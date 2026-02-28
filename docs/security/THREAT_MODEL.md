@@ -93,6 +93,7 @@ Notes:
 - `mcp` fail-closed policy: requires explicit server allowlist (`AGENTZERO_MCP_SERVERS`) and rejects unknown servers.
 - `plugin_exec` fail-closed policy: optional and off by default; requires explicit JSON config (`AGENTZERO_PLUGIN_TOOL`).
 - Audit trail policy: `[security.audit]` controls append-only step logging for command execution, tool calls, provider calls, and memory writes.
+- Dependency and supply-chain checks are enforced in CI/CD/release workflows via `scripts/run-security-audits.sh` (`cargo audit` + `cargo deny check advisories`).
 
 ## Encryption Requirements (Mandatory)
 - In-flight:
@@ -120,5 +121,4 @@ Notes:
 
 ## Non-Goals for This Sprint Slice
 - Full sandbox policy enforcement for tools (Sprint 0.3).
-- CI dependency policy automation (`cargo audit`/`cargo deny`) (Sprint 0.4).
 - WASM runtime isolation and Turso abuse-path enforcement (Sprint 0.5).

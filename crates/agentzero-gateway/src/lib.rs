@@ -1,43 +1,56 @@
+mod auth;
+mod banner;
+mod handlers;
+mod models;
+mod router;
+mod state;
+#[cfg(test)]
+mod tests;
+mod token_store;
+mod util;
+
 use anyhow::Context;
-use axum::{
-    extract::State,
-    routing::{get, post},
-    Json, Router,
-};
-use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
+use std::path::PathBuf;
 
-#[derive(Clone)]
-struct GatewayState {
-    service_name: Arc<String>,
+use banner::print_gateway_banner;
+use router::build_router;
+use state::GatewayState;
+use token_store::{clear_paired_tokens, load_paired_tokens};
+use util::{generate_base32_secret, generate_pairing_code};
+
+#[derive(Debug, Clone, Default)]
+pub struct GatewayRunOptions {
+    pub token_store_path: Option<PathBuf>,
+    pub new_pairing: bool,
 }
 
-#[derive(Debug, Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    service: String,
-}
+pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::Result<()> {
+    let otp_secret = generate_base32_secret(32);
+    println!("Initialized OTP secret for AgentZero.");
+    println!(
+        "Enrollment URI: otpauth://totp/AgentZero:agentzero?secret={otp_secret}&issuer=AgentZero&period=30"
+    );
 
-#[derive(Debug, Deserialize)]
-pub struct PingRequest {
-    pub message: String,
-}
+    if options.new_pairing {
+        clear_paired_tokens(options.token_store_path.as_deref())?;
+        println!("Cleared paired gateway tokens; generating fresh pairing code.");
+    }
 
-#[derive(Debug, Serialize)]
-pub struct PingResponse {
-    pub ok: bool,
-    pub echo: String,
-}
-
-pub async fn run(host: &str, port: u16) -> anyhow::Result<()> {
-    let state = GatewayState {
-        service_name: Arc::new("agentzero-gateway".to_string()),
+    let paired_tokens = load_paired_tokens(options.token_store_path.as_deref())?;
+    let pairing_code = if paired_tokens.is_empty() {
+        Some(generate_pairing_code())
+    } else {
+        None
     };
+    let state = GatewayState::new(
+        pairing_code.clone(),
+        otp_secret,
+        paired_tokens,
+        options.token_store_path,
+    );
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/v1/ping", post(ping))
-        .with_state(state);
+    let app = build_router(state);
 
     let addr: SocketAddr = format!("{host}:{port}")
         .parse()
@@ -47,23 +60,11 @@ pub async fn run(host: &str, port: u16) -> anyhow::Result<()> {
         .await
         .context("failed to bind gateway listener")?;
 
-    println!("gateway listening on http://{}", listener.local_addr()?);
+    let base = format!("http://{}", listener.local_addr()?);
+    print_gateway_banner(&base, pairing_code.as_deref());
+
     axum::serve(listener, app)
         .await
         .context("gateway server failed")?;
     Ok(())
-}
-
-async fn health(State(state): State<GatewayState>) -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok",
-        service: (*state.service_name).clone(),
-    })
-}
-
-async fn ping(Json(req): Json<PingRequest>) -> Json<PingResponse> {
-    Json(PingResponse {
-        ok: true,
-        echo: req.message,
-    })
 }

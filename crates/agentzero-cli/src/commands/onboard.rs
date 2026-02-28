@@ -59,7 +59,7 @@ impl Default for OnboardConfig {
             provider: "openai".to_string(),
             base_url: "https://api.openai.com".to_string(),
             model: "gpt-4o-mini".to_string(),
-            memory_path: "./agentzero.db".to_string(),
+            memory_path: default_memory_path(),
             allowed_root: ".".to_string(),
             allowed_commands: vec![
                 "ls".to_string(),
@@ -69,6 +69,12 @@ impl Default for OnboardConfig {
             ],
         }
     }
+}
+
+fn default_memory_path() -> String {
+    agentzero_common::paths::default_sqlite_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| "./agentzero.db".to_string())
 }
 
 trait OnboardOptionSpec {
@@ -693,7 +699,9 @@ fn base_url_start_cursor(provider: &str, current_url: &str) -> usize {
 }
 
 fn memory_path_options(current_path: &str) -> Vec<String> {
+    let default_path = default_memory_path();
     unique_options(vec![
+        default_path,
         "./agentzero.db".to_string(),
         "./.agentzero/agentzero.db".to_string(),
         current_path.to_string(),

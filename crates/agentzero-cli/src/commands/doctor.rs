@@ -1,5 +1,6 @@
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_config::{load, load_env_var};
+use agentzero_providers::find_provider;
 use anyhow::Context;
 use async_trait::async_trait;
 use console::style;
@@ -109,7 +110,7 @@ fn collect_config_checks(ctx: &CommandContext, report: &mut DoctorReport) {
     match load(config_path) {
         Ok(config) => {
             let provider = config.provider.kind.as_str();
-            if matches!(provider, "openai" | "openrouter" | "anthropic") {
+            if find_provider(provider).is_some() {
                 report.ok("config", format!("provider `{provider}` is valid"));
             } else {
                 report.warn(
@@ -420,6 +421,7 @@ mod tests {
 
         let ctx = CommandContext {
             workspace_root: workspace.clone(),
+            data_dir: workspace.clone(),
             config_path: workspace.join("missing.toml"),
         };
 
@@ -452,6 +454,7 @@ mod tests {
 
         let ctx = CommandContext {
             workspace_root: workspace.clone(),
+            data_dir: workspace.clone(),
             config_path: workspace.join("agentzero.toml"),
         };
 

@@ -74,7 +74,7 @@ fn normalize_verbose_args(args: Vec<OsString>) -> Result<Vec<OsString>, clap::Er
 #[cfg(test)]
 mod tests {
     use super::parse_cli_from;
-    use crate::cli::{Cli, Commands};
+    use crate::cli::{AuthCommands, Cli, Commands};
     use clap::{ColorChoice, CommandFactory};
 
     #[test]
@@ -94,6 +94,191 @@ mod tests {
     fn parse_cli_from_parses_doctor_command() {
         let parsed = parse_cli_from(["agentzero", "doctor"]).expect("doctor should parse");
         assert!(matches!(parsed.command, Commands::Doctor));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_gateway_with_new_pairing_flag() {
+        let parsed = parse_cli_from(["agentzero", "gateway", "--new-pairing"])
+            .expect("gateway --new-pairing should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Gateway {
+                new_pairing: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_gateway_defaults_new_pairing_to_false() {
+        let parsed = parse_cli_from(["agentzero", "gateway"]).expect("gateway should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Gateway {
+                new_pairing: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_auth_login_command() {
+        let parsed = parse_cli_from([
+            "agentzero",
+            "auth",
+            "login",
+            "--provider",
+            "openai-codex",
+            "--profile",
+            "default",
+        ])
+        .expect("auth login should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Auth {
+                command: AuthCommands::Login { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_rejects_auth_login_without_token() {
+        let err = parse_cli_from([
+            "agentzero",
+            "auth",
+            "login",
+            "--profile",
+            "default",
+            "--provider",
+            "openai-codex",
+        ])
+        .expect("auth login should parse without token");
+        assert!(matches!(
+            err.command,
+            Commands::Auth {
+                command: AuthCommands::Login { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_rejects_auth_login_without_provider() {
+        let err = parse_cli_from(["agentzero", "auth", "login", "--profile", "default"])
+            .expect_err("auth login missing provider should fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn parse_cli_from_parses_auth_paste_token_command() {
+        let parsed = parse_cli_from([
+            "agentzero",
+            "auth",
+            "paste-token",
+            "--profile",
+            "anthropic-sub",
+            "--provider",
+            "anthropic",
+            "--token",
+            "tok",
+        ])
+        .expect("auth paste-token should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Auth {
+                command: AuthCommands::PasteToken { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_auth_refresh_command() {
+        let parsed = parse_cli_from([
+            "agentzero",
+            "auth",
+            "refresh",
+            "--provider",
+            "openai-codex",
+            "--profile",
+            "default",
+        ])
+        .expect("auth refresh should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Auth {
+                command: AuthCommands::Refresh { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_rejects_auth_refresh_without_provider() {
+        let err = parse_cli_from(["agentzero", "auth", "refresh"])
+            .expect_err("auth refresh missing provider should fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn parse_cli_from_rejects_auth_paste_redirect_without_redirect() {
+        let err = parse_cli_from([
+            "agentzero",
+            "auth",
+            "paste-redirect",
+            "--profile",
+            "default",
+            "--provider",
+            "openai-codex",
+        ])
+        .expect("paste-redirect should parse without --input (interactive fallback)");
+        assert!(matches!(
+            err.command,
+            Commands::Auth {
+                command: AuthCommands::PasteRedirect { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_auth_logout_with_provider() {
+        let parsed = parse_cli_from(["agentzero", "auth", "logout", "--provider", "openai-codex"])
+            .expect("auth logout should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Auth {
+                command: AuthCommands::Logout { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_rejects_auth_logout_without_provider() {
+        let err = parse_cli_from(["agentzero", "auth", "logout"])
+            .expect_err("auth logout missing provider should fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn parse_cli_from_parses_providers_command() {
+        let parsed = parse_cli_from(["agentzero", "providers"]).expect("providers should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Providers {
+                json: false,
+                no_color: false
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_providers_json_and_no_color_flags() {
+        let parsed = parse_cli_from(["agentzero", "providers", "--json", "--no-color"])
+            .expect("providers flags should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Providers {
+                json: true,
+                no_color: true
+            }
+        ));
     }
 
     #[test]
@@ -117,6 +302,34 @@ mod tests {
                 .expect("config should be present")
                 .to_string_lossy(),
             "/tmp/cfg.toml"
+        );
+    }
+
+    #[test]
+    fn parse_cli_from_parses_global_data_dir_flag() {
+        let parsed = parse_cli_from(["agentzero", "--data-dir", "/tmp/agentzero", "status"])
+            .expect("--data-dir should parse");
+        assert_eq!(
+            parsed
+                .data_dir
+                .as_ref()
+                .expect("data_dir should be present")
+                .to_string_lossy(),
+            "/tmp/agentzero"
+        );
+    }
+
+    #[test]
+    fn parse_cli_from_parses_global_config_dir_alias() {
+        let parsed = parse_cli_from(["agentzero", "--config-dir", "/tmp/agentzero", "status"])
+            .expect("--config-dir alias should parse");
+        assert_eq!(
+            parsed
+                .data_dir
+                .as_ref()
+                .expect("data_dir should be present")
+                .to_string_lossy(),
+            "/tmp/agentzero"
         );
     }
 

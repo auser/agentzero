@@ -6,6 +6,8 @@ This project currently exposes a small command surface:
 - `agentzero gateway`
 - `agentzero status`
 - `agentzero doctor`
+- `agentzero providers`
+- `agentzero auth ...`
 - `agentzero agent -m "<message>"`
 
 You can always inspect generated help:
@@ -19,10 +21,12 @@ cargo run -p agentzero -- <command> --help
 
 - Binary name: `agentzero`
 - Package name: `agentzero-cli`
-- Default persistence: SQLite database at `./agentzero.db`
+- Default persistence: SQLite database at `~/.agentzero/agentzero.db` (unless overridden in config)
 - API key source: `OPENAI_API_KEY`
 - Memory backend selector: `AGENTZERO_MEMORY_BACKEND` (`sqlite` or `turso`)
 - Global config override: `--config <path>` (highest precedence for config file path)
+- Global data dir override: `--data-dir <path>` (alias: `--config-dir`) or `AGENTZERO_DATA_DIR`
+- Data dir precedence: `--data-dir` > `AGENTZERO_DATA_DIR` > `data_dir` in config > default `~/.agentzero`
 - Global verbosity:
 - `-v` (or `--verbose`) -> `RUST_LOG=error`
 - `-vv` -> `RUST_LOG=info`
@@ -38,7 +42,7 @@ cargo run -p agentzero -- <command> --help
 
 ## `onboard`
 
-Creates a starter config file (`agentzero.toml`) in the current directory.
+Creates a starter config file (`agentzero.toml`) in the active data directory (default: `~/.agentzero`).
 
 ### Usage
 
@@ -141,14 +145,22 @@ Starts the HTTP gateway server.
 ```bash
 cargo run -p agentzero -- gateway
 cargo run -p agentzero -- gateway --host 0.0.0.0 --port 8081
+cargo run -p agentzero -- gateway --new-pairing
 ```
 
 ### Behavior
 
 - Binds to `127.0.0.1:8080` by default.
+- Pairing tokens are persisted next to the config file in `*.gateway-paired-tokens.json` using encrypted storage.
+- Pairing code is only shown when no paired tokens exist.
+- `--new-pairing` clears persisted paired tokens before startup and forces a fresh pairing flow/code.
 - Exposes:
   - `GET /health` (service health probe)
   - `POST /v1/ping` (echo test endpoint)
+  - `POST /v1/webhook/:channel` (channel dispatch; built-in channel: `echo`)
+- Authn:
+  - If `AGENTZERO_GATEWAY_BEARER_TOKEN` is set, `POST /v1/ping` and `POST /v1/webhook/:channel` require `Authorization: Bearer <token>`.
+  - `GET /health` remains unauthenticated for liveness probes.
 
 ### Startup Output (What You Are Seeing)
 
@@ -181,6 +193,11 @@ curl -s http://127.0.0.1:8080/health
 
 # Ping endpoint
 curl -s -X POST http://127.0.0.1:8080/v1/ping -H 'content-type: application/json' -d '{"message":"hi"}'
+
+# Webhook dispatch to built-in echo channel
+curl -s -X POST http://127.0.0.1:8080/v1/webhook/echo \
+  -H 'content-type: application/json' \
+  -d '{"message":"hello from webhook"}'
 
 # Pairing endpoint
 curl -s -X POST http://127.0.0.1:42617/pair \
@@ -215,6 +232,34 @@ cargo run -p agentzero -- doctor
 
 # Diagnostics with explicit config path
 cargo run -p agentzero -- --config ./agentzero.toml doctor
+```
+
+## `providers`
+
+Lists the provider catalog and aliases supported by config/provider routing.
+
+### Usage
+
+```bash
+cargo run -p agentzero -- providers
+cargo run -p agentzero -- providers --no-color
+cargo run -p agentzero -- providers --json
+```
+
+### Behavior
+
+- Prints a table with provider IDs and descriptions.
+- Active provider ID is blue; inactive provider IDs are cyan (table mode).
+- Includes alias lists where available.
+- Marks the configured provider as `(active)` when `agentzero.toml` is present and valid.
+- Prints a warning if configured provider is not in the known provider catalog.
+- `--no-color` disables ANSI coloring in table output.
+- `--json` emits machine-readable JSON output with provider metadata (`id`, `description`, `aliases`, `active`, `local`).
+
+### Examples
+
+```bash
+cargo run -p agentzero -- providers
 ```
 
 ## `agent`
@@ -258,6 +303,36 @@ cargo run -p agentzero -- --config ./agentzero.toml agent -m "summarize README.m
 - `plugin_exec` (enabled only when `[security.plugin].enabled = true`)
 - Audit trail (`[security.audit]`) records step-by-step execution events when enabled.
 - Runtime metrics are collected for request counters and latency histograms and emitted as a lightweight log snapshot.
+
+## `auth`
+
+Manages provider authentication profiles and active profile selection.
+
+### Usage
+
+```bash
+cargo run -p agentzero -- auth login --profile default --provider openai-codex
+cargo run -p agentzero -- auth paste-redirect --profile default --provider openai-codex --input "<url-or-code>"
+cargo run -p agentzero -- auth paste-token --profile default --provider anthropic --token "<token>"
+cargo run -p agentzero -- auth setup-token --profile default --provider anthropic --token "<token>"
+cargo run -p agentzero -- auth refresh --provider openai-codex --profile default
+cargo run -p agentzero -- auth logout --provider openai-codex --profile default
+cargo run -p agentzero -- auth use default
+cargo run -p agentzero -- auth list --json
+cargo run -p agentzero -- auth status --json
+```
+
+### Behavior
+
+- Stores profiles in `auth_profiles.json` next to your config file using encrypted storage.
+- Uses `AGENTZERO_DATA_KEY` (base64 or 64-char hex) when set; otherwise creates/uses a local key file at `.agentzero-data.key`.
+- `login` supports `openai-codex` and `gemini`, prints OAuth authorize URL, and stages pending login state.
+- `paste-redirect` completes pending OAuth login from full redirect URL or raw code (`--input` optional; stdin prompt fallback).
+- `paste-token` stores setup/auth token for subscription auth flows.
+- `setup-token` is an alias-like flow for `paste-token` (prompts on stdin when `--token` is omitted).
+- `refresh` supports `openai-codex` and `gemini` only and checks/refreshes token state for an existing profile.
+- `use` switches active profile.
+- `logout` removes a provider/profile pair (`--provider` required, `--profile` defaults to `default`).
 
 ### Tool Invocation Shortcut
 

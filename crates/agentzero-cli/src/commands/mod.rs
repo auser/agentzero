@@ -1,7 +1,9 @@
 pub mod agent;
+pub mod auth;
 pub mod doctor;
 pub mod gateway;
 pub mod memory;
 pub mod onboard;
+pub mod providers;
 pub mod status;
 pub mod ux;

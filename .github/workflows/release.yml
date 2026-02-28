@@ -1,0 +1,126 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without 'v' prefix (e.g., 0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            ver="${GITHUB_REF_NAME#v}"
+          else
+            ver="${{ inputs.version }}"
+          fi
+          echo "value=$ver" >> "$GITHUB_OUTPUT"
+      - name: Verify changelog + package versions
+        run: scripts/verify-release-version.sh --version "${{ steps.version.outputs.value }}"
+      - name: install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: security audits
+        run: scripts/run-security-audits.sh
+      - name: Run quality gates
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target_name: linux-x86_64
+            bin_path: target/release/agentzero
+            ext: ""
+          - os: macos-latest
+            target_name: macos-x86_64
+            bin_path: target/release/agentzero
+            ext: ""
+          - os: windows-latest
+            target_name: windows-x86_64
+            bin_path: target/release/agentzero.exe
+            ext: ".exe"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            ver="${GITHUB_REF_NAME#v}"
+          else
+            ver="${{ inputs.version }}"
+          fi
+          echo "value=$ver" >> "$GITHUB_OUTPUT"
+      - name: Build release binary
+        run: cargo build -p agentzero --release
+      - name: Validate linux size budget
+        if: matrix.os == 'ubuntu-latest'
+        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 20000000
+      - name: Package artifact (unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p dist
+          cp "${{ matrix.bin_path }}" "dist/agentzero-v${{ steps.version.outputs.value }}-${{ matrix.target_name }}${{ matrix.ext }}"
+      - name: Package artifact (windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "${{ matrix.bin_path }}" "dist/agentzero-v${{ steps.version.outputs.value }}-${{ matrix.target_name }}${{ matrix.ext }}"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target_name }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="v${{ inputs.version }}"
+          fi
+          echo "value=$tag" >> "$GITHUB_OUTPUT"
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.value }}
+          generate_release_notes: true
+          files: dist/*

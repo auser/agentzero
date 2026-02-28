@@ -44,7 +44,8 @@ References:
 - [x] Optional Turso memory backend crate exists (`crates/agentzero-memory-turso`) and is wired to CLI via feature flag.
 - [x] WASM plugin container crate exists (`crates/agentzero-plugins-wasm`) with security preflight validation.
 - [x] Baseline gateway crate exists (`crates/agentzero-gateway`) with health and ping endpoints.
-- [x] Foundational crates extracted for config/provider/sqlite memory (`agentzero-config`, `agentzero-provider-openai`, `agentzero-memory-sqlite`).
+- [x] Encrypted persistence crate exists (`crates/agentzero-storage`) for secret-bearing on-disk state.
+- [x] Foundational crates extracted for config/provider/sqlite memory (`agentzero-config`, `agentzero-providers`, `agentzero-memory-sqlite`).
 - [x] CI exists for `fmt`, `clippy`, and `test`.
 
 ## Target Crate Architecture (Major Module = Crate)
@@ -52,7 +53,7 @@ References:
 - `bin/agentzero`: thin binary entrypoint (`main.rs`) that calls `agentzero_cli::cli()`.
 - `crates/agentzero-core`: domain models, traits, and pure agent orchestration.
 - `crates/agentzero-config`: typed config load/validation/env overrides.
-- `crates/agentzero-provider-openai`: OpenAI-compatible provider implementation.
+- `crates/agentzero-providers`: OpenAI-compatible provider implementation.
 - `crates/agentzero-memory-sqlite`: SQLite memory implementation.
 - `crates/agentzero-memory-turso`: Turso/libsql memory implementation (feature-gated).
 - `crates/agentzero-tools-fs`: file-system tools (`read_file`, `write_file`).
@@ -60,6 +61,7 @@ References:
 - `crates/agentzero-observability`: tracing, redaction, metrics.
 - `crates/agentzero-runtime`: request loop, timeout/retry policy, execution pipeline.
 - `crates/agentzero-plugins-wasm`: WASM plugin container/runtime policy and execution.
+- `crates/agentzero-storage`: encrypted on-disk persistence for secret-bearing state.
 - `crates/agentzero-testkit`: shared mocks, fixtures, integration harness.
 - Exception policy:
 - Tiny glue modules may remain in parent crate when splitting adds no maintainability value.
@@ -107,12 +109,12 @@ Delivery gate:
 - [ ] `estop`
 - [ ] `cron`
 - [ ] `models`
-- [ ] `providers`
+- [x] `providers`
 - [ ] `channel`
 - [ ] `integrations`
 - [ ] `skill`
 - [ ] `migrate`
-- [ ] `auth`
+- [x] `auth`
 - [ ] `hardware`
 - [ ] `peripheral`
 - [ ] `memory`
@@ -154,7 +156,7 @@ Goal: support hook points around each execution phase for policy, observability,
 - Acceptance:
 - Each step emits both before and after hooks with tests for success, timeout, and failure policies.
 
-## Upstream Module Parity Gaps (from `zeroclaw/src`)
+## Upstream Module Parity Gaps (from `openclaw/src`)
 The following major upstream sections are not yet explicitly covered in our sprint plan and are required for a fuller clone trajectory:
 
 - [ ] `approval`
@@ -172,7 +174,7 @@ The following major upstream sections are not yet explicitly covered in our spri
 - [ ] `hardware` + `peripherals`
 - [ ] Shared `util` extraction strategy
 
-## ZeroClaw Tool Parity Checklist (from `zeroclaw/src/tools`)
+## OpenClaw Tool Parity Checklist (from `openclaw/src/tools`)
 - [ ] `agents_ipc.rs`
 - [ ] `apply_patch.rs`
 - [ ] `browser.rs`
@@ -364,7 +366,7 @@ Goal: support the same workspace template model and usage flow.
 
 ### 1.4 Extract foundational crates
 - [x] Create `crates/agentzero-config`.
-- [x] Create `crates/agentzero-provider-openai`.
+- [x] Create `crates/agentzero-providers`.
 - [x] Create `crates/agentzero-memory-sqlite`.
 - [x] Move existing implementations from `agentzero-infra` into extracted crates.
 - [x] Keep `agentzero-infra` only as temporary compatibility layer or remove it.
@@ -470,6 +472,8 @@ Goal: support the same workspace template model and usage flow.
 
 ### 6.1 Improve command UX
 - [x] Add `--config` global flag.
+- [x] Add global `--data-dir`/`--config-dir` for storage path resolution (`flag > env > config > default ~/.agentzero`).
+- [x] Centralize default data/config/sqlite path constants and helpers in `crates/agentzero-common`.
 - [x] Add global `--verbose` flag to enable debug logging output.
 - [x] Extract shared tracing bootstrap into `crates/agentzero-common`.
 - [x] Add `--json` output mode for `status`.
@@ -500,46 +504,52 @@ Goal: support the same workspace template model and usage flow.
 
 ### 7.2 Benchmarks and baselines
 - [-] Add `criterion` benchmark crate for core loop.
-- [ ] Add CLI startup and single-message benchmark scripts.
-- [ ] Check in results at `docs/benchmarks.md`.
+- [x] Temporary offline benchmark harness added in `crates/agentzero-bench`; swap to `criterion` when registry access is available.
+- [x] Add CLI startup and single-message benchmark scripts.
+- [x] Check in results at `docs/benchmarks.md`.
 - Acceptance:
 - Baseline numbers reproducible with one documented command set.
 
 ### 7.3 Introduce runtime and testkit crates
-- [ ] Create `crates/agentzero-runtime` and move runtime orchestration concerns from CLI.
-- [ ] Create `crates/agentzero-testkit` for reusable mocks/fixtures.
-- [ ] Update integration tests to use testkit.
+- [x] Create `crates/agentzero-runtime` and move runtime orchestration concerns from CLI.
+- [x] Create `crates/agentzero-testkit` for reusable mocks/fixtures.
+- [x] Update integration tests to use testkit.
 - Acceptance:
 - Runtime and test support are reusable and decoupled from CLI.
 
 ## Sprint 8: Release Readiness
 
 ### 8.1 Packaging
-- [ ] Add release profile tuning and size checks.
-- [ ] Add versioning and changelog process.
-- [ ] Add GitHub release workflow (build + artifact upload).
+- [x] Add release profile tuning and size checks.
+- [x] Add versioning and changelog process.
+- [x] Add GitHub release workflow (build + artifact upload).
 - Acceptance:
 - Tagged release produces downloadable binaries.
 
 ### 8.2 Project quality gates
-- [ ] Add coverage reporting.
-- [ ] Keep security audits (`cargo audit`, `cargo deny`) in CI and update policy docs.
-- [ ] Add dependency update policy.
+- [x] Add coverage reporting.
+- [x] Keep security audits (`cargo audit`, `cargo deny`) in CI and update policy docs.
+- [x] Add dependency update policy.
 - Acceptance:
 - CI blocks merge on critical audit failures.
 
 ## Sprint 9: Auth, Identity, and Approval
 
 ### 9.1 Auth and profile management
-- [ ] Add `crates/agentzero-auth` for provider auth profiles and token lifecycle.
-- [ ] Implement profile selection, storage, and refresh behavior.
-- [ ] Add CLI command surface: `agentzero auth login/logout/list/status/use`.
+- [x] Add `crates/agentzero-auth` for provider auth profiles and token lifecycle.
+- [x] Implement profile selection, storage, and refresh behavior.
+- [x] Add CLI command surface: `agentzero auth login/logout/list/status/use`.
+- [x] Expand auth subcommand parity: `paste-redirect`, `paste-token`, `setup-token`, `refresh`.
+- [x] Align `auth refresh` semantics to provider-based flow (`--provider`, optional `--profile`) with OpenAI Codex/Gemini-specific behavior.
+- [x] Align `auth login` + `paste-redirect` with OAuth browser flow (authorize URL + localhost callback + fallback).
+- [x] Add callback port fallback: when `1455` is unavailable, auto-select next available localhost port for OAuth redirect.
+- [x] Add shared encrypted persistence crate and migrate auth + gateway token storage to it.
 - Acceptance:
 - Auth flows are tested with mocked providers and secure token storage.
 
 ### 9.2 Identity and approval controls
-- [ ] Add `crates/agentzero-identity` for actor identity model.
-- [ ] Add `crates/agentzero-approval` for high-risk action approvals.
+- [x] Add `crates/agentzero-identity` for actor identity model.
+- [x] Add `crates/agentzero-approval` for high-risk action approvals.
 - Acceptance:
 - High-risk actions require explicit approval and are audit logged.
 
@@ -547,14 +557,16 @@ Goal: support the same workspace template model and usage flow.
 
 ### 10.1 Channel abstraction and gateway
 - [x] Add `crates/agentzero-gateway` baseline HTTP service.
-- [ ] Add `crates/agentzero-channels` and evolve gateway routing/authn.
-- [ ] Implement minimal webhook + websocket gateway.
-- [ ] Add CLI command surface: `agentzero gateway --host --port`.
+- [x] Add `crates/agentzero-channels` and evolve gateway routing/authn.
+- [x] Implement minimal webhook + websocket gateway.
+- [x] Add CLI command surface: `agentzero gateway --host --port`.
+- [x] Add `agentzero gateway --new-pairing` to clear persisted paired tokens and rotate pairing setup.
+- [x] Align pairing lifecycle so one-time pairing code is shown only when no paired tokens exist; `--new-pairing` re-enables enrollment.
 - Acceptance:
 - One reference channel works end-to-end through gateway.
 
 ### 10.2 Daemon and service lifecycle
-- [ ] Add `crates/agentzero-daemon` and `crates/agentzero-service`.
+- [-] Add `crates/agentzero-daemon` and `crates/agentzero-service`.
 - [ ] Add install/start/stop/status command flow.
 - Acceptance:
 - Long-running runtime starts reliably and exposes health endpoints.

@@ -11,7 +11,7 @@ async-trait.workspace = true
 agentzero-core = { path = "../agentzero-core" }
 agentzero-tools = { path = "../agentzero-tools" }
 agentzero-memory-sqlite = { path = "../agentzero-memory-sqlite" }
-agentzero-provider-openai = { path = "../agentzero-provider-openai" }
+agentzero-providers = { path = "../agentzero-providers" }
 agentzero-security = { path = "../agentzero-security" }
 serde.workspace = true
 serde_json.workspace = true

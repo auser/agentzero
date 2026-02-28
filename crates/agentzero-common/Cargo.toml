@@ -6,4 +6,5 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+dirs = "5"
 tracing-subscriber.workspace = true

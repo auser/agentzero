@@ -13,7 +13,10 @@ struct BenchMemory {
 #[async_trait]
 impl MemoryStore for BenchMemory {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
-        self.entries.lock().expect("bench memory lock poisoned").push(entry);
+        self.entries
+            .lock()
+            .expect("bench memory lock poisoned")
+            .push(entry);
         Ok(())
     }
 
@@ -53,7 +56,11 @@ impl Tool for EchoTool {
         "echo"
     }
 
-    async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<agentzero_core::ToolResult> {
+    async fn execute(
+        &self,
+        input: &str,
+        _ctx: &ToolContext,
+    ) -> anyhow::Result<agentzero_core::ToolResult> {
         Ok(agentzero_core::ToolResult {
             output: format!("echoed:{input}"),
         })
@@ -87,7 +94,9 @@ pub async fn run_core_loop_iteration(message: &str) -> anyhow::Result<AssistantM
         .map_err(anyhow::Error::from)
 }
 
-pub async fn run_core_loop_iteration_failure(message: &str) -> Result<AssistantMessage, AgentError> {
+pub async fn run_core_loop_iteration_failure(
+    message: &str,
+) -> Result<AssistantMessage, AgentError> {
     let agent = Agent::new(
         AgentConfig::default(),
         Box::new(FailingBenchProvider),

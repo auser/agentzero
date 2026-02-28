@@ -7,7 +7,15 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio"] }
+agentzero-storage = { path = "../agentzero-storage" }
+agentzero-channels = { path = "../agentzero-channels" }
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "ws"] }
+futures-util = "0.3"
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = "0.5"

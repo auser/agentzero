@@ -11,18 +11,23 @@ flowchart TD
 
     C --> CFG[crates/agentzero-config]
     C --> CORE[crates/agentzero-core]
+    C --> RT[crates/agentzero-runtime]
     C --> GW[crates/agentzero-gateway]
     C --> INFRA[crates/agentzero-infra]
     C --> MEMSQL[crates/agentzero-memory-sqlite]
     C --> MEMTURSO[crates/agentzero-memory-turso]
-    C --> PROV[crates/agentzero-provider-openai]
+    C --> PROV[crates/agentzero-providers]
     C --> SEC[crates/agentzero-security]
     C --> TOOLS[crates/agentzero-tools]
     C --> WASM[crates/agentzero-plugins-wasm]
+    C --> TK[crates/agentzero-testkit]
 
     CORE --> INFRA
     INFRA --> TOOLS
     INFRA --> SEC
+    RT --> CORE
+    RT --> CFG
+    RT --> INFRA
 ```
 
 ## Command Execution Flow
@@ -35,7 +40,7 @@ sequenceDiagram
     participant Config as agentzero-config
     participant Core as agentzero-core
     participant Infra as agentzero-infra
-    participant Provider as agentzero-provider-openai
+    participant Provider as agentzero-providers
     participant Memory as sqlite/turso memory crate
     participant Tools as agentzero-tools
 
@@ -63,9 +68,10 @@ sequenceDiagram
 
 - `bin/agentzero`: Thin executable entrypoint and process exit behavior.
 - `agentzero-cli`: Command parsing, command dispatch, UX, diagnostics, and orchestration glue.
+- `agentzero-runtime`: Runtime orchestration for agent execution flows used by CLI commands.
 - `agentzero-config`: Typed config model, validation, dotenv/env/file layering, policy loading.
 - `agentzero-core`: Agent domain loop and trait-driven orchestration.
-- `agentzero-provider-openai`: OpenAI-compatible provider implementation and retry/error mapping.
+- `agentzero-providers`: OpenAI-compatible provider implementation and retry/error mapping.
 - `agentzero-memory-sqlite`: Default local memory backend.
 - `agentzero-memory-turso`: Optional remote/libsql memory backend.
 - `agentzero-tools`: Hardened tool implementations (`read_file`, `write_file`, `shell`) with policy gates.
@@ -73,6 +79,7 @@ sequenceDiagram
 - `agentzero-infra`: Integration layer for provider/memory/tool wiring and optional plugin/mcp tools.
 - `agentzero-gateway`: HTTP service surface for runtime access and health/ping.
 - `agentzero-plugins-wasm`: WASM plugin preflight/runtime policy checks.
+- `agentzero-testkit`: Reusable test doubles/mocks for provider, memory, and tool trait testing.
 
 ## Security Boundaries
 
@@ -83,5 +90,5 @@ sequenceDiagram
 
 ## Notes
 
-- The CLI crate currently contains runtime orchestration glue that is planned to move into a dedicated runtime crate in a later sprint (`agentzero-runtime`).
+- Runtime orchestration is being moved from CLI command handlers into `agentzero-runtime`; some CLI paths may still have light transitional glue.
 - Doctor diagnostics are currently CLI-local checks; deeper daemon/scheduler freshness checks are tracked in Sprint 11.

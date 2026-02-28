@@ -133,9 +133,15 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             backend: "sqlite".to_string(),
-            sqlite_path: "./agentzero.db".to_string(),
+            sqlite_path: default_sqlite_path(),
         }
     }
+}
+
+fn default_sqlite_path() -> String {
+    agentzero_common::paths::default_sqlite_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| "./agentzero.db".to_string())
 }
 
 #[derive(Debug, Clone, Deserialize)]

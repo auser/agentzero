@@ -1,3 +1,5 @@
+pub mod paths;
+
 use tracing_subscriber::EnvFilter;
 
 pub fn init_tracing(verbosity: u8) {

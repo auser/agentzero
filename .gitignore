@@ -12,3 +12,5 @@ agentzero.toml
 
 # macOS
 .DS_Store
+externals/
+auth_profiles.json

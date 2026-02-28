@@ -80,6 +80,7 @@ mod tests {
 
         let ctx = CommandContext {
             workspace_root: dir.clone(),
+            data_dir: dir.clone(),
             config_path: config_path.clone(),
         };
         let store = build_memory_store(&ctx)
@@ -116,6 +117,7 @@ mod tests {
 
         let ctx = CommandContext {
             workspace_root: dir.clone(),
+            data_dir: dir.clone(),
             config_path,
         };
         let result = build_memory_store(&ctx).await;

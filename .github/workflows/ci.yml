@@ -17,6 +17,12 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
+      - name: verify dependency policy
+        run: scripts/verify-dependency-policy.sh
+      - name: release build
+        run: cargo build -p agentzero --release
+      - name: release size budget
+        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 20000000
 
   security:
     runs-on: ubuntu-latest
@@ -28,7 +34,21 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: install cargo-deny
         run: cargo install cargo-deny --locked
-      - name: cargo-audit
-        run: cargo audit
-      - name: cargo-deny
-        run: cargo deny check advisories
+      - name: security audits
+        run: scripts/run-security-audits.sh
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: generate coverage
+        run: scripts/run-coverage.sh --output-dir coverage
+      - name: upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage

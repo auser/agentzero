@@ -1,0 +1,72 @@
+name: cd
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+      - name: install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: security audits
+        run: scripts/run-security-audits.sh
+
+  build-artifacts:
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target_name: linux-x86_64
+            bin_path: target/release/agentzero
+            asset_name: agentzero-linux-x86_64
+          - os: macos-latest
+            target_name: macos-x86_64
+            bin_path: target/release/agentzero
+            asset_name: agentzero-macos-x86_64
+          - os: windows-latest
+            target_name: windows-x86_64
+            bin_path: target/release/agentzero.exe
+            asset_name: agentzero-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build -p agentzero --release
+      - name: Validate linux size budget
+        if: matrix.os == 'ubuntu-latest'
+        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 20000000
+      - name: Package artifact (unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p dist
+          cp "${{ matrix.bin_path }}" "dist/${{ matrix.asset_name }}"
+      - name: Package artifact (windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "${{ matrix.bin_path }}" "dist/${{ matrix.asset_name }}"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.asset_name }}
