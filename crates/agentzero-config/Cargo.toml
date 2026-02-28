@@ -1,0 +1,17 @@
+[package]
+name = "agentzero-config"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+agentzero-tools = { path = "../agentzero-tools" }
+config.workspace = true
+dotenvy.workspace = true
+serde.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+temp-env = "0.3"

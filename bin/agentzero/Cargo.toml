@@ -1,0 +1,21 @@
+[package]
+name = "agentzero"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobins = false
+
+[features]
+default = []
+memory-turso = ["agentzero-cli/memory-turso"]
+
+[dependencies]
+anyhow.workspace = true
+agentzero-cli = { path = "../../crates/agentzero-cli" }
+agentzero-security = { path = "../../crates/agentzero-security" }
+tokio.workspace = true
+
+[[bin]]
+name = "agentzero"
+path = "bins/cli.rs"

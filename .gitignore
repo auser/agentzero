@@ -1,0 +1,14 @@
+# Rust build outputs
+/target/
+
+# Local runtime artifacts
+*.db
+*.sqlite
+agentzero.toml
+
+# Environment/config secrets
+.env
+.env.*
+
+# macOS
+.DS_Store

@@ -1,0 +1,15 @@
+[package]
+name = "agentzero-memory-sqlite"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+agentzero-core = { path = "../agentzero-core" }
+rusqlite.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
