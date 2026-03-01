@@ -6,9 +6,9 @@ use std::process::Stdio;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
-const DEFAULT_MAX_SHELL_ARGS: usize = 8;
-const DEFAULT_MAX_ARG_LENGTH: usize = 128;
-const DEFAULT_MAX_OUTPUT_BYTES: usize = 8192;
+const DEFAULT_MAX_SHELL_ARGS: usize = 32;
+const DEFAULT_MAX_ARG_LENGTH: usize = 4096;
+const DEFAULT_MAX_OUTPUT_BYTES: usize = 65536;
 const DEFAULT_FORBIDDEN_CHARS: &str = ";&|><$`\n\r";
 
 /// Context-aware shell command policy.

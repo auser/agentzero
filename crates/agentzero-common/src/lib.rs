@@ -1,3 +1,4 @@
+pub mod local_providers;
 pub mod paths;
 pub mod url_policy;
 pub mod util;

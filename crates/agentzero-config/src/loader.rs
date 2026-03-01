@@ -1,4 +1,5 @@
 use crate::model::AgentZeroConfig;
+use agentzero_common::local_providers::local_provider_meta;
 use anyhow::{anyhow, Context};
 use config::{Config, Environment, File};
 use std::collections::HashMap;
@@ -21,7 +22,8 @@ pub fn load(path: &Path) -> anyhow::Result<AgentZeroConfig> {
         .try_deserialize()
         .context("failed to deserialize config into typed model")?;
     let config = apply_dotenv_overrides(parsed, &dotenv_overrides)?;
-    let config = apply_legacy_env_overrides(config)?;
+    let mut config = apply_legacy_env_overrides(config)?;
+    resolve_local_provider_defaults(&mut config);
     config.validate()?;
     Ok(config)
 }
@@ -193,6 +195,18 @@ fn apply_legacy_env_overrides(mut config: AgentZeroConfig) -> anyhow::Result<Age
     }
 
     Ok(config)
+}
+
+const DEFAULT_CLOUD_BASE_URL: &str = "https://openrouter.ai/api/v1";
+
+fn resolve_local_provider_defaults(config: &mut AgentZeroConfig) {
+    if let Some(meta) = local_provider_meta(&config.provider.kind) {
+        let is_default_url = config.provider.base_url == DEFAULT_CLOUD_BASE_URL
+            || config.provider.base_url.trim().is_empty();
+        if is_default_url {
+            config.provider.base_url = meta.default_base_url.to_string();
+        }
+    }
 }
 
 fn first_nonempty_env(keys: &[&str]) -> Option<String> {

@@ -1,5 +1,6 @@
 # AgentZero task runner
 
+# Default recipe - show help
 default:
     @just --list
 
@@ -25,6 +26,36 @@ docs-preview:
 docs-lint:
     npx markdownlint-cli2 "public/src/content/**/*.md" "README.md" "AGENTS.md" --config .markdownlint-cli2.yaml
 
+# -- Test ─────────────────────────────────────────
+
+# Run tests
+test:
+    cargo nextest run --workspace
+
+# Run tests with verbose output
+test-verbose:
+    cargo nextest run --workspace --no-capture
+
+# Run benchmarks
+bench:
+    cargo bench --workspace
+
+# Run clippy lints
+lint:
+    cargo clippy -- -D warnings
+
+# Format code
+fmt:
+    cargo fmt
+
+# Check formatting
+fmt-check:
+    cargo fmt --check
+
+# Full CI check
+ci: fmt-check lint test
+
+
 # ── Release ───────────────────────────────────────
 
 # Cut a release: just release 0.2.0
@@ -35,7 +66,7 @@ release VERSION:
     # 1. Quality gates
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo test --workspace
+    cargo nextest run --workspace
     # 2. Verify changelog & crate versions match
     scripts/verify-release-version.sh --version "{{VERSION}}"
     # 3. Tag and push (triggers .github/workflows/release.yml)

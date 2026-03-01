@@ -45,6 +45,7 @@ agentzero-rag = { workspace = true, optional = true }
 agentzero-multimodal = { workspace = true, optional = true }
 agentzero-hardware = { workspace = true, optional = true }
 agentzero-peripherals = { workspace = true, optional = true }
+agentzero-local = { workspace = true }
 agentzero-runtime = { workspace = true, features = [] }
 agentzero-security = { workspace = true }
 agentzero-service = { workspace = true }
@@ -63,3 +64,5 @@ url.workspace = true
 
 [dev-dependencies]
 temp-env = "0.3"
+tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

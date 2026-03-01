@@ -9,7 +9,7 @@ model = "anthropic/claude-sonnet-4-6"    # model identifier for the provider
 
 [security]
 allowed_root = "."                         # restrict file access to this directory
-allowed_commands = ["ls", "pwd", "cat", "echo", "grep", "find"]
+allowed_commands = ["ls", "pwd", "cat", "echo", "grep", "find", "git", "cargo"]
 
 [gateway]
 port = 42617                               # local HTTP gateway port

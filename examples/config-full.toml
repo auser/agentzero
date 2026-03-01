@@ -50,10 +50,10 @@ on_error_default = "warn"                   # block | warn | ignore
 # ---------------------------------------------------------------------------
 [security]
 allowed_root = "."
-allowed_commands = ["ls", "pwd", "cat", "echo", "grep", "find"]
+allowed_commands = ["ls", "pwd", "cat", "echo", "grep", "find", "head", "tail", "wc", "sort", "uniq", "diff", "file", "which", "basename", "dirname", "mkdir", "cp", "mv", "rm", "touch", "date", "env", "test", "tr", "cut", "xargs", "sed", "awk", "git", "cargo", "rustc", "npm", "node", "python3"]
 
 [security.read_file]
-max_read_bytes = 65536                      # 64 KiB
+max_read_bytes = 262144                     # 256 KiB
 allow_binary = false
 
 [security.write_file]
@@ -61,9 +61,9 @@ enabled = false
 max_write_bytes = 65536                     # 64 KiB
 
 [security.shell]
-max_args = 8
-max_arg_length = 128
-max_output_bytes = 8192
+max_args = 32
+max_arg_length = 4096
+max_output_bytes = 65536
 forbidden_chars = ";&|><$`\n\r"
 context_aware_parsing = true                # smarter shell argument validation
 
@@ -147,8 +147,8 @@ allow_sensitive_file_writes = false
 non_cli_excluded_tools = []
 non_cli_approval_approvers = []
 non_cli_natural_language_approval_mode = "direct"
-max_actions_per_hour = 20
-max_cost_per_day_cents = 500
+max_actions_per_hour = 200
+max_cost_per_day_cents = 2000
 require_approval_for_medium_risk = true
 block_high_risk_commands = true
 

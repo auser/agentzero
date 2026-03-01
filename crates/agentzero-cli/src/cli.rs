@@ -163,6 +163,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: IntegrationsCommands,
     },
+    /// Discover and manage local AI model services.
+    Local {
+        #[command(subcommand)]
+        command: LocalCommands,
+    },
     /// Manage provider model catalogs.
     Models {
         #[command(subcommand)]
@@ -292,6 +297,41 @@ pub enum ModelCommands {
     },
     /// Show current model configuration and cache status.
     Status,
+    /// Pull a model from a local provider (currently Ollama only).
+    Pull {
+        /// Model name to pull (e.g., llama3.1:8b).
+        model: String,
+        /// Provider to pull from (defaults to configured provider or ollama).
+        #[arg(long)]
+        provider: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LocalCommands {
+    /// Scan default ports for running local AI services.
+    Discover {
+        /// Probe timeout in milliseconds.
+        #[arg(long, default_value_t = 2000)]
+        timeout_ms: u64,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show status of the configured local provider.
+    Status {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run health check on a specific local provider.
+    Health {
+        /// Provider name (ollama, llamacpp, lmstudio, vllm, sglang).
+        provider: String,
+        /// Custom base URL (overrides default).
+        #[arg(long)]
+        url: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

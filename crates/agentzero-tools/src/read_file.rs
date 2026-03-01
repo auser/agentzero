@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
-const DEFAULT_MAX_READ_BYTES: u64 = 64 * 1024;
+const DEFAULT_MAX_READ_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct ReadFilePolicy {

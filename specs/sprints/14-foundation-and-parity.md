@@ -726,6 +726,11 @@ Goal: support the same workspace template model and usage flow.
 - 2026-03-01: Completed `auth` parity cleanup: `paste-token` now supports optional token input + `--auth-kind`, and docs/parser coverage were aligned with `auth use --provider --profile`.
 - 2026-03-01: Completed `update` parity with top-level `--check` support and default `update` behavior resolving to status when no subcommand is provided.
 - 2026-03-01: Implemented global `--json` mode in CLI dispatch; all commands now emit a structured JSON object envelope when `--json` is passed.
+- 2026-03-01: Created `docs/COMMANDS.md` with full CLI command inventory (33 commands, 97+ subcommands) including testability tiers and test status.
+- 2026-03-01: Added CLI integration test suite (`crates/agentzero-cli/tests/cli_integration.rs`) with 52 in-process tests covering T1/T2/T3 commands via `parse_cli_from`/`execute`.
+- 2026-03-01: Added unit tests to `cron.rs` (3 tests) and `hooks.rs` (2 tests) command files that previously lacked test coverage.
+- 2026-03-01: Fixed `agentzero-config` watcher test (`skips_invalid_config_change`) that was flaky due to env-var override bypassing validation; changed to use syntactically invalid TOML.
+- 2026-03-01: Fixed pre-existing clippy warnings across workspace (`agentzero-local`, `agentzero-tools`, `agentzero-cli`) and applied `cargo fmt --all` for consistent formatting.
 - 2026-03-01: Updated `channel list` to print a full channel catalog with availability markers, feature-gate hints, and follow-up command guidance.
 - 2026-03-01: Added canonical channel catalog + channel-id normalization in `agentzero-channels` and implemented persistent `channel add/remove` state so listed channels are addable/configurable.
 - 2026-03-01: Migrated `channel` persistence to `agentzero-storage` (`EncryptedJsonStore`) so enabled-channel state is encrypted at rest under the shared data directory.

@@ -14,8 +14,13 @@ agentzero-common = { workspace = true }
 agentzero-delegation = { workspace = true }
 agentzero-providers = { workspace = true }
 agentzero-routing = { workspace = true }
+agentzero-cron = { workspace = true }
 agentzero-storage = { workspace = true }
+glob.workspace = true
+url.workspace = true
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
+zip.workspace = true

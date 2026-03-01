@@ -162,7 +162,7 @@
   background-color: var(--sl-color-red-low);
 }
 
-/* ── Expressive Code — ZeroClaw-style terminal blocks ───── */
+/* ── Expressive Code — terminal styled blocks ───── */
 :root {
   /* Frame chrome */
   --ec-brdRad: 10px;

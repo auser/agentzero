@@ -17,6 +17,7 @@ pub mod hardware;
 pub mod hooks;
 pub mod identity;
 pub mod integrations;
+pub mod local;
 pub mod memory;
 pub mod models;
 pub mod onboard;

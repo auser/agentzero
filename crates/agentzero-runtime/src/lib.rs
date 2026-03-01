@@ -1,3 +1,4 @@
+use agentzero_common::local_providers::is_local_provider;
 use agentzero_config::{load, load_audit_policy, load_env_var, load_tool_security_policy};
 use agentzero_core::{
     Agent, AgentConfig, AuditEvent, AuditSink, HookEvent, HookFailureMode, HookSink, MemoryStore,
@@ -57,8 +58,8 @@ impl HookSink for AuditHookSink {
 }
 
 pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutput> {
-    let key = require_openai_api_key(&req.config_path)?;
     let config = load(&req.config_path)?;
+    let key = resolve_api_key(&req.config_path, &config.provider.kind)?;
 
     let router = build_model_router(&config);
     let delegate_agents = build_delegate_agents(&config);
@@ -196,6 +197,13 @@ pub async fn run_agent_with_runtime(
     })
 }
 
+fn resolve_api_key(config_path: &Path, provider_kind: &str) -> anyhow::Result<String> {
+    if is_local_provider(provider_kind) {
+        return Ok(load_env_var(config_path, "OPENAI_API_KEY")?.unwrap_or_default());
+    }
+    require_openai_api_key(config_path)
+}
+
 fn require_openai_api_key(config_path: &Path) -> anyhow::Result<String> {
     load_env_var(config_path, "OPENAI_API_KEY")?
         .context("missing OPENAI_API_KEY (set env var or .env/.env.local/.env.<environment>)")
@@ -308,7 +316,7 @@ fn build_delegate_agents(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_hook_mode, require_openai_api_key};
+    use super::{parse_hook_mode, require_openai_api_key, resolve_api_key};
     use agentzero_core::HookFailureMode;
     use std::fs;
     use std::path::PathBuf;
@@ -352,6 +360,71 @@ mod tests {
         temp_env::with_var_unset("OPENAI_API_KEY", || {
             let err = require_openai_api_key(&config_path).expect_err("missing key should fail");
             assert!(err.to_string().contains("missing OPENAI_API_KEY"));
+        });
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_api_key_returns_empty_for_local_provider_without_key() {
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        fs::write(&config_path, "").expect("config file should exist");
+
+        temp_env::with_var_unset("OPENAI_API_KEY", || {
+            let key = resolve_api_key(&config_path, "ollama")
+                .expect("local provider should not require key");
+            assert!(key.is_empty(), "local provider key should be empty string");
+        });
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_api_key_returns_key_for_local_provider_when_set() {
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        fs::write(&config_path, "").expect("config file should exist");
+        fs::write(dir.join(".env"), "OPENAI_API_KEY=sk-local\n").expect("dotenv should be written");
+
+        temp_env::with_var_unset("OPENAI_API_KEY", || {
+            let key = resolve_api_key(&config_path, "llamacpp")
+                .expect("local provider should resolve key");
+            assert_eq!(key, "sk-local");
+        });
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_api_key_fails_for_cloud_provider_without_key() {
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        fs::write(&config_path, "").expect("config file should exist");
+
+        temp_env::with_var_unset("OPENAI_API_KEY", || {
+            let err = resolve_api_key(&config_path, "openrouter")
+                .expect_err("cloud provider should require key");
+            assert!(err.to_string().contains("missing OPENAI_API_KEY"));
+        });
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_api_key_succeeds_for_all_local_providers() {
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        fs::write(&config_path, "").expect("config file should exist");
+
+        temp_env::with_var_unset("OPENAI_API_KEY", || {
+            for provider in &["ollama", "llamacpp", "lmstudio", "vllm", "sglang"] {
+                let result = resolve_api_key(&config_path, provider);
+                assert!(
+                    result.is_ok(),
+                    "resolve_api_key should succeed for local provider '{provider}'"
+                );
+            }
         });
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");

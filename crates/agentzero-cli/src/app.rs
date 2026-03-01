@@ -106,6 +106,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Integrations { command } => {
             commands::integrations::IntegrationsCommand::run(&ctx, command).await
         }
+        Commands::Local { command } => commands::local::LocalCommand::run(&ctx, command).await,
         Commands::Models { command } => commands::models::ModelsCommand::run(&ctx, command).await,
         Commands::Approval { command } => {
             commands::approval::ApprovalCommand::run(&ctx, command).await

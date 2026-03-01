@@ -9,8 +9,13 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 pub use agentzero_tools::{
-    DelegateTool, ModelRoutingConfigTool, ReadFilePolicy, ReadFileTool, ShellPolicy, ShellTool,
-    ToolSecurityPolicy, WriteFilePolicy, WriteFileTool,
+    ApplyPatchTool, BrowserOpenTool, BrowserTool, ContentSearchTool, CronAddTool, CronListTool,
+    CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, DelegateTool, DocxReadTool,
+    FileEditTool, GitOperationsTool, GlobSearchTool, ImageInfoTool, MemoryForgetTool,
+    MemoryRecallTool, MemoryStoreTool, ModelRoutingConfigTool, PdfReadTool, ProcessTool,
+    ReadFilePolicy, ReadFileTool, ScreenshotTool, ShellPolicy, ShellTool, SubAgentListTool,
+    SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool, ToolSecurityPolicy, WebSearchTool,
+    WriteFilePolicy, WriteFileTool,
 };
 pub use mcp::McpTool;
 pub use plugin::ProcessPluginTool;
@@ -23,10 +28,54 @@ pub fn default_tools(
     let mut tools: Vec<Box<dyn Tool>> = vec![
         Box::new(ReadFileTool::new(policy.read_file.clone())),
         Box::new(ShellTool::new(policy.shell.clone())),
+        Box::new(GlobSearchTool),
+        Box::new(ContentSearchTool),
+        Box::new(MemoryStoreTool),
+        Box::new(MemoryRecallTool),
+        Box::new(MemoryForgetTool),
+        Box::new(ImageInfoTool),
+        Box::new(DocxReadTool),
+        Box::new(PdfReadTool),
+        Box::new(ScreenshotTool),
+        Box::new(TaskPlanTool::default()),
+        Box::new(ProcessTool::default()),
+        Box::new(SubAgentSpawnTool::default()),
+        Box::new(SubAgentListTool),
+        Box::new(SubAgentManageTool),
     ];
 
     if policy.enable_write_file {
         tools.push(Box::new(WriteFileTool::new(policy.write_file.clone())));
+        tools.push(Box::new(ApplyPatchTool));
+        tools.push(Box::new(FileEditTool::new(
+            policy.write_file.allowed_root.clone(),
+            policy.write_file.max_write_bytes,
+        )));
+    }
+
+    if policy.enable_git {
+        tools.push(Box::new(GitOperationsTool::new()));
+    }
+
+    if policy.enable_cron {
+        tools.push(Box::new(CronAddTool));
+        tools.push(Box::new(CronListTool));
+        tools.push(Box::new(CronRemoveTool));
+        tools.push(Box::new(CronUpdateTool));
+        tools.push(Box::new(CronPauseTool));
+        tools.push(Box::new(CronResumeTool));
+    }
+
+    if policy.enable_web_search {
+        tools.push(Box::new(WebSearchTool::default()));
+    }
+
+    if policy.enable_browser {
+        tools.push(Box::new(BrowserTool::default()));
+    }
+
+    if policy.enable_browser_open {
+        tools.push(Box::new(BrowserOpenTool::default()));
     }
 
     if policy.enable_mcp {

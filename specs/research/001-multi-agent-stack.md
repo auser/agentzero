@@ -990,7 +990,7 @@ The gateway-fronted worker pool (Section 11) is the right architecture for the s
 
 ---
 
-## 13. Decision Points
+## 14. Decision Points
 
 1. **Should sub-agents share memory with parent?** Recommendation: isolated empty memory (simplest, safest)
 2. **Should sub-agents be able to delegate further?** Recommendation: no (keep current block, reduce attack surface)

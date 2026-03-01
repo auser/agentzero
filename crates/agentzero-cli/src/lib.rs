@@ -97,6 +97,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Estop { .. } => "estop",
         Commands::Channel { .. } => "channel",
         Commands::Integrations { .. } => "integrations",
+        Commands::Local { .. } => "local",
         Commands::Models { .. } => "models",
         Commands::Approval { .. } => "approval",
         Commands::Identity { .. } => "identity",

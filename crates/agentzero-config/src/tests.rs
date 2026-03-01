@@ -1153,3 +1153,128 @@ fn update_auto_approve_empty_list_clears() {
 
     fs::remove_dir_all(dir).expect("cleanup");
 }
+
+#[test]
+fn resolve_local_provider_defaults_overrides_cloud_base_url_for_ollama() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"ollama\"\nmodel=\"llama3.1:8b\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("ollama config should load");
+        assert_eq!(cfg.provider.kind, "ollama");
+        assert_eq!(
+            cfg.provider.base_url, "http://localhost:11434",
+            "ollama should auto-resolve to localhost:11434"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn resolve_local_provider_defaults_overrides_cloud_base_url_for_lmstudio() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"lmstudio\"\nmodel=\"local-model\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("lmstudio config should load");
+        assert_eq!(
+            cfg.provider.base_url, "http://localhost:1234",
+            "lmstudio should auto-resolve to localhost:1234"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn resolve_local_provider_defaults_preserves_explicit_base_url() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"ollama\"\nbase_url=\"http://gpu-server:11434\"\nmodel=\"llama3.1:8b\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("ollama with custom url should load");
+        assert_eq!(
+            cfg.provider.base_url, "http://gpu-server:11434",
+            "explicit base_url should not be overridden"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn resolve_local_provider_defaults_does_not_affect_cloud_providers() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"openrouter\"\nbase_url=\"https://openrouter.ai/api/v1\"\nmodel=\"openai/gpt-4o-mini\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("openrouter config should load");
+        assert_eq!(
+            cfg.provider.base_url, "https://openrouter.ai/api/v1",
+            "cloud provider base_url should remain unchanged"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn resolve_local_provider_defaults_all_local_providers_resolve() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+
+    let providers = [
+        ("ollama", "http://localhost:11434"),
+        ("llamacpp", "http://localhost:8080"),
+        ("lmstudio", "http://localhost:1234"),
+        ("vllm", "http://localhost:8000"),
+        ("sglang", "http://localhost:30000"),
+    ];
+
+    for (kind, expected_url) in &providers {
+        let config_path = dir.join(format!("agentzero-{kind}.toml"));
+        fs::write(
+            &config_path,
+            format!(
+                "[provider]\nkind=\"{kind}\"\nmodel=\"test-model\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n"
+            ),
+        )
+        .expect("config should be written");
+
+        with_clean_agentzero_env(|| {
+            let cfg =
+                load(&config_path).unwrap_or_else(|e| panic!("{kind} config should load: {e}"));
+            assert_eq!(
+                cfg.provider.base_url, *expected_url,
+                "provider '{kind}' should resolve to {expected_url}"
+            );
+        });
+    }
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}

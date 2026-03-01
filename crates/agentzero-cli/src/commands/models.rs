@@ -1,5 +1,6 @@
 use crate::cli::ModelCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
+use agentzero_common::local_providers::{is_local_provider, local_provider_meta};
 use agentzero_config::load;
 use agentzero_providers::{find_models_for_provider, supported_providers};
 use agentzero_storage::EncryptedJsonStore;
@@ -39,6 +40,9 @@ impl AgentZeroCommand for ModelsCommand {
             ModelCommands::List { provider } => run_models_list(ctx, provider.as_deref()),
             ModelCommands::Set { model } => run_models_set(ctx, &model),
             ModelCommands::Status => run_models_status(ctx),
+            ModelCommands::Pull { model, provider } => {
+                run_models_pull(ctx, &model, provider.as_deref()).await
+            }
         }
     }
 }
@@ -272,6 +276,24 @@ fn supports_live_model_fetch(provider: &str) -> bool {
 }
 
 fn fetch_live_models_for_provider(provider: &str) -> anyhow::Result<Vec<String>> {
+    if is_local_provider(provider) {
+        if let Some(meta) = local_provider_meta(provider) {
+            let rt = tokio::runtime::Handle::current();
+            match rt.block_on(agentzero_local::list_models(
+                provider,
+                meta.default_base_url,
+                5000,
+            )) {
+                Ok(models) => {
+                    return Ok(models.into_iter().map(|m| m.id).collect());
+                }
+                Err(_) => {
+                    // Fall through to static catalog
+                }
+            }
+        }
+    }
+
     let (_resolved_provider, models) = find_models_for_provider(provider)
         .with_context(|| format!("unknown provider '{provider}'"))?;
 
@@ -383,6 +405,64 @@ fn now_epoch_secs() -> u64 {
 
 fn age_secs_from_now(epoch_secs: u64) -> u64 {
     now_epoch_secs().saturating_sub(epoch_secs)
+}
+
+async fn run_models_pull(
+    ctx: &CommandContext,
+    model: &str,
+    provider_override: Option<&str>,
+) -> anyhow::Result<()> {
+    let provider_name = provider_override
+        .map(str::to_string)
+        .or_else(|| {
+            load(&ctx.config_path)
+                .ok()
+                .map(|cfg| cfg.provider.kind)
+                .filter(|kind| is_local_provider(kind))
+        })
+        .unwrap_or_else(|| "ollama".to_string());
+
+    let meta = local_provider_meta(&provider_name).ok_or_else(|| {
+        anyhow!(
+            "'{}' is not a local provider. Model pulling is only available for local providers.",
+            provider_name
+        )
+    })?;
+
+    if !meta.supports_pull {
+        anyhow::bail!(
+            "Provider '{}' does not support model pulling. \
+             Load models through its native interface.",
+            provider_name
+        );
+    }
+
+    let base_url = load(&ctx.config_path)
+        .ok()
+        .filter(|cfg| cfg.provider.kind == provider_name)
+        .map(|cfg| cfg.provider.base_url)
+        .unwrap_or_else(|| meta.default_base_url.to_string());
+
+    println!("Pulling '{}' from {}...", model, provider_name);
+    println!();
+
+    agentzero_local::pull_model(&base_url, model, 600_000, |progress| {
+        if let Some(pct) = progress.percent() {
+            print!("\r  {} {:.0}%", progress.status, pct);
+        } else {
+            print!("\r  {}", progress.status);
+        }
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+    })
+    .await?;
+
+    println!();
+    println!();
+    println!("Done. Model '{}' is now available.", model);
+    println!();
+
+    Ok(())
 }
 
 #[cfg(test)]

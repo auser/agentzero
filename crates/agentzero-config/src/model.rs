@@ -345,6 +345,37 @@ impl Default for SecurityConfig {
                 "pwd".to_string(),
                 "cat".to_string(),
                 "echo".to_string(),
+                "grep".to_string(),
+                "find".to_string(),
+                "head".to_string(),
+                "tail".to_string(),
+                "wc".to_string(),
+                "sort".to_string(),
+                "uniq".to_string(),
+                "diff".to_string(),
+                "file".to_string(),
+                "which".to_string(),
+                "basename".to_string(),
+                "dirname".to_string(),
+                "mkdir".to_string(),
+                "cp".to_string(),
+                "mv".to_string(),
+                "rm".to_string(),
+                "touch".to_string(),
+                "date".to_string(),
+                "env".to_string(),
+                "test".to_string(),
+                "tr".to_string(),
+                "cut".to_string(),
+                "xargs".to_string(),
+                "sed".to_string(),
+                "awk".to_string(),
+                "git".to_string(),
+                "cargo".to_string(),
+                "rustc".to_string(),
+                "npm".to_string(),
+                "node".to_string(),
+                "python3".to_string(),
             ],
             read_file: ReadFileConfig::default(),
             write_file: WriteFileConfig::default(),
@@ -372,7 +403,7 @@ pub struct ReadFileConfig {
 impl Default for ReadFileConfig {
     fn default() -> Self {
         Self {
-            max_read_bytes: 64 * 1024,
+            max_read_bytes: 256 * 1024,
             allow_binary: false,
         }
     }
@@ -407,9 +438,9 @@ pub struct ShellConfig {
 impl Default for ShellConfig {
     fn default() -> Self {
         Self {
-            max_args: 8,
-            max_arg_length: 128,
-            max_output_bytes: 8192,
+            max_args: 32,
+            max_arg_length: 4096,
+            max_output_bytes: 65536,
             forbidden_chars: ";&|><$`\n\r".to_string(),
             context_aware_parsing: true,
         }
@@ -491,8 +522,8 @@ impl Default for AutonomyConfig {
             non_cli_approval_approvers: Vec::new(),
             non_cli_natural_language_approval_mode: "direct".to_string(),
             non_cli_natural_language_approval_mode_by_channel: HashMap::new(),
-            max_actions_per_hour: 20,
-            max_cost_per_day_cents: 500,
+            max_actions_per_hour: 200,
+            max_cost_per_day_cents: 2000,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
         }

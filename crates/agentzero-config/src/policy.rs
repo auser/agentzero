@@ -22,6 +22,8 @@ pub fn load_tool_security_policy(
         );
     }
 
+    let enable_git = config.security.allowed_commands.iter().any(|c| c == "git");
+
     Ok(ToolSecurityPolicy {
         read_file: ReadFilePolicy {
             allowed_root: allowed_root.clone(),
@@ -54,6 +56,11 @@ pub fn load_tool_security_policy(
         enable_mcp: config.security.mcp.enabled,
         allowed_mcp_servers: config.security.mcp.allowed_servers,
         enable_process_plugin: config.security.plugin.enabled,
+        enable_git,
+        enable_cron: true,
+        enable_web_search: config.web_search.enabled,
+        enable_browser: config.browser.enabled,
+        enable_browser_open: config.browser.enabled,
     })
 }
 

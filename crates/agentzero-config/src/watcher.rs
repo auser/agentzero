@@ -198,13 +198,10 @@ mod tests {
 
         let handle = tokio::spawn(watcher.run(cancel_rx));
 
-        // Write config that fails validation (zero timeout is invalid)
+        // Write syntactically invalid TOML that cannot be parsed at all.
+        // Using broken TOML ensures no environment variable override can rescue it.
         tokio::time::sleep(Duration::from_millis(100)).await;
-        fs::write(
-            &config_path,
-            "[agent]\nrequest_timeout_ms = 0\n\n[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n",
-        )
-        .unwrap();
+        fs::write(&config_path, "[provider\nkind = broken toml ~~~\n").unwrap();
 
         // Give it time to detect and skip
         tokio::time::sleep(Duration::from_millis(200)).await;
