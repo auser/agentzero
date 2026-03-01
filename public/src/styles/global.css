@@ -139,7 +139,7 @@
   --sl-color-purple-low:  hsl(270, 76%, 92%);
 }
 
-/* ── Sidebar group labels — uppercase like ZeroClaw ────────── */
+/* ── Sidebar group labels — uppercase ────────── */
 .sidebar-content .top-level > details > summary > div > span {
   text-transform: uppercase;
   font-size: var(--sl-text-xs);

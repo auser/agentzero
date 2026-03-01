@@ -504,7 +504,15 @@ impl Agent {
                         }
                     }
 
-                    prompt = format!("Tool output from {tool_name}: {}", result.output);
+                    // If tool output is itself a tool directive, chain directly
+                    // so multi-step tool use works. Otherwise, format for the
+                    // provider prompt with context about which tool ran.
+                    if result.output.starts_with("tool:") {
+                        prompt = result.output.clone();
+                    } else {
+                        prompt =
+                            format!("Tool output from {tool_name}: {}", result.output);
+                    }
                     continue;
                 }
                 self.audit(
@@ -788,6 +796,55 @@ mod tests {
         async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
             Ok(ToolResult {
                 output: input.to_uppercase(),
+            })
+        }
+    }
+
+    /// Tool that always returns a `tool:` directive pointing back to itself,
+    /// creating an infinite self-referencing loop (caught by no-progress detection).
+    struct LoopTool;
+
+    #[async_trait]
+    impl Tool for LoopTool {
+        fn name(&self) -> &'static str {
+            "loop_tool"
+        }
+
+        async fn execute(&self, _input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                output: "tool:loop_tool x".to_string(),
+            })
+        }
+    }
+
+    /// Tool that chains to PongTool (for ping-pong detection tests).
+    struct PingTool;
+
+    #[async_trait]
+    impl Tool for PingTool {
+        fn name(&self) -> &'static str {
+            "ping"
+        }
+
+        async fn execute(&self, _input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                output: "tool:pong x".to_string(),
+            })
+        }
+    }
+
+    /// Tool that chains to PingTool (for ping-pong detection tests).
+    struct PongTool;
+
+    #[async_trait]
+    impl Tool for PongTool {
+        fn name(&self) -> &'static str {
+            "pong"
+        }
+
+        async fn execute(&self, _input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                output: "tool:ping x".to_string(),
             })
         }
     }
@@ -1424,16 +1481,12 @@ mod tests {
     #[tokio::test]
     async fn self_correction_injected_on_no_progress() {
         let prompts = Arc::new(Mutex::new(Vec::new()));
-        let provider = ScriptedProvider {
-            responses: vec![
-                "tool:echo same".to_string(),
-                "tool:echo same".to_string(),
-                "tool:echo same".to_string(),
-                "I'll try a different approach".to_string(),
-            ],
-            call_count: AtomicUsize::new(0),
+        let provider = TestProvider {
             received_prompts: prompts.clone(),
+            response_text: "I'll try a different approach".to_string(),
         };
+        // LoopTool always returns "tool:loop_tool x", creating a self-referencing
+        // chain that triggers no-progress detection after 3 identical iterations.
         let agent = Agent::new(
             AgentConfig {
                 loop_detection_no_progress_threshold: 3,
@@ -1442,13 +1495,13 @@ mod tests {
             },
             Box::new(provider),
             Box::new(TestMemory::default()),
-            vec![Box::new(EchoTool)],
+            vec![Box::new(LoopTool)],
         );
 
         let response = agent
             .respond(
                 UserMessage {
-                    text: "tool:echo same".to_string(),
+                    text: "tool:loop_tool x".to_string(),
                 },
                 &test_ctx(),
             )
@@ -1464,23 +1517,17 @@ mod tests {
             last_prompt.contains("Loop detected"),
             "provider prompt should contain self-correction notice, got: {last_prompt}"
         );
-        assert!(last_prompt.contains("echo"));
+        assert!(last_prompt.contains("loop_tool"));
     }
 
     #[tokio::test]
     async fn self_correction_injected_on_ping_pong() {
         let prompts = Arc::new(Mutex::new(Vec::new()));
-        // Provider drives the ping-pong: echo → upper → echo → upper, then corrects.
-        let provider = ScriptedProvider {
-            responses: vec![
-                "tool:upper x".to_string(),   // after echo, call upper
-                "tool:echo x".to_string(),     // after upper, call echo
-                "tool:upper x".to_string(),    // after echo, call upper (2nd cycle)
-                "I stopped the loop".to_string(), // after ping-pong detected
-            ],
-            call_count: AtomicUsize::new(0),
+        let provider = TestProvider {
             received_prompts: prompts.clone(),
+            response_text: "I stopped the loop".to_string(),
         };
+        // PingTool→PongTool→PingTool→PongTool creates a 2-cycle ping-pong.
         let agent = Agent::new(
             AgentConfig {
                 loop_detection_ping_pong_cycles: 2,
@@ -1490,13 +1537,13 @@ mod tests {
             },
             Box::new(provider),
             Box::new(TestMemory::default()),
-            vec![Box::new(EchoTool), Box::new(UpperTool)],
+            vec![Box::new(PingTool), Box::new(PongTool)],
         );
 
         let response = agent
             .respond(
                 UserMessage {
-                    text: "tool:echo x".to_string(),
+                    text: "tool:ping x".to_string(),
                 },
                 &test_ctx(),
             )
@@ -1516,13 +1563,12 @@ mod tests {
     #[tokio::test]
     async fn no_progress_disabled_when_threshold_zero() {
         let prompts = Arc::new(Mutex::new(Vec::new()));
-        // Provider always returns the same tool call — should hit max_tool_iterations,
-        // not no-progress detection (which is disabled).
-        let provider = ScriptedProvider {
-            responses: vec!["tool:echo same".to_string()],
-            call_count: AtomicUsize::new(0),
+        let provider = TestProvider {
             received_prompts: prompts.clone(),
+            response_text: "final answer".to_string(),
         };
+        // With detection disabled, LoopTool chains until max_tool_iterations
+        // exhausts without triggering self-correction.
         let agent = Agent::new(
             AgentConfig {
                 loop_detection_no_progress_threshold: 0,
@@ -1532,22 +1578,22 @@ mod tests {
             },
             Box::new(provider),
             Box::new(TestMemory::default()),
-            vec![Box::new(EchoTool)],
+            vec![Box::new(LoopTool)],
         );
 
         let response = agent
             .respond(
                 UserMessage {
-                    text: "tool:echo same".to_string(),
+                    text: "tool:loop_tool x".to_string(),
                 },
                 &test_ctx(),
             )
             .await
             .expect("should complete without error");
 
-        // When loop detection is disabled, after max_tool_iterations the loop
-        // breaks normally with the last tool output, and the provider gets
-        // called with that output (no self-correction notice).
+        assert_eq!(response.text, "final answer");
+
+        // Provider should NOT receive a self-correction notice.
         let received = prompts.lock().expect("provider lock poisoned");
         let last_prompt = received.last().expect("provider should have been called");
         assert!(
