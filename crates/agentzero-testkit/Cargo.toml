@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-agentzero-core = { path = "../agentzero-core" }
+agentzero-core = { workspace = true }
 anyhow.workspace = true
 async-trait.workspace = true
 

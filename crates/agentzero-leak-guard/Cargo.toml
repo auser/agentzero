@@ -1,0 +1,12 @@
+[package]
+name = "agentzero-leak-guard"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+regex.workspace = true
+serde.workspace = true
+tracing.workspace = true

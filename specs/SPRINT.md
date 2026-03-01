@@ -1,12 +1,11 @@
-# AgentZero Sprint Plan
+# AgentZero Sprint Plan — Sprint 15: Reference Alignment
 
 ## Scope
-Build a lightweight, maintainable clone with a traits-first architecture and strict phased delivery.
+Align AgentZero with reference semantics across config, security, agent loop, channels, and multi-agent coordination. Based on gap analysis (2026-02-28).
 
 References:
-- `docs/ROADMAP.md`
-- `docs/adr/0001-scope.md`
-- `docs/COMMANDS.md`
+- `specs/sprints/14-foundation-and-parity.md` (archived previous sprint)
+- Gap analysis: `.claude/plans/glittery-churning-horizon.md`
 
 ## Sprint Cadence
 - Sprint length: 1 week.
@@ -21,648 +20,327 @@ References:
 - If scope changes, update this file before coding.
 
 ## Dependencies and Critical Path
-- Critical path:
-1. Sprint 1 tests/hygiene
-2. Sprint 2 config
-3. Sprint 3 hardening
-- Blocking dependency rule: do not start a sprint if previous sprint acceptance criteria are incomplete.
+1. Phase A (Config Alignment) — foundation for all other phases
+2. Phase B (Security Hardening) — depends on A for config sections
+3. Phase C (Agent Loop) — depends on A for config, B for security policy
+4. Phase D (Channel Features) — depends on A for config, B for approval model
+5. Phase E (Multi-Agent Stack) — deferred to `specs/sprints/backlog.md`
 
 ## Risks and Mitigations
-- Risk: shell tool security regressions.
-- Mitigation: explicit allowlists, negative tests, bounded output, and no raw `sh -c` in hardened mode.
-- Risk: provider API drift.
-- Mitigation: mock tests and strict error mapping before adding features.
-- Risk: architecture sprawl.
-- Mitigation: ADR updates required for any new module family.
+- Risk: Config model breaking changes break existing onboarding flows.
+  Mitigation: Keep serde aliases for old field names during transition.
+- Risk: Security hardening introduces false-positive blocking.
+  Mitigation: All new security features default to disabled/permissive.
+- Risk: Multi-agent coordination complexity.
+  Mitigation: Deferred to backlog; single-process delegation first.
 
-## Current State (Completed)
-- [x] Workspace split into `bin/` and `crates/`.
-- [x] CLI commands exist: `onboard`, `status`, `agent`.
-- [x] Core traits exist: `Provider`, `MemoryStore`, `Tool`.
-- [x] Shared tracing/bootstrap crate exists (`crates/agentzero-common`).
-- [x] Infra implementations exist: OpenAI-compatible provider, SQLite memory, `read_file`, `shell`.
-- [x] Optional Turso memory backend crate exists (`crates/agentzero-memory-turso`) and is wired to CLI via feature flag.
-- [x] WASM plugin container crate exists (`crates/agentzero-plugins-wasm`) with security preflight validation.
-- [x] Baseline gateway crate exists (`crates/agentzero-gateway`) with health and ping endpoints.
-- [x] Encrypted persistence crate exists (`crates/agentzero-storage`) for secret-bearing on-disk state.
-- [x] Foundational crates extracted for config/provider/sqlite memory (`agentzero-config`, `agentzero-providers`, `agentzero-memory-sqlite`).
-- [x] CI exists for `fmt`, `clippy`, and `test`.
+---
 
-## Target Crate Architecture (Major Module = Crate)
-- `crates/agentzero-cli`: CLI library (commands, parser, dispatch, command context).
-- `bin/agentzero`: thin binary entrypoint (`main.rs`) that calls `agentzero_cli::cli()`.
-- `crates/agentzero-core`: domain models, traits, and pure agent orchestration.
-- `crates/agentzero-config`: typed config load/validation/env overrides.
-- `crates/agentzero-providers`: OpenAI-compatible provider implementation.
-- `crates/agentzero-memory-sqlite`: SQLite memory implementation.
-- `crates/agentzero-memory-turso`: Turso/libsql memory implementation (feature-gated).
-- `crates/agentzero-tools-fs`: file-system tools (`read_file`, `write_file`).
-- `crates/agentzero-tools-shell`: shell tool + command policy.
-- `crates/agentzero-observability`: tracing, redaction, metrics.
-- `crates/agentzero-runtime`: request loop, timeout/retry policy, execution pipeline.
-- `crates/agentzero-plugins-wasm`: WASM plugin container/runtime policy and execution.
-- `crates/agentzero-storage`: encrypted on-disk persistence for secret-bearing state.
-- `crates/agentzero-testkit`: shared mocks, fixtures, integration harness.
-- Exception policy:
-- Tiny glue modules may remain in parent crate when splitting adds no maintainability value.
-- Every exception must be documented in `specs/SPRINT.md` change log.
+## Phase A: Config Alignment (Foundation)
 
-## Functional Coverage Checklist
-- [ ] CLI command surface complete and documented.
-- [ ] Config system complete (file + env + validation).
-- [ ] Agent loop hardened (timeouts, retries, bounded context).
-- [ ] Provider integration stable (error mapping and mocks).
-- [ ] Memory backend stable and tested.
-- [ ] Turso memory backend implemented and security-reviewed.
-- [ ] Tools secure by default with negative tests.
-- [ ] WASM plugin container runtime implemented with isolation controls.
-- [ ] Observability baseline (traces + metrics + redaction).
-- [ ] Performance baseline documented.
-- [ ] Release pipeline and quality gates complete.
-- [ ] Required modules delivered: `skills`, `tunnel`, `gateway`, `rag`, `auth`, `cron`, `doctor`.
+### A1. Provider Config
+- [x] Rename `provider.kind` → `default_provider` (keep `kind` as serde alias)
+- [x] Default provider: `openrouter` (not `openai`)
+- [x] Default model: `anthropic/claude-sonnet-4-6`
+- [x] Add `default_temperature: f64` (default 0.7)
+- [x] Add `provider_api: Option<String>` (openai-chat-completions / openai-responses)
+- [x] Add `model_support_vision: Option<bool>`
 
-## Requested Must-Have Track
-User-priority modules that must be included in the proper clone:
+### A2. Agent Settings
+- [x] `max_tool_iterations`: 4 → 20
+- [x] Rename `memory_window_size` → `max_history_messages` (keep alias), default 8 → 50
+- [x] Add `parallel_tools: bool` (default false)
+- [x] Add `tool_dispatcher: String` (default "auto")
+- [x] Add `compact_context: bool` (default true)
+- [x] Add loop detection config: `loop_detection_no_progress_threshold` (3), `loop_detection_ping_pong_cycles` (2), `loop_detection_failure_streak` (3)
 
-- [x] `gateway` baseline crate + CLI command exists.
-- [ ] `auth` module with secure profile/token lifecycle.
-- [ ] `cron` module with create/list/pause/resume/update/remove.
-- [ ] `doctor` command/module for diagnostics and health checks.
-- [ ] `skills` module lifecycle (install/list/test/remove).
-- [ ] `tunnel` module for secure remote bridge use cases.
-- [ ] `rag` module with feature-gated ingestion/query pipeline.
-- [ ] Plugin development workflow (scaffold, validate, test, package, publish/install).
-- [ ] Step hooks support (`before_*` / `after_*`) for every execution step.
+### A3. Missing Config Sections
+- [x] `[observability]` — backend, otel_endpoint, otel_service_name, runtime_trace_mode/path/max_entries
+- [x] `[research]` — enabled, trigger, keywords, min_message_length, max_iterations, show_progress
+- [x] `[runtime]` — kind (native/docker/wasm), reasoning_enabled
+- [x] `[runtime.wasm]` — tools_dir, fuel_limit, memory_limit_mb, max_module_size_mb, security sub-section
+- [x] `[browser]` — enabled, allowed_domains, backend, session_name, computer_use sub-section
+- [x] `[http_request]` — enabled, allowed_domains, max_response_size, timeout_secs, credential_profiles
+- [x] `[web_fetch]` — enabled, provider, api_key, allowed/blocked_domains, max_response_size
+- [x] `[web_search]` — enabled, provider, fallback_providers, retries_per_provider, api keys (brave/perplexity/exa/jina), max_results
+- [x] `[composio]` — enabled, api_key, entity_id
+- [x] `[cost]` — enabled, daily_limit_usd, monthly_limit_usd, warn_at_percent, allow_override
+- [x] `[identity]` — format (openclaw/aieos), aieos_path, aieos_inline
+- [x] `[multimodal]` — max_images, max_image_size_mb, allow_remote_fetch
+- [x] `[skills]` — open_skills_enabled, open_skills_dir, prompt_injection_mode, clawhub_token
+- [x] `[provider]` — reasoning_level, transport
+- [x] `[gateway]` — require_pairing, allow_public_bind
+- [x] `[channels_config]` — message_timeout_secs
 
-Delivery gate:
-- These must be functionally implemented and documented no later than Sprint 13 completion.
+### A4. Model Provider Profiles
+- [x] `[model_providers.<profile>]` with name, base_url, wire_api, model, api_key, requires_openai_auth
 
-## Command Surface Parity Checklist
-- [x] `onboard`
-- [x] `agent`
-- [x] `gateway`
-- [ ] `daemon`
-- [ ] `service`
-- [x] `doctor`
-- [x] `status`
-- [ ] `update`
-- [ ] `estop`
-- [ ] `cron`
-- [ ] `models`
-- [x] `providers`
-- [ ] `channel`
-- [ ] `integrations`
-- [ ] `skill`
-- [ ] `migrate`
-- [x] `auth`
-- [ ] `hardware`
-- [ ] `peripheral`
-- [ ] `memory`
-- [ ] `config`
-- [ ] `completions`
-- [x] `help`
+### A5. Model/Embedding Routes and Query Classification
+- [x] `[[model_routes]]` — hint, provider, model, max_tokens, api_key, transport
+- [x] `[[embedding_routes]]` — hint, provider, model, dimensions, api_key
+- [x] `[query_classification]` — enabled, rules with hint/keywords/patterns/min_length/max_length/priority
 
-## Plugin Development Track
-Goal: make plugin creation and lifecycle first-class, not just runtime execution.
+### A6. Delegate Sub-Agent Config
+- [x] `[agents.<name>]` — provider, model, system_prompt, api_key, temperature, max_depth, agentic, allowed_tools, max_iterations
 
-- [ ] Define plugin manifest schema (id, version, permissions/capabilities, hooks, entrypoints).
-- [ ] Add plugin dev CLI commands:
-- `agentzero plugin new`
-- `agentzero plugin validate`
-- `agentzero plugin test`
-- `agentzero plugin package`
-- `agentzero plugin install/remove/list`
-- [ ] Add local plugin dev loop (watch/build/test) with deterministic fixtures.
-- [ ] Add signature + integrity verification for packaged plugins.
-- [ ] Add plugin compatibility checks (runtime/API version gates).
-- Acceptance:
-- Developer can scaffold, test, package, and install a plugin end-to-end with docs only.
+### A7. Config CLI Commands
+- [x] `config show` — print effective config as JSON with secrets masked
+- [x] `config get <key>` — dot-path query
+- [x] `config set <key> <value>` — atomic update to config.toml with type inference
+- [x] Add `providers-quota` top-level command
 
-## Hook Lifecycle Track (Before/After Each Step)
-Goal: support hook points around each execution phase for policy, observability, and extensibility.
+### A-Acceptance
+- [x] All new config sections parse from TOML correctly
+- [x] Serde aliases preserve backward compatibility with old field names
+- [x] Validation catches invalid values with actionable error messages
+- [x] `cargo test --workspace` passes with new config model
 
-- Required hook points:
-- [ ] `before_run` / `after_run`
-- [ ] `before_provider_call` / `after_provider_call`
-- [ ] `before_tool_call` / `after_tool_call`
-- [ ] `before_plugin_call` / `after_plugin_call`
-- [ ] `before_memory_write` / `after_memory_write`
-- [ ] `before_response_emit` / `after_response_emit`
-- Hook behavior requirements:
-- [ ] Hooks can read context and emit events.
-- [ ] Hooks must be timeout-bounded and fail-closed configurable.
-- [ ] Hook errors are auditable and policy-controlled (block/warn/ignore by tier).
-- [ ] Hook chain ordering is deterministic.
-- Acceptance:
-- Each step emits both before and after hooks with tests for success, timeout, and failure policies.
+---
 
-## Upstream Module Parity Gaps (from `openclaw/src`)
-The following major upstream sections are not yet explicitly covered in our sprint plan and are required for a fuller clone trajectory:
+## Phase B: Security Hardening
 
-- [ ] `approval`
-- [ ] `auth` + `identity`
-- [ ] `channels` + `gateway` + `daemon` + `service`
-- [ ] `health` + `heartbeat` + `doctor`
-- [ ] `cron`
-- [ ] `coordination` + `cost` + `goals` + `hooks`
-- [ ] `integrations`
-- [ ] `providers` catalog management
-- [ ] `migration` + `update`
-- [ ] `plugins` + `skills` + `skillforge` + `sop`
-- [ ] `rag` + `multimodal`
-- [ ] `tunnel`
-- [ ] `hardware` + `peripherals`
-- [ ] Shared `util` extraction strategy
+### B1. Autonomy Model
+- [x] Create `crates/agentzero-autonomy/`
+- [x] Add `[autonomy]` config section: level (read_only/supervised/full), workspace_only, forbidden_paths, allowed_roots
+- [x] Add auto_approve, always_ask tool lists
+- [x] Add allow_sensitive_file_reads/writes
+- [x] Add non_cli_excluded_tools, non_cli_approval_approvers
+- [x] Add non_cli_natural_language_approval_mode (direct/request_confirm/disabled)
+- [x] Add non_cli_natural_language_approval_mode_by_channel
 
-## OpenClaw Tool Parity Checklist (from `openclaw/src/tools`)
-- [ ] `agents_ipc.rs`
-- [ ] `apply_patch.rs`
-- [ ] `browser.rs`
-- [ ] `browser_open.rs`
-- [ ] `cli_discovery.rs`
-- [ ] `composio.rs`
-- [ ] `content_search.rs`
-- [ ] `cron_add.rs`
-- [ ] `cron_list.rs`
-- [ ] `cron_remove.rs`
-- [ ] `cron_run.rs`
-- [ ] `cron_runs.rs`
-- [ ] `cron_update.rs`
-- [ ] `delegate.rs`
-- [ ] `delegate_coordination_status.rs`
-- [ ] `docx_read.rs`
-- [ ] `file_edit.rs`
-- [ ] `file_read.rs`
-- [ ] `file_write.rs`
-- [ ] `git_operations.rs`
-- [ ] `glob_search.rs`
-- [ ] `hardware_board_info.rs`
-- [ ] `hardware_memory_map.rs`
-- [ ] `hardware_memory_read.rs`
-- [ ] `http_request.rs`
-- [ ] `image_info.rs`
-- [ ] `mcp_client.rs`
-- [ ] `mcp_protocol.rs`
-- [ ] `mcp_tool.rs`
-- [ ] `mcp_transport.rs`
-- [ ] `memory_forget.rs`
-- [ ] `memory_recall.rs`
-- [ ] `memory_store.rs`
-- [ ] `mod.rs`
-- [ ] `model_routing_config.rs`
-- [ ] `pdf_read.rs`
-- [ ] `process.rs`
-- [ ] `proxy_config.rs`
-- [ ] `pushover.rs`
-- [ ] `schedule.rs`
-- [ ] `schema.rs`
-- [ ] `screenshot.rs`
-- [ ] `shell.rs`
-- [ ] `sop_advance.rs`
-- [ ] `sop_approve.rs`
-- [ ] `sop_execute.rs`
-- [ ] `sop_list.rs`
-- [ ] `sop_status.rs`
-- [ ] `subagent_list.rs`
-- [ ] `subagent_manage.rs`
-- [ ] `subagent_registry.rs`
-- [ ] `subagent_spawn.rs`
-- [ ] `task_plan.rs`
-- [ ] `traits.rs`
-- [ ] `url_validation.rs`
-- [ ] `wasm_module.rs`
-- [ ] `wasm_tool.rs`
-- [ ] `web_fetch.rs`
-- [ ] `web_search_tool.rs`
+### B2. URL Access Policy
+- [x] Add `[security.url_access]` config section
+- [x] Implement block_private_ip, allow_cidrs, allow_domains, allow_loopback (`url_policy.rs`)
+- [x] Implement domain_allowlist, domain_blocklist, approved_domains
+- [x] Implement require_first_visit_approval, enforce_domain_allowlist
+- [x] Add DNS rebinding protection (resolve domain → check resolved IPs for private ranges)
+- [x] Wire into web_fetch, http_request, url_validation tools via shared `UrlAccessPolicy`
+- [x] Add CIDR range parsing and matching (IPv4 + IPv6)
+- [x] Add IPv4-mapped IPv6 private IP detection (`::ffff:192.168.x.x`)
+- [x] Wire config → policy in `load_tool_security_policy()` (policy.rs)
 
-## Channel Parity Checklist (from upstream `src/channels`)
-- [ ] `clawdtalk.rs`
-- [ ] `cli.rs`
-- [ ] `dingtalk.rs`
-- [ ] `discord.rs`
-- [ ] `email_channel.rs`
-- [ ] `imessage.rs`
-- [ ] `irc.rs`
-- [ ] `lark.rs`
-- [ ] `linq.rs`
-- [ ] `matrix.rs`
-- [ ] `mattermost.rs`
-- [ ] `mqtt.rs`
-- [ ] `nextcloud_talk.rs`
-- [ ] `nostr.rs`
-- [ ] `qq.rs`
-- [ ] `signal.rs`
-- [ ] `slack.rs`
-- [ ] `telegram.rs`
-- [ ] `transcription.rs`
-- [ ] `wati.rs`
-- [ ] `whatsapp.rs`
-- [ ] `whatsapp_storage.rs`
-- [ ] `whatsapp_web.rs`
-- [ ] `traits.rs` (channel trait surface)
+### B3. OTP Gating
+- [x] Add `[security.otp]` config section
+- [x] Implement TOTP generation and validation (RFC 6238 / RFC 4226, HMAC-SHA1)
+- [x] Implement gated_actions, gated_domains, gated_domain_categories (`OtpGate` engine)
+- [x] Implement approval caching with TTL
+- [x] Integrate with estop resume flow (--require-otp flag, encrypted OTP secret provisioning, validation on resume)
 
-## Template Usage Parity
-Goal: support the same workspace template model and usage flow.
+### B4. Outbound Leak Guard
+- [x] Create `crates/agentzero-leak-guard/`
+- [x] Add `[security.outbound_leak_guard]` config section
+- [x] Implement credential leak scanning (API keys, JWTs, private keys, high-entropy tokens)
+- [x] Implement action modes: redact vs block
+- [x] Wire into channel response pipeline (`outbound.rs` — `process_outbound()`)
 
-- [ ] `AGENTS.md` template support.
-- [ ] `BOOT.md` template support.
-- [ ] `BOOTSTRAP.md` template support.
-- [ ] `HEARTBEAT.md` template support.
-- [ ] `IDENTITY` template support.
-- [ ] `SOUL.md` template support.
-- [ ] `TOOLS.md` template support.
-- [ ] `USER` template support.
-- [ ] Define template load order and session behavior in runtime.
-- [ ] Add CLI/config support to scaffold and validate template files.
-- [ ] Add docs for template responsibilities and safe usage boundaries.
-- [ ] Add tests for template discovery, precedence, and missing-file behavior.
-- Acceptance:
-- [ ] Template loading is deterministic and documented.
-- [ ] Missing templates fail safely with actionable guidance.
-- [ ] Main-session vs shared-session template behavior is test-covered.
+### B5. Perplexity Filter
+- [x] Add `[security.perplexity_filter]` config section
+- [x] Implement character-class bigram perplexity scoring (`perplexity.rs`)
+- [x] Implement suffix window analysis before provider calls (`analyze_suffix()`)
+- [x] Implement symbol ratio threshold detection
+- [x] Add to channel message pipeline (`pipeline.rs` — `check_perplexity()` in dispatch loop)
+- [x] Add to gateway handlers (api_chat, legacy_webhook, v1_chat_completions)
+- [x] Shared `PerplexityFilterSettings` config struct with `PipelineConfig` and `GatewayState`
 
-## Module Parity Mapping (Planned)
-- Core runtime (`agent`, `memory`, `providers`, `tools`, `runtime`, `config`, `observability`, `security`): Sprints 0-8.
-- Auth/identity/approval: Sprint 9.
-- Channel runtime (`channels`, `gateway`, `daemon`, `service`): Sprint 10.
-- Reliability/runtime ops (`health`, `heartbeat`, `doctor`, `cron`, `cost`, `coordination`): Sprint 11.
-- Ecosystem and extensibility (`integrations`, `plugins`, `skills`, `skillforge`, `sop`, `tunnel`): Sprint 12.
-- Data growth and portability (`migration`, `update`, `rag`, `multimodal`): Sprint 13.
-- Device support (`hardware`, `peripherals`): Sprint 14 (optional profile for lightweight builds).
+### B6. Syscall Anomaly Detection
+- [x] Add `[security.syscall_anomaly]` config section
+- [x] Implement `SyscallAnomalyDetector` with stateful rate-limiting windows
+- [x] Implement baseline syscall profile matching (known vs unknown syscalls)
+- [x] Implement anomaly detection from command output (strace, audit/seccomp log parsing)
+- [x] Add alert budget and cooldown (`max_alerts_per_minute`, `alert_cooldown_secs`)
+- [x] Parse strace-style (`syscall(args) = result`) and audit-style (`syscall=NAME/NUMBER`) lines
+- [x] Map well-known Linux x86_64 syscall numbers to names
+- [x] Denied event rate limiting (`max_denied_events_per_minute`)
+- [x] 16 tests covering parsing, detection, rate limiting, budget exhaustion, and reset
 
-## Definition of Done (All Sprints)
+### B7. File Tool Hardening
+- [x] Add hard-link guard (refuse multiply-linked files) — in `agentzero-autonomy`
+- [x] Add sensitive file detection (.env, .aws/credentials, private keys, etc.) — in `agentzero-autonomy`
+- [x] Implement quote-aware shell separator parsing in ShellTool
+- [x] Replace simple forbidden_chars with context-aware policy
+
+### B-Acceptance
+- [x] URL access policy blocks private IPs by default
+- [x] Leak guard detects and redacts API key patterns in channel output
+- [x] Leak guard wired into channel outbound pipeline
+- [x] OTP gating validates TOTP codes with RFC 4226 test vectors
+- [x] OTP integrated with estop resume (--require-otp engage, --otp code resume)
+- [x] Perplexity filter flags adversarial suffixes
+- [x] Perplexity filter wired into channel pipeline and gateway handlers
+- [x] Syscall anomaly detector parses strace/audit output, enforces alert budget
+- [x] Sensitive file reads blocked by default
+- [x] All security features disabled by default (opt-in)
+- [x] Negative tests for each security feature
+- [x] IPC message store migrated to encrypted storage
+
+---
+
+## Phase C: Agent Loop Features
+
+### C1. Loop Detection
+- [x] Implement no-progress detector (same tool+args+output N times)
+- [x] Implement ping-pong detector (A→B→A→B alternation)
+- [x] Implement failure streak detector (same tool consecutive failures)
+- [ ] Add self-correction prompt injection before hard stop
+- [x] Wire to agent config thresholds (0 = disabled)
+
+### C2. Research Phase
+- [ ] Add research phase to agent loop (runs before main turn)
+- [ ] Implement trigger strategies: never, always, keywords, length, question
+- [ ] Separate tool budget from main agent turn
+- [ ] Add progress reporting
+
+### C3. Parallel Tool Execution
+- [ ] When `parallel_tools = true`, execute independent tool calls concurrently
+- [ ] Maintain stable result ordering
+- [ ] Respect approval gating (sequential for gated tools)
+
+### C4. Sub-Agent Delegation
+- [x] Create `crates/agentzero-delegation/`
+- [ ] Implement `delegate` tool
+- [ ] Resolve sub-agent config from `[agents.<name>]`
+- [x] Enforce max_depth recursion guard
+- [x] Exclude `delegate` from sub-agent tool allowlists
+- [ ] Support agentic mode (multi-turn tool loop) vs single prompt→response
+
+### C5. Model Routing
+- [x] Create `crates/agentzero-routing/`
+- [x] Implement hint resolution from `[[model_routes]]`
+- [x] Implement query classification engine from `[query_classification]` rules
+- [ ] Implement `model_routing_config` runtime tool
+- [x] Implement `[[embedding_routes]]` resolution
+
+### C6. Reasoning Control
+- [ ] Wire reasoning_level through to provider calls
+- [ ] Provider-specific mapping: Ollama (think field), OpenAI Codex (effort param)
+- [ ] Wire reasoning_enabled as global override
+
+### C-Acceptance
+- [x] Loop detection engages on repeated tool calls (test with mock)
+- [ ] Research phase runs before main turn when triggered
+- [ ] Parallel tool execution produces correct results
+- [x] Sub-agent delegation respects max_depth
+- [x] Model routing resolves hints correctly
+
+---
+
+## Phase D: Channel Features
+
+### D0. Channel Infrastructure (Completed)
+Foundation for all channel features — async trait, 5 core channel implementations, macro system, crypto crate, persistent queue, and message pipeline.
+
+- [x] Created `crates/agentzero-crypto` crate (XChaCha20Poly1305 encryption, key management, SHA-256 hashing)
+- [x] Extracted encryption from `agentzero-storage` into dedicated crypto crate (MIT-compatible RustCrypto)
+- [x] Created `EncryptedQueue` in `agentzero-storage` (directory-backed persistent queue, one encrypted file per item)
+- [x] Replaced sync `ChannelHandler` trait with async `Channel` trait (`send`, `listen`, `health_check`, typing, drafts, reactions)
+- [x] Added `ChannelMessage` (inbound) and `SendMessage` (outbound) message types
+- [x] Added `ChannelRegistry` with async `dispatch()` for gateway webhook routing
+- [x] Created 3-macro system for easy channel addition:
+  - `channel_stub!` — one-liner for unimplemented channels (struct + descriptor + bail impl)
+  - `channel_meta!` — descriptor const for implemented channels
+  - `channel_catalog!` — auto-wires module tree, re-exports, and catalog array
+- [x] Added shared `helpers.rs` (message IDs, timestamps, user allowlist, message splitting)
+- [x] Implemented CLI channel (async stdin reader, stdout sender)
+- [x] Implemented Webhook channel (passive receiver with `inject_message()` from gateway)
+- [x] Implemented Telegram channel (long-polling `getUpdates`, feature-gated: `channel-telegram`)
+- [x] Implemented Discord channel (WebSocket Gateway v10, heartbeat, feature-gated: `channel-discord`)
+- [x] Implemented Slack channel (Socket Mode + HTTP polling fallback, feature-gated: `channel-slack`)
+- [x] All 16 stub channels updated to `channel_stub!` macro invocations
+- [x] Created message processing pipeline (`pipeline.rs`) with supervised listeners, semaphore-bounded concurrency
+- [x] Updated gateway webhook handler to use async `dispatch().await`
+- [x] Added tokio features: `sync`, `io-util`, `io-std` to workspace
+- [x] Added tokio-tungstenite `connect` feature for WebSocket channels
+- [x] 81 channel tests + 8 gateway tests passing
+
+### D1. Group Reply Policy
+- [x] Add `[channels_config.<channel>.group_reply]` config structure (`GroupReplyConfig` in model.rs)
+- [x] Implement mode: all_messages / mention_only (`group_reply.rs` — `GroupReplyFilter`)
+- [x] Implement allowed_sender_ids bypass
+- [x] Wire into channel receive path (`group_reply::GroupReplyFilter::should_process()`)
+
+### D2. In-Chat Runtime Commands
+- [x] Implement command interceptor before LLM inference (`commands.rs` — `intercept_command()`)
+- [x] `/models`, `/models <provider>` — show/switch providers
+- [x] `/model`, `/model <id>` — show/switch model (per-sender session)
+- [x] `/new` — clear sender conversation history
+- [x] `/approve-request <tool>`, `/approve-confirm <id>`, `/approve-pending`
+- [x] `/approve <tool>`, `/unapprove <tool>`, `/approvals`
+- [ ] Persist approvals to autonomy.auto_approve
+
+### D3. Streaming and Drafts
+- [x] Add stream_mode config (off/partial) — in `ChannelsGlobalConfig`
+- [x] Add draft_update_interval_ms throttle — in `ChannelsGlobalConfig`
+- [ ] Implement draft lifecycle: send_draft → update_draft → finalize_draft
+
+### D4. Message Interruption
+- [x] Add interrupt_on_new_message config flag — in `ChannelsGlobalConfig`
+- [ ] Implement same-sender same-chat cancellation scope
+- [ ] Preserve interrupted turn in conversation history
+
+### D5. ACK Reactions
+- [x] Add `[channels_config.ack_reaction.<channel>]` config (`AckReactionConfig` in model.rs)
+- [x] Implement emoji pools, strategies (random/first), sample rates (`ack_reactions.rs` — `AckReactionEngine`)
+- [x] Implement conditional rules (contains_any/all/none, regex, sender/chat/locale filters)
+
+### D6. Hot Config Reload
+- [ ] Watch config.toml during daemon/channel runtime
+- [ ] Hot-apply: default_provider, default_model, default_temperature, api_key
+- [ ] Hot-apply: reliability settings
+
+### D7. Multimodal Image Markers
+- [x] Implement `[IMAGE:<source>]` parser for user messages (`image_markers.rs`)
+- [x] Support local file paths and data URIs
+- [x] Support remote URL fetch when allow_remote_fetch = true
+- [x] Add validation (max_images, allow_remote_fetch policy)
+- [ ] Add provider vision capability check (fail with structured error)
+
+### D8. Catalog Additions
+- [x] Add Napcat (QQ via OneBot) to channel catalog
+- [x] Add ACP (Agent Client Protocol) to channel catalog
+
+### D-Acceptance
+- [x] Group reply respects mention_only mode
+- [x] In-chat commands execute before LLM inference
+- [x] ACK reactions fire on configured channels
+- [ ] Hot config reload updates provider settings without restart
+- [x] Image markers parse correctly
+
+---
+
+## Phase E: Multi-Agent Stack — DEFERRED
+See `specs/sprints/backlog.md` for full details. Deferred to avoid distributed-systems complexity until there's a concrete scaling need.
+
+---
+
+## New Crates to Create
+
+| Crate | Purpose | Phase |
+|---|---|---|
+| `crates/agentzero-crypto/` | XChaCha20Poly1305 encryption, key management, SHA-256 | D0 (done) |
+| `crates/agentzero-autonomy/` | Autonomy levels, approval state machine, tool gating | B1 (done) |
+| `crates/agentzero-delegation/` | Sub-agent delegation with agentic mode | C4 (done) |
+| `crates/agentzero-leak-guard/` | Outbound credential leak detection | B4 (done) |
+| `crates/agentzero-routing/` | Model routing, query classification, embedding routes | C5 (done) |
+
+## Critical Files to Modify
+
+| File | Phase | Changes |
+|---|---|---|
+| `crates/agentzero-config/src/model.rs` | A | Add ~15 config sections, rename fields, update defaults |
+| `crates/agentzero-core/src/types.rs` | A, C | Loop detection config, parallel_tools, research config |
+| `crates/agentzero-core/src/agent.rs` | C | Loop detection, research phase, parallel tool dispatch |
+| `crates/agentzero-channels/src/pipeline.rs` | D | In-chat commands, hot reload, ACK reactions |
+| `crates/agentzero-channels/src/lib.rs` | D | Group reply policy, streaming config, image markers |
+| `crates/agentzero-tools/src/url_validation.rs` | B | URL access policy enforcement |
+| `crates/agentzero-tools/src/lib.rs` | B | File tool hardening, sensitive file detection |
+| `crates/agentzero-cli/src/commands/config.rs` | A | Add show/get/set subcommands |
+| `crates/agentzero-config/src/tests.rs` | A, B | Tests for all new config sections |
+| `Cargo.toml` (workspace) | B, C | Add new crate members |
+
+## Definition of Done (All Phases)
 - Code compiles and tests pass locally.
 - `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` pass.
-- Feature has docs updates.
+- New config sections have deserialization tests.
+- Security features default to disabled (opt-in).
+- Serde aliases preserve backward compatibility.
 - Feature has at least one negative-path test.
-- Non-goals are explicitly documented in PR/spec notes.
-
-## Sprint 0: Security Foundation (Highest Priority)
-
-### 0.1 Security architecture baseline
-- [x] Create `docs/security/THREAT_MODEL.md` with trust boundaries and attacker model.
-- [x] Define risk tiers for tools/providers/channels and required controls per tier.
-- [x] Add `crates/agentzero-security` for shared policy and guardrails.
-- Acceptance:
-- [x] Threat model and controls are documented and referenced by code.
-
-### 0.2 Secret handling and redaction
-- [x] Add centralized secret redaction utility and apply it to all logs/errors.
-- [x] Ensure API keys/tokens never appear in panic/error output.
-- [x] Add tests proving redaction behavior.
-- Acceptance:
-- [x] No secret leakage in logs under normal and error paths.
-
-### 0.3 Tool sandbox and policy hardening
-- [x] Define explicit deny-by-default tool policy.
-- [x] Add argument-level validation for shell tool.
-- [x] Add file read/write policy with size/type/path restrictions.
-- [x] Enforce tool restrictions from global config (`agentzero.toml` `[security.*]`).
-- Acceptance:
-- [x] Unsafe tool calls fail closed with auditable reasons.
-
-### 0.5 Turso and WASM security controls
-- [x] Define secure secret handling for `TURSO_AUTH_TOKEN` and connection metadata.
-- [x] Add threat-model section for remote memory backend risks (token theft, exfiltration, MITM).
-- [x] Define encryption requirements:
-- [x] data in transit must use TLS for provider/Turso/MCP connections.
-- [x] secrets at rest must be encrypted for persisted secret material and sensitive local artifacts.
-- [x] key management policy for local + remote backends (rotation, storage, fallback behavior).
-- [x] Add configurable audit logging to retrace execution steps (`[security.audit]`).
-- [x] Define WASM plugin isolation policy (capabilities, IO limits, timeout, memory limits).
-- [x] Add abuse-path tests for plugin preflight and backend selection.
-- [x] Add MCP server tool bridge with explicit server allowlist and fail-closed defaults.
-- Acceptance:
-- [x] Turso + WASM additions are covered by explicit threat model, encryption controls, and fail-closed tests.
-
-### 0.4 Supply chain and CI security gates
-- [x] Add `cargo audit` and `cargo deny` checks in CI.
-- [x] Add dependency update cadence and CVE response policy.
-- [x] Add security review checklist to PR template.
-- Acceptance:
-- [x] CI blocks on high/critical vulnerabilities by default.
-
-## Sprint 1: Core Testing and Refactor Hygiene
-
-### 1.1 Add core unit tests for agent orchestration
-- [x] Add tests for user/assistant memory append sequence.
-- [x] Add test for `tool:<name> <input>` invocation path.
-- [x] Add test for unknown tool name behavior.
-- Acceptance:
-- [x] Deterministic tests in `crates/agentzero-core`.
-
-### 1.2 Add infra unit tests
-- [x] SQLite memory roundtrip tests (`append`, `recent`, ordering).
-- [x] `read_file` allowlist path-denial tests.
-- [x] `shell` allowlist denial tests.
-- Acceptance:
-- [x] Denied operations return clear errors.
-
-### 1.3 Improve module boundaries
-- [x] Add `lib.rs` in CLI crate to host dispatch logic, keep `main.rs` thin.
-- [x] Keep command parsing isolated from command execution.
-- Acceptance:
-- [x] `main.rs` is runtime/bootstrap only.
-
-### 1.4 Extract foundational crates
-- [x] Create `crates/agentzero-config`.
-- [x] Create `crates/agentzero-providers`.
-- [x] Create `crates/agentzero-memory-sqlite`.
-- [x] Move existing implementations from `agentzero-infra` into extracted crates.
-- [x] Keep `agentzero-infra` only as temporary compatibility layer or remove it.
-- Acceptance:
-- [x] Major module responsibilities are no longer co-located in one infra crate.
-
-## Sprint 2: Config System (Phase 3 baseline brought forward)
-
-### 2.1 Create typed config model
-- [x] Add `agentzero-config` crate.
-- [x] Define structs for provider, memory, security, agent settings.
-- [x] Support load from `agentzero.toml`.
-- Acceptance:
-- [x] `agentzero onboard` produces valid config matching the typed schema.
-
-### 2.2 Add env overrides
-- [x] Support env overrides for API key, model, base URL, db path.
-- [x] Document precedence order (env > file > defaults).
-- Acceptance:
-- [x] Tests verify precedence behavior.
-
-### 2.3 Validate dangerous config values
-- [x] Reject empty allowlists in non-dev mode.
-- [x] Reject relative traversal escape attempts in allowed root.
-- [x] Reject unsupported provider URL schemes.
-- Acceptance:
-- [x] Validation errors are actionable and explicit.
-
-## Sprint 3: Agent Loop Hardening (Phase 2)
-
-### 3.1 Loop control and cancellation
-- [x] Add max-tool-iterations from config.
-- [x] Add overall per-request timeout.
-- [x] Return typed errors for timeout vs provider failures.
-- [x] Introduce step execution model so every step can trigger `before_*` and `after_*` hooks.
-- Acceptance:
-- [x] No unbounded loops possible.
-
-### 3.2 Structured tracing
-- [x] Add request IDs and tool execution spans.
-- [x] Add redaction helpers for secrets.
-- [x] Log tool start/end and duration.
-- Acceptance:
-- [x] Logs are structured and do not leak secrets.
-
-### 3.3 Conversation assembly
-- [x] Include recent memory in provider prompt (bounded window).
-- [x] Add context window cap to avoid oversized prompts.
-- Acceptance:
-- [x] Prompt construction is deterministic and tested.
-
-## Sprint 4: Provider Robustness
-
-### 4.1 Provider abstraction hardening
-- [x] Add retry policy (bounded, jittered) for transient errors.
-- [x] Add status-code-specific error mapping (401/429/5xx).
-- [x] Add JSON parse fallback handling.
-- Acceptance:
-- [x] Clear error categories surfaced to CLI.
-
-### 4.2 Mock-driven integration tests
-- [x] Add mock server tests for success, timeout, malformed response.
-- [x] Add tests for auth failure and rate limits.
-- Acceptance:
-- [x] Integration suite runs in CI without external API dependency.
-
-### 4.3 Turso backend verification
-- [x] Add `crates/agentzero-memory-turso` integration tests with local libsql-compatible target when feasible.
-- [x] Add fallback behavior tests (backend unavailable, auth failure, invalid URL).
-- Acceptance:
-- [x] Turso backend behavior is predictable and does not degrade SQLite default path.
-
-## Sprint 5: Tooling and Safety
-
-### 5.1 Harden `shell` tool execution
-- [x] Replace `sh -c` string execution with argument-safe command execution.
-- [x] Add configurable command + argument policy.
-- [x] Capture stdout/stderr with bounded size.
-- Acceptance:
-- [x] No shell injection vector via raw input concatenation.
-
-### 5.2 Harden `read_file` tool execution
-- [x] Resolve symlink and canonical path checks consistently.
-- [x] Add max file size read guard.
-- [x] Add binary-file detection fallback.
-- Acceptance:
-- [x] Tool safely rejects unsafe or oversized reads.
-
-### 5.3 Add optional `write_file` tool (strict mode)
-- [x] Create new tool disabled by default.
-- [x] Restrict writes to allowed workspace root.
-- [x] Add overwrite flag and dry-run mode.
-- Acceptance:
-- [x] Write operations are explicit and auditable.
-
-### 5.4 Split tool modules into dedicated crates
-- [x] Create `crates/agentzero-tools` and move file tools + shell tool/policy.
-- [x] Add per-crate tests and docs.
-- Acceptance:
-- [x] Tools are isolated by risk domain and independently testable.
-
-## Sprint 6: CLI Productization
-
-### 6.1 Improve command UX
-- [x] Add `--config` global flag.
-- [x] Add global `--data-dir`/`--config-dir` for storage path resolution (`flag > env > config > default ~/.agentzero`).
-- [x] Centralize default data/config/sqlite path constants and helpers in `crates/agentzero-common`.
-- [x] Add global `--verbose` flag to enable debug logging output.
-- [x] Extract shared tracing bootstrap into `crates/agentzero-common`.
-- [x] Add `--json` output mode for `status`.
-- [x] Add better error formatting and exit codes.
-- [x] Make `onboard` interactive with safe overwrite confirmation.
-- [x] Add typed `onboard` option overrides with env-var fallback (`flag > env > default`).
-- [x] Add shared interactive CLI UX helpers (headers, colors, checkmarks, section summaries).
-- [x] Apply searchable/autocomplete-first prompts for all interactive commands.
-- [ ] Add interactive TUI dashboard command (ratatui-style) for live status, logs, and controls.
-- Acceptance:
-- Commands have consistent human and machine output options.
-
-### 6.2 Expand command docs
-- [x] Add examples for each command in `docs/COMMANDS.md`.
-- [x] Add troubleshooting matrix (symptom -> fix).
-- [x] Add architecture diagram in `docs/ARCHITECTURE.md`.
-- Acceptance:
-- New user can run first query in <10 minutes from docs only.
-
-## Sprint 7: Observability and Benchmarks (Phase 4)
-
-### 7.1 Runtime metrics
-- [x] Add counters: requests, provider errors, tool errors.
-- [x] Add histograms: provider latency, tool latency.
-- [x] Add lightweight exporter (log or optional endpoint).
-- Acceptance:
-- Metrics visible locally and testable in integration tests.
-
-### 7.2 Benchmarks and baselines
-- [-] Add `criterion` benchmark crate for core loop.
-- [x] Temporary offline benchmark harness added in `crates/agentzero-bench`; swap to `criterion` when registry access is available.
-- [x] Add CLI startup and single-message benchmark scripts.
-- [x] Check in results at `docs/benchmarks.md`.
-- Acceptance:
-- Baseline numbers reproducible with one documented command set.
-
-### 7.3 Introduce runtime and testkit crates
-- [x] Create `crates/agentzero-runtime` and move runtime orchestration concerns from CLI.
-- [x] Create `crates/agentzero-testkit` for reusable mocks/fixtures.
-- [x] Update integration tests to use testkit.
-- Acceptance:
-- Runtime and test support are reusable and decoupled from CLI.
-
-## Sprint 8: Release Readiness
-
-### 8.1 Packaging
-- [x] Add release profile tuning and size checks.
-- [x] Add versioning and changelog process.
-- [x] Add GitHub release workflow (build + artifact upload).
-- Acceptance:
-- Tagged release produces downloadable binaries.
-
-### 8.2 Project quality gates
-- [x] Add coverage reporting.
-- [x] Keep security audits (`cargo audit`, `cargo deny`) in CI and update policy docs.
-- [x] Add dependency update policy.
-- Acceptance:
-- CI blocks merge on critical audit failures.
-
-## Sprint 9: Auth, Identity, and Approval
-
-### 9.1 Auth and profile management
-- [x] Add `crates/agentzero-auth` for provider auth profiles and token lifecycle.
-- [x] Implement profile selection, storage, and refresh behavior.
-- [x] Add CLI command surface: `agentzero auth login/logout/list/status/use`.
-- [x] Expand auth subcommand parity: `paste-redirect`, `paste-token`, `setup-token`, `refresh`.
-- [x] Align `auth refresh` semantics to provider-based flow (`--provider`, optional `--profile`) with OpenAI Codex/Gemini-specific behavior.
-- [x] Align `auth login` + `paste-redirect` with OAuth browser flow (authorize URL + localhost callback + fallback).
-- [x] Add callback port fallback: when `1455` is unavailable, auto-select next available localhost port for OAuth redirect.
-- [x] Add shared encrypted persistence crate and migrate auth + gateway token storage to it.
-- Acceptance:
-- Auth flows are tested with mocked providers and secure token storage.
-
-### 9.2 Identity and approval controls
-- [x] Add `crates/agentzero-identity` for actor identity model.
-- [x] Add `crates/agentzero-approval` for high-risk action approvals.
-- Acceptance:
-- High-risk actions require explicit approval and are audit logged.
-
-## Sprint 10: Channels, Gateway, Daemon, Service
-
-### 10.1 Channel abstraction and gateway
-- [x] Add `crates/agentzero-gateway` baseline HTTP service.
-- [x] Add `crates/agentzero-channels` and evolve gateway routing/authn.
-- [x] Implement minimal webhook + websocket gateway.
-- [x] Add CLI command surface: `agentzero gateway --host --port`.
-- [x] Add `agentzero gateway --new-pairing` to clear persisted paired tokens and rotate pairing setup.
-- [x] Align pairing lifecycle so one-time pairing code is shown only when no paired tokens exist; `--new-pairing` re-enables enrollment.
-- Acceptance:
-- One reference channel works end-to-end through gateway.
-
-### 10.2 Daemon and service lifecycle
-- [-] Add `crates/agentzero-daemon` and `crates/agentzero-service`.
-- [ ] Add install/start/stop/status command flow.
-- Acceptance:
-- Long-running runtime starts reliably and exposes health endpoints.
-
-## Sprint 11: Reliability and Operations
-
-### 11.1 Health subsystem
-- [ ] Add `crates/agentzero-health`, `crates/agentzero-heartbeat`, `crates/agentzero-doctor`.
-- [ ] Implement stale-task/channel detection and operator diagnostics.
-- [x] Add CLI command surface: `agentzero doctor`.
-- [ ] Add `agentzero doctor --json` with stable machine-readable schema.
-- [ ] Add `doctor` remediation hints per failed check (clear next-action guidance).
-- Acceptance:
-- Health checks identify and classify runtime issues correctly.
-
-### 11.2 Scheduling and operational controls
-- [ ] Add `crates/agentzero-cron`, `crates/agentzero-cost`, `crates/agentzero-coordination`, `crates/agentzero-goals`, `crates/agentzero-hooks`.
-- [ ] Add CLI command surface: `agentzero cron list/add/update/pause/resume/remove`.
-- [ ] Add CLI command surface for hook controls and diagnostics (list/enable/disable/test).
-- Acceptance:
-- Scheduled tasks and operational controls function with auditability.
-
-## Sprint 12: Integrations and Extensibility
-
-### 12.1 Integrations and plugin runtime
-- [ ] Add `crates/agentzero-integrations`, `crates/agentzero-plugins`, `crates/agentzero-tunnel`.
-- [ ] Evolve `crates/agentzero-plugins-wasm` from preflight to executable runtime container.
-- [ ] Add sandbox controls for WASM runtime (time, memory, host-call allowlist).
-- [ ] Implement plugin packaging + install pipeline with integrity checks.
-- Acceptance:
-- Integration discovery and plugin execution work with sandbox controls.
-
-### 12.2 Skills and SOP
-- [ ] Add `crates/agentzero-skills`, `crates/agentzero-skillforge`, `crates/agentzero-sop`.
-- [ ] Add CLI command surface: `agentzero skill list/install/test/remove`.
-- [ ] Add CLI command surface: `agentzero tunnel ...` (secure tunnel lifecycle).
-- [ ] Add plugin developer commands (`plugin new/validate/test/package/install`).
-- Acceptance:
-- Skills lifecycle and SOP execution are versioned and test covered.
-
-## Sprint 13: Migration, Update, and Knowledge Expansion
-
-### 13.1 Migration and self-update
-- [ ] Add `crates/agentzero-migration` and `crates/agentzero-update`.
-- Acceptance:
-- Data import and binary update flows are recoverable and tested.
-
-### 13.2 RAG and multimodal
-- [ ] Add `crates/agentzero-rag` and `crates/agentzero-multimodal`.
-- [ ] Add CLI command surface: `agentzero rag ingest/query` (feature-gated).
-- Acceptance:
-- Optional features are behind flags and do not bloat base runtime.
-
-## Sprint 14: Hardware and Peripherals (Optional Profile)
-
-### 14.1 Device support track
-- [ ] Add `crates/agentzero-hardware` and `crates/agentzero-peripherals`.
-- [ ] Keep hardware support feature-gated and off by default.
-- Acceptance:
-- Hardware mode can be enabled without impacting default lightweight profile.
-
-## Backlog (Post-v1, Out of Current Scope)
-- [ ] Additional channel providers beyond reference implementation.
-- [ ] Advanced enterprise policy packs.
-- [ ] Multi-node coordination and HA mode.
-
-## Execution Order Summary
-1. Sprint 0 (security foundation)
-2. Sprint 1 (tests/hygiene + crate extraction)
-3. Sprint 2 (config)
-4. Sprint 3 (loop hardening)
-5. Sprint 4 (provider robustness)
-6. Sprint 5 (tool safety)
-7. Sprint 6 (CLI/docs)
-8. Sprint 7 (observability/bench)
-9. Sprint 8 (release readiness)
-10. Sprint 9 (auth/identity/approval)
-11. Sprint 10 (channels/gateway/daemon/service)
-12. Sprint 11 (reliability/operations)
-13. Sprint 12 (integrations/extensibility)
-14. Sprint 13 (migration/update/rag/multimodal)
-15. Sprint 14 (hardware/peripherals optional)
-
-## Sprint Change Log
-- 2026-02-27: Initial sprint plan created.
-- 2026-02-27: Added cadence, tracking conventions, dependencies, and risk sections.
-- 2026-02-27: Added target crate architecture, functional coverage checklist, and crate-extraction tasks.
-- 2026-02-27: Added upstream module parity gaps/mapping and expanded roadmap to Sprints 9-14.
-- 2026-02-27: Added Sprint 0 security foundation and moved security to highest priority.
-- 2026-02-27: Added Turso backend and WASM plugin-container milestones with security-first controls.
-- 2026-02-27: Added baseline gateway crate and CLI command (`gateway`) with HTTP health/ping routes.
-- 2026-02-27: Added must-have track for `skills`, `tunnel`, `gateway`, `rag`, `auth`, `cron`, and `doctor` with explicit command deliverables.
-- 2026-02-27: Refactored CLI dispatch to trait-based `AgentZeroCommand` execution in `app.rs`.
-- 2026-02-27: Consolidated `AgentZeroCommand` trait + `CommandContext` into `crates/agentzero-cli`, and moved executable entrypoint to thin `bin/agentzero/src/main.rs`.
-- 2026-02-27: Updated binary entrypoint to `bin/agentzero/bins/cli.rs` and configured Cargo `[[bin]]` to use that path.
-- 2026-02-27: Made `onboard` explicitly interactive by default via CLI surface; added `onboard --yes` for non-interactive runs.
-- 2026-02-27: Added plugin development track and explicit before/after hook lifecycle requirements for each execution step.
-- 2026-02-27: Upgraded `onboard` UX with branded header, colored/checkmark section progress, and searchable interactive prompts via `inquire`.
-- 2026-02-27: Added typed `onboard` flags + env var resolution using option-spec traits and precedence `flag > env > default`.

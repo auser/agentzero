@@ -1,0 +1,537 @@
+/* ── Landing Page Styles ─────────────────────────────────
+   Scoped to .az-* classes. Colors from global.css (--sl-*).
+   ─────────────────────────────────────────────────────── */
+
+:root {
+  --az-bg-card-hover: #1a1a26;
+  --az-max-width: 1120px;
+  color-scheme: dark;
+}
+
+/* ── Landing page base (scoped to .az-page) ──── */
+
+.az-page {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--sl-color-bg, #0a0a0f);
+  color: var(--sl-color-text, #e4e4ef);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.az-page *,
+.az-page *::before,
+.az-page *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.az-page a {
+  color: var(--sl-color-accent, #38bdf8);
+  text-decoration: none;
+}
+
+.az-page a:hover {
+  text-decoration: underline;
+}
+
+.az-page code {
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.az-page html {
+  scroll-behavior: smooth;
+}
+
+/* ── Nav ───────────────────────────────────────── */
+
+.az-nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(10, 10, 15, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--sl-color-gray-5);
+}
+
+.az-nav-inner {
+  max-width: var(--az-max-width);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.5rem;
+}
+
+.az-logo {
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--sl-color-text);
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+.az-logo:hover {
+  text-decoration: none;
+  color: var(--sl-color-accent);
+}
+
+.az-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.az-nav-links a {
+  color: var(--sl-color-gray-2);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.az-nav-links a:hover {
+  color: var(--sl-color-text);
+  text-decoration: none;
+}
+
+.az-nav-docs,
+.az-nav-gh {
+  font-weight: 600;
+  color: var(--sl-color-text) !important;
+}
+
+/* ── Buttons ───────────────────────────────────── */
+
+.az-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.5rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-decoration: none;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.az-btn:hover {
+  text-decoration: none;
+  transform: translateY(-1px);
+}
+
+.az-btn-primary {
+  background: var(--sl-color-accent);
+  color: #0a0a0f !important;
+}
+
+.az-btn-primary:hover {
+  background: #0ea5e9;
+  color: #0a0a0f !important;
+}
+
+.az-btn-secondary {
+  background: var(--sl-color-gray-6);
+  color: var(--sl-color-text) !important;
+  border: 1px solid var(--sl-color-gray-5);
+}
+
+.az-btn-secondary:hover {
+  background: var(--az-bg-card-hover);
+}
+
+/* ── Hero ──────────────────────────────────────── */
+
+.az-hero {
+  padding: 6rem 1.5rem 4rem;
+}
+
+.az-hero-inner {
+  max-width: var(--az-max-width);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  align-items: center;
+}
+
+.az-eyebrow {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--sl-color-accent);
+  margin-bottom: 1rem;
+}
+
+.az-hero h1 {
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  margin-bottom: 1.25rem;
+  color: var(--sl-color-white);
+}
+
+.az-accent {
+  color: var(--sl-color-accent);
+}
+
+.az-lead {
+  font-size: 1.15rem;
+  color: var(--sl-color-gray-2);
+  max-width: 480px;
+  margin-bottom: 0.5rem;
+}
+
+.az-sub {
+  font-size: 1rem;
+  color: var(--sl-color-gray-2);
+  margin-bottom: 2rem;
+}
+
+.az-hero-actions {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* ── Command Lane ──────────────────────────────── */
+
+.az-command-lane {
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+}
+
+.az-command-lane h2 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--sl-color-gray-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 1rem;
+}
+
+.az-command-lane ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.az-command-lane li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.az-command-lane code {
+  color: var(--sl-color-accent);
+  font-size: 0.85rem;
+}
+
+.az-command-lane span {
+  font-size: 0.8rem;
+  color: var(--sl-color-gray-2);
+}
+
+/* ── Metrics ───────────────────────────────────── */
+
+.az-metrics {
+  max-width: var(--az-max-width);
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+}
+
+.az-metrics article {
+  text-align: center;
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  padding: 1.5rem 1rem;
+}
+
+.az-metric-value {
+  font-size: 2.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--sl-color-text);
+}
+
+.az-metric-label {
+  font-size: 0.85rem;
+  color: var(--sl-color-gray-2);
+  margin-top: 0.25rem;
+}
+
+/* ── Features ──────────────────────────────────── */
+
+.az-features {
+  max-width: var(--az-max-width);
+  margin: 0 auto;
+  padding: 4rem 1.5rem;
+}
+
+.az-features h2,
+.az-steps h2,
+.az-arch h2,
+.az-cta h2 {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-bottom: 2.5rem;
+  text-align: center;
+}
+
+.az-features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+
+.az-features-grid article {
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.az-features-grid article:hover {
+  border-color: #0ea5e9;
+  background: var(--az-bg-card-hover);
+}
+
+.az-features-grid h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.az-features-grid p {
+  font-size: 0.9rem;
+  color: var(--sl-color-gray-2);
+  line-height: 1.5;
+}
+
+/* ── Steps ─────────────────────────────────────── */
+
+.az-steps {
+  max-width: var(--az-max-width);
+  margin: 0 auto;
+  padding: 4rem 1.5rem;
+}
+
+.az-steps-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+}
+
+.az-steps-grid article {
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+}
+
+.az-step-num {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--sl-color-accent);
+  letter-spacing: 0.05em;
+}
+
+.az-steps-grid h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0.5rem 0;
+}
+
+.az-steps-grid code {
+  display: block;
+  background: rgba(56, 189, 248, 0.08);
+  color: var(--sl-color-accent);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  margin-bottom: 0.75rem;
+  word-break: break-all;
+}
+
+.az-steps-grid p {
+  font-size: 0.85rem;
+  color: var(--sl-color-gray-2);
+}
+
+/* ── Architecture ──────────────────────────────── */
+
+.az-arch {
+  max-width: var(--az-max-width);
+  margin: 0 auto;
+  padding: 4rem 1.5rem;
+}
+
+.az-arch-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+
+.az-arch-grid article {
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+}
+
+.az-arch-grid h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  color: var(--sl-color-accent);
+}
+
+.az-arch-grid ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.az-arch-grid li {
+  font-size: 0.9rem;
+  color: var(--sl-color-gray-2);
+  padding-left: 1rem;
+  position: relative;
+}
+
+.az-arch-grid li::before {
+  content: "›";
+  position: absolute;
+  left: 0;
+  color: var(--sl-color-accent);
+  font-weight: 700;
+}
+
+/* ── CTA ───────────────────────────────────────── */
+
+.az-cta {
+  max-width: var(--az-max-width);
+  margin: 0 auto;
+  padding: 5rem 1.5rem;
+  text-align: center;
+}
+
+.az-cta p {
+  font-size: 1.1rem;
+  color: var(--sl-color-gray-2);
+  margin-bottom: 2rem;
+}
+
+.az-cta-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ── Footer ────────────────────────────────────── */
+
+.az-footer {
+  border-top: 1px solid var(--sl-color-gray-5);
+  padding: 2rem 1.5rem;
+}
+
+.az-footer-inner {
+  max-width: var(--az-max-width);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.az-footer-brand {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.az-footer-links {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.85rem;
+}
+
+.az-footer-links a {
+  color: var(--sl-color-gray-2);
+  text-decoration: none;
+}
+
+.az-footer-links a:hover {
+  color: var(--sl-color-text);
+}
+
+.az-footer-copy {
+  font-size: 0.8rem;
+  color: var(--sl-color-gray-2);
+}
+
+/* ── Responsive ────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .az-hero-inner {
+    grid-template-columns: 1fr;
+  }
+
+  .az-features-grid,
+  .az-arch-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .az-steps-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .az-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .az-nav-links {
+    gap: 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  .az-hero {
+    padding: 3rem 1rem 2rem;
+  }
+
+  .az-features-grid,
+  .az-steps-grid,
+  .az-arch-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .az-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .az-footer-inner {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .az-btn:hover {
+    transform: none;
+  }
+}

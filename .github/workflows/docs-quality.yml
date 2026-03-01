@@ -1,0 +1,41 @@
+name: Docs quality
+
+on:
+  pull_request:
+    paths:
+      - "public/**"
+      - "README.md"
+      - "AGENTS.md"
+      - ".markdownlint-cli2.yaml"
+
+jobs:
+  markdown-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Lint markdown
+        run: npx markdownlint-cli2 "public/src/content/**/*.md" "README.md" "AGENTS.md" --config .markdownlint-cli2.yaml
+
+  site-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: public/package-lock.json
+
+      - name: Install dependencies
+        working-directory: public
+        run: npm ci
+
+      - name: Build site
+        working-directory: public
+        run: npm run build

@@ -6,6 +6,7 @@ use crate::models::{
 };
 use crate::state::GatewayState;
 use crate::util::{generate_session_token, now_epoch_secs};
+use agentzero_channels::pipeline::check_perplexity;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -89,7 +90,7 @@ pub(crate) async fn webhook(
 ) -> Result<Json<WebhookResponse>, StatusCode> {
     authorize_request(&state, &headers, false)?;
 
-    let Some(delivery) = state.channels.dispatch(&channel, payload) else {
+    let Some(delivery) = state.channels.dispatch(&channel, payload).await else {
         return Err(StatusCode::NOT_FOUND);
     };
 
@@ -107,6 +108,11 @@ pub(crate) async fn legacy_webhook(
 ) -> Result<Json<ChatResponse>, StatusCode> {
     authorize_request(&state, &headers, false)?;
 
+    if let Some(reason) = check_perplexity(&req.message, &state.perplexity_filter) {
+        tracing::warn!(reason = %reason, "gateway legacy_webhook blocked by perplexity filter");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     Ok(Json(ChatResponse {
         message: format!("echo: {}", req.message),
         tokens_used_estimate: req.message.len() + req.context.len() * 8,
@@ -119,6 +125,11 @@ pub(crate) async fn api_chat(
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, StatusCode> {
     authorize_request(&state, &headers, false)?;
+
+    if let Some(reason) = check_perplexity(&req.message, &state.perplexity_filter) {
+        tracing::warn!(reason = %reason, "gateway api_chat blocked by perplexity filter");
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     Ok(Json(ChatResponse {
         message: format!("agent reply: {}", req.message),
@@ -140,6 +151,12 @@ pub(crate) async fn v1_chat_completions(
         .find(|msg| msg.role == "user")
         .map(|msg| msg.content.clone())
         .unwrap_or_else(|| "hello".to_string());
+
+    if let Some(reason) = check_perplexity(&last_user, &state.perplexity_filter) {
+        tracing::warn!(reason = %reason, "gateway chat_completions blocked by perplexity filter");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let model = req.model.unwrap_or_else(|| "gpt-4o-mini".to_string());
 
     Ok(Json(ChatCompletionsResponse {

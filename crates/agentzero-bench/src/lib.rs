@@ -68,9 +68,7 @@ impl Tool for EchoTool {
 }
 
 fn bench_ctx() -> ToolContext {
-    ToolContext {
-        workspace_root: ".".to_string(),
-    }
+    ToolContext::new(".".to_string())
 }
 
 pub async fn run_core_loop_iteration(message: &str) -> anyhow::Result<AssistantMessage> {

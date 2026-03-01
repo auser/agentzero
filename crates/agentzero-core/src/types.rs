@@ -10,16 +10,24 @@ pub struct AgentConfig {
     pub memory_window_size: usize,
     pub max_prompt_chars: usize,
     pub hooks: HookPolicy,
+    pub parallel_tools: bool,
+    pub loop_detection_no_progress_threshold: usize,
+    pub loop_detection_ping_pong_cycles: usize,
+    pub loop_detection_failure_streak: usize,
 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            max_tool_iterations: 4,
+            max_tool_iterations: 20,
             request_timeout_ms: 30_000,
-            memory_window_size: 8,
+            memory_window_size: 50,
             max_prompt_chars: 8_000,
             hooks: HookPolicy::default(),
+            parallel_tools: false,
+            loop_detection_no_progress_threshold: 3,
+            loop_detection_ping_pong_cycles: 2,
+            loop_detection_failure_streak: 3,
         }
     }
 }
@@ -29,6 +37,10 @@ pub struct HookPolicy {
     pub enabled: bool,
     pub timeout_ms: u64,
     pub fail_closed: bool,
+    pub default_mode: HookFailureMode,
+    pub low_tier_mode: HookFailureMode,
+    pub medium_tier_mode: HookFailureMode,
+    pub high_tier_mode: HookFailureMode,
 }
 
 impl Default for HookPolicy {
@@ -37,8 +49,26 @@ impl Default for HookPolicy {
             enabled: false,
             timeout_ms: 250,
             fail_closed: false,
+            default_mode: HookFailureMode::Warn,
+            low_tier_mode: HookFailureMode::Ignore,
+            medium_tier_mode: HookFailureMode::Warn,
+            high_tier_mode: HookFailureMode::Block,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookFailureMode {
+    Block,
+    Warn,
+    Ignore,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookRiskTier {
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +89,20 @@ pub struct ChatResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolContext {
     pub workspace_root: String,
+    #[serde(default)]
+    pub allow_sensitive_file_reads: bool,
+    #[serde(default)]
+    pub allow_sensitive_file_writes: bool,
+}
+
+impl ToolContext {
+    pub fn new(workspace_root: String) -> Self {
+        Self {
+            workspace_root,
+            allow_sensitive_file_reads: false,
+            allow_sensitive_file_writes: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

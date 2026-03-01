@@ -1,0 +1,169 @@
+---
+import "../styles/global.css";
+import "../styles/landing.css";
+
+const base = import.meta.env.BASE_URL;
+
+const commands = [
+  { cmd: "agentzero onboard --interactive", hint: "Generate config and credentials" },
+  { cmd: 'agentzero agent -m "hello"', hint: "Run the agent loop" },
+  { cmd: "agentzero gateway", hint: "Start the HTTP gateway" },
+  { cmd: "agentzero doctor", hint: "Validate environment health" },
+];
+
+const features = [
+  { title: "Secure by Default", desc: "Allowlists, policy gates, encrypted storage, and audit logging are baseline." },
+  { title: "Trait-Driven Core", desc: "Providers, memory, tools, and channels are swappable through interfaces." },
+  { title: "No Lock-In", desc: "OpenAI-compatible providers, SQLite or Turso memory, pluggable everything." },
+  { title: "Lean Runtime", desc: "Single-process CLI with minimal dependencies and fast cold starts." },
+  { title: "Plugin Sandbox", desc: "WASM plugins run in a bounded sandbox with integrity verification." },
+  { title: "Deploy Anywhere", desc: "Native binary, no container required. Linux, macOS, Windows." },
+];
+
+const steps = [
+  { num: "01", title: "Install", cmd: "cargo install agentzero", desc: "Single binary, no runtime dependencies." },
+  { num: "02", title: "Onboard", cmd: "agentzero onboard --interactive", desc: "Interactive wizard writes agentzero.toml." },
+  { num: "03", title: "Run Agent", cmd: 'agentzero agent -m "hello"', desc: "Send a message through the agent loop." },
+  { num: "04", title: "Start Gateway", cmd: "agentzero gateway", desc: "HTTP gateway with health, webhook, and pairing." },
+];
+
+const metrics = [
+  { value: "34", label: "Crates" },
+  { value: "37+", label: "Commands" },
+  { value: "6", label: "Quality Gates" },
+  { value: "100%", label: "Rust" },
+];
+
+const pillars = [
+  { title: "Interfaces", items: ["Provider trait", "MemoryStore trait", "Tool trait", "Channel trait"] },
+  { title: "Runtime Core", items: ["Agent orchestrator", "Config + policy", "Security + redaction", "Audit trail"] },
+  { title: "Pluggable Traits", items: ["WASM plugins", "MCP tools", "Multiple providers", "SQLite / Turso"] },
+];
+---
+
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentZero — Lightweight Rust Agent Runtime</title>
+    <meta name="description" content="A security-first agent runtime and CLI. 100% Rust. Trait-driven. Deploy anywhere." />
+    <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+  </head>
+  <body class="az-page">
+    <nav class="az-nav">
+      <div class="az-nav-inner">
+        <a href={base} class="az-logo">AgentZero</a>
+        <div class="az-nav-links">
+          <a href="#features">Features</a>
+          <a href="#how-it-works">How It Works</a>
+          <a href="#architecture">Architecture</a>
+          <a href={`${base}overview/`} class="az-nav-docs">Docs</a>
+          <a href="https://github.com/auser/agentzero" class="az-nav-gh" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </div>
+    </nav>
+
+    <main>
+      <!-- Hero -->
+      <section class="az-hero">
+        <div class="az-hero-inner">
+          <div class="az-hero-text">
+            <p class="az-eyebrow">AGENT RUNTIME &amp; CLI</p>
+            <h1>Lightweight. Secure.<br />Modular. <span class="az-accent">100% Rust.</span></h1>
+            <p class="az-lead">A security-first agent runtime with clean crate boundaries and test-driven delivery.</p>
+            <p class="az-sub">Deploy anywhere. Swap anything.</p>
+            <div class="az-hero-actions">
+              <a href={`${base}overview/`} class="az-btn az-btn-primary">Read the docs</a>
+              <a href="https://github.com/auser/agentzero" class="az-btn az-btn-secondary" target="_blank" rel="noopener">GitHub</a>
+            </div>
+          </div>
+          <aside class="az-command-lane">
+            <h2>Runtime commands</h2>
+            <ul>
+              {commands.map((c) => (
+                <li>
+                  <code>{c.cmd}</code>
+                  <span>{c.hint}</span>
+                </li>
+              ))}
+            </ul>
+          </aside>
+        </div>
+      </section>
+
+      <!-- Metrics -->
+      <section class="az-metrics">
+        {metrics.map((m) => (
+          <article>
+            <p class="az-metric-value">{m.value}</p>
+            <p class="az-metric-label">{m.label}</p>
+          </article>
+        ))}
+      </section>
+
+      <!-- Features -->
+      <section id="features" class="az-features">
+        <h2>Built for production</h2>
+        <div class="az-features-grid">
+          {features.map((f) => (
+            <article>
+              <h3>{f.title}</h3>
+              <p>{f.desc}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <!-- How It Works -->
+      <section id="how-it-works" class="az-steps">
+        <h2>How it works</h2>
+        <div class="az-steps-grid">
+          {steps.map((s) => (
+            <article>
+              <span class="az-step-num">{s.num}</span>
+              <h3>{s.title}</h3>
+              <code>{s.cmd}</code>
+              <p>{s.desc}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <!-- Architecture -->
+      <section id="architecture" class="az-arch">
+        <h2>Modular architecture</h2>
+        <div class="az-arch-grid">
+          {pillars.map((p) => (
+            <article>
+              <h3>{p.title}</h3>
+              <ul>
+                {p.items.map((item) => <li>{item}</li>)}
+              </ul>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <!-- CTA -->
+      <section class="az-cta">
+        <h2>Take control of your AI agents</h2>
+        <p>Secure. Modular. Yours to extend.</p>
+        <div class="az-cta-actions">
+          <a href={`${base}overview/`} class="az-btn az-btn-primary">Get started</a>
+          <a href="https://github.com/auser/agentzero" class="az-btn az-btn-secondary" target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="az-footer">
+      <div class="az-footer-inner">
+        <p class="az-footer-brand">AgentZero</p>
+        <div class="az-footer-links">
+          <a href={`${base}overview/`}>Documentation</a>
+          <a href="https://github.com/auser/agentzero" target="_blank" rel="noopener">GitHub</a>
+        </div>
+        <p class="az-footer-copy">&copy; 2026 AgentZero contributors</p>
+      </div>
+    </footer>
+  </body>
+</html>

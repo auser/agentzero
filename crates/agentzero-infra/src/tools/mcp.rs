@@ -391,9 +391,7 @@ mod tests {
         let result = tool
             .execute(
                 r#"{"server":"missing","tool":"read_file","arguments":{}}"#,
-                &ToolContext {
-                    workspace_root: ".".to_string(),
-                },
+                &ToolContext::new(".".to_string()),
             )
             .await;
 

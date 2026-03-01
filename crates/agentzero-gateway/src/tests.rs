@@ -115,11 +115,11 @@ async fn websocket_route_requires_upgrade_headers_negative_path() {
 }
 
 #[tokio::test]
-async fn webhook_echo_channel_returns_delivery_success_path() {
+async fn webhook_cli_channel_returns_delivery_success_path() {
     let app = build_router(GatewayState::test_with_bearer(None));
     let request = Request::builder()
         .method("POST")
-        .uri("/v1/webhook/echo")
+        .uri("/v1/webhook/cli")
         .header("content-type", "application/json")
         .body(Body::from(json!({"message": "hello"}).to_string()))
         .expect("request should build");
@@ -140,7 +140,7 @@ async fn webhook_echo_channel_returns_delivery_success_path() {
     assert_eq!(json["accepted"], serde_json::Value::Bool(true));
     assert_eq!(
         json["channel"],
-        serde_json::Value::String("echo".to_string())
+        serde_json::Value::String("cli".to_string())
     );
 }
 

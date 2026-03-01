@@ -1,388 +1,249 @@
+use crate::cli::DoctorCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_config::{load, load_env_var};
-use agentzero_providers::find_provider;
+use agentzero_providers::{find_models_for_provider, supported_providers};
+use agentzero_storage::EncryptedJsonStore;
 use anyhow::Context;
 use async_trait::async_trait;
-use console::style;
-use std::collections::BTreeSet;
+use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::fs;
-use std::io::{self, Write};
 use std::path::Path;
-use std::process::Command;
 
 pub struct DoctorCommand;
 
 #[async_trait]
 impl AgentZeroCommand for DoctorCommand {
-    type Options = ();
+    type Options = DoctorCommands;
 
-    async fn run(ctx: &CommandContext, _opts: Self::Options) -> anyhow::Result<()> {
-        let report = collect_report(ctx, &run_command);
-        let mut stdout = io::stdout();
-        render_report(&report, &mut stdout)?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Severity {
-    Ok,
-    Warn,
-    Error,
-}
-
-#[derive(Debug, Clone)]
-struct Check {
-    section: &'static str,
-    severity: Severity,
-    message: String,
-}
-
-#[derive(Debug, Default)]
-struct DoctorReport {
-    checks: Vec<Check>,
-}
-
-impl DoctorReport {
-    fn ok(&mut self, section: &'static str, message: impl Into<String>) {
-        self.checks.push(Check {
-            section,
-            severity: Severity::Ok,
-            message: message.into(),
-        });
-    }
-
-    fn warn(&mut self, section: &'static str, message: impl Into<String>) {
-        self.checks.push(Check {
-            section,
-            severity: Severity::Warn,
-            message: message.into(),
-        });
-    }
-
-    fn error(&mut self, section: &'static str, message: impl Into<String>) {
-        self.checks.push(Check {
-            section,
-            severity: Severity::Error,
-            message: message.into(),
-        });
-    }
-
-    fn counts(&self) -> (usize, usize, usize) {
-        let mut ok = 0usize;
-        let mut warnings = 0usize;
-        let mut errors = 0usize;
-        for check in &self.checks {
-            match check.severity {
-                Severity::Ok => ok += 1,
-                Severity::Warn => warnings += 1,
-                Severity::Error => errors += 1,
-            }
+    async fn run(ctx: &CommandContext, opts: Self::Options) -> anyhow::Result<()> {
+        match opts {
+            DoctorCommands::Models {
+                provider,
+                use_cache,
+            } => run_models_probe(ctx, provider.as_deref(), use_cache),
+            DoctorCommands::Traces {
+                id,
+                event,
+                contains,
+                limit,
+            } => run_traces_query(
+                ctx,
+                id.as_deref(),
+                event.as_deref(),
+                contains.as_deref(),
+                limit,
+            ),
         }
-        (ok, warnings, errors)
     }
 }
 
-fn collect_report(
+fn run_models_probe(
     ctx: &CommandContext,
-    run: &impl Fn(&str, &[&str]) -> anyhow::Result<String>,
-) -> DoctorReport {
-    let mut report = DoctorReport::default();
-    collect_config_checks(ctx, &mut report);
-    collect_workspace_checks(ctx, run, &mut report);
-    collect_daemon_checks(ctx, &mut report);
-    collect_environment_checks(run, &mut report);
-    collect_cli_tool_checks(run, &mut report);
-    report
-}
-
-fn collect_config_checks(ctx: &CommandContext, report: &mut DoctorReport) {
-    let config_path = &ctx.config_path;
-    if config_path.exists() {
-        report.ok("config", format!("config file: {}", config_path.display()));
+    provider_filter: Option<&str>,
+    use_cache: bool,
+) -> anyhow::Result<()> {
+    let mut providers = if let Some(provider) = provider_filter {
+        vec![provider.trim().to_string()]
     } else {
-        report.error(
-            "config",
-            format!("config file not found: {}", config_path.display()),
-        );
-    }
+        supported_providers()
+            .iter()
+            .map(|provider| provider.id.to_string())
+            .collect::<Vec<_>>()
+    };
 
-    match load(config_path) {
-        Ok(config) => {
-            let provider = config.provider.kind.as_str();
-            if find_provider(provider).is_some() {
-                report.ok("config", format!("provider `{provider}` is valid"));
-            } else {
-                report.warn(
-                    "config",
-                    format!("provider `{provider}` is not in known defaults"),
-                );
-            }
+    providers.sort();
+    providers.dedup();
 
-            match load_env_var(config_path, "OPENAI_API_KEY") {
-                Ok(Some(_)) => report.ok("config", "OPENAI_API_KEY is set"),
-                Ok(None) => report.warn(
-                    "config",
-                    "OPENAI_API_KEY is not set (may rely on environment-specific defaults)",
-                ),
-                Err(err) => report.warn("config", format!("failed to load OPENAI_API_KEY: {err}")),
-            }
+    println!("Model catalog diagnostics");
+    println!();
+    println!("  {:<20} {:<10} MODELS", "PROVIDER", "STATUS");
+    println!("  {:<20} {:<10} ------", "--------", "------");
 
-            if config.provider.model.trim().is_empty() {
-                report.error("config", "provider.model is empty");
-            } else {
-                report.ok(
-                    "config",
-                    format!("default model: {}", config.provider.model.trim()),
-                );
-            }
+    let mut ok = 0usize;
+    let mut warn = 0usize;
+    let mut err = 0usize;
 
-            report.ok(
-                "config",
-                format!(
-                    "memory backend: {} ({})",
-                    config.memory.backend, config.memory.sqlite_path
-                ),
-            );
-        }
-        Err(err) => report.error("config", format!("config load failed: {err}")),
-    }
-}
-
-fn collect_workspace_checks(
-    ctx: &CommandContext,
-    run: &impl Fn(&str, &[&str]) -> anyhow::Result<String>,
-    report: &mut DoctorReport,
-) {
-    let workspace = &ctx.workspace_root;
-    if workspace.exists() {
-        report.ok(
-            "workspace",
-            format!("directory exists: {}", workspace.display()),
-        );
-    } else {
-        report.error(
-            "workspace",
-            format!("directory missing: {}", workspace.display()),
-        );
-    }
-
-    match probe_writable(workspace) {
-        Ok(()) => report.ok("workspace", "directory is writable"),
-        Err(err) => report.error("workspace", format!("directory is not writable: {err}")),
-    }
-
-    let required_files = ["AGENTS.md", "specs/SPRINT.md"];
-    for file in required_files {
-        if workspace.join(file).exists() {
-            report.ok("workspace", format!("{file} present"));
+    for provider in providers {
+        let outcome = if use_cache {
+            probe_models_from_cache(&ctx.data_dir, &provider)
         } else {
-            report.warn("workspace", format!("{file} missing"));
-        }
-    }
+            probe_models_live_catalog(&provider)
+        };
 
-    match disk_space_available_mb(workspace, run) {
-        Ok(available) => report.ok("workspace", format!("disk space: {available} MB available")),
-        Err(err) => report.warn(
-            "workspace",
-            format!(
-                "disk space check unavailable: {}",
-                truncate_line(&err.to_string(), 80)
-            ),
-        ),
-    }
-}
-
-fn collect_daemon_checks(ctx: &CommandContext, report: &mut DoctorReport) {
-    let config_dir = ctx
-        .config_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-    let daemon_state = config_dir.join("daemon_state.json");
-    if daemon_state.exists() {
-        report.ok(
-            "daemon",
-            format!("state file present: {}", daemon_state.display()),
-        );
-    } else {
-        report.error(
-            "daemon",
-            format!(
-                "state file not found: {} (is the daemon running?)",
-                daemon_state.display()
-            ),
-        );
-    }
-}
-
-fn collect_environment_checks(
-    run: &impl Fn(&str, &[&str]) -> anyhow::Result<String>,
-    report: &mut DoctorReport,
-) {
-    match run("git", &["--version"]) {
-        Ok(value) => report.ok("environment", format!("git: {}", truncate_line(&value, 80))),
-        Err(err) => report.warn("environment", format!("git unavailable: {err}")),
-    }
-
-    if std::env::var("SHELL")
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
-    {
-        report.ok("environment", "shell env is set");
-    } else {
-        report.warn("environment", "SHELL env is not set");
-    }
-
-    if std::env::var("HOME")
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
-    {
-        report.ok("environment", "home directory env is set");
-    } else {
-        report.warn("environment", "HOME env is not set");
-    }
-}
-
-fn collect_cli_tool_checks(
-    run: &impl Fn(&str, &[&str]) -> anyhow::Result<String>,
-    report: &mut DoctorReport,
-) {
-    let tools = [
-        ("git", "Version Control", "--version"),
-        ("python3", "Language", "--version"),
-        ("node", "Language", "--version"),
-        ("npm", "Package Manager", "--version"),
-        ("cargo", "Build", "--version"),
-        ("rustc", "Language", "--version"),
-    ];
-
-    let mut discovered = 0usize;
-    for (cmd, label, version_flag) in tools {
-        match run(cmd, &[version_flag]) {
-            Ok(value) => {
-                report.ok(
-                    "cli-tools",
-                    format!("{cmd} ({label}) - {}", truncate_line(&value, 100)),
-                );
-                discovered += 1;
+        match outcome {
+            ModelProbeOutcome::Ok(count) => {
+                ok += 1;
+                println!("  {:<20} {:<10} {}", provider, "ok", count);
             }
-            Err(err) => {
-                report.warn("cli-tools", format!("{cmd} ({label}) missing: {err}"));
+            ModelProbeOutcome::Warn(detail) => {
+                warn += 1;
+                println!("  {:<20} {:<10} {}", provider, "warn", detail);
+            }
+            ModelProbeOutcome::Error(detail) => {
+                err += 1;
+                println!("  {:<20} {:<10} {}", provider, "error", detail);
             }
         }
     }
-    report.ok("cli-tools", format!("{discovered} CLI tools discovered"));
-}
 
-fn probe_writable(path: &Path) -> anyhow::Result<()> {
-    let probe = path.join(".agentzero-doctor-write-check");
-    fs::write(&probe, b"ok").with_context(|| format!("cannot create {}", probe.display()))?;
-    fs::remove_file(&probe).with_context(|| format!("cannot remove {}", probe.display()))?;
+    println!();
+    println!("Summary: {ok} ok, {warn} warnings, {err} errors");
+    if err > 0 {
+        println!("Tip: run `agentzero models refresh --provider <name>` to prime model cache.");
+    }
+
     Ok(())
 }
 
-fn disk_space_available_mb(
-    path: &Path,
-    run: &impl Fn(&str, &[&str]) -> anyhow::Result<String>,
-) -> anyhow::Result<u64> {
-    let output = run("df", &["-k", path.to_string_lossy().as_ref()])?;
-    let line = output
-        .lines()
-        .nth(1)
-        .context("missing df data line in output")?;
-    let columns = line.split_whitespace().collect::<Vec<_>>();
-    if columns.len() < 4 {
-        anyhow::bail!("unexpected df output format");
-    }
-    let available_kb = columns[3]
-        .parse::<u64>()
-        .context("failed to parse available KB from df output")?;
-    Ok(available_kb / 1024)
+enum ModelProbeOutcome {
+    Ok(usize),
+    Warn(String),
+    Error(String),
 }
 
-fn run_command(cmd: &str, args: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new(cmd)
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to execute `{cmd}`"))?;
+fn probe_models_live_catalog(provider: &str) -> ModelProbeOutcome {
+    match find_models_for_provider(provider) {
+        Some((_resolved, models)) if !models.is_empty() => ModelProbeOutcome::Ok(models.len()),
+        Some((_resolved, _)) => ModelProbeOutcome::Warn("empty model list".to_string()),
+        None => ModelProbeOutcome::Error("unknown provider".to_string()),
+    }
+}
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "`{cmd}` exited with status {}: {}",
-            output.status,
-            truncate_line(stderr.trim(), 80)
+fn probe_models_from_cache(data_dir: &Path, provider: &str) -> ModelProbeOutcome {
+    let store =
+        match EncryptedJsonStore::in_config_dir(data_dir, &format!("models/{provider}.json")) {
+            Ok(store) => store,
+            Err(err) => return ModelProbeOutcome::Error(format!("cache open failed: {err}")),
+        };
+
+    let payload = match store.load_optional::<CachedModelCatalog>() {
+        Ok(Some(payload)) => payload,
+        Ok(None) => return ModelProbeOutcome::Error("cache missing".to_string()),
+        Err(err) => return ModelProbeOutcome::Error(format!("cache parse failed: {err}")),
+    };
+
+    if payload.models.is_empty() {
+        ModelProbeOutcome::Warn("cache empty".to_string())
+    } else {
+        ModelProbeOutcome::Ok(payload.models.len())
+    }
+}
+
+fn run_traces_query(
+    ctx: &CommandContext,
+    id_filter: Option<&str>,
+    event_filter: Option<&str>,
+    contains_filter: Option<&str>,
+    limit: usize,
+) -> anyhow::Result<()> {
+    let limit = limit.max(1);
+    let contains_filter = contains_filter.map(|value| value.to_ascii_lowercase());
+
+    let mut events = load_trace_events(ctx).context("failed to load trace events")?;
+
+    events.retain(|event| {
+        if let Some(id) = id_filter {
+            if event.id.as_deref() != Some(id) {
+                return false;
+            }
+        }
+
+        if let Some(event_name) = event_filter {
+            if event.event.as_deref() != Some(event_name) {
+                return false;
+            }
+        }
+
+        if let Some(needle) = &contains_filter {
+            let message_hit = event
+                .message
+                .as_ref()
+                .map(|text| text.to_ascii_lowercase().contains(needle))
+                .unwrap_or(false);
+            let payload_hit = event
+                .payload
+                .as_ref()
+                .and_then(|value| serde_json::to_string(value).ok())
+                .map(|text| text.to_ascii_lowercase().contains(needle))
+                .unwrap_or(false);
+            if !message_hit && !payload_hit {
+                return false;
+            }
+        }
+
+        true
+    });
+
+    events.sort_by_key(|event| Reverse(event.ts_epoch_secs.unwrap_or(0)));
+
+    println!("Trace events");
+    println!();
+
+    if events.is_empty() {
+        println!("  no trace events found");
+        return Ok(());
+    }
+
+    for event in events.into_iter().take(limit) {
+        println!(
+            "- id={} event={} ts={}",
+            event.id.as_deref().unwrap_or("(none)"),
+            event.event.as_deref().unwrap_or("(none)"),
+            event
+                .ts_epoch_secs
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "(none)".to_string())
         );
+        if let Some(message) = event.message {
+            println!("  message: {message}");
+        }
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !stdout.is_empty() {
-        return Ok(stdout);
-    }
-
-    Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    Ok(())
 }
 
-fn truncate_line(value: &str, max_len: usize) -> String {
-    let trimmed = value.trim();
-    if trimmed.chars().count() <= max_len {
-        return trimmed.to_string();
-    }
-    let mut out = trimmed.chars().take(max_len).collect::<String>();
-    out.push_str("...");
-    out
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedModelCatalog {
+    provider: String,
+    models: Vec<String>,
+    updated_at_epoch_secs: u64,
 }
 
-fn render_report(report: &DoctorReport, writer: &mut dyn Write) -> anyhow::Result<()> {
-    writeln!(writer, "AgentZero Doctor (enhanced)").context("failed to write output")?;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TraceEvent {
+    id: Option<String>,
+    event: Option<String>,
+    message: Option<String>,
+    payload: Option<serde_json::Value>,
+    ts_epoch_secs: Option<u64>,
+}
 
-    let order = ["config", "workspace", "daemon", "environment", "cli-tools"];
-    let sections = report
-        .checks
-        .iter()
-        .map(|check| check.section)
-        .collect::<BTreeSet<_>>();
+fn load_trace_events(ctx: &CommandContext) -> anyhow::Result<Vec<TraceEvent>> {
+    let path = ctx.data_dir.join("trace_events.jsonl");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
 
-    for section in order {
-        if !sections.contains(section) {
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read trace file at {}", path.display()))?;
+    let mut out = Vec::new();
+
+    for (idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             continue;
         }
-        writeln!(writer, "\n[{section}]").context("failed to write output")?;
-        for check in report
-            .checks
-            .iter()
-            .filter(|check| check.section == section)
-        {
-            let (symbol, message) = match check.severity {
-                Severity::Ok => (style("✅").green().bold(), style(&check.message).white()),
-                Severity::Warn => (style("⚠️").yellow().bold(), style(&check.message).yellow()),
-                Severity::Error => (style("❌").red().bold(), style(&check.message).red()),
-            };
-            writeln!(writer, "{} {}", symbol, message).context("failed to write output")?;
-        }
+        let parsed: TraceEvent = serde_json::from_str(trimmed)
+            .with_context(|| format!("invalid trace event JSON at line {}", idx + 1))?;
+        out.push(parsed);
     }
 
-    let (ok, warnings, errors) = report.counts();
-    writeln!(
-        writer,
-        "\nSummary: {ok} ok, {warnings} warnings, {errors} errors"
-    )
-    .context("failed to write output")?;
-    if errors > 0 {
-        writeln!(
-            writer,
-            "{}",
-            style("Fix the errors above, then run `agentzero doctor` again.").yellow()
-        )
-        .context("failed to write output")?;
-    }
-    Ok(())
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::collect_report;
+    use super::{load_trace_events, probe_models_from_cache, run_traces_query, ModelProbeOutcome};
     use crate::command_core::CommandContext;
     use std::fs;
     use std::path::PathBuf;
@@ -397,79 +258,69 @@ mod tests {
             .expect("time should be after epoch")
             .as_nanos();
         let seq = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("agentzero-doctor-{nanos}-{seq}"));
+        let dir = std::env::temp_dir().join(format!("agentzero-doctor-cli-{nanos}-{seq}"));
         fs::create_dir_all(&dir).expect("temp dir should be created");
         dir
     }
 
-    fn fake_run_command(cmd: &str, _args: &[&str]) -> anyhow::Result<String> {
-        if cmd == "df" {
-            return Ok(
-                "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/mock 2048 1024 1024 50% /"
-                    .to_string(),
-            );
-        }
-        Ok(format!("{cmd} version 1.0.0"))
-    }
-
     #[test]
-    fn collect_report_flags_missing_config_as_error() {
-        let workspace = temp_dir();
-        fs::write(workspace.join("AGENTS.md"), "rules").expect("should write AGENTS.md");
-        fs::create_dir_all(workspace.join("specs")).expect("should create specs");
-        fs::write(workspace.join("specs/SPRINT.md"), "sprint").expect("should write sprint");
-
-        let ctx = CommandContext {
-            workspace_root: workspace.clone(),
-            data_dir: workspace.clone(),
-            config_path: workspace.join("missing.toml"),
-        };
-
-        let report = collect_report(&ctx, &fake_run_command);
-        assert!(report
-            .checks
-            .iter()
-            .any(|check| check.section == "config"
-                && check.message.contains("config file not found")));
-        assert!(report.checks.iter().any(
-            |check| check.section == "daemon" && check.message.contains("state file not found")
-        ));
-
-        fs::remove_dir_all(workspace).expect("temp dir should be removed");
-    }
-
-    #[test]
-    fn collect_report_emits_workspace_and_tool_successes_when_config_is_valid() {
-        let workspace = temp_dir();
-        fs::write(workspace.join("AGENTS.md"), "rules").expect("should write AGENTS.md");
-        fs::create_dir_all(workspace.join("specs")).expect("should create specs");
-        fs::write(workspace.join("specs/SPRINT.md"), "sprint").expect("should write sprint");
-        fs::write(workspace.join(".env"), "OPENAI_API_KEY=sk-test\n").expect("should write .env");
+    fn probe_models_from_cache_success_path() {
+        let dir = temp_dir();
+        let models_dir = dir.join("models");
+        fs::create_dir_all(&models_dir).expect("models dir should exist");
         fs::write(
-            workspace.join("agentzero.toml"),
-            "[provider]\nkind=\"openai\"\nbase_url=\"https://api.openai.com\"\nmodel=\"gpt-4o-mini\"\n\n[memory]\nbackend=\"sqlite\"\nsqlite_path=\"./agentzero.db\"\n",
+            models_dir.join("openai.json"),
+            r#"{"provider":"openai","models":["gpt-4o-mini"],"updated_at_epoch_secs":1}"#,
         )
-        .expect("should write config");
-        fs::write(workspace.join("daemon_state.json"), "{}").expect("should write daemon state");
+        .expect("cache should be written");
+
+        let outcome = probe_models_from_cache(&dir, "openai");
+        assert!(matches!(outcome, ModelProbeOutcome::Ok(1)));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn probe_models_from_cache_missing_file_negative_path() {
+        let dir = temp_dir();
+        let outcome = probe_models_from_cache(&dir, "openai");
+        assert!(matches!(outcome, ModelProbeOutcome::Error(_)));
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn load_trace_events_parses_jsonl_success_path() {
+        let dir = temp_dir();
+        fs::write(
+            dir.join("trace_events.jsonl"),
+            "{\"id\":\"1\",\"event\":\"tool\",\"message\":\"ok\",\"ts_epoch_secs\":10}\n",
+        )
+        .expect("trace file should be written");
 
         let ctx = CommandContext {
-            workspace_root: workspace.clone(),
-            data_dir: workspace.clone(),
-            config_path: workspace.join("agentzero.toml"),
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
         };
 
-        let report = collect_report(&ctx, &fake_run_command);
-        assert!(report.checks.iter().any(|check| check.section == "config"
-            && check.message.contains("provider `openai` is valid")));
-        assert!(report.checks.iter().any(
-            |check| check.section == "workspace" && check.message.contains("directory exists")
-        ));
-        assert!(report
-            .checks
-            .iter()
-            .any(|check| check.section == "cli-tools"
-                && check.message.contains("CLI tools discovered")));
+        let events = load_trace_events(&ctx).expect("trace load should succeed");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id.as_deref(), Some("1"));
 
-        fs::remove_dir_all(workspace).expect("temp dir should be removed");
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn run_traces_query_handles_no_file_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        run_traces_query(&ctx, None, None, None, 20).expect("traces query should succeed");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
 }

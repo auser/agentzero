@@ -140,9 +140,14 @@ impl AgentZeroCommand for AuthCommand {
                 profile,
                 provider,
                 token,
+                auth_kind: _auth_kind,
                 activate,
             } => {
-                manager.paste_token(&profile, &provider, &token, activate)?;
+                let value = match token {
+                    Some(value) => value,
+                    None => read_plain_input("Paste setup token / auth token")?,
+                };
+                manager.paste_token(&profile, &provider, &value, activate)?;
                 println!(
                     "saved setup token for profile `{}` provider `{}`{}",
                     profile,
@@ -242,11 +247,19 @@ impl AgentZeroCommand for AuthCommand {
                     println!("{}", render_auth_status_text(&status, &profiles));
                 }
             }
-            AuthCommands::Use { profile } => {
+            AuthCommands::Use { provider, profile } => {
+                let profiles = manager.list_profiles()?;
+                let matched = profiles.iter().any(|entry| {
+                    entry.name.eq_ignore_ascii_case(&profile)
+                        && entry.provider.eq_ignore_ascii_case(&provider)
+                });
+                if !matched {
+                    bail!("auth profile not found for provider={provider} profile={profile}");
+                }
                 manager
                     .use_profile(&profile)
                     .with_context(|| format!("failed to activate profile `{profile}`"))?;
-                println!("active auth profile set to `{profile}`");
+                println!("active auth profile set to `{profile}` for provider `{provider}`");
             }
         }
         Ok(())
@@ -638,12 +651,45 @@ mod tests {
         let err = AuthCommand::run(
             &ctx,
             AuthCommands::Use {
+                provider: "openai-codex".to_string(),
                 profile: "missing".to_string(),
             },
         )
         .await
         .expect_err("using missing profile should fail");
-        assert!(err.to_string().contains("failed to activate profile"));
+        assert!(err.to_string().contains("auth profile not found"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn auth_command_use_with_provider_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        let manager =
+            agentzero_auth::AuthManager::in_config_dir(&dir).expect("manager should construct");
+        manager
+            .login("default", "openai-codex", "tok", true)
+            .expect("seed login should succeed");
+
+        AuthCommand::run(
+            &ctx,
+            AuthCommands::Use {
+                provider: "openai-codex".to_string(),
+                profile: "default".to_string(),
+            },
+        )
+        .await
+        .expect("auth use should succeed");
+
+        let status = manager.status().expect("status should load");
+        assert_eq!(status.active_profile.as_deref(), Some("default"));
+        assert_eq!(status.active_provider.as_deref(), Some("openai-codex"));
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }

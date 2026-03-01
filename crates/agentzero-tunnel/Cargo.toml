@@ -1,0 +1,12 @@
+[package]
+name = "agentzero-tunnel"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+agentzero-storage = { workspace = true }
+anyhow.workspace = true
+serde.workspace = true
+thiserror.workspace = true

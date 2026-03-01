@@ -7,22 +7,34 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Onboard {
+            interactive,
+            force,
+            channels_only,
+            api_key,
             yes,
             provider,
             base_url,
             model,
+            memory,
             memory_path,
+            no_totp,
             allowed_root,
             allowed_commands,
         } => {
             commands::onboard::OnboardCommand::run(
                 &ctx,
                 commands::onboard::OnboardOptions {
+                    interactive,
+                    force,
+                    channels_only,
+                    api_key,
                     yes,
                     provider,
                     base_url,
                     model,
+                    memory,
                     memory_path,
+                    no_totp,
                     allowed_root,
                     allowed_commands,
                 },
@@ -44,15 +56,24 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::Status { json } => {
-            commands::status::StatusCommand::run(&ctx, commands::status::StatusOptions { json })
-                .await
+        Commands::Daemon { host, port } => {
+            commands::daemon::DaemonCommand::run(
+                &ctx,
+                commands::daemon::DaemonOptions { host, port },
+            )
+            .await
         }
+        Commands::Status => commands::status::StatusCommand::run(&ctx, ()).await,
         Commands::Agent { message } => {
             commands::agent::AgentCommand::run(&ctx, commands::agent::AgentOptions { message })
                 .await
         }
         Commands::Auth { command } => commands::auth::AuthCommand::run(&ctx, command).await,
+        Commands::Cron { command } => commands::cron::CronCommand::run(&ctx, command).await,
+        Commands::Hooks { command } => commands::hooks::HooksCommand::run(&ctx, command).await,
+        Commands::Skill { command } => commands::skill::SkillCommand::run(&ctx, command).await,
+        Commands::Tunnel { command } => commands::tunnel::TunnelCommand::run(&ctx, command).await,
+        Commands::Plugin { command } => commands::plugin::PluginCommand::run(&ctx, command).await,
         Commands::Providers { json, no_color } => {
             commands::providers::ProvidersCommand::run(
                 &ctx,
@@ -60,6 +81,81 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::Doctor => commands::doctor::DoctorCommand::run(&ctx, ()).await,
+        Commands::Estop {
+            level,
+            domains,
+            tools,
+            require_otp,
+            command,
+        } => {
+            commands::estop::EstopCommand::run(
+                &ctx,
+                commands::estop::EstopOptions {
+                    level,
+                    domains,
+                    tools,
+                    require_otp,
+                    command,
+                },
+            )
+            .await
+        }
+        Commands::Channel { command } => {
+            commands::channel::ChannelCommand::run(&ctx, command).await
+        }
+        Commands::Integrations { command } => {
+            commands::integrations::IntegrationsCommand::run(&ctx, command).await
+        }
+        Commands::Models { command } => commands::models::ModelsCommand::run(&ctx, command).await,
+        Commands::Approval { command } => {
+            commands::approval::ApprovalCommand::run(&ctx, command).await
+        }
+        Commands::Identity { command } => {
+            commands::identity::IdentityCommand::run(&ctx, command).await
+        }
+        Commands::Coordination { command } => {
+            commands::coordination::CoordinationCommand::run(&ctx, command).await
+        }
+        Commands::Cost { command } => commands::cost::CostCommand::run(&ctx, command).await,
+        Commands::Goals { command } => commands::goals::GoalsCommand::run(&ctx, command).await,
+        Commands::Doctor { command } => commands::doctor::DoctorCommand::run(&ctx, command).await,
+        Commands::Service {
+            service_init: _service_init,
+            command,
+        } => commands::service::ServiceCommand::run(&ctx, command).await,
+        Commands::Dashboard => commands::dashboard::DashboardCommand::run(&ctx, ()).await,
+        Commands::Migrate { command } => commands::update::MigrateCommand::run(&ctx, command).await,
+        Commands::Update { check, command } => {
+            let resolved = command.unwrap_or_else(|| {
+                if check {
+                    crate::cli::UpdateCommands::Check {
+                        channel: "stable".to_string(),
+                        json: false,
+                    }
+                } else {
+                    crate::cli::UpdateCommands::Status { json: false }
+                }
+            });
+            commands::update::UpdateCommand::run(&ctx, resolved).await
+        }
+        Commands::Completions { shell } => {
+            commands::completions::CompletionsCommand::run(&ctx, shell).await
+        }
+        Commands::Config { command } => commands::config::ConfigCommand::run(&ctx, command).await,
+        Commands::Memory { command } => commands::memory::MemoryCommand::run(&ctx, command).await,
+        Commands::Rag { command } => commands::rag::RagCommand::run(&ctx, command).await,
+        Commands::Hardware { command } => {
+            commands::hardware::HardwareCommand::run(&ctx, command).await
+        }
+        Commands::Peripheral { command } => {
+            commands::peripheral::PeripheralCommand::run(&ctx, command).await
+        }
+        Commands::ProvidersQuota { provider, json } => {
+            commands::providers::ProvidersQuotaCommand::run(
+                &ctx,
+                commands::providers::ProvidersQuotaOptions { provider, json },
+            )
+            .await
+        }
     }
 }

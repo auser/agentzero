@@ -1,0 +1,118 @@
+---
+title: Overview
+description: AgentZero is a lightweight, Rust-first agent runtime and CLI built with strong module boundaries, security-first defaults, and test-driven delivery.
+---
+
+AgentZero is a lightweight, Rust-first agent runtime and CLI inspired by OpenClaw, built incrementally with strong module boundaries, security-first defaults, and test-driven delivery.
+
+## Why this project
+
+- Learn how to build an agent platform with clean crate boundaries.
+- Keep the runtime minimal and understandable.
+- Prioritize safety: scoped tools, allowlists, auditability, and documented threat model.
+
+## Workspace layout
+
+- `bin/agentzero`: thin binary entrypoint (`bins/cli.rs`) that calls `agentzero_cli::run()`
+- `crates/agentzero-cli`: CLI command parsing, dispatch, UX, and command implementations
+- `crates/agentzero-core`: core agent traits, orchestration, and shared domain types
+- `crates/agentzero-config`: typed config model, loader, and policy validation
+- `crates/agentzero-infra`: infrastructure adapters and tool wiring (currently transitional)
+- `crates/agentzero-memory`: unified memory backend crate (SQLite default + Turso/libsql via feature)
+- `crates/agentzero-providers`: provider catalog and OpenAI-compatible provider implementation
+- `crates/agentzero-tools`: filesystem/shell tool implementations
+- `crates/agentzero-gateway`: HTTP gateway service
+- `crates/agentzero-daemon`: daemon runtime state + lifecycle
+- `crates/agentzero-service`: service lifecycle state and operations
+- `crates/agentzero-health`: shared health/freshness assessment utilities
+- `crates/agentzero-heartbeat`: encrypted heartbeat persistence for runtime components
+- `crates/agentzero-doctor`: diagnostics collection/report model for doctor command
+- `crates/agentzero-cron`: scheduled task state and lifecycle operations
+- `crates/agentzero-hooks`: hook state and control operations
+- `crates/agentzero-cost`: cost tracking domain primitives
+- `crates/agentzero-coordination`: runtime coordination domain primitives
+- `crates/agentzero-goals`: goals domain primitives
+- `crates/agentzero-plugins`: plugin lifecycle + WASM runtime scaffolding
+- `crates/agentzero-skills`: skills lifecycle with embedded skillforge + SOP functionality
+- `crates/agentzero-rag`: local retrieval index + ingest/query primitives
+- `crates/agentzero-multimodal`: shared media-kind inference primitives
+- `crates/agentzero-hardware`: hardware discovery/introspection primitives
+- `crates/agentzero-peripherals`: peripheral registry lifecycle primitives
+- `crates/agentzero-security`: shared security policy + redaction utilities
+- `crates/agentzero-update`: migration + self-update flows and state model
+- `crates/agentzero-bench`: criterion benchmark suite
+- `crates/agentzero-common`: common helpers/types
+
+## Plugin packaging and install integrity
+
+`crates/agentzero-plugins` now includes a packaging/install pipeline with built-in integrity checks:
+
+- `package::package_plugin(...)` packages `manifest.json` + `.wasm` into a plugin archive.
+- Packaging always regenerates and writes a SHA-256 checksum for the wasm module.
+- `package::install_packaged_plugin(...)` validates manifest shape and verifies checksum before install.
+- Tampered packages fail closed on install (checksum mismatch).
+
+WASM runtime sandbox controls are also enforced in the same crate:
+
+- execution timeout limits
+- memory limits
+- host-call import allowlist validation
+
+## Quick start
+
+### 1. Prerequisites
+
+- Rust 1.80+
+- Cargo
+
+### 2. Build
+
+```bash
+cargo build
+```
+
+### 3. Run onboarding
+
+```bash
+cargo run -p agentzero -- onboard
+```
+
+This launches an interactive setup flow and writes `agentzero.toml`.
+
+### 4. Set your API key
+
+```bash
+export OPENAI_API_KEY="<your-key>"
+```
+
+### 5. Run commands
+
+```bash
+cargo run -p agentzero -- status
+cargo run -p agentzero -- doctor
+cargo run -p agentzero -- providers
+cargo run -p agentzero -- auth list
+cargo run -p agentzero -- agent -m "hello"
+cargo run -p agentzero -- gateway
+```
+
+## Security posture
+
+- Tool access is scoped and allowlist-driven.
+- Redaction utilities are centralized in `agentzero-security`.
+- Security requirements and threat model are tracked in:
+  - [Threat Model](/agentzero/security/threat-model/)
+  - [Dependency Policy](/agentzero/security/dependency-policy/)
+
+## Quality gates
+
+Recommended local checks:
+
+```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build -p agentzero --release
+scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 20000000
+scripts/verify-release-version.sh --version 0.1.0
+```

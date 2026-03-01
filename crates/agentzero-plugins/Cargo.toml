@@ -1,0 +1,19 @@
+[package]
+name = "agentzero-plugins"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+tar = "0.4"
+thiserror.workspace = true
+wasmtime = "30.0"
+
+[dev-dependencies]
+tempfile = "3"
+wat = "1"

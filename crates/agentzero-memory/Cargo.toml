@@ -1,0 +1,21 @@
+[package]
+name = "agentzero-memory"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+memory-turso = ["dep:libsql", "dep:tokio"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+agentzero-core = { workspace = true }
+rusqlite.workspace = true
+libsql = { version = "0.9.29", default-features = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio.workspace = true

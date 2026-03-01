@@ -10,12 +10,18 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
 
 pub struct OnboardOptions {
+    pub interactive: bool,
+    pub force: bool,
+    pub channels_only: bool,
+    pub api_key: Option<String>,
     /// Autoaccept all interactive questions
     pub yes: bool,
     pub provider: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,
+    pub memory: Option<String>,
     pub memory_path: Option<String>,
+    pub no_totp: bool,
     pub allowed_root: Option<String>,
     pub allowed_commands: Vec<String>,
 }
@@ -31,12 +37,23 @@ impl AgentZeroCommand for OnboardCommand {
         let mut stdout = io::stdout();
         let stdin = io::stdin();
         let resolved = resolve_onboard_config(&opts, |key| env::var(key).ok())?;
+        let _ = &opts.api_key;
+        let _ = opts.no_totp;
 
-        if stdin.is_terminal() && !opts.yes {
-            run_with_inquire(ctx, &path, &mut stdout, resolved)?;
+        if opts.channels_only {
+            writeln!(
+                stdout,
+                "channels-only flow is not implemented yet; running full onboarding instead"
+            )?;
+        }
+
+        let interactive = opts.interactive && stdin.is_terminal() && !opts.yes;
+
+        if interactive {
+            run_with_inquire(ctx, &path, &mut stdout, opts.force, resolved)?;
         } else {
             let mut reader = stdin.lock();
-            run_with_io(&path, &mut reader, &mut stdout, false, resolved)?;
+            run_with_io(&path, &mut reader, &mut stdout, false, opts.force, resolved)?;
         }
 
         Ok(())
@@ -56,9 +73,9 @@ struct OnboardConfig {
 impl Default for OnboardConfig {
     fn default() -> Self {
         Self {
-            provider: "openai".to_string(),
-            base_url: "https://api.openai.com".to_string(),
-            model: "gpt-4o-mini".to_string(),
+            provider: "openrouter".to_string(),
+            base_url: "https://openrouter.ai/api/v1".to_string(),
+            model: "anthropic/claude-sonnet-4-6".to_string(),
             memory_path: default_memory_path(),
             allowed_root: ".".to_string(),
             allowed_commands: vec![
@@ -203,6 +220,11 @@ fn resolve_onboard_config(
         .as_deref()
         .map(MemoryPathSpec::parse)
         .transpose()?;
+    let memory_backend_flag = opts
+        .memory
+        .as_deref()
+        .map(parse_memory_backend)
+        .transpose()?;
     let allowed_root_flag = opts
         .allowed_root
         .as_deref()
@@ -214,8 +236,12 @@ fn resolve_onboard_config(
     config.base_url = resolve_optional::<BaseUrlSpec>(base_url_flag, &get_env)?
         .unwrap_or_else(|| default_base_url(&config.provider).to_string());
     config.model = resolve_value::<ModelSpec>(model_flag, &get_env, config.model.clone())?;
+    let default_memory_path = memory_backend_flag
+        .as_deref()
+        .map(default_memory_path_for_backend)
+        .unwrap_or_else(|| config.memory_path.clone());
     config.memory_path =
-        resolve_value::<MemoryPathSpec>(memory_path_flag, &get_env, config.memory_path.clone())?;
+        resolve_value::<MemoryPathSpec>(memory_path_flag, &get_env, default_memory_path)?;
     config.allowed_root =
         resolve_value::<AllowedRootSpec>(allowed_root_flag, &get_env, config.allowed_root.clone())?;
     config.allowed_commands = resolve_value::<AllowedCommandsSpec>(
@@ -278,9 +304,27 @@ fn resolve_optional<S: OnboardOptionSpec>(
 fn parse_provider(raw: &str) -> anyhow::Result<String> {
     let value = raw.trim().to_ascii_lowercase();
     match value.as_str() {
-        "" => Ok("openai".to_string()),
+        "" => Ok("openrouter".to_string()),
         "openai" | "openrouter" | "anthropic" => Ok(value),
         _ => anyhow::bail!("unsupported provider: {value}"),
+    }
+}
+
+fn parse_memory_backend(raw: &str) -> anyhow::Result<String> {
+    let value = raw.trim().to_ascii_lowercase();
+    match value.as_str() {
+        "sqlite" | "lucid" | "markdown" | "none" => Ok(value),
+        _ => anyhow::bail!("unsupported memory backend: {value}"),
+    }
+}
+
+fn default_memory_path_for_backend(backend: &str) -> String {
+    match backend {
+        "sqlite" => default_memory_path(),
+        "markdown" => "./memory.md".to_string(),
+        "lucid" => "./memory.lucid".to_string(),
+        "none" => ":memory:".to_string(),
+        _ => default_memory_path(),
     }
 }
 
@@ -289,13 +333,16 @@ fn run_with_io(
     reader: &mut dyn BufRead,
     writer: &mut dyn Write,
     interactive: bool,
+    force: bool,
     seed: OnboardConfig,
 ) -> anyhow::Result<()> {
     if path.exists() {
         writeln!(writer, "Config already exists at {}", path.display())
             .context("failed to write output")?;
 
-        if interactive {
+        if force {
+            // Intentionally overwrite without prompting.
+        } else if interactive {
             let overwrite = prompt_yes_no(reader, writer, "Overwrite existing config?", false)?;
             if !overwrite {
                 writeln!(writer, "Aborted. Existing config was left unchanged.")
@@ -327,6 +374,7 @@ fn run_with_inquire(
     ctx: &CommandContext,
     path: &Path,
     writer: &mut dyn Write,
+    force: bool,
     defaults: OnboardConfig,
 ) -> anyhow::Result<()> {
     ux::print_brand_header(writer)?;
@@ -335,7 +383,7 @@ fn run_with_inquire(
         "Quick setup: generating config with sensible defaults...\n",
     )?;
 
-    if path.exists() {
+    if path.exists() && !force {
         let overwrite = Confirm::new(&format!(
             "Config already exists at {}. Overwrite?",
             path.display()
@@ -631,7 +679,7 @@ fn render_template(config: &OnboardConfig) -> String {
         .join(", ");
 
     format!(
-        "[provider]\nname = {}\nbase_url = {}\nmodel = {}\n\n[memory]\npath = {}\n\n[agent]\nmode = \"development\"\nmax_tool_iterations = 4\nrequest_timeout_ms = 30000\nmemory_window_size = 8\nmax_prompt_chars = 8000\n\n[agent.hooks]\nenabled = false\ntimeout_ms = 250\nfail_closed = false\n\n[security]\nallowed_root = {}\nallowed_commands = [{}]\n\n[security.read_file]\nmax_read_bytes = 65536\nallow_binary = false\n\n[security.write_file]\nenabled = false\nmax_write_bytes = 65536\n\n[security.shell]\nmax_args = 8\nmax_arg_length = 128\nmax_output_bytes = 8192\nforbidden_chars = \";&|><$`\\n\\r\"\n\n[security.mcp]\nenabled = false\nallowed_servers = []\n\n[security.plugin]\nenabled = false\n\n[security.audit]\nenabled = false\npath = \"./agentzero-audit.log\"\n",
+        "[provider]\nname = {}\nbase_url = {}\nmodel = {}\n\n[memory]\npath = {}\n\n[agent]\nmode = \"development\"\nmax_tool_iterations = 4\nrequest_timeout_ms = 30000\nmemory_window_size = 8\nmax_prompt_chars = 8000\n\n[agent.hooks]\nenabled = false\ntimeout_ms = 250\nfail_closed = false\non_error_default = \"warn\"\non_error_low = \"ignore\"\non_error_medium = \"warn\"\non_error_high = \"block\"\n\n[security]\nallowed_root = {}\nallowed_commands = [{}]\n\n[security.read_file]\nmax_read_bytes = 65536\nallow_binary = false\n\n[security.write_file]\nenabled = false\nmax_write_bytes = 65536\n\n[security.shell]\nmax_args = 8\nmax_arg_length = 128\nmax_output_bytes = 8192\nforbidden_chars = \";&|><$`\\n\\r\"\n\n[security.mcp]\nenabled = false\nallowed_servers = []\n\n[security.plugin]\nenabled = false\n\n[security.audit]\nenabled = false\npath = \"./agentzero-audit.log\"\n",
         toml_string(&config.provider),
         toml_string(&config.base_url),
         toml_string(&config.model),
@@ -852,6 +900,7 @@ mod tests {
             &mut input,
             &mut output,
             true,
+            false,
             OnboardConfig::default(),
         )
         .expect("onboard should succeed");
@@ -881,6 +930,7 @@ mod tests {
             &mut input,
             &mut output,
             true,
+            false,
             OnboardConfig::default(),
         )
         .expect("declining overwrite should not error");
@@ -898,11 +948,17 @@ mod tests {
     #[test]
     fn resolves_onboard_config_with_env_values() {
         let opts = OnboardOptions {
+            interactive: false,
+            force: false,
+            channels_only: false,
+            api_key: None,
             yes: false,
             provider: None,
             base_url: None,
             model: None,
+            memory: None,
             memory_path: None,
+            no_totp: false,
             allowed_root: None,
             allowed_commands: vec![],
         };
@@ -932,11 +988,17 @@ mod tests {
     #[test]
     fn flag_values_override_env_values() {
         let opts = OnboardOptions {
+            interactive: false,
+            force: false,
+            channels_only: false,
+            api_key: None,
             yes: false,
             provider: Some("anthropic".to_string()),
             base_url: Some("https://example.invalid".to_string()),
             model: Some("claude-3-5-haiku-latest".to_string()),
+            memory: None,
             memory_path: Some("./flag.db".to_string()),
+            no_totp: false,
             allowed_root: Some("./flag-root".to_string()),
             allowed_commands: vec!["cat".to_string(), "echo".to_string()],
         };

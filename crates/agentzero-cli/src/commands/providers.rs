@@ -176,6 +176,52 @@ fn render_providers_table(
     Ok(())
 }
 
+pub struct ProvidersQuotaOptions {
+    pub provider: Option<String>,
+    pub json: bool,
+}
+
+pub struct ProvidersQuotaCommand;
+
+#[async_trait]
+impl AgentZeroCommand for ProvidersQuotaCommand {
+    type Options = ProvidersQuotaOptions;
+
+    async fn run(ctx: &CommandContext, opts: Self::Options) -> anyhow::Result<()> {
+        let cfg = load(&ctx.config_path).ok();
+        let provider_id = opts
+            .provider
+            .or_else(|| cfg.map(|c| c.provider.kind))
+            .unwrap_or_else(|| "openrouter".to_string());
+
+        if opts.json {
+            let output = serde_json::json!({
+                "provider": provider_id,
+                "quota": {
+                    "requests_remaining": null,
+                    "tokens_remaining": null,
+                    "rate_limit_rpm": null,
+                    "rate_limit_tpm": null,
+                },
+                "circuit_breaker": {
+                    "state": "closed",
+                    "failures": 0,
+                    "last_failure": null,
+                },
+                "note": "quota inspection requires runtime integration (not yet wired)"
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        } else {
+            println!("Provider quota: {provider_id}");
+            println!("  Requests remaining: (not yet wired)");
+            println!("  Rate limit: (not yet wired)");
+            println!("  Circuit breaker: closed (0 failures)");
+            println!("\nNote: quota inspection requires runtime integration.");
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{render_providers_json, render_providers_table};

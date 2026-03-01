@@ -15,15 +15,45 @@ AgentZero is a lightweight, Rust-first agent runtime and CLI inspired by OpenCla
 - `crates/agentzero-core`: core agent traits, orchestration, and shared domain types
 - `crates/agentzero-config`: typed config model, loader, and policy validation
 - `crates/agentzero-infra`: infrastructure adapters and tool wiring (currently transitional)
-- `crates/agentzero-memory-sqlite`: SQLite memory backend
-- `crates/agentzero-memory-turso`: Turso/libsql memory backend (feature-gated)
+- `crates/agentzero-memory`: unified memory backend crate (SQLite default + Turso/libsql via feature)
 - `crates/agentzero-providers`: provider catalog and OpenAI-compatible provider implementation
 - `crates/agentzero-tools`: filesystem/shell tool implementations
 - `crates/agentzero-gateway`: HTTP gateway service
-- `crates/agentzero-plugins-wasm`: WASM plugin runtime scaffolding
+- `crates/agentzero-daemon`: daemon runtime state + lifecycle
+- `crates/agentzero-service`: service lifecycle state and operations
+- `crates/agentzero-health`: shared health/freshness assessment utilities
+- `crates/agentzero-heartbeat`: encrypted heartbeat persistence for runtime components
+- `crates/agentzero-doctor`: diagnostics collection/report model for doctor command
+- `crates/agentzero-cron`: scheduled task state and lifecycle operations
+- `crates/agentzero-hooks`: hook state and control operations
+- `crates/agentzero-cost`: cost tracking domain primitives
+- `crates/agentzero-coordination`: runtime coordination domain primitives
+- `crates/agentzero-goals`: goals domain primitives
+- `crates/agentzero-plugins`: plugin lifecycle + WASM runtime scaffolding
+- `crates/agentzero-skills`: skills lifecycle with embedded skillforge + SOP functionality
+- `crates/agentzero-rag`: local retrieval index + ingest/query primitives
+- `crates/agentzero-multimodal`: shared media-kind inference primitives
+- `crates/agentzero-hardware`: hardware discovery/introspection primitives
+- `crates/agentzero-peripherals`: peripheral registry lifecycle primitives
 - `crates/agentzero-security`: shared security policy + redaction utilities
-- `crates/agentzero-bench`: benchmark harness
+- `crates/agentzero-update`: migration + self-update flows and state model
+- `crates/agentzero-bench`: criterion benchmark suite
 - `crates/agentzero-common`: common helpers/types
+
+## Plugin packaging and install integrity
+
+`crates/agentzero-plugins` now includes a packaging/install pipeline with built-in integrity checks:
+
+- `package::package_plugin(...)` packages `manifest.json` + `.wasm` into a plugin archive.
+- Packaging always regenerates and writes a SHA-256 checksum for the wasm module.
+- `package::install_packaged_plugin(...)` validates manifest shape and verifies checksum before install.
+- Tampered packages fail closed on install (checksum mismatch).
+
+WASM runtime sandbox controls are also enforced in the same crate:
+
+- execution timeout limits
+- memory limits
+- host-call import allowlist validation
 
 ## Quick start
 
@@ -72,6 +102,17 @@ Current primary commands:
 - `agentzero doctor`
 - `agentzero providers`
 - `agentzero auth ...`
+- `agentzero cron ...`
+- `agentzero hooks ...`
+- `agentzero daemon ...`
+- `agentzero service ...`
+- `agentzero tunnel ...`
+- `agentzero plugin ...`
+- `agentzero migrate ...`
+- `agentzero update ...`
+- `agentzero rag ...` (feature-gated)
+- `agentzero hardware ...` (feature-gated)
+- `agentzero peripheral ...` (feature-gated)
 - `agentzero agent -m "..."`
 - `agentzero gateway`
 

@@ -63,7 +63,7 @@ fn loads_typed_config_from_toml_file() {
         assert_eq!(cfg.memory.sqlite_path, "./local.db");
         assert_eq!(cfg.agent.max_tool_iterations, 7);
         assert_eq!(cfg.agent.request_timeout_ms, 30_000);
-        assert_eq!(cfg.agent.memory_window_size, 8);
+        assert_eq!(cfg.agent.memory_window_size, 50); // new default
         assert_eq!(cfg.agent.max_prompt_chars, 8_000);
         assert_eq!(cfg.security.allowed_commands, vec!["echo".to_string()]);
     });
@@ -259,6 +259,29 @@ fn rejects_enabled_mcp_without_allowed_servers() {
             .expect_err("invalid config should fail")
             .to_string()
             .contains("allowed_servers"));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn rejects_invalid_hook_error_mode_negative_path() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[agent.hooks]\nenabled=true\ntimeout_ms=250\nfail_closed=false\non_error_default=\"panic\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("invalid hook mode should fail")
+            .to_string()
+            .contains("on_error_default"));
     });
 
     fs::remove_dir_all(dir).expect("temp dir should be removed");
@@ -532,6 +555,526 @@ fn rejects_enabled_audit_policy_with_empty_path() {
             .expect_err("empty audit path should fail")
             .to_string()
             .contains("security.audit.path"));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+// --- Phase A3-A6 deserialization tests ---
+
+#[test]
+fn parses_observability_config() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[observability]\nbackend = \"otel\"\notel_endpoint = \"http://collector:4318\"\notel_service_name = \"myservice\"\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("observability config should load");
+        assert_eq!(cfg.observability.backend, "otel");
+        assert_eq!(cfg.observability.otel_endpoint, "http://collector:4318");
+        assert_eq!(cfg.observability.otel_service_name, "myservice");
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_research_config() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[research]\nenabled = true\ntrigger = \"keywords\"\nmax_iterations = 10\nkeywords = [\"find\", \"search\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("research config should load");
+        assert!(cfg.research.enabled);
+        assert_eq!(cfg.research.trigger, "keywords");
+        assert_eq!(cfg.research.max_iterations, 10);
+        assert_eq!(cfg.research.keywords, vec!["find", "search"]);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_runtime_config_with_wasm() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[runtime]\nkind = \"wasm\"\n\n[runtime.wasm]\nfuel_limit = 500000\nmemory_limit_mb = 32\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("runtime config should load");
+        assert_eq!(cfg.runtime.kind, "wasm");
+        assert_eq!(cfg.runtime.wasm.fuel_limit, 500_000);
+        assert_eq!(cfg.runtime.wasm.memory_limit_mb, 32);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_browser_config() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[browser]\nenabled = true\nbackend = \"native\"\nallowed_domains = [\"example.com\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("browser config should load");
+        assert!(cfg.browser.enabled);
+        assert_eq!(cfg.browser.backend, "native");
+        assert_eq!(cfg.browser.allowed_domains, vec!["example.com"]);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_web_search_config() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[web_search]\nenabled = true\nprovider = \"brave\"\nbrave_api_key = \"bk-xxx\"\nmax_results = 10\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("web_search config should load");
+        assert!(cfg.web_search.enabled);
+        assert_eq!(cfg.web_search.provider, "brave");
+        assert_eq!(cfg.web_search.brave_api_key, Some("bk-xxx".to_string()));
+        assert_eq!(cfg.web_search.max_results, 10);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_cost_config() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[cost]\nenabled = true\ndaily_limit_usd = 5.0\nmonthly_limit_usd = 50.0\nwarn_at_percent = 90\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("cost config should load");
+        assert!(cfg.cost.enabled);
+        assert!((cfg.cost.daily_limit_usd - 5.0).abs() < f64::EPSILON);
+        assert!((cfg.cost.monthly_limit_usd - 50.0).abs() < f64::EPSILON);
+        assert_eq!(cfg.cost.warn_at_percent, 90);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_identity_config() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[identity]\nformat = \"aieos\"\naieos_path = \"/etc/aieos.json\"\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("identity config should load");
+        assert_eq!(cfg.identity.format, "aieos");
+        assert_eq!(cfg.identity.aieos_path, Some("/etc/aieos.json".to_string()));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_model_provider_profiles() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[model_providers.local]\nname = \"ollama\"\nbase_url = \"http://localhost:11434\"\nmodel = \"llama3\"\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("model_providers config should load");
+        let profile = cfg
+            .model_providers
+            .get("local")
+            .expect("local profile should exist");
+        assert_eq!(profile.name, Some("ollama".to_string()));
+        assert_eq!(profile.base_url, Some("http://localhost:11434".to_string()));
+        assert_eq!(profile.model, Some("llama3".to_string()));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_model_routes() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[[model_routes]]\nhint = \"fast\"\nprovider = \"openai\"\nmodel = \"gpt-4o-mini\"\nmax_tokens = 4096\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("model_routes config should load");
+        assert_eq!(cfg.model_routes.len(), 1);
+        assert_eq!(cfg.model_routes[0].hint, "fast");
+        assert_eq!(cfg.model_routes[0].provider, "openai");
+        assert_eq!(cfg.model_routes[0].model, "gpt-4o-mini");
+        assert_eq!(cfg.model_routes[0].max_tokens, Some(4096));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_embedding_routes() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[[embedding_routes]]\nhint = \"default\"\nprovider = \"openai\"\nmodel = \"text-embedding-3-small\"\ndimensions = 1536\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("embedding_routes config should load");
+        assert_eq!(cfg.embedding_routes.len(), 1);
+        assert_eq!(cfg.embedding_routes[0].hint, "default");
+        assert_eq!(cfg.embedding_routes[0].model, "text-embedding-3-small");
+        assert_eq!(cfg.embedding_routes[0].dimensions, Some(1536));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_query_classification() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[query_classification]\nenabled = true\n\n[[query_classification.rules]]\nhint = \"code\"\nkeywords = [\"implement\", \"fix\"]\npriority = 10\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("query_classification config should load");
+        assert!(cfg.query_classification.enabled);
+        assert_eq!(cfg.query_classification.rules.len(), 1);
+        assert_eq!(cfg.query_classification.rules[0].hint, "code");
+        assert_eq!(
+            cfg.query_classification.rules[0].keywords,
+            vec!["implement", "fix"]
+        );
+        assert_eq!(cfg.query_classification.rules[0].priority, 10);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn parses_delegate_agent_config() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[agents.coder]\nprovider = \"openai\"\nmodel = \"gpt-4o\"\nmax_depth = 2\nagentic = true\nmax_iterations = 15\nallowed_tools = [\"shell\", \"read_file\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("delegate agent config should load");
+        let coder = cfg.agents.get("coder").expect("coder agent should exist");
+        assert_eq!(coder.provider, "openai");
+        assert_eq!(coder.model, "gpt-4o");
+        assert_eq!(coder.max_depth, 2);
+        assert!(coder.agentic);
+        assert_eq!(coder.max_iterations, 15);
+        assert_eq!(coder.allowed_tools, vec!["shell", "read_file"]);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+// --- Negative-path tests ---
+
+#[test]
+fn rejects_invalid_provider_temperature() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind = \"openai\"\nbase_url = \"https://api.openai.com\"\nmodel = \"gpt-4o\"\ndefault_temperature = 3.0\n\n[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("invalid temperature should fail")
+            .to_string()
+            .contains("default_temperature"));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn rejects_invalid_provider_api() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind = \"openai\"\nbase_url = \"https://api.openai.com\"\nmodel = \"gpt-4o\"\nprovider_api = \"graphql\"\n\n[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("invalid provider_api should fail")
+            .to_string()
+            .contains("provider_api"));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+// --- Masking test ---
+
+#[test]
+fn masked_config_redacts_api_keys() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[web_search]\nenabled = true\nbrave_api_key = \"sk-secret-key\"\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config should load");
+        let masked = cfg.masked();
+        assert_eq!(masked.web_search.brave_api_key, Some("****".to_string()));
+        // Original should be untouched
+        assert_eq!(
+            cfg.web_search.brave_api_key,
+            Some("sk-secret-key".to_string())
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+// --- Phase D: Channel config tests ---
+
+#[test]
+fn channels_config_group_reply_parses() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        r#"
+[security]
+allowed_root = "."
+allowed_commands = ["echo"]
+
+[channels_config]
+message_timeout_secs = 600
+stream_mode = "partial"
+draft_update_interval_ms = 250
+interrupt_on_new_message = true
+
+[channels_config.group_reply.telegram]
+mode = "mention_only"
+allowed_sender_ids = ["admin-123"]
+bot_name = "MyBot"
+
+[channels_config.group_reply.discord]
+mode = "all_messages"
+
+[channels_config.ack_reaction.telegram]
+enabled = true
+emoji_pool = ["👍", "🔥"]
+strategy = "first"
+sample_rate = 0.8
+"#,
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config should load");
+        assert_eq!(cfg.channels_config.message_timeout_secs, 600);
+        assert_eq!(cfg.channels_config.stream_mode, "partial");
+        assert_eq!(cfg.channels_config.draft_update_interval_ms, 250);
+        assert!(cfg.channels_config.interrupt_on_new_message);
+
+        let tg_reply = cfg.channels_config.group_reply.get("telegram").unwrap();
+        assert_eq!(tg_reply.mode, "mention_only");
+        assert_eq!(tg_reply.allowed_sender_ids, vec!["admin-123"]);
+        assert_eq!(tg_reply.bot_name, Some("MyBot".to_string()));
+
+        let dc_reply = cfg.channels_config.group_reply.get("discord").unwrap();
+        assert_eq!(dc_reply.mode, "all_messages");
+
+        let tg_ack = cfg.channels_config.ack_reaction.get("telegram").unwrap();
+        assert!(tg_ack.enabled);
+        assert_eq!(tg_ack.emoji_pool, vec!["👍", "🔥"]);
+        assert_eq!(tg_ack.strategy, "first");
+        assert!((tg_ack.sample_rate - 0.8).abs() < f64::EPSILON);
+    });
+
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn channels_config_defaults_are_reasonable() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config should load");
+        assert_eq!(cfg.channels_config.message_timeout_secs, 300);
+        assert_eq!(cfg.channels_config.stream_mode, "off");
+        assert_eq!(cfg.channels_config.draft_update_interval_ms, 500);
+        assert!(!cfg.channels_config.interrupt_on_new_message);
+        assert!(cfg.channels_config.group_reply.is_empty());
+        assert!(cfg.channels_config.ack_reaction.is_empty());
+    });
+
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn channels_config_ack_reaction_rules_parse() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        r#"
+[security]
+allowed_root = "."
+allowed_commands = ["echo"]
+
+[channels_config.ack_reaction.slack]
+enabled = true
+emoji_pool = ["👀"]
+strategy = "random"
+sample_rate = 1.0
+
+[[channels_config.ack_reaction.slack.rules]]
+contains_any = ["urgent", "asap"]
+emoji_override = ["🚨"]
+
+[[channels_config.ack_reaction.slack.rules]]
+sender_ids = ["boss-id"]
+contains_none = ["test"]
+"#,
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config should load");
+        let slack_ack = cfg.channels_config.ack_reaction.get("slack").unwrap();
+        assert!(slack_ack.enabled);
+        assert_eq!(slack_ack.rules.len(), 2);
+
+        let rule0 = &slack_ack.rules[0];
+        assert_eq!(rule0.contains_any, vec!["urgent", "asap"]);
+        assert_eq!(rule0.emoji_override, vec!["🚨"]);
+
+        let rule1 = &slack_ack.rules[1];
+        assert_eq!(rule1.sender_ids, vec!["boss-id"]);
+        assert_eq!(rule1.contains_none, vec!["test"]);
+    });
+
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
+// --- Phase B7: Shell config tests ---
+
+#[test]
+fn shell_context_aware_parsing_defaults_to_true() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config should load");
+        assert!(cfg.security.shell.context_aware_parsing);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn shell_context_aware_parsing_can_be_disabled() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[security.shell]\ncontext_aware_parsing = false\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config should load");
+        assert!(!cfg.security.shell.context_aware_parsing);
     });
 
     fs::remove_dir_all(dir).expect("temp dir should be removed");

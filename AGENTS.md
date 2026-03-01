@@ -58,6 +58,39 @@ Project-level operating rules for all contributors and coding agents working in 
 - explicit policy checks (fail-closed behavior)
 - No merge for security-sensitive functionality without tests and policy enforcement.
 
+### 8) Workspace dependency policy (no per-crate path wiring)
+- Internal workspace crates must be declared via workspace dependencies, not direct relative paths.
+- Do this:
+- `agentzero-auth = { workspace = true }`
+- Do not do this:
+- `agentzero-auth = { path = "../../crates/agentzero-auth" }`
+- Applies to all crate `Cargo.toml` files in this repository.
+- Scope clarification:
+- This requirement targets subcrate manifests under `crates/*/Cargo.toml` and `bin/*/Cargo.toml`.
+- The root workspace `Cargo.toml` remains the single place that declares internal crate paths under `[workspace.dependencies]`.
+- If a new internal crate is added:
+- add it under `[workspace.dependencies]` in the root `Cargo.toml`
+- reference it from subcrates with `{ workspace = true }`
+
+### 9) Persistence policy (use `agentzero-storage`)
+- All persisted application state must use `agentzero-storage`.
+- Do not add new direct persistence paths in CLI/domain code using ad-hoc `std::fs` JSON/TOML writes for runtime state.
+- Persistence implementations must go through storage abstractions provided by `agentzero-storage` (encrypted-at-rest where applicable).
+- If migration from legacy direct-file persistence is needed, include:
+- a success-path migration test
+- a negative-path test for malformed/legacy payload handling
+
+### 10) Rust best-practices
+- **Common crate first**: Shared types, utilities, and constants belong in `agentzero-common`. Before adding a helper to a domain crate, check whether it already exists in common or belongs there.
+- **Macros where they reduce boilerplate**: Use `macro_rules!` (or derive macros) to eliminate repetitive patterns. Prefer macros over copy-pasting similar impl blocks across crates.
+- **Zero clippy warnings**: All code must pass `cargo clippy --workspace --all-targets -- -D warnings` with no exceptions. Do not `#[allow(clippy::...)]` without a justifying comment.
+- **Builder pattern for complex construction**: Functions or constructors that accept more than 3–4 configuration parameters must use a builder struct (or a dedicated config/options struct with `Default`) instead of long argument lists.
+- **Error handling conventions**: Use `thiserror` for domain-specific error enums; use `anyhow` for ad-hoc error propagation and context. Always add `.context()` or `.with_context()` when propagating errors across crate boundaries.
+- **Derive discipline**: Apply standard derives consistently — `Debug, Clone` on most types; add `Serialize, Deserialize` only when the type crosses a serialization boundary; add `Copy, PartialEq, Eq` on small enums.
+- **Trait design**: All async traits use `#[async_trait]` and require `Send + Sync` bounds. Trait methods should return `anyhow::Result` unless a domain-specific error type is warranted.
+- **Prefer `impl` blocks over free functions**: Attach behavior to the type it operates on. Use free functions only for true module-level utilities with no obvious owning type.
+- **`where` clauses for readability**: Use `where` clauses (not inline bounds) when generic constraints span more than one trait bound.
+
 ## Preferred PR Checklist
 - [ ] Functionality implemented
 - [ ] Success-path tests added

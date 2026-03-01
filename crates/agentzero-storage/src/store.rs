@@ -1,5 +1,4 @@
-use crate::crypto::{decrypt_json, encrypt_json};
-use crate::StorageKey;
+use agentzero_crypto::{decrypt_json, encrypt_json, StorageKey};
 use anyhow::Context;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -139,10 +138,13 @@ impl EncryptedJsonStore {
 #[cfg(test)]
 mod tests {
     use super::EncryptedJsonStore;
-    use crate::StorageKey;
+    use agentzero_crypto::StorageKey;
     use serde::{Deserialize, Serialize};
     use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
     struct TestData {
@@ -154,7 +156,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time should move forward")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("agentzero-store-{now}"));
+        let seq = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("agentzero-store-{now}-{seq}"));
         fs::create_dir_all(&dir).expect("temp dir should be created");
         dir
     }

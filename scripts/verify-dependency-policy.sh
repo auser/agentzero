@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 dependabot_path=".github/dependabot.yml"
-policy_path="docs/security/DEPENDENCY_POLICY.md"
+policy_path="public/src/content/docs/security/dependency-policy.md"
 
 if [[ ! -f "$dependabot_path" ]]; then
   echo "Missing file: $dependabot_path" >&2

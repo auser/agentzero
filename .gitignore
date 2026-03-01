@@ -10,7 +10,15 @@ agentzero.toml
 .env
 .env.*
 
+# Site build
+/gh-pages/
+public/node_modules/
+public/.astro/
+public/dist/
+
 # macOS
 .DS_Store
 externals/
 auth_profiles.json
+
+.playwright-mcp

@@ -6,27 +6,56 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
-default = []
-memory-turso = ["dep:agentzero-memory-turso", "agentzero-runtime/memory-turso"]
+default = ["memory-sqlite"]
+memory-sqlite = ["agentzero-runtime/memory-sqlite"]
+memory-turso = ["agentzero-memory/memory-turso", "agentzero-runtime/memory-turso"]
+rag = ["dep:agentzero-rag", "dep:agentzero-multimodal"]
+hardware = ["dep:agentzero-hardware", "dep:agentzero-peripherals"]
 
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
-agentzero-auth = { path = "../../crates/agentzero-auth" }
-agentzero-common = { path = "../../crates/agentzero-common" }
-agentzero-config = { path = "../../crates/agentzero-config" }
-agentzero-core = { path = "../../crates/agentzero-core" }
-agentzero-gateway = { path = "../../crates/agentzero-gateway" }
-agentzero-infra = { path = "../../crates/agentzero-infra" }
-agentzero-memory-sqlite = { path = "../../crates/agentzero-memory-sqlite" }
-agentzero-memory-turso = { path = "../../crates/agentzero-memory-turso", optional = true }
-agentzero-providers = { path = "../../crates/agentzero-providers" }
-agentzero-runtime = { path = "../../crates/agentzero-runtime", features = [] }
+clap_complete = "4.5"
+agentzero-approval = { workspace = true }
+agentzero-auth = { workspace = true }
+agentzero-channels = { workspace = true }
+agentzero-common = { workspace = true }
+agentzero-config = { workspace = true }
+agentzero-coordination = { workspace = true }
+agentzero-core = { workspace = true }
+agentzero-cost = { workspace = true }
+agentzero-cron = { workspace = true }
+agentzero-daemon = { workspace = true }
+agentzero-doctor = { workspace = true }
+agentzero-gateway = { workspace = true }
+agentzero-hooks = { workspace = true }
+agentzero-identity = { workspace = true }
+agentzero-infra = { workspace = true }
+agentzero-integrations = { workspace = true }
+agentzero-memory = { workspace = true }
+agentzero-goals = { workspace = true }
+agentzero-plugins = { workspace = true }
+agentzero-skills = { workspace = true }
+agentzero-storage = { workspace = true }
+agentzero-tunnel = { workspace = true }
+agentzero-update = { workspace = true }
+agentzero-providers = { workspace = true }
+agentzero-rag = { workspace = true, optional = true }
+agentzero-multimodal = { workspace = true, optional = true }
+agentzero-hardware = { workspace = true, optional = true }
+agentzero-peripherals = { workspace = true, optional = true }
+agentzero-runtime = { workspace = true, features = [] }
+agentzero-security = { workspace = true }
+agentzero-service = { workspace = true }
 console = "0.15"
+crossterm = "0.28"
 inquire = "0.7"
+ratatui = "0.28"
 serde.workspace = true
 serde_json.workspace = true
+gag = "1.0"
+rusqlite.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true

@@ -8,19 +8,41 @@ members = [
   "crates/agentzero-common",
   "crates/agentzero-runtime",
   "crates/agentzero-testkit",
+  "crates/agentzero-health",
+  "crates/agentzero-heartbeat",
+  "crates/agentzero-doctor",
+  "crates/agentzero-cron",
+  "crates/agentzero-cost",
+  "crates/agentzero-coordination",
+  "crates/agentzero-goals",
+  "crates/agentzero-hooks",
   "crates/agentzero-security",
   "crates/agentzero-cli",
   "crates/agentzero-config",
   "crates/agentzero-core",
   "crates/agentzero-infra",
-  "crates/agentzero-memory-sqlite",
-  "crates/agentzero-memory-turso",
+  "crates/agentzero-memory",
   "crates/agentzero-tools",
   "crates/agentzero-providers",
+  "crates/agentzero-integrations",
+  "crates/agentzero-plugins",
+  "crates/agentzero-skills",
+  "crates/agentzero-tunnel",
   "crates/agentzero-gateway",
+  "crates/agentzero-daemon",
+  "crates/agentzero-service",
   "crates/agentzero-channels",
-  "crates/agentzero-plugins-wasm",
+  "crates/agentzero-crypto",
   "crates/agentzero-storage",
+  "crates/agentzero-rag",
+  "crates/agentzero-multimodal",
+  "crates/agentzero-hardware",
+  "crates/agentzero-peripherals",
+  "crates/agentzero-update",
+  "crates/agentzero-autonomy",
+  "crates/agentzero-leak-guard",
+  "crates/agentzero-delegation",
+  "crates/agentzero-routing",
 ]
 resolver = "2"
 
@@ -35,17 +57,62 @@ async-trait = "0.1"
 clap = { version = "4.5", features = ["derive"] }
 config = "0.14"
 dotenvy = "0.15"
+agentzero-approval = { path = "crates/agentzero-approval" }
+agentzero-auth = { path = "crates/agentzero-auth" }
+agentzero-bench = { path = "crates/agentzero-bench" }
+agentzero-channels = { path = "crates/agentzero-channels" }
+agentzero-cli = { path = "crates/agentzero-cli" }
+agentzero-common = { path = "crates/agentzero-common" }
+agentzero-config = { path = "crates/agentzero-config" }
+agentzero-coordination = { path = "crates/agentzero-coordination" }
+agentzero-crypto = { path = "crates/agentzero-crypto" }
+agentzero-core = { path = "crates/agentzero-core" }
+agentzero-cost = { path = "crates/agentzero-cost" }
+agentzero-cron = { path = "crates/agentzero-cron" }
+agentzero-daemon = { path = "crates/agentzero-daemon" }
+agentzero-doctor = { path = "crates/agentzero-doctor" }
+agentzero-gateway = { path = "crates/agentzero-gateway" }
+agentzero-goals = { path = "crates/agentzero-goals" }
+agentzero-health = { path = "crates/agentzero-health" }
+agentzero-heartbeat = { path = "crates/agentzero-heartbeat" }
+agentzero-hooks = { path = "crates/agentzero-hooks" }
+agentzero-identity = { path = "crates/agentzero-identity" }
+agentzero-integrations = { path = "crates/agentzero-integrations" }
+agentzero-infra = { path = "crates/agentzero-infra" }
+agentzero-memory = { path = "crates/agentzero-memory" }
+agentzero-plugins = { path = "crates/agentzero-plugins" }
+agentzero-skills = { path = "crates/agentzero-skills" }
+agentzero-providers = { path = "crates/agentzero-providers" }
+agentzero-runtime = { path = "crates/agentzero-runtime" }
+agentzero-security = { path = "crates/agentzero-security" }
+agentzero-service = { path = "crates/agentzero-service" }
+agentzero-storage = { path = "crates/agentzero-storage" }
+agentzero-rag = { path = "crates/agentzero-rag" }
+agentzero-multimodal = { path = "crates/agentzero-multimodal" }
+agentzero-hardware = { path = "crates/agentzero-hardware" }
+agentzero-peripherals = { path = "crates/agentzero-peripherals" }
+agentzero-testkit = { path = "crates/agentzero-testkit" }
+agentzero-tools = { path = "crates/agentzero-tools" }
+agentzero-tunnel = { path = "crates/agentzero-tunnel" }
+agentzero-update = { path = "crates/agentzero-update" }
+agentzero-autonomy = { path = "crates/agentzero-autonomy" }
+agentzero-leak-guard = { path = "crates/agentzero-leak-guard" }
+agentzero-delegation = { path = "crates/agentzero-delegation" }
+agentzero-routing = { path = "crates/agentzero-routing" }
+futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "fs", "process"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "fs", "process", "sync", "io-util", "io-std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 regex = "1"
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 toml = "0.8"
 url = "2"
+uuid = { version = "1", features = ["v4"] }
 
 [profile.release]
 codegen-units = 1

@@ -1,13 +1,14 @@
 use crate::types::{
-    AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, HookEvent, HookSink,
-    MemoryEntry, MemoryStore, MetricsSink, Provider, Tool, ToolContext, UserMessage,
+    AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, HookEvent, HookFailureMode,
+    HookRiskTier, HookSink, MemoryEntry, MemoryStore, MetricsSink, Provider, Tool, ToolContext,
+    UserMessage,
 };
 use agentzero_security::redaction::redact_text;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::{timeout, Duration};
-use tracing::info;
+use tracing::{info, warn};
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -113,6 +114,39 @@ impl Agent {
         format!("req-{ts_ms}-{seq}")
     }
 
+    fn hook_risk_tier(stage: &str) -> HookRiskTier {
+        if matches!(
+            stage,
+            "before_tool_call" | "after_tool_call" | "before_plugin_call" | "after_plugin_call"
+        ) {
+            HookRiskTier::High
+        } else if matches!(
+            stage,
+            "before_provider_call"
+                | "after_provider_call"
+                | "before_memory_write"
+                | "after_memory_write"
+                | "before_run"
+                | "after_run"
+        ) {
+            HookRiskTier::Medium
+        } else {
+            HookRiskTier::Low
+        }
+    }
+
+    fn hook_failure_mode_for_stage(&self, stage: &str) -> HookFailureMode {
+        if self.config.hooks.fail_closed {
+            return HookFailureMode::Block;
+        }
+
+        match Self::hook_risk_tier(stage) {
+            HookRiskTier::Low => self.config.hooks.low_tier_mode,
+            HookRiskTier::Medium => self.config.hooks.medium_tier_mode,
+            HookRiskTier::High => self.config.hooks.high_tier_mode,
+        }
+    }
+
     async fn hook(&self, stage: &str, detail: serde_json::Value) -> Result<(), AgentError> {
         if !self.config.hooks.enabled {
             return Ok(());
@@ -126,6 +160,8 @@ impl Agent {
             detail,
         };
         let hook_call = sink.record(event);
+        let mode = self.hook_failure_mode_for_stage(stage);
+        let tier = Self::hook_risk_tier(stage);
         match timeout(
             Duration::from_millis(self.config.hooks.timeout_ms),
             hook_call,
@@ -134,38 +170,68 @@ impl Agent {
         {
             Ok(Ok(())) => Ok(()),
             Ok(Err(err)) => {
-                if self.config.hooks.fail_closed {
-                    Err(AgentError::Hook {
+                let redacted = redact_text(&err.to_string());
+                match mode {
+                    HookFailureMode::Block => Err(AgentError::Hook {
                         stage: stage.to_string(),
                         source: err,
-                    })
-                } else {
-                    self.audit(
-                        "hook_error_ignored",
-                        json!({"stage": stage, "error": redact_text(&err.to_string())}),
-                    )
-                    .await;
-                    Ok(())
+                    }),
+                    HookFailureMode::Warn => {
+                        warn!(
+                            stage = stage,
+                            tier = ?tier,
+                            mode = "warn",
+                            "hook error (continuing): {redacted}"
+                        );
+                        self.audit(
+                            "hook_error_warn",
+                            json!({"stage": stage, "tier": format!("{tier:?}").to_ascii_lowercase(), "error": redacted}),
+                        )
+                        .await;
+                        Ok(())
+                    }
+                    HookFailureMode::Ignore => {
+                        self.audit(
+                            "hook_error_ignored",
+                            json!({"stage": stage, "tier": format!("{tier:?}").to_ascii_lowercase(), "error": redacted}),
+                        )
+                        .await;
+                        Ok(())
+                    }
                 }
             }
-            Err(_) => {
-                if self.config.hooks.fail_closed {
-                    Err(AgentError::Hook {
-                        stage: stage.to_string(),
-                        source: anyhow::anyhow!(
-                            "hook execution timed out after {} ms",
-                            self.config.hooks.timeout_ms
-                        ),
-                    })
-                } else {
+            Err(_) => match mode {
+                HookFailureMode::Block => Err(AgentError::Hook {
+                    stage: stage.to_string(),
+                    source: anyhow::anyhow!(
+                        "hook execution timed out after {} ms",
+                        self.config.hooks.timeout_ms
+                    ),
+                }),
+                HookFailureMode::Warn => {
+                    warn!(
+                        stage = stage,
+                        tier = ?tier,
+                        mode = "warn",
+                        timeout_ms = self.config.hooks.timeout_ms,
+                        "hook timeout (continuing)"
+                    );
                     self.audit(
-                        "hook_timeout_ignored",
-                        json!({"stage": stage, "timeout_ms": self.config.hooks.timeout_ms}),
-                    )
-                    .await;
+                            "hook_timeout_warn",
+                            json!({"stage": stage, "tier": format!("{tier:?}").to_ascii_lowercase(), "timeout_ms": self.config.hooks.timeout_ms}),
+                        )
+                        .await;
                     Ok(())
                 }
-            }
+                HookFailureMode::Ignore => {
+                    self.audit(
+                            "hook_timeout_ignored",
+                            json!({"stage": stage, "tier": format!("{tier:?}").to_ascii_lowercase(), "timeout_ms": self.config.hooks.timeout_ms}),
+                        )
+                        .await;
+                    Ok(())
+                }
+            },
         }
     }
 
@@ -265,6 +331,9 @@ impl Agent {
 
         let mut prompt = user.text;
 
+        // Loop detection state.
+        let mut tool_history: Vec<(String, String, String)> = Vec::new(); // (name, args, output)
+
         // Minimal iteration guard to avoid accidental runaway tool loops.
         for iteration in 0..self.config.max_tool_iterations {
             if let Some(rest) = prompt.strip_prefix("tool:") {
@@ -282,11 +351,19 @@ impl Agent {
                 )
                 .await;
                 if let Some(tool) = self.tools.iter().find(|t| t.name() == tool_name) {
+                    let is_plugin_call = tool_name.starts_with("plugin:");
                     self.hook(
                         "before_tool_call",
                         json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
                     )
                     .await?;
+                    if is_plugin_call {
+                        self.hook(
+                            "before_plugin_call",
+                            json!({"request_id": request_id, "iteration": iteration, "plugin_tool": tool_name}),
+                        )
+                        .await?;
+                    }
                     self.audit(
                         "tool_execute_start",
                         json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
@@ -301,6 +378,11 @@ impl Agent {
                                 tool_started.elapsed().as_secs_f64() * 1000.0,
                             );
                             self.increment_counter("tool_errors_total");
+
+                            // TODO(C1): Failure streak detection requires error
+                            // recovery (continue instead of return) to accumulate
+                            // state across iterations. Implement in Phase C.
+
                             return Err(AgentError::Tool {
                                 tool: tool_name.to_string(),
                                 source,
@@ -334,6 +416,94 @@ impl Agent {
                         json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name, "status": "ok"}),
                     )
                     .await?;
+                    if is_plugin_call {
+                        self.hook(
+                            "after_plugin_call",
+                            json!({"request_id": request_id, "iteration": iteration, "plugin_tool": tool_name, "status": "ok"}),
+                        )
+                        .await?;
+                    }
+                    // Record tool call for loop detection.
+                    tool_history.push((
+                        tool_name.to_string(),
+                        tool_input.to_string(),
+                        result.output.clone(),
+                    ));
+
+                    // No-progress detection (C1): same tool+args+output N times.
+                    if self.config.loop_detection_no_progress_threshold > 0 {
+                        let threshold = self.config.loop_detection_no_progress_threshold;
+                        if tool_history.len() >= threshold {
+                            let recent = &tool_history[tool_history.len() - threshold..];
+                            let all_same = recent.iter().all(|entry| {
+                                entry.0 == recent[0].0
+                                    && entry.1 == recent[0].1
+                                    && entry.2 == recent[0].2
+                            });
+                            if all_same {
+                                warn!(
+                                    tool_name,
+                                    threshold, "loop detection: no-progress threshold reached"
+                                );
+                                self.audit(
+                                    "loop_detection_no_progress",
+                                    json!({
+                                        "request_id": request_id,
+                                        "tool_name": tool_name,
+                                        "threshold": threshold,
+                                    }),
+                                )
+                                .await;
+                                // C1: Self-correction — give provider context about the loop.
+                                prompt = format!(
+                                    "SYSTEM NOTICE: Loop detected — the tool `{tool_name}` was called \
+                                     {threshold} times with identical arguments and output. You are stuck \
+                                     in a loop. Stop calling this tool and try a different approach, or \
+                                     provide your best answer with the information you already have."
+                                );
+                                break;
+                            }
+                        }
+                    }
+
+                    // Ping-pong detection (C1): A→B→A→B alternation.
+                    if self.config.loop_detection_ping_pong_cycles > 0 {
+                        let cycles = self.config.loop_detection_ping_pong_cycles;
+                        let needed = cycles * 2;
+                        if tool_history.len() >= needed {
+                            let recent = &tool_history[tool_history.len() - needed..];
+                            let is_ping_pong = (0..needed).all(|i| recent[i].0 == recent[i % 2].0)
+                                && recent[0].0 != recent[1].0;
+                            if is_ping_pong {
+                                warn!(
+                                    tool_a = recent[0].0,
+                                    tool_b = recent[1].0,
+                                    cycles,
+                                    "loop detection: ping-pong pattern detected"
+                                );
+                                self.audit(
+                                    "loop_detection_ping_pong",
+                                    json!({
+                                        "request_id": request_id,
+                                        "tool_a": recent[0].0,
+                                        "tool_b": recent[1].0,
+                                        "cycles": cycles,
+                                    }),
+                                )
+                                .await;
+                                // C1: Self-correction — give provider context about the loop.
+                                prompt = format!(
+                                    "SYSTEM NOTICE: Loop detected — tools `{}` and `{}` have been \
+                                     alternating for {} cycles in a ping-pong pattern. Stop this \
+                                     alternation and try a different approach, or provide your best \
+                                     answer with the information you already have.",
+                                    recent[0].0, recent[1].0, cycles
+                                );
+                                break;
+                            }
+                        }
+                    }
+
                     prompt = format!("Tool output from {tool_name}: {}", result.output);
                     continue;
                 }
@@ -469,10 +639,11 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ChatResult, HookEvent, HookPolicy, ToolResult};
+    use crate::types::{ChatResult, HookEvent, HookFailureMode, HookPolicy, ToolResult};
     use async_trait::async_trait;
     use serde_json::Value;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tokio::time::{sleep, Duration};
 
@@ -530,6 +701,21 @@ mod tests {
         }
     }
 
+    struct PluginEchoTool;
+
+    #[async_trait]
+    impl Tool for PluginEchoTool {
+        fn name(&self) -> &'static str {
+            "plugin:echo"
+        }
+
+        async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                output: format!("plugin-echoed:{input}"),
+            })
+        }
+    }
+
     struct FailingTool;
 
     #[async_trait]
@@ -564,6 +750,48 @@ mod tests {
         }
     }
 
+    /// Provider that returns a scripted sequence of responses, cycling through
+    /// them in order. When all responses are consumed, repeats the last one.
+    struct ScriptedProvider {
+        responses: Vec<String>,
+        call_count: AtomicUsize,
+        received_prompts: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl Provider for ScriptedProvider {
+        async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult> {
+            self.received_prompts
+                .lock()
+                .expect("provider lock poisoned")
+                .push(prompt.to_string());
+            let idx = self.call_count.fetch_add(1, Ordering::Relaxed);
+            let response = if idx < self.responses.len() {
+                &self.responses[idx]
+            } else {
+                self.responses.last().expect("responses must not be empty")
+            };
+            Ok(ChatResult {
+                output_text: response.clone(),
+            })
+        }
+    }
+
+    struct UpperTool;
+
+    #[async_trait]
+    impl Tool for UpperTool {
+        fn name(&self) -> &'static str {
+            "upper"
+        }
+
+        async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                output: input.to_uppercase(),
+            })
+        }
+    }
+
     struct RecordingHookSink {
         events: Arc<Mutex<Vec<String>>>,
     }
@@ -576,6 +804,15 @@ mod tests {
                 .expect("hook lock poisoned")
                 .push(event.stage);
             Ok(())
+        }
+    }
+
+    struct FailingHookSink;
+
+    #[async_trait]
+    impl HookSink for FailingHookSink {
+        async fn record(&self, _event: HookEvent) -> anyhow::Result<()> {
+            Err(anyhow::anyhow!("hook sink failure"))
         }
     }
 
@@ -609,9 +846,7 @@ mod tests {
     }
 
     fn test_ctx() -> ToolContext {
-        ToolContext {
-            workspace_root: ".".to_string(),
-        }
+        ToolContext::new(".".to_string())
     }
 
     fn counter(counters: &Arc<Mutex<HashMap<&'static str, u64>>>, name: &'static str) -> u64 {
@@ -954,9 +1189,7 @@ mod tests {
             AgentConfig {
                 max_tool_iterations: 1,
                 request_timeout_ms: 10,
-                memory_window_size: 8,
-                max_prompt_chars: 8_000,
-                hooks: HookPolicy::default(),
+                ..AgentConfig::default()
             },
             Box::new(SlowProvider),
             Box::new(memory),
@@ -988,19 +1221,17 @@ mod tests {
         };
         let agent = Agent::new(
             AgentConfig {
-                max_tool_iterations: 4,
-                request_timeout_ms: 10_000,
-                memory_window_size: 8,
-                max_prompt_chars: 8_000,
                 hooks: HookPolicy {
                     enabled: true,
                     timeout_ms: 50,
                     fail_closed: true,
+                    ..HookPolicy::default()
                 },
+                ..AgentConfig::default()
             },
             Box::new(provider),
             Box::new(memory),
-            vec![Box::new(EchoTool)],
+            vec![Box::new(EchoTool), Box::new(PluginEchoTool)],
         )
         .with_hooks(Box::new(RecordingHookSink {
             events: events.clone(),
@@ -1009,7 +1240,7 @@ mod tests {
         agent
             .respond(
                 UserMessage {
-                    text: "tool:echo ping".to_string(),
+                    text: "tool:plugin:echo ping".to_string(),
                 },
                 &test_ctx(),
             )
@@ -1021,6 +1252,8 @@ mod tests {
         assert!(stages.contains(&"after_run".to_string()));
         assert!(stages.contains(&"before_tool_call".to_string()));
         assert!(stages.contains(&"after_tool_call".to_string()));
+        assert!(stages.contains(&"before_plugin_call".to_string()));
+        assert!(stages.contains(&"after_plugin_call".to_string()));
         assert!(stages.contains(&"before_provider_call".to_string()));
         assert!(stages.contains(&"after_provider_call".to_string()));
         assert!(stages.contains(&"before_memory_write".to_string()));
@@ -1098,5 +1331,228 @@ mod tests {
             .get("duration_ms")
             .and_then(Value::as_u64)
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn hook_errors_respect_block_mode_for_high_tier_negative_path() {
+        let memory = TestMemory::default();
+        let provider = TestProvider {
+            received_prompts: Arc::new(Mutex::new(Vec::new())),
+            response_text: "ok".to_string(),
+        };
+        let agent = Agent::new(
+            AgentConfig {
+                hooks: HookPolicy {
+                    enabled: true,
+                    timeout_ms: 50,
+                    fail_closed: false,
+                    default_mode: HookFailureMode::Warn,
+                    low_tier_mode: HookFailureMode::Ignore,
+                    medium_tier_mode: HookFailureMode::Warn,
+                    high_tier_mode: HookFailureMode::Block,
+                },
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(memory),
+            vec![Box::new(EchoTool)],
+        )
+        .with_hooks(Box::new(FailingHookSink));
+
+        let result = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo ping".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await;
+
+        match result {
+            Err(AgentError::Hook { stage, .. }) => assert_eq!(stage, "before_tool_call"),
+            other => panic!("expected hook block error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn hook_errors_respect_warn_mode_for_high_tier_success_path() {
+        let audit_events = Arc::new(Mutex::new(Vec::new()));
+        let memory = TestMemory::default();
+        let provider = TestProvider {
+            received_prompts: Arc::new(Mutex::new(Vec::new())),
+            response_text: "ok".to_string(),
+        };
+        let agent = Agent::new(
+            AgentConfig {
+                hooks: HookPolicy {
+                    enabled: true,
+                    timeout_ms: 50,
+                    fail_closed: false,
+                    default_mode: HookFailureMode::Warn,
+                    low_tier_mode: HookFailureMode::Ignore,
+                    medium_tier_mode: HookFailureMode::Warn,
+                    high_tier_mode: HookFailureMode::Warn,
+                },
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(memory),
+            vec![Box::new(EchoTool)],
+        )
+        .with_hooks(Box::new(FailingHookSink))
+        .with_audit(Box::new(RecordingAuditSink {
+            events: audit_events.clone(),
+        }));
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo ping".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("warn mode should continue");
+        assert!(!response.text.is_empty());
+
+        let events = audit_events.lock().expect("audit lock poisoned");
+        assert!(events.iter().any(|event| event.stage == "hook_error_warn"));
+    }
+
+    // ── C1: Self-correction prompt injection tests ──────────────────────────
+
+    #[tokio::test]
+    async fn self_correction_injected_on_no_progress() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = ScriptedProvider {
+            responses: vec![
+                "tool:echo same".to_string(),
+                "tool:echo same".to_string(),
+                "tool:echo same".to_string(),
+                "I'll try a different approach".to_string(),
+            ],
+            call_count: AtomicUsize::new(0),
+            received_prompts: prompts.clone(),
+        };
+        let agent = Agent::new(
+            AgentConfig {
+                loop_detection_no_progress_threshold: 3,
+                max_tool_iterations: 20,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo same".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("self-correction should succeed");
+
+        assert_eq!(response.text, "I'll try a different approach");
+
+        // The provider should have received the self-correction prompt.
+        let received = prompts.lock().expect("provider lock poisoned");
+        let last_prompt = received.last().expect("provider should have been called");
+        assert!(
+            last_prompt.contains("Loop detected"),
+            "provider prompt should contain self-correction notice, got: {last_prompt}"
+        );
+        assert!(last_prompt.contains("echo"));
+    }
+
+    #[tokio::test]
+    async fn self_correction_injected_on_ping_pong() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        // Provider drives the ping-pong: echo → upper → echo → upper, then corrects.
+        let provider = ScriptedProvider {
+            responses: vec![
+                "tool:upper x".to_string(),   // after echo, call upper
+                "tool:echo x".to_string(),     // after upper, call echo
+                "tool:upper x".to_string(),    // after echo, call upper (2nd cycle)
+                "I stopped the loop".to_string(), // after ping-pong detected
+            ],
+            call_count: AtomicUsize::new(0),
+            received_prompts: prompts.clone(),
+        };
+        let agent = Agent::new(
+            AgentConfig {
+                loop_detection_ping_pong_cycles: 2,
+                loop_detection_no_progress_threshold: 0, // disable no-progress
+                max_tool_iterations: 20,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool), Box::new(UpperTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo x".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("self-correction should succeed");
+
+        assert_eq!(response.text, "I stopped the loop");
+
+        let received = prompts.lock().expect("provider lock poisoned");
+        let last_prompt = received.last().expect("provider should have been called");
+        assert!(
+            last_prompt.contains("ping-pong"),
+            "provider prompt should contain ping-pong notice, got: {last_prompt}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_progress_disabled_when_threshold_zero() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        // Provider always returns the same tool call — should hit max_tool_iterations,
+        // not no-progress detection (which is disabled).
+        let provider = ScriptedProvider {
+            responses: vec!["tool:echo same".to_string()],
+            call_count: AtomicUsize::new(0),
+            received_prompts: prompts.clone(),
+        };
+        let agent = Agent::new(
+            AgentConfig {
+                loop_detection_no_progress_threshold: 0,
+                loop_detection_ping_pong_cycles: 0,
+                max_tool_iterations: 5,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo same".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should complete without error");
+
+        // When loop detection is disabled, after max_tool_iterations the loop
+        // breaks normally with the last tool output, and the provider gets
+        // called with that output (no self-correction notice).
+        let received = prompts.lock().expect("provider lock poisoned");
+        let last_prompt = received.last().expect("provider should have been called");
+        assert!(
+            !last_prompt.contains("Loop detected"),
+            "should not contain self-correction when detection is disabled"
+        );
     }
 }

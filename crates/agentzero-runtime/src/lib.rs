@@ -1,13 +1,13 @@
 use agentzero_config::{load, load_audit_policy, load_env_var, load_tool_security_policy};
 use agentzero_core::{
-    Agent, AgentConfig, AuditEvent, AuditSink, HookEvent, HookSink, MemoryStore, Provider,
-    RuntimeMetrics, Tool, ToolContext, UserMessage,
+    Agent, AgentConfig, AuditEvent, AuditSink, HookEvent, HookFailureMode, HookSink, MemoryStore,
+    Provider, RuntimeMetrics, Tool, ToolContext, UserMessage,
 };
 use agentzero_infra::audit::FileAuditSink;
 use agentzero_infra::tools::default_tools;
-use agentzero_memory_sqlite::SqliteMemoryStore;
+use agentzero_memory::SqliteMemoryStore;
 #[cfg(feature = "memory-turso")]
-use agentzero_memory_turso::{TursoMemoryStore, TursoSettings};
+use agentzero_memory::{TursoMemoryStore, TursoSettings};
 use agentzero_providers::OpenAiCompatibleProvider;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -70,10 +70,39 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
             request_timeout_ms: config.agent.request_timeout_ms,
             memory_window_size: config.agent.memory_window_size,
             max_prompt_chars: config.agent.max_prompt_chars,
+            parallel_tools: config.agent.parallel_tools,
+            loop_detection_no_progress_threshold: config.agent.loop_detection_no_progress_threshold,
+            loop_detection_ping_pong_cycles: config.agent.loop_detection_ping_pong_cycles,
+            loop_detection_failure_streak: config.agent.loop_detection_failure_streak,
             hooks: agentzero_core::HookPolicy {
                 enabled: config.agent.hooks.enabled,
                 timeout_ms: config.agent.hooks.timeout_ms,
                 fail_closed: config.agent.hooks.fail_closed,
+                default_mode: parse_hook_mode(&config.agent.hooks.on_error_default)?,
+                low_tier_mode: config
+                    .agent
+                    .hooks
+                    .on_error_low
+                    .as_deref()
+                    .map(parse_hook_mode)
+                    .transpose()?
+                    .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
+                medium_tier_mode: config
+                    .agent
+                    .hooks
+                    .on_error_medium
+                    .as_deref()
+                    .map(parse_hook_mode)
+                    .transpose()?
+                    .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
+                high_tier_mode: config
+                    .agent
+                    .hooks
+                    .on_error_high
+                    .as_deref()
+                    .map(parse_hook_mode)
+                    .transpose()?
+                    .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
             },
         },
         provider: Box::new(provider),
@@ -94,6 +123,17 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
     };
 
     run_agent_with_runtime(execution, req.workspace_root, req.message).await
+}
+
+fn parse_hook_mode(input: &str) -> anyhow::Result<HookFailureMode> {
+    match input.trim() {
+        "block" => Ok(HookFailureMode::Block),
+        "warn" => Ok(HookFailureMode::Warn),
+        "ignore" => Ok(HookFailureMode::Ignore),
+        other => {
+            anyhow::bail!("invalid hook error mode `{other}`; expected block, warn, or ignore")
+        }
+    }
 }
 
 pub async fn run_agent_with_runtime(
@@ -120,9 +160,7 @@ pub async fn run_agent_with_runtime(
     let response = agent
         .respond(
             UserMessage { text: message },
-            &ToolContext {
-                workspace_root: workspace_root.to_string_lossy().to_string(),
-            },
+            &ToolContext::new(workspace_root.to_string_lossy().to_string()),
         )
         .await?;
     let metrics_snapshot = runtime_metrics.export_json();
@@ -165,7 +203,8 @@ async fn build_memory_store(config_path: &Path) -> anyhow::Result<Box<dyn Memory
 
 #[cfg(test)]
 mod tests {
-    use super::require_openai_api_key;
+    use super::{parse_hook_mode, require_openai_api_key};
+    use agentzero_core::HookFailureMode;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -211,5 +250,27 @@ mod tests {
         });
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn parse_hook_mode_accepts_known_modes_success_path() {
+        assert!(matches!(
+            parse_hook_mode("block").expect("block should parse"),
+            HookFailureMode::Block
+        ));
+        assert!(matches!(
+            parse_hook_mode("warn").expect("warn should parse"),
+            HookFailureMode::Warn
+        ));
+        assert!(matches!(
+            parse_hook_mode("ignore").expect("ignore should parse"),
+            HookFailureMode::Ignore
+        ));
+    }
+
+    #[test]
+    fn parse_hook_mode_rejects_unknown_mode_negative_path() {
+        let err = parse_hook_mode("panic").expect_err("unknown mode should fail");
+        assert!(err.to_string().contains("invalid hook error mode"));
     }
 }

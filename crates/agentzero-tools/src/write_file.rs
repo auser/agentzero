@@ -102,6 +102,19 @@ impl Tool for WriteFileTool {
         let request = Self::parse_input(input)?;
         let destination = self.resolve_destination(&request.path, &ctx.workspace_root)?;
 
+        // B7: Hard-link guard — refuse overwriting multiply-linked files.
+        agentzero_autonomy::AutonomyPolicy::check_hard_links(&destination.to_string_lossy())?;
+
+        // B7: Sensitive file detection — block unless explicitly allowed.
+        if !ctx.allow_sensitive_file_writes
+            && agentzero_autonomy::is_sensitive_path(&destination.to_string_lossy())
+        {
+            return Err(anyhow!(
+                "refusing to write sensitive file: {}",
+                destination.display()
+            ));
+        }
+
         let bytes = request.content.as_bytes();
         if bytes.len() as u64 > self.max_write_bytes {
             return Err(anyhow!(
@@ -177,9 +190,7 @@ mod tests {
         let result = tool
             .execute(
                 r#"{"path":"note.txt","content":"hello","overwrite":false,"dry_run":false}"#,
-                &ToolContext {
-                    workspace_root: dir.to_string_lossy().to_string(),
-                },
+                &ToolContext::new(dir.to_string_lossy().to_string()),
             )
             .await
             .expect("write_file should succeed");
@@ -197,9 +208,7 @@ mod tests {
         let result = tool
             .execute(
                 r#"{"path":"note.txt","content":"hello","overwrite":false,"dry_run":true}"#,
-                &ToolContext {
-                    workspace_root: dir.to_string_lossy().to_string(),
-                },
+                &ToolContext::new(dir.to_string_lossy().to_string()),
             )
             .await
             .expect("dry run should succeed");
@@ -218,9 +227,7 @@ mod tests {
         let result = tool
             .execute(
                 r#"{"path":"note.txt","content":"new","overwrite":false,"dry_run":false}"#,
-                &ToolContext {
-                    workspace_root: dir.to_string_lossy().to_string(),
-                },
+                &ToolContext::new(dir.to_string_lossy().to_string()),
             )
             .await;
 
@@ -240,9 +247,7 @@ mod tests {
         let tool = WriteFileTool::new(WriteFilePolicy::default_for_root(dir.clone()));
         tool.execute(
             r#"{"path":"note.txt","content":"new","overwrite":true,"dry_run":false}"#,
-            &ToolContext {
-                workspace_root: dir.to_string_lossy().to_string(),
-            },
+            &ToolContext::new(dir.to_string_lossy().to_string()),
         )
         .await
         .expect("overwrite=true should succeed");
@@ -259,9 +264,7 @@ mod tests {
         let result = tool
             .execute(
                 r#"{"path":"../escape.txt","content":"x","overwrite":false,"dry_run":false}"#,
-                &ToolContext {
-                    workspace_root: dir.to_string_lossy().to_string(),
-                },
+                &ToolContext::new(dir.to_string_lossy().to_string()),
             )
             .await;
 
@@ -270,6 +273,74 @@ mod tests {
             .expect_err("traversal should be denied")
             .to_string()
             .contains("path traversal is not allowed"));
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    // B7: Hard-link guard tests
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_file_rejects_hard_linked_file() {
+        let dir = temp_dir();
+        let original = dir.join("original.txt");
+        fs::write(&original, "old").expect("original file should be written");
+        let link = dir.join("hardlink.txt");
+        fs::hard_link(&original, &link).expect("hard link should be created");
+
+        let tool = WriteFileTool::new(WriteFilePolicy::default_for_root(dir.clone()));
+        let result = tool
+            .execute(
+                r#"{"path":"hardlink.txt","content":"new","overwrite":true,"dry_run":false}"#,
+                &ToolContext::new(dir.to_string_lossy().to_string()),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("hard-linked file should be rejected")
+            .to_string()
+            .contains("hard link"));
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    // B7: Sensitive file detection tests
+
+    #[tokio::test]
+    async fn write_file_blocks_sensitive_path() {
+        let dir = temp_dir();
+        let tool = WriteFileTool::new(WriteFilePolicy::default_for_root(dir.clone()));
+        let result = tool
+            .execute(
+                r#"{"path":".env","content":"SECRET=x","overwrite":false,"dry_run":false}"#,
+                &ToolContext::new(dir.to_string_lossy().to_string()),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("sensitive file should be blocked")
+            .to_string()
+            .contains("refusing to write sensitive file"));
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn write_file_allows_sensitive_path_when_configured() {
+        let dir = temp_dir();
+        let tool = WriteFileTool::new(WriteFilePolicy::default_for_root(dir.clone()));
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        ctx.allow_sensitive_file_writes = true;
+        let result = tool
+            .execute(
+                r#"{"path":".env","content":"SECRET=x","overwrite":false,"dry_run":false}"#,
+                &ctx,
+            )
+            .await
+            .expect("sensitive file should be allowed when configured");
+
+        assert!(result.output.contains("dry_run=false"));
+        let content = fs::read_to_string(dir.join(".env")).expect("written file should exist");
+        assert_eq!(content, "SECRET=x");
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
 
@@ -283,9 +354,7 @@ mod tests {
         let result = tool
             .execute(
                 r#"{"path":"note.txt","content":"12345","overwrite":false,"dry_run":false}"#,
-                &ToolContext {
-                    workspace_root: dir.to_string_lossy().to_string(),
-                },
+                &ToolContext::new(dir.to_string_lossy().to_string()),
             )
             .await;
 

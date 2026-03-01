@@ -1,5 +1,7 @@
 use crate::loader::load;
-use agentzero_tools::{ReadFilePolicy, ShellPolicy, ToolSecurityPolicy, WriteFilePolicy};
+use agentzero_tools::{
+    ReadFilePolicy, ShellPolicy, ToolSecurityPolicy, UrlAccessPolicy, WriteFilePolicy,
+};
 use anyhow::Context;
 use std::path::{Component, Path, PathBuf};
 
@@ -9,6 +11,16 @@ pub fn load_tool_security_policy(
 ) -> anyhow::Result<ToolSecurityPolicy> {
     let config = load(config_path)?;
     let allowed_root = resolve_allowed_root(workspace_root, &config.security.allowed_root)?;
+
+    let url_cfg = &config.security.url_access;
+    let mut allow_cidrs = Vec::new();
+    for cidr_str in &url_cfg.allow_cidrs {
+        allow_cidrs.push(
+            agentzero_common::url_policy::CidrRange::parse(cidr_str).with_context(|| {
+                format!("invalid CIDR in security.url_access.allow_cidrs: {cidr_str}")
+            })?,
+        );
+    }
 
     Ok(ToolSecurityPolicy {
         read_file: ReadFilePolicy {
@@ -26,6 +38,17 @@ pub fn load_tool_security_policy(
             max_arg_length: config.security.shell.max_arg_length,
             max_output_bytes: config.security.shell.max_output_bytes,
             forbidden_chars: config.security.shell.forbidden_chars,
+            command_policy: Default::default(),
+        },
+        url_access: UrlAccessPolicy {
+            block_private_ip: url_cfg.block_private_ip,
+            allow_loopback: url_cfg.allow_loopback,
+            allow_cidrs,
+            allow_domains: url_cfg.allow_domains.clone(),
+            enforce_domain_allowlist: url_cfg.enforce_domain_allowlist,
+            domain_allowlist: url_cfg.domain_allowlist.clone(),
+            domain_blocklist: url_cfg.domain_blocklist.clone(),
+            approved_domains: url_cfg.approved_domains.clone(),
         },
         enable_write_file: config.security.write_file.enabled,
         enable_mcp: config.security.mcp.enabled,

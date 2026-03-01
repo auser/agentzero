@@ -102,12 +102,7 @@ mod tests {
             .expect("tool should be constructed");
 
         let result = tool
-            .execute(
-                "hello",
-                &ToolContext {
-                    workspace_root: "/tmp".to_string(),
-                },
-            )
+            .execute("hello", &ToolContext::new("/tmp".to_string()))
             .await
             .expect("plugin execution should succeed");
 

@@ -1,4 +1,5 @@
 use crate::token_store::save_paired_tokens;
+use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
 use std::{
     collections::HashSet,
@@ -15,6 +16,7 @@ pub(crate) struct GatewayState {
     pub(crate) paired_tokens: Arc<Mutex<HashSet<String>>>,
     pub(crate) otp_secret: Arc<String>,
     pub(crate) token_store_path: Option<Arc<PathBuf>>,
+    pub(crate) perplexity_filter: Arc<PerplexityFilterSettings>,
 }
 
 impl GatewayState {
@@ -35,7 +37,13 @@ impl GatewayState {
             paired_tokens: Arc::new(Mutex::new(paired_tokens)),
             otp_secret: Arc::new(otp_secret),
             token_store_path: token_store_path.map(Arc::new),
+            perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
         }
+    }
+
+    pub(crate) fn with_perplexity_filter(mut self, settings: PerplexityFilterSettings) -> Self {
+        self.perplexity_filter = Arc::new(settings);
+        self
     }
 
     pub(crate) fn add_paired_token(&self, token: String) -> anyhow::Result<()> {
@@ -56,6 +64,7 @@ impl GatewayState {
             paired_tokens: Arc::new(Mutex::new(HashSet::new())),
             otp_secret: Arc::new("OTPSECRET".to_string()),
             token_store_path: None,
+            perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
         }
     }
 
@@ -71,6 +80,7 @@ impl GatewayState {
             paired_tokens: Arc::new(Mutex::new(paired_tokens)),
             otp_secret: Arc::new("OTPSECRET".to_string()),
             token_store_path: None,
+            perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
         }
     }
 }

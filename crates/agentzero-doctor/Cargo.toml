@@ -1,0 +1,15 @@
+[package]
+name = "agentzero-doctor"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+agentzero-config = { workspace = true }
+agentzero-providers = { workspace = true }
+agentzero-heartbeat = { workspace = true }
+agentzero-health = { workspace = true }
+anyhow.workspace = true
+serde.workspace = true
+
