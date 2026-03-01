@@ -1,5 +1,6 @@
 use crate::url_policy::{enforce_url_policy, UrlAccessPolicy, UrlPolicyResult};
 use anyhow::anyhow;
+use std::collections::HashMap;
 use url::Url;
 
 /// Parse and validate an HTTP/HTTPS URL (scheme + host check only).
@@ -31,6 +32,39 @@ pub fn parse_http_url_with_policy(input: &str, policy: &UrlAccessPolicy) -> anyh
         }
         UrlPolicyResult::Blocked { reason } => Err(anyhow!("URL access denied: {reason}")),
     }
+}
+
+/// Build a URL query string using standard percent-encoding (`%20` for spaces).
+///
+/// OAuth authorize endpoints and similar browser-facing URLs require `%20` for
+/// spaces instead of `+` (which is only valid in `application/x-www-form-urlencoded`
+/// POST bodies). This function matches the encoding used by the official OpenAI
+/// Codex CLI (`urlencoding::encode`).
+///
+/// Keys are emitted in the order returned by the HashMap iterator. Use
+/// [`build_query_string_ordered`] when deterministic ordering is required.
+pub fn build_query_string(params: &HashMap<&str, &str>) -> String {
+    encode_pairs(params.iter().map(|(&k, &v)| (k, v)))
+}
+
+/// Like [`build_query_string`] but emits keys in the provided order.
+///
+/// Use this when the parameter order matters (e.g. for readable URLs or when a
+/// server is sensitive to ordering).
+pub fn build_query_string_ordered(params: &[(&str, &str)]) -> String {
+    encode_pairs(params.iter().map(|&(k, v)| (k, v)))
+}
+
+fn encode_pairs<'a>(pairs: impl Iterator<Item = (&'a str, &'a str)>) -> String {
+    pairs
+        .map(|(k, v)| {
+            let ek: String = url::form_urlencoded::byte_serialize(k.as_bytes()).collect();
+            let ev: String = url::form_urlencoded::byte_serialize(v.as_bytes()).collect();
+            format!("{ek}={ev}")
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+        .replace('+', "%20")
 }
 
 #[cfg(test)]
@@ -75,5 +109,38 @@ mod tests {
         let err = parse_http_url_with_policy("https://blocked.com/path", &policy)
             .expect_err("blocklisted domain should be blocked");
         assert!(err.to_string().contains("URL access denied"));
+    }
+
+    #[test]
+    fn build_query_string_encodes_spaces_as_percent20() {
+        let mut params = HashMap::new();
+        params.insert("scope", "openid profile email");
+        let qs = build_query_string(&params);
+        assert!(qs.contains("scope=openid%20profile%20email"));
+        assert!(!qs.contains('+'));
+    }
+
+    #[test]
+    fn build_query_string_ordered_preserves_insertion_order() {
+        let params = vec![
+            ("response_type", "code"),
+            ("client_id", "my_app"),
+            ("scope", "openid email"),
+        ];
+        let qs = build_query_string_ordered(&params);
+        assert_eq!(
+            qs,
+            "response_type=code&client_id=my_app&scope=openid%20email"
+        );
+    }
+
+    #[test]
+    fn build_query_string_ordered_encodes_special_chars() {
+        let params = vec![("redirect_uri", "http://localhost:1455/auth/callback")];
+        let qs = build_query_string_ordered(&params);
+        assert_eq!(
+            qs,
+            "redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"
+        );
     }
 }

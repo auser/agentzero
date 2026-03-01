@@ -49,12 +49,16 @@ agentzero-local = { workspace = true }
 agentzero-runtime = { workspace = true, features = [] }
 agentzero-security = { workspace = true }
 agentzero-service = { workspace = true }
+base64 = "0.22"
 console = "0.15"
 crossterm = "0.28"
 inquire = "0.7"
+rand = "0.8"
 ratatui = "0.28"
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 gag = "1.0"
 rusqlite.workspace = true
 tokio.workspace = true

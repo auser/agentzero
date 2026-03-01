@@ -31,6 +31,8 @@ pub struct PendingOAuthLogin {
     pub code_verifier: String,
     pub state: String,
     pub created_at_epoch_secs: u64,
+    #[serde(default)]
+    pub redirect_uri: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -111,6 +113,25 @@ impl AuthManager {
     ) -> anyhow::Result<()> {
         let code = extract_oauth_code(redirect_or_code);
         self.upsert_token(profile_name, provider, &code, None, None, activate)
+    }
+
+    pub fn store_oauth_tokens(
+        &self,
+        profile_name: &str,
+        provider: &str,
+        access_token: &str,
+        refresh_token: Option<&str>,
+        expires_in_secs: Option<u64>,
+        activate: bool,
+    ) -> anyhow::Result<()> {
+        self.upsert_token(
+            profile_name,
+            provider,
+            access_token,
+            refresh_token,
+            expires_in_secs,
+            activate,
+        )
     }
 
     pub fn save_pending_oauth_login(&self, pending: &PendingOAuthLogin) -> anyhow::Result<()> {
@@ -461,6 +482,10 @@ fn now_epoch_secs() -> u64 {
         .as_secs()
 }
 
+pub fn extract_oauth_code_from_input(redirect_or_code: &str) -> String {
+    extract_oauth_code(redirect_or_code)
+}
+
 fn extract_oauth_code(redirect_or_code: &str) -> String {
     let raw = redirect_or_code.trim();
     if let Ok(parsed) = Url::parse(raw) {
@@ -682,6 +707,7 @@ mod tests {
             code_verifier: "v1".to_string(),
             state: "s1".to_string(),
             created_at_epoch_secs: 1,
+            redirect_uri: Some("http://localhost:1455/auth/callback".to_string()),
         };
         manager
             .save_pending_oauth_login(&pending)

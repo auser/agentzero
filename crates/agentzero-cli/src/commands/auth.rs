@@ -2,8 +2,11 @@ use crate::cli::AuthCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_auth::AuthStatus;
 use agentzero_auth::{AuthManager, AuthProfileSummary, PendingOAuthLogin, RefreshStatus};
+use agentzero_common::util::build_query_string_ordered;
 use anyhow::{bail, Context};
 use async_trait::async_trait;
+use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};
+use sha2::Digest;
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
 use std::time::Duration;
@@ -53,12 +56,14 @@ impl AgentZeroCommand for AuthCommand {
                 }
 
                 let (state, code_verifier) = generate_pkce_seed();
+                let redirect_uri = format!("http://localhost:{callback_port}/auth/callback");
                 let pending = PendingOAuthLogin {
                     provider: provider.to_string(),
                     profile: profile.clone(),
                     code_verifier: code_verifier.clone(),
                     state: state.clone(),
                     created_at_epoch_secs: now_epoch_secs(),
+                    redirect_uri: Some(redirect_uri.clone()),
                 };
                 manager.save_pending_oauth_login(&pending)?;
 
@@ -74,7 +79,18 @@ impl AgentZeroCommand for AuthCommand {
                     );
                     match receive_loopback_code(callback_port, &state, oauth_callback_timeout()) {
                         Ok(code) => {
-                            manager.paste_redirect(&profile, provider, &code, true)?;
+                            println!("Received authorization code, exchanging for token...");
+                            let tokens =
+                                exchange_oauth_code(provider, &code, &code_verifier, &redirect_uri)
+                                    .await?;
+                            manager.store_oauth_tokens(
+                                &profile,
+                                provider,
+                                &tokens.access_token,
+                                tokens.refresh_token.as_deref(),
+                                tokens.expires_in,
+                                true,
+                            )?;
                             manager.clear_pending_oauth_login()?;
                             println!("Saved profile {profile}");
                             println!("Active profile for {provider}: {profile}");
@@ -131,7 +147,25 @@ impl AgentZeroCommand for AuthCommand {
                     }
                 }
 
-                manager.paste_redirect(&profile, provider, &redirect_input, true)?;
+                let code = agentzero_auth::extract_oauth_code_from_input(&redirect_input);
+                let redirect_uri = pending
+                    .redirect_uri
+                    .unwrap_or_else(|| "http://localhost:1455/auth/callback".to_string());
+                if provider == "openai-codex" {
+                    let tokens =
+                        exchange_oauth_code(provider, &code, &pending.code_verifier, &redirect_uri)
+                            .await?;
+                    manager.store_oauth_tokens(
+                        &profile,
+                        provider,
+                        &tokens.access_token,
+                        tokens.refresh_token.as_deref(),
+                        tokens.expires_in,
+                        true,
+                    )?;
+                } else {
+                    manager.paste_redirect(&profile, provider, &redirect_input, true)?;
+                }
                 manager.clear_pending_oauth_login()?;
                 println!("Saved profile {profile}");
                 println!("Active profile for {provider}: {profile}");
@@ -312,7 +346,7 @@ fn build_authorize_url(
     let (base, client_id, scope) = if provider == "openai-codex" {
         (
             "https://auth.openai.com/oauth/authorize",
-            "app_EMoamEEZ73f0CkXaXp7hrann",
+            openai_client_id(),
             "openid profile email offline_access",
         )
     } else {
@@ -323,19 +357,29 @@ fn build_authorize_url(
         )
     };
 
-    let query = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("client_id", client_id)
-        .append_pair("code_challenge", code_verifier)
-        .append_pair("code_challenge_method", "S256")
-        .append_pair("response_type", "code")
-        .append_pair("redirect_uri", &redirect_uri)
-        .append_pair("scope", scope)
-        .append_pair("state", state)
-        .finish();
+    let code_challenge = compute_code_challenge(code_verifier);
+
+    let mut params: Vec<(&str, &str)> = vec![
+        ("response_type", "code"),
+        ("client_id", client_id),
+        ("redirect_uri", &redirect_uri),
+        ("scope", scope),
+        ("code_challenge", &code_challenge),
+        ("code_challenge_method", "S256"),
+        ("state", state),
+    ];
+    if provider == "openai-codex" {
+        params.push(("id_token_add_organizations", "true"));
+        params.push(("codex_cli_simplified_flow", "true"));
+        params.push(("originator", "codex_cli_rs"));
+    }
+    let query = build_query_string_ordered(&params);
     format!("{base}?{query}")
 }
 
 fn generate_pkce_seed() -> (String, String) {
+    use rand::Rng;
+
     let now = now_epoch_secs();
     let pid = std::process::id();
     let nanos = SystemTime::now()
@@ -343,8 +387,69 @@ fn generate_pkce_seed() -> (String, String) {
         .expect("system time should be after unix epoch")
         .as_nanos();
     let state = format!("st_{pid:x}_{now:x}_{nanos:x}");
-    let verifier = format!("vf_{nanos:x}_{pid:x}");
+
+    // RFC 7636: code_verifier must be 43-128 chars of [A-Z]/[a-z]/[0-9]/"-"/"."/"_"/"~".
+    // Generate 32 random bytes and base64url-encode (no padding) → 43 characters.
+    let mut random_bytes = [0u8; 32];
+    rand::thread_rng().fill(&mut random_bytes);
+    let verifier = URL_SAFE_NO_PAD.encode(random_bytes);
+
     (state, verifier)
+}
+
+fn compute_code_challenge(code_verifier: &str) -> String {
+    let digest = sha2::Sha256::digest(code_verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
+fn openai_client_id() -> &'static str {
+    "app_EMoamEEZ73f0CkXaXp7hrann"
+}
+
+#[derive(serde::Deserialize)]
+struct OAuthTokenResponse {
+    access_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    expires_in: Option<u64>,
+}
+
+async fn exchange_oauth_code(
+    provider: &str,
+    code: &str,
+    code_verifier: &str,
+    redirect_uri: &str,
+) -> anyhow::Result<OAuthTokenResponse> {
+    let (token_url, client_id) = if provider == "openai-codex" {
+        ("https://auth.openai.com/oauth/token", openai_client_id())
+    } else {
+        bail!("OAuth token exchange not yet implemented for {provider}");
+    };
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(token_url)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
+            ("client_id", client_id),
+            ("code_verifier", code_verifier),
+        ])
+        .send()
+        .await
+        .context("failed to exchange authorization code")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("token exchange failed (HTTP {status}): {body}");
+    }
+
+    resp.json::<OAuthTokenResponse>()
+        .await
+        .context("failed to parse token exchange response")
 }
 
 fn now_epoch_secs() -> u64 {
@@ -601,6 +706,7 @@ mod tests {
         .await
         .expect("auth login should succeed");
 
+        // PasteRedirect with wrong state should fail.
         AuthCommand::run(
             &ctx,
             AuthCommands::PasteRedirect {
@@ -612,25 +718,29 @@ mod tests {
         .await
         .expect_err("state mismatch should fail");
 
-        let pending = agentzero_auth::AuthManager::in_config_dir(&dir)
-            .expect("manager should construct")
+        let manager =
+            agentzero_auth::AuthManager::in_config_dir(&dir).expect("manager should construct");
+        let pending = manager
             .load_pending_oauth_login()
             .expect("pending oauth should be readable")
             .expect("pending oauth should exist");
+        assert!(pending.redirect_uri.is_some());
 
-        AuthCommand::run(
-            &ctx,
-            AuthCommands::PasteRedirect {
-                provider: "openai-codex".to_string(),
-                profile: "default".to_string(),
-                input: Some(format!(
-                    "https://example.test/callback?code=tok-test&state={}",
-                    pending.state
-                )),
-            },
-        )
-        .await
-        .expect("paste redirect should succeed");
+        // Simulate successful token exchange by storing tokens directly
+        // (real exchange requires network access to auth.openai.com).
+        manager
+            .store_oauth_tokens(
+                "default",
+                "openai-codex",
+                "access-tok",
+                Some("refresh-tok"),
+                Some(3600),
+                true,
+            )
+            .expect("store oauth tokens should succeed");
+        manager
+            .clear_pending_oauth_login()
+            .expect("clear pending should succeed");
 
         AuthCommand::run(&ctx, AuthCommands::Status { json: true })
             .await
@@ -728,35 +838,19 @@ mod tests {
             config_path: dir.join("agentzero.toml"),
         };
 
-        AuthCommand::run(
-            &ctx,
-            AuthCommands::Login {
-                profile: "default".to_string(),
-                provider: "openai-codex".to_string(),
-                device_code: false,
-            },
-        )
-        .await
-        .expect("auth login should succeed");
-
-        let pending = agentzero_auth::AuthManager::in_config_dir(&dir)
-            .expect("manager should construct")
-            .load_pending_oauth_login()
-            .expect("pending oauth should be readable")
-            .expect("pending oauth should exist");
-        AuthCommand::run(
-            &ctx,
-            AuthCommands::PasteRedirect {
-                provider: "openai-codex".to_string(),
-                profile: "default".to_string(),
-                input: Some(format!(
-                    "https://example.test/callback?code=tok-test&state={}",
-                    pending.state
-                )),
-            },
-        )
-        .await
-        .expect("paste redirect should succeed");
+        // Seed a profile directly (token exchange requires network).
+        let manager =
+            agentzero_auth::AuthManager::in_config_dir(&dir).expect("manager should construct");
+        manager
+            .store_oauth_tokens(
+                "default",
+                "openai-codex",
+                "access-tok",
+                Some("refresh-tok"),
+                Some(3600),
+                true,
+            )
+            .expect("store oauth tokens should succeed");
 
         AuthCommand::run(
             &ctx,
@@ -861,6 +955,34 @@ mod tests {
     fn build_authorize_url_uses_selected_callback_port_success_path() {
         let url = build_authorize_url("openai-codex", "state-1", "verifier-1", 1460);
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A1460%2Fauth%2Fcallback"));
+        // The code_challenge should be the SHA256 hash of the verifier, not the raw verifier.
+        assert!(!url.contains("code_challenge=verifier-1"));
+        let expected_challenge = super::compute_code_challenge("verifier-1");
+        assert!(url.contains(&format!("code_challenge={expected_challenge}")));
+    }
+
+    #[test]
+    fn pkce_verifier_meets_rfc7636_length_requirement() {
+        let (_state, verifier) = super::generate_pkce_seed();
+        // RFC 7636 requires 43-128 characters.
+        assert!(
+            verifier.len() >= 43 && verifier.len() <= 128,
+            "verifier length {} not in 43..=128",
+            verifier.len()
+        );
+    }
+
+    #[test]
+    fn pkce_challenge_is_base64url_sha256_of_verifier() {
+        use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};
+        use sha2::Digest;
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = super::compute_code_challenge(verifier);
+        // Manually compute expected value.
+        let digest = sha2::Sha256::digest(verifier.as_bytes());
+        let expected = URL_SAFE_NO_PAD.encode(digest);
+        assert_eq!(challenge, expected);
     }
 
     #[test]
