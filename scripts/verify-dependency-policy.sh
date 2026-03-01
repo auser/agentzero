@@ -42,17 +42,17 @@ if [[ ! -f "$policy_path" ]]; then
   exit 1
 fi
 
-if ! rg -q 'package-ecosystem:\s*"cargo"' "$dependabot_path"; then
+if ! grep -qE 'package-ecosystem:\s*"cargo"' "$dependabot_path"; then
   echo "dependabot config missing cargo ecosystem entry" >&2
   exit 1
 fi
 
-if ! rg -q 'package-ecosystem:\s*"github-actions"' "$dependabot_path"; then
+if ! grep -qE 'package-ecosystem:\s*"github-actions"' "$dependabot_path"; then
   echo "dependabot config missing github-actions ecosystem entry" >&2
   exit 1
 fi
 
-if ! rg -qi "Update Cadence" "$policy_path"; then
+if ! grep -qi "Update Cadence" "$policy_path"; then
   echo "dependency policy doc missing Update Cadence section" >&2
   exit 1
 fi

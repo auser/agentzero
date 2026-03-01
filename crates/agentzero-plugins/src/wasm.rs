@@ -132,7 +132,7 @@ impl WasmPluginRuntime {
 
         let engine = Engine::default();
         let module = Module::from_file(&engine, path)
-            .with_context(|| format!("failed to compile module at {}", path.display()))?;
+            .map_err(|e| anyhow!("failed to compile module at {}: {e}", path.display()))?;
         validate_host_call_allowlist(&module, policy)?;
 
         Ok(())
@@ -156,10 +156,11 @@ impl WasmPluginRuntime {
 
         let mut config = Config::new();
         config.epoch_interruption(true);
-        let engine = Engine::new(&config).context("failed to configure wasmtime engine")?;
-        let module = Module::from_file(&engine, &container.module_path).with_context(|| {
-            format!(
-                "failed to compile module at {}",
+        let engine = Engine::new(&config)
+            .map_err(|e| anyhow!("failed to configure wasmtime engine: {e}"))?;
+        let module = Module::from_file(&engine, &container.module_path).map_err(|e| {
+            anyhow!(
+                "failed to compile module at {}: {e}",
                 container.module_path.display()
             )
         })?;
@@ -193,19 +194,20 @@ impl WasmPluginRuntime {
         let linker = Linker::new(&engine);
         let instance = linker
             .instantiate(&mut store, &module)
-            .context("failed to instantiate plugin module")?;
+            .map_err(|e| anyhow!("failed to instantiate plugin module: {e}"))?;
 
         let entrypoint = instance
             .get_typed_func::<(), i32>(&mut store, &container.entrypoint)
-            .with_context(|| {
-                format!(
-                    "missing or incompatible entrypoint '{}' (expected fn() -> i32)",
+            .map_err(|e| {
+                anyhow!(
+                    "missing or incompatible entrypoint '{}' (expected fn() -> i32): {e}",
                     container.entrypoint
                 )
             })?;
 
         let started = Instant::now();
-        let status_code = match entrypoint.call(&mut store, ()) {
+        let call_result: Result<i32, wasmtime::Error> = entrypoint.call(&mut store, ());
+        let status_code = match call_result {
             Ok(status) => status,
             Err(err) => {
                 let err_text = err.to_string();
@@ -225,7 +227,7 @@ impl WasmPluginRuntime {
                 }
                 timer_cancel.store(true, Ordering::Relaxed);
                 let _ = timer_handle.join();
-                return Err(err).context("plugin entrypoint call failed");
+                return Err(anyhow!("plugin entrypoint call failed: {err}"));
             }
         };
         timer_cancel.store(true, Ordering::Relaxed);
