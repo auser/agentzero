@@ -16,6 +16,9 @@ public/node_modules/
 public/.astro/
 public/dist/
 
+# Legacy docs directory (moved to public/)
+/docs/
+
 # macOS
 .DS_Store
 externals/

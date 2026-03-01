@@ -97,4 +97,61 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn cost_status_on_empty_store_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        CostCommand::run(&ctx, CostCommands::Status { json: true })
+            .await
+            .expect("status on empty store should succeed");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn cost_record_accumulates_across_calls_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        CostCommand::run(
+            &ctx,
+            CostCommands::Record {
+                tokens: 100,
+                usd: 0.01,
+            },
+        )
+        .await
+        .expect("first record should succeed");
+
+        CostCommand::run(
+            &ctx,
+            CostCommands::Record {
+                tokens: 200,
+                usd: 0.02,
+            },
+        )
+        .await
+        .expect("second record should succeed");
+
+        // Verify accumulation by loading from store directly
+        let store = agentzero_storage::EncryptedJsonStore::in_config_dir(&dir, "cost-summary.json")
+            .expect("store should open");
+        let summary = store
+            .load_or_default::<agentzero_cost::CostSummary>()
+            .expect("load should succeed");
+        assert_eq!(summary.total_tokens, 300);
+        assert!((summary.total_usd - 0.03).abs() < f64::EPSILON);
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
 }

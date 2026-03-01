@@ -142,4 +142,101 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn goals_list_empty_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        GoalsCommand::run(&ctx, GoalCommands::List { json: true })
+            .await
+            .expect("list on empty store should succeed");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn goals_add_duplicate_id_overwrites_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        GoalsCommand::run(
+            &ctx,
+            GoalCommands::Add {
+                id: "g1".to_string(),
+                title: "Original title".to_string(),
+            },
+        )
+        .await
+        .expect("first add should succeed");
+
+        GoalsCommand::run(
+            &ctx,
+            GoalCommands::Add {
+                id: "g1".to_string(),
+                title: "Updated title".to_string(),
+            },
+        )
+        .await
+        .expect("duplicate add should succeed (overwrite)");
+
+        // Verify latest title wins
+        let store = agentzero_storage::EncryptedJsonStore::in_config_dir(&dir, "goals.json")
+            .expect("store should open");
+        let goals = store
+            .load_or_default::<std::collections::BTreeMap<String, agentzero_goals::Goal>>()
+            .expect("load should succeed");
+        let goal = goals.get("g1").expect("goal should exist");
+        assert_eq!(goal.title, "Updated title");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn goals_complete_already_done_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        GoalsCommand::run(
+            &ctx,
+            GoalCommands::Add {
+                id: "g1".to_string(),
+                title: "Ship feature".to_string(),
+            },
+        )
+        .await
+        .expect("add should succeed");
+
+        GoalsCommand::run(
+            &ctx,
+            GoalCommands::Complete {
+                id: "g1".to_string(),
+            },
+        )
+        .await
+        .expect("first complete should succeed");
+
+        GoalsCommand::run(
+            &ctx,
+            GoalCommands::Complete {
+                id: "g1".to_string(),
+            },
+        )
+        .await
+        .expect("completing already-done goal should succeed (idempotent)");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
 }

@@ -189,37 +189,100 @@ impl AgentZeroCommand for ProvidersQuotaCommand {
 
     async fn run(ctx: &CommandContext, opts: Self::Options) -> anyhow::Result<()> {
         let cfg = load(&ctx.config_path).ok();
-        let provider_id = opts
+        let provider_kind = opts
             .provider
-            .or_else(|| cfg.map(|c| c.provider.kind))
+            .clone()
+            .or_else(|| cfg.as_ref().map(|c| c.provider.kind.clone()))
             .unwrap_or_else(|| "openrouter".to_string());
 
+        let base_url = cfg
+            .as_ref()
+            .map(|c| c.provider.base_url.clone())
+            .unwrap_or_default();
+        let model = cfg
+            .as_ref()
+            .map(|c| c.provider.model.clone())
+            .unwrap_or_default();
+
+        let descriptor = agentzero_providers::find_provider(&provider_kind);
+        let api_key_available = resolve_api_key(&provider_kind).is_some();
+
+        let quota_info = QuotaInfo {
+            provider: provider_kind.clone(),
+            description: descriptor.map(|d| d.description).unwrap_or("unknown"),
+            base_url,
+            model,
+            api_key_configured: api_key_available,
+            quota_api_supported: supports_quota_api(&provider_kind),
+        };
+
         if opts.json {
-            let output = serde_json::json!({
-                "provider": provider_id,
-                "quota": {
-                    "requests_remaining": null,
-                    "tokens_remaining": null,
-                    "rate_limit_rpm": null,
-                    "rate_limit_tpm": null,
-                },
-                "circuit_breaker": {
-                    "state": "closed",
-                    "failures": 0,
-                    "last_failure": null,
-                },
-                "note": "quota inspection requires runtime integration (not yet wired)"
-            });
-            println!("{}", serde_json::to_string_pretty(&output)?);
+            println!("{}", serde_json::to_string_pretty(&quota_info)?);
         } else {
-            println!("Provider quota: {provider_id}");
-            println!("  Requests remaining: (not yet wired)");
-            println!("  Rate limit: (not yet wired)");
-            println!("  Circuit breaker: closed (0 failures)");
-            println!("\nNote: quota inspection requires runtime integration.");
+            println!(
+                "Provider: {} ({})",
+                quota_info.provider, quota_info.description
+            );
+            println!("  Base URL: {}", quota_info.base_url);
+            println!("  Model: {}", quota_info.model);
+            println!(
+                "  API key: {}",
+                if quota_info.api_key_configured {
+                    "configured"
+                } else {
+                    "not found"
+                }
+            );
+            println!(
+                "  Quota API: {}",
+                if quota_info.quota_api_supported {
+                    "supported (use provider dashboard for live data)"
+                } else {
+                    "not available for this provider"
+                }
+            );
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Serialize)]
+struct QuotaInfo {
+    provider: String,
+    description: &'static str,
+    base_url: String,
+    model: String,
+    api_key_configured: bool,
+    quota_api_supported: bool,
+}
+
+fn resolve_api_key(provider: &str) -> Option<String> {
+    // Check provider-specific env vars, then generic fallback
+    let env_keys = match provider {
+        "openrouter" => &["OPENROUTER_API_KEY"][..],
+        "anthropic" => &["ANTHROPIC_API_KEY"][..],
+        "openai" => &["OPENAI_API_KEY"][..],
+        "google" | "gemini" => &["GOOGLE_API_KEY", "GEMINI_API_KEY"][..],
+        "groq" => &["GROQ_API_KEY"][..],
+        "together" | "together-ai" => &["TOGETHER_API_KEY"][..],
+        "deepseek" => &["DEEPSEEK_API_KEY"][..],
+        "mistral" => &["MISTRAL_API_KEY"][..],
+        "xai" | "grok" => &["XAI_API_KEY"][..],
+        _ => &["AGENTZERO_API_KEY"][..],
+    };
+
+    for key in env_keys {
+        if let Ok(val) = std::env::var(key) {
+            if !val.is_empty() {
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
+fn supports_quota_api(provider: &str) -> bool {
+    matches!(provider, "openrouter" | "anthropic" | "openai")
 }
 
 #[cfg(test)]

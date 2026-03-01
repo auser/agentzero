@@ -61,6 +61,8 @@ pub fn load_tool_security_policy(
         enable_web_search: config.web_search.enabled,
         enable_browser: config.browser.enabled,
         enable_browser_open: config.browser.enabled,
+        enable_composio: false,
+        enable_pushover: false,
     })
 }
 

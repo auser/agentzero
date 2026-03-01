@@ -9,13 +9,16 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 pub use agentzero_tools::{
-    ApplyPatchTool, BrowserOpenTool, BrowserTool, ContentSearchTool, CronAddTool, CronListTool,
-    CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, DelegateTool, DocxReadTool,
-    FileEditTool, GitOperationsTool, GlobSearchTool, ImageInfoTool, MemoryForgetTool,
-    MemoryRecallTool, MemoryStoreTool, ModelRoutingConfigTool, PdfReadTool, ProcessTool,
-    ReadFilePolicy, ReadFileTool, ScreenshotTool, ShellPolicy, ShellTool, SubAgentListTool,
-    SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool, ToolSecurityPolicy, WebSearchTool,
-    WriteFilePolicy, WriteFileTool,
+    ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool, ComposioTool,
+    ContentSearchTool, CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool,
+    CronUpdateTool, DelegateCoordinationStatusTool, DelegateTool, DocxReadTool, FileEditTool,
+    GitOperationsTool, GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool,
+    HardwareMemoryReadTool, ImageInfoTool, MemoryForgetTool, MemoryRecallTool, MemoryStoreTool,
+    ModelRoutingConfigTool, PdfReadTool, ProcessTool, ProxyConfigTool, PushoverTool,
+    ReadFilePolicy, ReadFileTool, ScreenshotTool, ShellPolicy, ShellTool, SopAdvanceTool,
+    SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, SubAgentListTool,
+    SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool, ToolSecurityPolicy, WasmModuleTool,
+    WasmToolExecTool, WebSearchTool, WriteFilePolicy, WriteFileTool,
 };
 pub use mcp::McpTool;
 pub use plugin::ProcessPluginTool;
@@ -42,6 +45,19 @@ pub fn default_tools(
         Box::new(SubAgentSpawnTool::default()),
         Box::new(SubAgentListTool),
         Box::new(SubAgentManageTool),
+        Box::new(CliDiscoveryTool),
+        Box::new(ProxyConfigTool),
+        Box::new(DelegateCoordinationStatusTool),
+        Box::new(SopListTool),
+        Box::new(SopStatusTool),
+        Box::new(SopAdvanceTool),
+        Box::new(SopApproveTool),
+        Box::new(SopExecuteTool),
+        Box::new(HardwareBoardInfoTool),
+        Box::new(HardwareMemoryMapTool),
+        Box::new(HardwareMemoryReadTool),
+        Box::new(WasmModuleTool),
+        Box::new(WasmToolExecTool),
     ];
 
     if policy.enable_write_file {
@@ -88,6 +104,14 @@ pub fn default_tools(
             anyhow::anyhow!("plugin tool enabled but AGENTZERO_PLUGIN_TOOL is missing")
         })?;
         tools.push(Box::new(plugin_tool));
+    }
+
+    if policy.enable_composio {
+        tools.push(Box::new(ComposioTool));
+    }
+
+    if policy.enable_pushover {
+        tools.push(Box::new(PushoverTool));
     }
 
     if let Some(r) = router {

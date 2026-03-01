@@ -196,4 +196,60 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn identity_get_missing_fails_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        let err = IdentityCommand::run(
+            &ctx,
+            IdentityCommands::Get {
+                id: "nonexistent".to_string(),
+                json: true,
+            },
+        )
+        .await
+        .expect_err("get missing identity should fail");
+        assert!(err.to_string().contains("not found"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn identity_upsert_agent_kind_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        IdentityCommand::run(
+            &ctx,
+            IdentityCommands::Upsert {
+                id: "agent-1".to_string(),
+                name: "Worker Agent".to_string(),
+                kind: IdentityKind::Agent,
+                json: true,
+            },
+        )
+        .await
+        .expect("upsert agent kind should succeed");
+
+        // Verify persistence by loading from store directly
+        let store = agentzero_storage::EncryptedJsonStore::in_config_dir(&dir, "identities.json")
+            .expect("store should open");
+        let identities = store
+            .load_or_default::<std::collections::BTreeMap<String, agentzero_identity::ActorIdentity>>()
+            .expect("load should succeed");
+        let agent = identities.get("agent-1").expect("agent should exist");
+        assert_eq!(agent.display_name, "Worker Agent");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
 }

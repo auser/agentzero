@@ -18,7 +18,11 @@ pub use model::{
     WriteFileConfig,
 };
 pub use policy::{load_audit_policy, load_tool_security_policy, AuditPolicy};
-pub use templates::{template_paths_for_workspace, TemplateFile, TEMPLATE_LOAD_ORDER};
+pub use templates::{
+    discover_shared_templates, discover_templates, list_template_sources,
+    template_paths_for_workspace, template_search_dirs, ResolvedTemplate, TemplateFile,
+    TemplateSet, MAIN_SESSION_TEMPLATES, SHARED_SESSION_TEMPLATES, TEMPLATE_LOAD_ORDER,
+};
 
 #[cfg(test)]
 mod tests;

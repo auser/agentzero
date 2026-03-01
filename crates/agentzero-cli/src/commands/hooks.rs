@@ -103,4 +103,48 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn hooks_disable_missing_fails_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        let err = HooksCommand::run(
+            &ctx,
+            HookCommands::Disable {
+                name: "nonexistent".to_string(),
+            },
+        )
+        .await
+        .expect_err("disabling missing hook should fail");
+        assert!(err.to_string().contains("unknown hook"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn hooks_test_missing_fails_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        let err = HooksCommand::run(
+            &ctx,
+            HookCommands::Test {
+                name: "nonexistent".to_string(),
+            },
+        )
+        .await
+        .expect_err("testing missing hook should fail");
+        assert!(err.to_string().contains("unknown hook"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
 }

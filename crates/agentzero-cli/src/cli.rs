@@ -268,6 +268,11 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Template management — discover, scaffold, and validate template files.
+    Template {
+        #[command(subcommand)]
+        command: TemplateCommands,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -498,6 +503,28 @@ pub enum SkillCommands {
         #[arg(long)]
         name: String,
     },
+    /// Scaffold a new skill project.
+    New {
+        /// Name for the new skill.
+        name: String,
+        /// Scaffold template language (typescript, rust, go, python).
+        #[arg(long, default_value = "typescript")]
+        template: String,
+        /// Target directory (defaults to current directory).
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Audit an installed skill for security and compatibility.
+    Audit {
+        /// Name of the skill to audit.
+        #[arg(long)]
+        name: String,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List available skill scaffold templates.
+    Templates,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1039,16 +1066,20 @@ pub enum AuthKind {
 
 #[derive(Debug, Subcommand)]
 pub enum ChannelCommands {
-    /// Add a channel.
-    Add,
-    /// Bind Telegram channel settings.
-    BindTelegram,
+    /// Add a channel. Optionally specify the channel name, e.g. `channel add telegram`.
+    Add {
+        /// Channel name to add. If omitted, prompts interactively or reads AGENTZERO_CHANNEL.
+        name: Option<String>,
+    },
     /// Run channel diagnostics.
     Doctor,
     /// List available channels.
     List,
-    /// Remove a channel.
-    Remove,
+    /// Remove a channel. Optionally specify the channel name.
+    Remove {
+        /// Channel name to remove. If omitted, prompts interactively or reads AGENTZERO_CHANNEL.
+        name: Option<String>,
+    },
     /// Start configured channels.
     Start,
 }
@@ -1109,6 +1140,35 @@ pub enum ConfigCommands {
         /// Value to set (type inferred: bool, integer, float, or string).
         value: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TemplateCommands {
+    /// List all template files with their status and source location.
+    List {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the content of a specific template file.
+    Show {
+        /// Template name (e.g. AGENTS, BOOT, IDENTITY, SOUL, TOOLS, etc.).
+        name: String,
+    },
+    /// Scaffold one or all template files into the workspace.
+    Init {
+        /// Scaffold a single template (e.g. AGENTS, BOOT). Omit to scaffold all.
+        #[arg(long)]
+        name: Option<String>,
+        /// Target directory (defaults to workspace root).
+        #[arg(long)]
+        dir: Option<String>,
+        /// Overwrite existing template files.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Validate that template files are well-formed and discoverable.
+    Validate,
 }
 
 #[derive(Debug, Subcommand)]

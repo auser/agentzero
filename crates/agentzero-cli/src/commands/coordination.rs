@@ -95,4 +95,52 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn coordination_status_on_empty_store_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        CoordinationCommand::run(&ctx, CoordinationCommands::Status { json: true })
+            .await
+            .expect("status on empty store should succeed");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn coordination_set_persists_across_status_calls_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        CoordinationCommand::run(
+            &ctx,
+            CoordinationCommands::Set {
+                active_workers: 3,
+                queued_tasks: 7,
+            },
+        )
+        .await
+        .expect("set should succeed");
+
+        // Verify persistence by loading from store directly
+        let store =
+            agentzero_storage::EncryptedJsonStore::in_config_dir(&dir, "coordination-status.json")
+                .expect("store should open");
+        let status = store
+            .load_or_default::<agentzero_coordination::CoordinationStatus>()
+            .expect("load should succeed");
+        assert_eq!(status.active_workers, 3);
+        assert_eq!(status.queued_tasks, 7);
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
 }

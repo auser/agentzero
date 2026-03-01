@@ -174,4 +174,41 @@ mod tests {
             .await
             .expect("info should succeed");
     }
+
+    #[tokio::test]
+    async fn integrations_search_no_match_returns_empty_success_path() {
+        let ctx = CommandContext {
+            workspace_root: std::env::temp_dir(),
+            data_dir: std::env::temp_dir(),
+            config_path: std::env::temp_dir().join("agentzero.toml"),
+        };
+
+        IntegrationsCommand::run(
+            &ctx,
+            IntegrationsCommands::Search {
+                query: Some("zzz-nonexistent".to_string()),
+            },
+        )
+        .await
+        .expect("search with no match should succeed");
+    }
+
+    #[tokio::test]
+    async fn integrations_list_with_category_filter_success_path() {
+        let ctx = CommandContext {
+            workspace_root: std::env::temp_dir(),
+            data_dir: std::env::temp_dir(),
+            config_path: std::env::temp_dir().join("agentzero.toml"),
+        };
+
+        IntegrationsCommand::run(
+            &ctx,
+            IntegrationsCommands::List {
+                category: Some("chat".to_string()),
+                status: None,
+            },
+        )
+        .await
+        .expect("list with category filter should succeed");
+    }
 }

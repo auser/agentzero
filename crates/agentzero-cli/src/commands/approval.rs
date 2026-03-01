@@ -130,7 +130,7 @@ fn map_approval_err(err: ApprovalError) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::ApprovalCommand;
-    use crate::cli::{ApprovalCommands, ApprovalRisk};
+    use crate::cli::{ApprovalCommands, ApprovalDecisionMode, ApprovalRisk};
     use crate::command_core::{AgentZeroCommand, CommandContext};
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -200,6 +200,89 @@ mod tests {
         .await
         .expect_err("high-risk evaluate without decision should fail");
         assert!(err.to_string().contains("approval required"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn approval_evaluate_with_allow_decision_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        ApprovalCommand::run(
+            &ctx,
+            ApprovalCommands::Evaluate {
+                actor: "operator-1".to_string(),
+                action: "deploy_service".to_string(),
+                risk: ApprovalRisk::High,
+                approver: Some("admin".to_string()),
+                decision: Some(ApprovalDecisionMode::Allow),
+                reason: Some("deployment approved".to_string()),
+                json: true,
+            },
+        )
+        .await
+        .expect("high-risk evaluate with allow decision should succeed");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn approval_evaluate_with_deny_decision_returns_error_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        let err = ApprovalCommand::run(
+            &ctx,
+            ApprovalCommands::Evaluate {
+                actor: "operator-1".to_string(),
+                action: "deploy_service".to_string(),
+                risk: ApprovalRisk::High,
+                approver: Some("admin".to_string()),
+                decision: Some(ApprovalDecisionMode::Deny),
+                reason: Some("not ready".to_string()),
+                json: false,
+            },
+        )
+        .await
+        .expect_err("deny decision should return error");
+        assert!(err.to_string().contains("denied"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn approval_evaluate_decision_without_approver_fails_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        let err = ApprovalCommand::run(
+            &ctx,
+            ApprovalCommands::Evaluate {
+                actor: "operator-1".to_string(),
+                action: "deploy_service".to_string(),
+                risk: ApprovalRisk::Low,
+                approver: None,
+                decision: Some(ApprovalDecisionMode::Allow),
+                reason: None,
+                json: false,
+            },
+        )
+        .await
+        .expect_err("decision without approver should fail");
+        assert!(err.to_string().contains("--approver is required"));
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }

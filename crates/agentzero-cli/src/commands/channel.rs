@@ -19,19 +19,16 @@ impl AgentZeroCommand for ChannelCommand {
         let mut state = ChannelState::load(&store)?;
 
         match opts {
-            ChannelCommands::Add => {
-                let channel = resolve_channel_from_input("channel to add", "AGENTZERO_CHANNEL")?;
+            ChannelCommands::Add { name } => {
+                let channel =
+                    resolve_channel(name.as_deref(), "channel to add", "AGENTZERO_CHANNEL")?;
                 match bind_channel(&mut state, &store, channel)? {
                     ChannelMutation::Noop(message) => println!("{message}"),
-                    ChannelMutation::Mutated(message) => println!("{message}"),
+                    ChannelMutation::Mutated(message) => {
+                        println!("{message}");
+                        println!("Run `agentzero channel start` to launch channels.");
+                    }
                 }
-            }
-            ChannelCommands::BindTelegram => {
-                match bind_channel(&mut state, &store, "telegram")? {
-                    ChannelMutation::Noop(message) => println!("{message}"),
-                    ChannelMutation::Mutated(message) => println!("{message}"),
-                }
-                println!("Run `agentzero channel start` to launch channels.");
             }
             ChannelCommands::Doctor => {
                 println!("Channel diagnostics");
@@ -45,8 +42,9 @@ impl AgentZeroCommand for ChannelCommand {
             ChannelCommands::List => {
                 render_channel_list(&mut std::io::stdout(), &state)?;
             }
-            ChannelCommands::Remove => {
-                let channel = resolve_channel_from_input("channel to remove", "AGENTZERO_CHANNEL")?;
+            ChannelCommands::Remove { name } => {
+                let channel =
+                    resolve_channel(name.as_deref(), "channel to remove", "AGENTZERO_CHANNEL")?;
                 match remove_channel(&mut state, channel) {
                     ChannelMutation::Noop(message) => println!("{message}"),
                     ChannelMutation::Mutated(message) => {
@@ -150,7 +148,23 @@ fn channel_state_store(ctx: &CommandContext) -> anyhow::Result<EncryptedJsonStor
     EncryptedJsonStore::in_config_dir(&ctx.data_dir, "channels/enabled.json")
 }
 
-fn resolve_channel_from_input(prompt: &str, env_key: &str) -> anyhow::Result<&'static str> {
+/// Resolve a channel ID from an explicit name, env var, or interactive prompt.
+fn resolve_channel(
+    explicit_name: Option<&str>,
+    prompt: &str,
+    env_key: &str,
+) -> anyhow::Result<&'static str> {
+    // 1. Explicit name from CLI argument
+    if let Some(name) = explicit_name {
+        if let Some(channel) = normalize_channel_id(name) {
+            return Ok(channel);
+        }
+        anyhow::bail!(
+            "unknown channel `{name}`. Run `agentzero channel list` to see available channels."
+        );
+    }
+
+    // 2. Environment variable
     if let Ok(value) = std::env::var(env_key) {
         if let Some(channel) = normalize_channel_id(&value) {
             return Ok(channel);
@@ -158,6 +172,7 @@ fn resolve_channel_from_input(prompt: &str, env_key: &str) -> anyhow::Result<&'s
         anyhow::bail!("unknown channel `{}` from {}", value, env_key);
     }
 
+    // 3. Interactive prompt
     if io::stdin().is_terminal() {
         print!("Enter {}: ", prompt);
         io::stdout().flush()?;
@@ -170,7 +185,7 @@ fn resolve_channel_from_input(prompt: &str, env_key: &str) -> anyhow::Result<&'s
     }
 
     anyhow::bail!(
-        "set {} or run in an interactive terminal to choose a channel",
+        "specify a channel name, set {}, or run in an interactive terminal",
         env_key
     )
 }
@@ -243,7 +258,8 @@ impl ChannelState {
 mod tests {
     use super::{
         add_channel, channel_availability, channel_state_store, channel_supported_in_build,
-        remove_channel, render_channel_list, ChannelCommand, ChannelMutation, ChannelState,
+        remove_channel, render_channel_list, resolve_channel, ChannelCommand, ChannelMutation,
+        ChannelState,
     };
     use crate::cli::ChannelCommands;
     use crate::command_core::{AgentZeroCommand, CommandContext};
@@ -342,7 +358,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn channel_bind_telegram_without_env_still_binds_success_path() {
+    async fn channel_add_with_name_binds_success_path() {
         let dir = temp_dir();
         let ctx = CommandContext {
             workspace_root: dir.clone(),
@@ -350,9 +366,14 @@ mod tests {
             config_path: dir.join("agentzero.toml"),
         };
 
-        ChannelCommand::run(&ctx, ChannelCommands::BindTelegram)
-            .await
-            .expect("bind telegram should succeed");
+        ChannelCommand::run(
+            &ctx,
+            ChannelCommands::Add {
+                name: Some("telegram".to_string()),
+            },
+        )
+        .await
+        .expect("channel add telegram should succeed");
 
         let store = channel_state_store(&ctx).expect("store should construct");
         let state = ChannelState::load(&store).expect("state should load");
@@ -362,6 +383,86 @@ mod tests {
             .any(|channel| channel == "telegram"));
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn channel_add_discord_via_name_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        ChannelCommand::run(
+            &ctx,
+            ChannelCommands::Add {
+                name: Some("discord".to_string()),
+            },
+        )
+        .await
+        .expect("channel add discord should succeed");
+
+        let store = channel_state_store(&ctx).expect("store should construct");
+        let state = ChannelState::load(&store).expect("state should load");
+        assert!(state
+            .enabled_channels
+            .iter()
+            .any(|channel| channel == "discord"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn channel_remove_with_name_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        // Add first
+        ChannelCommand::run(
+            &ctx,
+            ChannelCommands::Add {
+                name: Some("telegram".to_string()),
+            },
+        )
+        .await
+        .expect("add should succeed");
+
+        // Remove by name
+        ChannelCommand::run(
+            &ctx,
+            ChannelCommands::Remove {
+                name: Some("telegram".to_string()),
+            },
+        )
+        .await
+        .expect("remove should succeed");
+
+        let store = channel_state_store(&ctx).expect("store should construct");
+        let state = ChannelState::load(&store).expect("state should load");
+        assert!(!state
+            .enabled_channels
+            .iter()
+            .any(|channel| channel == "telegram"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_channel_with_explicit_name_success_path() {
+        let result = resolve_channel(Some("telegram"), "unused", "UNUSED_ENV");
+        assert_eq!(result.unwrap(), "telegram");
+    }
+
+    #[test]
+    fn resolve_channel_with_unknown_name_negative_path() {
+        let err = resolve_channel(Some("nonexistent"), "unused", "UNUSED_ENV")
+            .expect_err("unknown channel should fail");
+        assert!(err.to_string().contains("unknown channel"));
     }
 
     #[test]

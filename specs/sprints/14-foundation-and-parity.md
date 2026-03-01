@@ -177,64 +177,64 @@ The following major upstream sections are not yet explicitly covered in our spri
 
 ## OpenClaw Tool Parity Checklist (from `openclaw/src/tools`)
 - [x] `agents_ipc.rs`
-- [-] `apply_patch.rs`
-- [ ] `browser.rs`
-- [ ] `browser_open.rs`
+- [x] `apply_patch.rs`
+- [x] `browser.rs`
+- [x] `browser_open.rs`
 - [ ] `cli_discovery.rs`
 - [ ] `composio.rs`
-- [ ] `content_search.rs`
-- [ ] `cron_add.rs`
-- [ ] `cron_list.rs`
-- [ ] `cron_remove.rs`
-- [ ] `cron_run.rs`
-- [ ] `cron_runs.rs`
-- [ ] `cron_update.rs`
-- [ ] `delegate.rs`
+- [x] `content_search.rs`
+- [x] `cron_add.rs`
+- [x] `cron_list.rs`
+- [x] `cron_remove.rs`
+- [x] `cron_run.rs` (via cron_pause/cron_resume)
+- [x] `cron_runs.rs` (via cron_list)
+- [x] `cron_update.rs`
+- [x] `delegate.rs` (via subagent_spawn)
 - [ ] `delegate_coordination_status.rs`
-- [ ] `docx_read.rs`
-- [ ] `file_edit.rs`
-- [ ] `file_read.rs`
-- [ ] `file_write.rs`
-- [ ] `git_operations.rs`
-- [ ] `glob_search.rs`
+- [x] `docx_read.rs`
+- [x] `file_edit.rs`
+- [x] `file_read.rs` (read_file)
+- [x] `file_write.rs` (write_file)
+- [x] `git_operations.rs`
+- [x] `glob_search.rs`
 - [ ] `hardware_board_info.rs`
 - [ ] `hardware_memory_map.rs`
 - [ ] `hardware_memory_read.rs`
 - [x] `http_request.rs`
-- [ ] `image_info.rs`
-- [ ] `mcp_client.rs`
-- [ ] `mcp_protocol.rs`
-- [ ] `mcp_tool.rs`
-- [ ] `mcp_transport.rs`
-- [ ] `memory_forget.rs`
-- [ ] `memory_recall.rs`
-- [ ] `memory_store.rs`
-- [ ] `mod.rs`
+- [x] `image_info.rs`
+- [x] `mcp_client.rs` (mcp_tool bridge)
+- [x] `mcp_protocol.rs` (mcp_tool bridge)
+- [x] `mcp_tool.rs`
+- [x] `mcp_transport.rs` (mcp_tool bridge)
+- [x] `memory_forget.rs`
+- [x] `memory_recall.rs`
+- [x] `memory_store.rs`
+- [x] `mod.rs`
 - [ ] `model_routing_config.rs`
-- [ ] `pdf_read.rs`
-- [ ] `process.rs`
+- [x] `pdf_read.rs`
+- [x] `process.rs`
 - [ ] `proxy_config.rs`
 - [ ] `pushover.rs`
 - [ ] `schedule.rs`
-- [ ] `schema.rs`
-- [ ] `screenshot.rs`
-- [ ] `shell.rs`
+- [x] `schema.rs` (tool trait + ToolResult)
+- [x] `screenshot.rs`
+- [x] `shell.rs`
 - [ ] `sop_advance.rs`
 - [ ] `sop_approve.rs`
 - [ ] `sop_execute.rs`
 - [ ] `sop_list.rs`
 - [ ] `sop_status.rs`
-- [ ] `subagent_list.rs`
-- [ ] `subagent_manage.rs`
-- [ ] `subagent_registry.rs`
-- [ ] `subagent_spawn.rs`
-- [ ] `task_plan.rs`
-- [ ] `traits.rs`
+- [x] `subagent_list.rs`
+- [x] `subagent_manage.rs`
+- [x] `subagent_registry.rs` (in subagent_tools)
+- [x] `subagent_spawn.rs`
+- [x] `task_plan.rs`
+- [x] `traits.rs` (Tool trait in agentzero-core)
 - [x] `url_validation.rs`
 - [ ] `wasm_module.rs`
 - [ ] `wasm_tool.rs`
 - [x] `web_fetch.rs`
-- [ ] `web_search_tool.rs`
+- [x] `web_search_tool.rs`
 
 ## Channel Parity Checklist (from upstream `src/channels`)
 - [ ] `clawdtalk.rs`

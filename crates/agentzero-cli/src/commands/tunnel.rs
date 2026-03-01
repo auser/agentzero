@@ -132,4 +132,50 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn tunnel_stop_missing_fails_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        let err = TunnelCommand::run(
+            &ctx,
+            TunnelCommands::Stop {
+                name: "nonexistent".to_string(),
+            },
+        )
+        .await
+        .expect_err("stop missing tunnel should fail");
+        assert!(err.to_string().contains("not found"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn tunnel_start_ssh_protocol_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        TunnelCommand::run(
+            &ctx,
+            TunnelCommands::Start {
+                name: "ssh-tunnel".to_string(),
+                protocol: "ssh".to_string(),
+                remote: "host.example.com:22".to_string(),
+                local_port: 2222,
+            },
+        )
+        .await
+        .expect("ssh protocol should be accepted");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
 }

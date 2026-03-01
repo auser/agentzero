@@ -12,6 +12,10 @@ Project-level operating rules for all contributors and coding agents working in 
 - At least one success-path test.
 - At least one negative-path test.
 - No merge if tests are missing.
+- CLI commands: Every CLI command must have unit tests covering at minimum:
+  - One success-path test exercising the primary workflow
+  - One negative-path test exercising error handling
+  - Helper/utility functions must have their own targeted tests
 - Agent enforcement:
 - Codex must add/update tests for every code change it makes.
 - If a test is truly not feasible, Codex must explicitly state why and propose the nearest practical regression check.

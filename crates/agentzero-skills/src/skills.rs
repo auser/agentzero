@@ -50,6 +50,14 @@ impl SkillStore {
         Ok(record)
     }
 
+    pub fn get(&self, name: &str) -> anyhow::Result<SkillRecord> {
+        let skills = self.list()?;
+        skills
+            .into_iter()
+            .find(|skill| skill.name == name)
+            .with_context(|| format!("skill `{name}` is not installed"))
+    }
+
     pub fn remove(&self, name: &str) -> anyhow::Result<()> {
         let mut skills = self.list()?;
         let previous_len = skills.len();

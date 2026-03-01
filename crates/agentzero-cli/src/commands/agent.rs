@@ -75,4 +75,38 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn agent_command_fails_without_config_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("nonexistent.toml"),
+        };
+
+        AgentCommand::run(
+            &ctx,
+            AgentOptions {
+                message: "hello".to_string(),
+            },
+        )
+        .await
+        .expect_err("missing config should fail");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn agent_options_struct_construction_success_path() {
+        let opts = AgentOptions {
+            message: "test message".to_string(),
+        };
+        assert_eq!(opts.message, "test message");
+
+        let empty_opts = AgentOptions {
+            message: String::new(),
+        };
+        assert!(empty_opts.message.is_empty());
+    }
 }

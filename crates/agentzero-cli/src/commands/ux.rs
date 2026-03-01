@@ -3,6 +3,7 @@ use console::style;
 use std::io::Write;
 
 const ACCENT_LINE: &str = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
+const PAD: &str = "  ";
 
 pub fn print_brand_header(writer: &mut dyn Write) -> anyhow::Result<()> {
     let accent = style(ACCENT_LINE).color256(51);
@@ -15,18 +16,18 @@ pub fn print_brand_header(writer: &mut dyn Write) -> anyhow::Result<()> {
         "          |___/                                   ",
     ];
 
-    writeln!(writer, "\n{}", accent).context("failed to write output")?;
+    writeln!(writer, "\n{PAD}{}", accent).context("failed to write output")?;
     for line in logo {
-        writeln!(writer, "{}", style(line).bold().color256(153))
+        writeln!(writer, "{PAD}{}", style(line).bold().color256(153))
             .context("failed to write output")?;
     }
     writeln!(
         writer,
-        "\n\n{}",
+        "\n\n{PAD}{}",
         style("Fast. Secure. Safe. 100% Rust. 100% Agnostic.").color256(151)
     )
     .context("failed to write output")?;
-    writeln!(writer, "{}", accent).context("failed to write output")?;
+    writeln!(writer, "{PAD}{}", accent).context("failed to write output")?;
     writeln!(writer).context("failed to write output")?;
     Ok(())
 }
@@ -36,7 +37,7 @@ pub fn print_intro(writer: &mut dyn Write, message: &str) -> anyhow::Result<()> 
         anyhow::bail!("intro message cannot be empty");
     }
 
-    writeln!(writer, "{}", style(message).bold()).context("failed to write output")?;
+    writeln!(writer, "{PAD}{}", style(message).bold()).context("failed to write output")?;
     Ok(())
 }
 
@@ -45,7 +46,8 @@ pub fn print_section(writer: &mut dyn Write, title: &str) -> anyhow::Result<()> 
         anyhow::bail!("section title cannot be empty");
     }
 
-    writeln!(writer, "\n{}", style(title).bold().underlined()).context("failed to write output")?;
+    writeln!(writer, "\n{PAD}{}", style(title).bold().underlined())
+        .context("failed to write output")?;
     Ok(())
 }
 
@@ -56,7 +58,7 @@ pub fn print_success_line(writer: &mut dyn Write, message: &str) -> anyhow::Resu
 
     writeln!(
         writer,
-        "{} {}",
+        "{PAD}{} {}",
         style("✓").green().bold(),
         style(message).white()
     )

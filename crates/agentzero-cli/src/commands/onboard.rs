@@ -1,5 +1,6 @@
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use crate::commands::ux;
+use agentzero_providers::{find_models_for_provider, find_provider, supported_providers};
 use anyhow::Context;
 use async_trait::async_trait;
 use console::style;
@@ -303,11 +304,13 @@ fn resolve_optional<S: OnboardOptionSpec>(
 
 fn parse_provider(raw: &str) -> anyhow::Result<String> {
     let value = raw.trim().to_ascii_lowercase();
-    match value.as_str() {
-        "" => Ok("openrouter".to_string()),
-        "openai" | "openrouter" | "anthropic" => Ok(value),
-        _ => anyhow::bail!("unsupported provider: {value}"),
+    if value.is_empty() {
+        return Ok("openrouter".to_string());
     }
+    if let Some(descriptor) = find_provider(&value) {
+        return Ok(descriptor.id.to_string());
+    }
+    anyhow::bail!("unsupported provider: {value}")
 }
 
 fn parse_memory_backend(raw: &str) -> anyhow::Result<String> {
@@ -399,11 +402,10 @@ fn run_with_inquire(
     }
 
     ux::print_section(writer, "Provider Setup")?;
-    let providers = vec![
-        "openai".to_string(),
-        "openrouter".to_string(),
-        "anthropic".to_string(),
-    ];
+    let providers: Vec<String> = supported_providers()
+        .iter()
+        .map(|p| p.id.to_string())
+        .collect();
     let provider_index = providers
         .iter()
         .position(|value| value == &defaults.provider)
@@ -411,6 +413,7 @@ fn run_with_inquire(
     let provider = Select::new("Provider", providers)
         .with_starting_cursor(provider_index)
         .with_help_message("Type to filter options.")
+        .with_page_size(12)
         .prompt()?;
 
     let base_url_selection = Select::new(
@@ -429,16 +432,10 @@ fn run_with_inquire(
         base_url_selection
     };
 
-    let model_selection = Select::new(
-        "Model",
-        model_options(&provider)
-            .into_iter()
-            .map(ToString::to_string)
-            .collect(),
-    )
-    .with_help_message("Type to filter options. Choose custom to enter your own model.")
-    .with_starting_cursor(model_start_cursor(&provider, &defaults.model))
-    .prompt()?;
+    let model_selection = Select::new("Model", model_options(&provider))
+        .with_help_message("Type to filter options. Choose custom to enter your own model.")
+        .with_starting_cursor(model_start_cursor(&provider, &defaults.model))
+        .prompt()?;
 
     let model = if model_selection == "custom" {
         Text::new("Custom model ID")
@@ -697,28 +694,20 @@ fn default_base_url(provider: &str) -> &str {
     }
 }
 
-fn model_options(provider: &str) -> Vec<&'static str> {
-    match provider {
-        "openrouter" => vec![
-            "anthropic/claude-3.5-sonnet",
-            "openai/gpt-4o-mini",
-            "custom",
-        ],
-        "anthropic" => vec![
-            "claude-3-5-sonnet-latest",
-            "claude-3-5-haiku-latest",
-            "custom",
-        ],
-        _ => vec!["gpt-4o-mini", "gpt-4.1-mini", "custom"],
-    }
+fn model_options(provider: &str) -> Vec<String> {
+    let mut options: Vec<String> = find_models_for_provider(provider)
+        .map(|(_, models)| models.iter().map(|m| m.id.to_string()).collect())
+        .unwrap_or_default();
+    options.push("custom".to_string());
+    options
 }
 
 fn model_start_cursor(provider: &str, current_model: &str) -> usize {
     let options = model_options(provider);
     options
         .iter()
-        .position(|value| *value == current_model)
-        .or_else(|| options.iter().position(|value| *value == "custom"))
+        .position(|value| value == current_model)
+        .or_else(|| options.iter().position(|value| value == "custom"))
         .unwrap_or(0)
 }
 
@@ -860,8 +849,8 @@ fn print_summary(
 #[cfg(test)]
 mod tests {
     use super::{
-        allowed_commands_options, base_url_options, resolve_onboard_config, run_with_io,
-        OnboardConfig, OnboardOptions,
+        allowed_commands_options, base_url_options, model_options, parse_provider,
+        resolve_onboard_config, run_with_io, OnboardConfig, OnboardOptions,
     };
     use std::fs;
     use std::io::Cursor;
@@ -1040,5 +1029,30 @@ mod tests {
         assert!(options.contains(&"ls,pwd,cat,echo".to_string()));
         assert!(options.contains(&"custom".to_string()));
         assert!(!options.contains(&"".to_string()));
+    }
+
+    #[test]
+    fn parse_provider_resolves_alias_success_path() {
+        let result = parse_provider("github-copilot").expect("alias should resolve");
+        assert_eq!(result, "copilot");
+    }
+
+    #[test]
+    fn parse_provider_rejects_unknown_negative_path() {
+        let err = parse_provider("not-real").expect_err("unknown provider should fail");
+        assert!(err.to_string().contains("unsupported provider"));
+    }
+
+    #[test]
+    fn model_options_returns_catalog_models_with_custom_success_path() {
+        let options = model_options("openrouter");
+        assert!(
+            options.last().map(|s| s.as_str()) == Some("custom"),
+            "last option should be 'custom'"
+        );
+        assert!(
+            options.iter().any(|m| m.contains("claude")),
+            "openrouter models should include a claude model"
+        );
     }
 }

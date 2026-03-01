@@ -483,4 +483,69 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn memory_list_empty_db_success_path() {
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        let sqlite_path = dir.join("memory-empty.db");
+        write_config(
+            &config_path,
+            "sqlite",
+            sqlite_path.to_str().expect("sqlite path should be utf8"),
+        );
+
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path,
+        };
+
+        MemoryCommand::run(
+            &ctx,
+            MemoryCommands::List {
+                limit: 10,
+                offset: 0,
+                category: None,
+                session: None,
+                json: true,
+            },
+        )
+        .await
+        .expect("list on empty db should succeed");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn memory_clear_empty_db_success_path() {
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        let sqlite_path = dir.join("memory-clear-empty.db");
+        write_config(
+            &config_path,
+            "sqlite",
+            sqlite_path.to_str().expect("sqlite path should be utf8"),
+        );
+
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path,
+        };
+
+        MemoryCommand::run(
+            &ctx,
+            MemoryCommands::Clear {
+                key: None,
+                category: None,
+                yes: true,
+                json: false,
+            },
+        )
+        .await
+        .expect("clear on empty db should succeed");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
 }

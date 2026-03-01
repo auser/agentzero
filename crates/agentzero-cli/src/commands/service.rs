@@ -105,4 +105,46 @@ mod tests {
 
         fs::remove_dir_all(data_dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn service_start_stop_lifecycle_success_path() {
+        let data_dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: data_dir.clone(),
+            data_dir: data_dir.clone(),
+            config_path: data_dir.join("agentzero.toml"),
+        };
+
+        ServiceCommand::run(&ctx, ServiceCommands::Install)
+            .await
+            .expect("install should succeed");
+        ServiceCommand::run(&ctx, ServiceCommands::Start)
+            .await
+            .expect("start should succeed");
+        ServiceCommand::run(&ctx, ServiceCommands::Stop)
+            .await
+            .expect("stop should succeed");
+        ServiceCommand::run(&ctx, ServiceCommands::Uninstall)
+            .await
+            .expect("uninstall should succeed");
+
+        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn service_stop_without_install_fails_negative_path() {
+        let data_dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: data_dir.clone(),
+            data_dir: data_dir.clone(),
+            config_path: data_dir.join("agentzero.toml"),
+        };
+
+        let err = ServiceCommand::run(&ctx, ServiceCommands::Stop)
+            .await
+            .expect_err("stop without install should fail");
+        assert!(err.to_string().contains("service is not installed"));
+
+        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
+    }
 }

@@ -117,6 +117,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Hardware { .. } => "hardware",
         Commands::Peripheral { .. } => "peripheral",
         Commands::ProvidersQuota { .. } => "providers-quota",
+        Commands::Template { .. } => "template",
     }
 }
 
@@ -168,7 +169,7 @@ mod tests {
         DoctorCommands, EstopCommands, EstopLevel, GoalCommands, HardwareCommands, HookCommands,
         IdentityCommands, IdentityKind, IntegrationsCommands, MemoryCommands, MigrateCommands,
         ModelCommands, PeripheralCommands, PluginCommands, RagCommands, ServiceCommands,
-        ServiceInit, SkillCommands, TunnelCommands, UpdateCommands,
+        ServiceInit, SkillCommands, TemplateCommands, TunnelCommands, UpdateCommands,
     };
     use clap::{ColorChoice, CommandFactory};
 
@@ -646,13 +647,37 @@ mod tests {
     }
 
     #[test]
-    fn parse_cli_from_parses_channel_bind_telegram_command() {
-        let parsed = parse_cli_from(["agentzero", "channel", "bind-telegram"])
-            .expect("channel bind-telegram should parse");
+    fn parse_cli_from_parses_channel_add_with_name() {
+        let parsed = parse_cli_from(["agentzero", "channel", "add", "telegram"])
+            .expect("channel add telegram should parse");
         assert!(matches!(
             parsed.command,
             Commands::Channel {
-                command: ChannelCommands::BindTelegram
+                command: ChannelCommands::Add { name: Some(_) }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_channel_add_without_name() {
+        let parsed = parse_cli_from(["agentzero", "channel", "add"])
+            .expect("channel add (no name) should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Channel {
+                command: ChannelCommands::Add { name: None }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_channel_remove_with_name() {
+        let parsed = parse_cli_from(["agentzero", "channel", "remove", "discord"])
+            .expect("channel remove discord should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Channel {
+                command: ChannelCommands::Remove { name: Some(_) }
             }
         ));
     }
@@ -1470,5 +1495,116 @@ mod tests {
     fn cli_command_enforces_colorized_output() {
         let cmd = Cli::command();
         assert_eq!(cmd.get_color(), ColorChoice::Always);
+    }
+
+    // --- template command tests ---
+
+    #[test]
+    fn parse_cli_from_parses_template_list_command() {
+        let parsed = parse_cli_from(["agentzero", "template", "list", "--json"])
+            .expect("template list should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Template {
+                command: TemplateCommands::List { json: true }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_template_show_command() {
+        let parsed = parse_cli_from(["agentzero", "template", "show", "AGENTS"])
+            .expect("template show should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Template {
+                command: TemplateCommands::Show { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_template_init_command() {
+        let parsed = parse_cli_from(["agentzero", "template", "init", "--force"])
+            .expect("template init should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Template {
+                command: TemplateCommands::Init { force: true, .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_template_validate_command() {
+        let parsed =
+            parse_cli_from(["agentzero", "template", "validate"]).expect("template validate");
+        assert!(matches!(
+            parsed.command,
+            Commands::Template {
+                command: TemplateCommands::Validate
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_rejects_template_without_subcommand() {
+        let err = parse_cli_from(["agentzero", "template"])
+            .expect_err("template without subcommand should fail");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+    }
+
+    // --- skill new/audit/templates command tests ---
+
+    #[test]
+    fn parse_cli_from_parses_skill_new_command() {
+        let parsed = parse_cli_from([
+            "agentzero",
+            "skill",
+            "new",
+            "my_skill",
+            "--template",
+            "rust",
+        ])
+        .expect("skill new should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Skill {
+                command: SkillCommands::New { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_skill_audit_command() {
+        let parsed = parse_cli_from([
+            "agentzero",
+            "skill",
+            "audit",
+            "--name",
+            "my_skill",
+            "--json",
+        ])
+        .expect("skill audit should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Skill {
+                command: SkillCommands::Audit { json: true, .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_skill_templates_command() {
+        let parsed = parse_cli_from(["agentzero", "skill", "templates"]).expect("skill templates");
+        assert!(matches!(
+            parsed.command,
+            Commands::Skill {
+                command: SkillCommands::Templates
+            }
+        ));
     }
 }

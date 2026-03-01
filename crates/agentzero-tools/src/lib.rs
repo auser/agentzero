@@ -2,26 +2,34 @@ pub mod agents_ipc;
 pub mod apply_patch;
 pub mod browser;
 pub mod browser_open;
+pub mod cli_discovery;
+pub mod composio;
 pub mod content_search;
 pub mod cron_tools;
 pub mod delegate;
+pub mod delegate_coordination_status;
 pub mod docx_read;
 pub mod file_edit;
 pub mod git_operations;
 pub mod glob_search;
+pub mod hardware_tools;
 pub mod http_request;
 pub mod image_info;
 pub mod memory_tools;
 pub mod model_routing_config;
 pub mod pdf_read;
 pub mod process_tool;
+pub mod proxy_config;
+pub mod pushover;
 pub mod read_file;
 pub mod screenshot;
 pub mod shell;
 pub mod shell_parse;
+pub mod sop_tools;
 pub mod subagent_tools;
 pub mod task_plan;
 pub mod url_validation;
+pub mod wasm_tools;
 pub mod web_fetch;
 pub mod web_search;
 pub mod write_file;
@@ -33,27 +41,35 @@ pub use agentzero_common::url_policy::UrlAccessPolicy;
 pub use apply_patch::ApplyPatchTool;
 pub use browser::BrowserTool;
 pub use browser_open::BrowserOpenTool;
+pub use cli_discovery::CliDiscoveryTool;
+pub use composio::ComposioTool;
 pub use content_search::ContentSearchTool;
 pub use cron_tools::{
     CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool,
 };
 pub use delegate::DelegateTool;
+pub use delegate_coordination_status::DelegateCoordinationStatusTool;
 pub use docx_read::DocxReadTool;
 pub use file_edit::FileEditTool;
 pub use git_operations::GitOperationsTool;
 pub use glob_search::GlobSearchTool;
+pub use hardware_tools::{HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool};
 pub use http_request::HttpRequestTool;
 pub use image_info::ImageInfoTool;
 pub use memory_tools::{MemoryForgetTool, MemoryRecallTool, MemoryStoreTool};
 pub use model_routing_config::ModelRoutingConfigTool;
 pub use pdf_read::PdfReadTool;
 pub use process_tool::ProcessTool;
+pub use proxy_config::ProxyConfigTool;
+pub use pushover::PushoverTool;
 pub use read_file::{ReadFilePolicy, ReadFileTool};
 pub use screenshot::ScreenshotTool;
 pub use shell::{ShellPolicy, ShellTool};
+pub use sop_tools::{SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool};
 pub use subagent_tools::{SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool};
 pub use task_plan::TaskPlanTool;
 pub use url_validation::UrlValidationTool;
+pub use wasm_tools::{WasmModuleTool, WasmToolExecTool};
 pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
 pub use write_file::{WriteFilePolicy, WriteFileTool};
@@ -73,6 +89,8 @@ pub struct ToolSecurityPolicy {
     pub enable_web_search: bool,
     pub enable_browser: bool,
     pub enable_browser_open: bool,
+    pub enable_composio: bool,
+    pub enable_pushover: bool,
 }
 
 impl ToolSecurityPolicy {
@@ -127,6 +145,8 @@ impl ToolSecurityPolicy {
             enable_web_search: false,
             enable_browser: false,
             enable_browser_open: false,
+            enable_composio: false,
+            enable_pushover: false,
         }
     }
 }

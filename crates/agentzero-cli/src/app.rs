@@ -158,5 +158,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             )
             .await
         }
+        Commands::Template { command } => {
+            commands::template::TemplateCommand::run(&ctx, command).await
+        }
     }
 }

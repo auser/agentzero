@@ -200,4 +200,50 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn cron_update_missing_task_fails_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        let err = CronCommand::run(
+            &ctx,
+            CronCommands::Update {
+                id: "nonexistent".to_string(),
+                schedule: Some("daily".to_string()),
+                command: None,
+            },
+        )
+        .await
+        .expect_err("updating missing task should fail");
+        assert!(err.to_string().contains("not found"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn cron_pause_missing_fails_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        let err = CronCommand::run(
+            &ctx,
+            CronCommands::Pause {
+                id: "nonexistent".to_string(),
+            },
+        )
+        .await
+        .expect_err("pausing missing task should fail");
+        assert!(err.to_string().contains("not found"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
 }

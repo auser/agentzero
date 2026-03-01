@@ -278,11 +278,13 @@ Manage messaging channels.
 
 ```bash
 agentzero channel list
-agentzero channel add
-agentzero channel bind-telegram
+agentzero channel add              # interactive prompt
+agentzero channel add telegram     # add by name
+agentzero channel add discord      # add by name
 agentzero channel doctor
 agentzero channel start
-agentzero channel remove
+agentzero channel remove           # interactive prompt
+agentzero channel remove telegram  # remove by name
 ```
 
 ### `integrations`
@@ -328,7 +330,7 @@ agentzero skill remove --name research
 
 ---
 
-## Models
+## Models & Local Providers
 
 ### `models`
 
@@ -341,7 +343,35 @@ agentzero models list                            # List cached models
 agentzero models list --provider ollama
 agentzero models set anthropic/claude-sonnet-4-6
 agentzero models status
+agentzero models pull llama3.1:8b                # Pull model (Ollama only)
+agentzero models pull llama3.1:8b --provider ollama
 ```
+
+| Flag | Description |
+|---|---|
+| `--provider <NAME>` | Target provider for refresh/list/pull |
+| `--all` | Refresh all providers |
+| `--force` | Force refresh even if cache is fresh |
+
+### `local`
+
+Discover and manage local AI services (Ollama, llama.cpp, LM Studio, vLLM, SGLang).
+
+```bash
+agentzero local discover                         # Scan for running local services
+agentzero local discover --json                  # JSON output
+agentzero local discover --timeout-ms 5000       # Custom timeout
+agentzero local status                           # Status of configured local provider
+agentzero local status --json
+agentzero local health --provider ollama          # Health check a specific service
+agentzero local health --provider vllm --url http://gpu:8000
+```
+
+| Subcommand | Description | Key Options |
+|---|---|---|
+| `discover` | Scan default ports for running local services | `--timeout-ms`, `--json` |
+| `status` | Show status of the currently configured local provider | `--json` |
+| `health` | Health check a specific local provider | `--provider` (required), `--url` |
 
 ---
 
