@@ -23,8 +23,8 @@ agentzero-memory-sqlite = { path = "../../crates/agentzero-memory-sqlite" }
 agentzero-memory-turso = { path = "../../crates/agentzero-memory-turso", optional = true }
 agentzero-providers = { path = "../../crates/agentzero-providers" }
 agentzero-runtime = { path = "../../crates/agentzero-runtime", features = [] }
-console = "0.15"
-inquire = "0.7"
+console = "0.16"
+inquire = "0.9"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
