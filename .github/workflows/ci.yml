@@ -48,7 +48,7 @@ jobs:
       - name: generate coverage
         run: scripts/run-coverage.sh --output-dir coverage
       - name: upload coverage artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage

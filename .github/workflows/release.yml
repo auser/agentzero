@@ -95,7 +95,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item "${{ matrix.bin_path }}" "dist/agentzero-v${{ steps.version.outputs.value }}-${{ matrix.target_name }}${{ matrix.ext }}"
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.target_name }}
           path: dist/*
