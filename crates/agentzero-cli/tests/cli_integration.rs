@@ -2324,15 +2324,22 @@ fn gateway_args_parse_success_path() {
 
 #[test]
 fn daemon_args_parse_success_path() {
-    let result = agentzero_cli::parse_cli_from([
+    let start = agentzero_cli::parse_cli_from([
         "agentzero",
         "daemon",
+        "start",
         "--host",
         "127.0.0.1",
         "--port",
         "3000",
     ]);
-    assert!(result.is_ok(), "daemon args should parse");
+    assert!(start.is_ok(), "daemon start args should parse");
+
+    let stop = agentzero_cli::parse_cli_from(["agentzero", "daemon", "stop"]);
+    assert!(stop.is_ok(), "daemon stop should parse");
+
+    let status = agentzero_cli::parse_cli_from(["agentzero", "daemon", "status"]);
+    assert!(status.is_ok(), "daemon status should parse");
 }
 
 #[test]

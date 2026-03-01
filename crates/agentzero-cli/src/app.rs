@@ -56,13 +56,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             )
             .await
         }
-        Commands::Daemon { host, port } => {
-            commands::daemon::DaemonCommand::run(
-                &ctx,
-                commands::daemon::DaemonOptions { host, port },
-            )
-            .await
-        }
+        Commands::Daemon { command } => commands::daemon::DaemonCommand::run(&ctx, command).await,
         Commands::Status => commands::status::StatusCommand::run(&ctx, ()).await,
         Commands::Agent {
             message,

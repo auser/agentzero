@@ -9,5 +9,6 @@ publish = false
 [dependencies]
 agentzero-storage = { workspace = true }
 anyhow.workspace = true
+libc = "0.2"
 serde.workspace = true
 

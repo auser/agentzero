@@ -82,14 +82,10 @@ pub enum Commands {
         #[arg(long)]
         new_pairing: bool,
     },
-    /// Start and manage long-running autonomous runtime state.
+    /// Manage the background daemon process.
     Daemon {
-        /// Host interface to bind (default: 127.0.0.1).
-        #[arg(long)]
-        host: Option<String>,
-        /// Port to bind (default: 8080).
-        #[arg(short, long)]
-        port: Option<u16>,
+        #[command(subcommand)]
+        command: DaemonCommands,
     },
     /// Send a single message through the agent loop.
     Agent {
@@ -390,6 +386,30 @@ pub enum ServiceCommands {
     Uninstall,
     /// Show service status.
     Status,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DaemonCommands {
+    /// Start the daemon in the background.
+    Start {
+        /// Host interface to bind (default: 127.0.0.1).
+        #[arg(long)]
+        host: Option<String>,
+        /// Port to bind (default: 8080).
+        #[arg(short, long)]
+        port: Option<u16>,
+        /// Run in the foreground instead of daemonizing (useful for debugging).
+        #[arg(long)]
+        foreground: bool,
+    },
+    /// Stop the running daemon.
+    Stop,
+    /// Show daemon status.
+    Status {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

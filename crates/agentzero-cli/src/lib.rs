@@ -457,16 +457,29 @@ mod tests {
     }
 
     #[test]
-    fn parse_cli_from_parses_daemon_command() {
-        let parsed = parse_cli_from(["agentzero", "daemon", "--port", "42617"])
-            .expect("daemon should parse");
+    fn parse_cli_from_parses_daemon_start_command() {
+        let parsed = parse_cli_from(["agentzero", "daemon", "start", "--port", "42617"])
+            .expect("daemon start should parse");
         assert!(matches!(parsed.command, Commands::Daemon { .. }));
     }
 
     #[test]
-    fn parse_cli_from_parses_daemon_with_defaults() {
-        let parsed = parse_cli_from(["agentzero", "daemon"]).expect("daemon should parse");
+    fn parse_cli_from_parses_daemon_stop_command() {
+        let parsed =
+            parse_cli_from(["agentzero", "daemon", "stop"]).expect("daemon stop should parse");
         assert!(matches!(parsed.command, Commands::Daemon { .. }));
+    }
+
+    #[test]
+    fn parse_cli_from_parses_daemon_status_command() {
+        let parsed =
+            parse_cli_from(["agentzero", "daemon", "status"]).expect("daemon status should parse");
+        assert!(matches!(parsed.command, Commands::Daemon { .. }));
+    }
+
+    #[test]
+    fn parse_cli_from_rejects_daemon_without_subcommand() {
+        assert!(parse_cli_from(["agentzero", "daemon"]).is_err());
     }
 
     #[test]
