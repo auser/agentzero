@@ -340,6 +340,28 @@ impl AuthManager {
             .collect())
     }
 
+    /// Return the stored token for the given provider, preferring the active
+    /// profile, then a profile named "default", then any matching profile.
+    pub fn active_token_for_provider(&self, provider: &str) -> anyhow::Result<Option<String>> {
+        let state = self.load_state()?;
+        let idx = self.find_refresh_profile_index(&state, provider, None);
+        Ok(idx.map(|i| state.profiles[i].token.clone()))
+    }
+
+    /// Look up a profile by name (regardless of provider kind).
+    /// Returns `(provider_kind, token)` if found.
+    pub fn token_for_profile(
+        &self,
+        profile_name: &str,
+    ) -> anyhow::Result<Option<(String, String)>> {
+        let state = self.load_state()?;
+        let found = state
+            .profiles
+            .iter()
+            .find(|p| p.name.eq_ignore_ascii_case(profile_name));
+        Ok(found.map(|p| (p.provider.clone(), p.token.clone())))
+    }
+
     pub fn status(&self) -> anyhow::Result<AuthStatus> {
         let state = self.load_state()?;
         let active_profile = state.active_profile.clone();

@@ -1235,8 +1235,8 @@ fn resolve_local_provider_defaults_does_not_affect_cloud_providers() {
     with_clean_agentzero_env(|| {
         let cfg = load(&config_path).expect("openrouter config should load");
         assert_eq!(
-            cfg.provider.base_url, "https://openrouter.ai/api/v1",
-            "cloud provider base_url should remain unchanged"
+            cfg.provider.base_url, "https://openrouter.ai/api",
+            "cloud provider base_url should have trailing /v1 stripped by normalization"
         );
     });
 
@@ -1275,6 +1275,72 @@ fn resolve_local_provider_defaults_all_local_providers_resolve() {
             );
         });
     }
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn normalize_base_url_strips_trailing_v1() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"openrouter\"\nbase_url=\"https://openrouter.ai/api/v1\"\nmodel=\"openai/gpt-4o-mini\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config with /v1 suffix should load");
+        assert_eq!(
+            cfg.provider.base_url, "https://openrouter.ai/api",
+            "trailing /v1 should be stripped from base_url"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn normalize_base_url_strips_trailing_v1_with_slash() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"openrouter\"\nbase_url=\"https://openrouter.ai/api/v1/\"\nmodel=\"openai/gpt-4o-mini\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config with /v1/ suffix should load");
+        assert_eq!(
+            cfg.provider.base_url, "https://openrouter.ai/api",
+            "trailing /v1/ should be stripped from base_url"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn normalize_base_url_preserves_url_without_v1() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"openrouter\"\nbase_url=\"https://openrouter.ai/api\"\nmodel=\"openai/gpt-4o-mini\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config without /v1 should load");
+        assert_eq!(
+            cfg.provider.base_url, "https://openrouter.ai/api",
+            "base_url without /v1 should remain unchanged"
+        );
+    });
 
     fs::remove_dir_all(dir).expect("temp dir should be removed");
 }

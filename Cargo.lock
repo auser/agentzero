@@ -486,6 +486,7 @@ dependencies = [
 name = "agentzero-runtime"
 version = "0.1.0"
 dependencies = [
+ "agentzero-auth",
  "agentzero-common",
  "agentzero-config",
  "agentzero-core",

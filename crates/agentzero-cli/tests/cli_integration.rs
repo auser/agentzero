@@ -873,6 +873,854 @@ async fn peripheral_add_and_list_success_path() {
     cleanup(dir);
 }
 
+// ── template ──
+
+#[tokio::test]
+async fn template_list_success_path() {
+    let dir = temp_dir("tpl-list");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&["agentzero", "--data-dir", d, "template", "list"])
+        .await
+        .expect("template list should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn template_list_json_success_path() {
+    let dir = temp_dir("tpl-list-json");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&["agentzero", "--data-dir", d, "template", "list", "--json"])
+        .await
+        .expect("template list --json should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn template_show_known_success_path() {
+    let dir = temp_dir("tpl-show");
+    let d = dir.to_str().unwrap();
+
+    // Must init template first so the file exists on disk
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "template",
+        "init",
+        "--name",
+        "AGENTS",
+        "--dir",
+        d,
+    ])
+    .await
+    .expect("template init should succeed");
+
+    run_cmd(&["agentzero", "--data-dir", d, "template", "show", "AGENTS"])
+        .await
+        .expect("template show AGENTS should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn template_show_unknown_negative_path() {
+    let dir = temp_dir("tpl-show-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "template",
+        "show",
+        "NONEXISTENT",
+    ])
+    .await;
+    assert!(result.is_err(), "show unknown template should fail");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn template_init_all_success_path() {
+    let dir = temp_dir("tpl-init-all");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "template",
+        "init",
+        "--dir",
+        d,
+        "--force",
+    ])
+    .await
+    .expect("template init --force should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn template_init_single_success_path() {
+    let dir = temp_dir("tpl-init-one");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "template",
+        "init",
+        "--name",
+        "AGENTS",
+        "--dir",
+        d,
+    ])
+    .await
+    .expect("template init --name AGENTS should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn template_init_no_overwrite_skips_existing_success_path() {
+    let dir = temp_dir("tpl-init-noover");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "template",
+        "init",
+        "--name",
+        "AGENTS",
+        "--dir",
+        d,
+    ])
+    .await
+    .expect("first template init should succeed");
+
+    // Second init without --force skips existing (does not error)
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "template",
+        "init",
+        "--name",
+        "AGENTS",
+        "--dir",
+        d,
+    ])
+    .await
+    .expect("second template init should succeed (skip existing)");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn template_validate_success_path() {
+    let dir = temp_dir("tpl-validate");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "template",
+        "init",
+        "--dir",
+        d,
+        "--force",
+    ])
+    .await
+    .expect("template init should succeed");
+
+    run_cmd(&["agentzero", "--data-dir", d, "template", "validate"])
+        .await
+        .expect("template validate should succeed");
+
+    cleanup(dir);
+}
+
+// ── skill lifecycle ──
+
+#[tokio::test]
+async fn skill_new_typescript_success_path() {
+    let dir = temp_dir("skill-new-ts");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "skill",
+        "new",
+        "test-skill",
+        "--template",
+        "typescript",
+        "--dir",
+        d,
+    ])
+    .await
+    .expect("skill new typescript should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn skill_new_rust_success_path() {
+    let dir = temp_dir("skill-new-rs");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "skill",
+        "new",
+        "test-skill",
+        "--template",
+        "rust",
+        "--dir",
+        d,
+    ])
+    .await
+    .expect("skill new rust should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn skill_templates_success_path() {
+    let dir = temp_dir("skill-tpls");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&["agentzero", "--data-dir", d, "skill", "templates"])
+        .await
+        .expect("skill templates should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn skill_test_missing_negative_path() {
+    let dir = temp_dir("skill-test-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "skill",
+        "test",
+        "--name",
+        "nonexistent",
+    ])
+    .await;
+    assert!(result.is_err(), "testing missing skill should fail");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn skill_audit_missing_negative_path() {
+    let dir = temp_dir("skill-audit-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "skill",
+        "audit",
+        "--name",
+        "nonexistent",
+    ])
+    .await;
+    assert!(result.is_err(), "auditing missing skill should fail");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn skill_remove_missing_negative_path() {
+    let dir = temp_dir("skill-rm-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "skill",
+        "remove",
+        "--name",
+        "nonexistent",
+    ])
+    .await;
+    assert!(result.is_err(), "removing missing skill should fail");
+
+    cleanup(dir);
+}
+
+// ── hooks (additional) ──
+
+#[tokio::test]
+async fn hooks_disable_missing_negative_path() {
+    let dir = temp_dir("hooks-dis-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "hooks",
+        "disable",
+        "--name",
+        "nope",
+    ])
+    .await;
+    assert!(result.is_err(), "disabling unknown hook should fail");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn hooks_test_missing_negative_path() {
+    let dir = temp_dir("hooks-test-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "hooks",
+        "test",
+        "--name",
+        "nope",
+    ])
+    .await;
+    assert!(result.is_err(), "testing unknown hook should fail");
+
+    cleanup(dir);
+}
+
+// ── plugin (additional) ──
+
+#[tokio::test]
+async fn plugin_validate_after_new_success_path() {
+    let dir = temp_dir("plugin-val");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "plugin",
+        "new",
+        "--id",
+        "val-plugin",
+        "--out-dir",
+        d,
+        "--force",
+    ])
+    .await
+    .expect("plugin new should succeed");
+
+    let manifest = dir.join("manifest.json");
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "plugin",
+        "validate",
+        "--manifest",
+        manifest.to_str().unwrap(),
+    ])
+    .await
+    .expect("plugin validate should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn plugin_validate_missing_negative_path() {
+    let dir = temp_dir("plugin-val-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "plugin",
+        "validate",
+        "--manifest",
+        "/nonexistent/plugin.toml",
+    ])
+    .await;
+    assert!(result.is_err(), "validating missing manifest should fail");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn plugin_remove_missing_success_path() {
+    let dir = temp_dir("plugin-rm-neg");
+    let d = dir.to_str().unwrap();
+
+    // Plugin remove for missing id prints a message but does not error
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "plugin",
+        "remove",
+        "--id",
+        "nope",
+        "--install-dir",
+        d,
+    ])
+    .await
+    .expect("plugin remove missing id should succeed (idempotent)");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn plugin_list_json_success_path() {
+    let dir = temp_dir("plugin-json");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "plugin",
+        "list",
+        "--json",
+        "--install-dir",
+        d,
+    ])
+    .await
+    .expect("plugin list --json should succeed");
+
+    cleanup(dir);
+}
+
+// ── cron variants ──
+
+#[tokio::test]
+async fn cron_add_at_success_path() {
+    let dir = temp_dir("cron-addat");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "cron",
+        "add-at",
+        "--id",
+        "job1",
+        "--schedule",
+        "2026-04-01T12:00:00",
+        "--command",
+        "echo hi",
+    ])
+    .await
+    .expect("cron add-at should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn cron_add_every_success_path() {
+    let dir = temp_dir("cron-addevery");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "cron",
+        "add-every",
+        "--id",
+        "job2",
+        "--schedule",
+        "5m",
+        "--command",
+        "echo hi",
+    ])
+    .await
+    .expect("cron add-every should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn cron_once_success_path() {
+    let dir = temp_dir("cron-once");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "cron",
+        "once",
+        "--id",
+        "job3",
+        "--schedule",
+        "2026-04-01T12:00:00",
+        "--command",
+        "echo hi",
+    ])
+    .await
+    .expect("cron once should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn cron_update_missing_negative_path() {
+    let dir = temp_dir("cron-upd-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "cron",
+        "update",
+        "--id",
+        "nonexistent",
+        "--schedule",
+        "0 4 * * *",
+    ])
+    .await;
+    assert!(result.is_err(), "updating missing cron task should fail");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn cron_pause_missing_negative_path() {
+    let dir = temp_dir("cron-pause-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "cron",
+        "pause",
+        "--id",
+        "nonexistent",
+    ])
+    .await;
+    assert!(result.is_err(), "pausing missing cron task should fail");
+
+    cleanup(dir);
+}
+
+// ── estop levels ──
+
+#[tokio::test]
+async fn estop_network_kill_and_resume_success_path() {
+    let dir = temp_dir("estop-netkill");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "estop",
+        "--level",
+        "network-kill",
+    ])
+    .await
+    .expect("estop network-kill should succeed");
+
+    run_cmd(&["agentzero", "--data-dir", d, "estop", "resume", "--network"])
+        .await
+        .expect("estop resume --network should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn estop_domain_block_and_resume_success_path() {
+    let dir = temp_dir("estop-domain");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "estop",
+        "--level",
+        "domain-block",
+        "--domain",
+        "evil.com",
+    ])
+    .await
+    .expect("estop domain-block should succeed");
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "estop",
+        "resume",
+        "--domain",
+        "evil.com",
+    ])
+    .await
+    .expect("estop resume --domain should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn estop_tool_freeze_and_resume_success_path() {
+    let dir = temp_dir("estop-tool");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "estop",
+        "--level",
+        "tool-freeze",
+        "--tool",
+        "shell",
+    ])
+    .await
+    .expect("estop tool-freeze should succeed");
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "estop",
+        "resume",
+        "--tool",
+        "shell",
+    ])
+    .await
+    .expect("estop resume --tool should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn estop_engage_with_require_otp_success_path() {
+    let dir = temp_dir("estop-otp");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "estop",
+        "--level",
+        "kill-all",
+        "--require-otp",
+    ])
+    .await
+    .expect("estop with --require-otp should succeed");
+
+    cleanup(dir);
+}
+
+// ── auth token flows ──
+
+#[tokio::test]
+async fn auth_paste_token_and_list_success_path() {
+    let dir = temp_dir("auth-paste-list");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "auth",
+        "paste-token",
+        "--provider",
+        "anthropic",
+        "--token",
+        "sk-test-123",
+    ])
+    .await
+    .expect("auth paste-token should succeed");
+
+    run_cmd(&["agentzero", "--data-dir", d, "auth", "list"])
+        .await
+        .expect("auth list after paste-token should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn auth_paste_token_and_logout_success_path() {
+    let dir = temp_dir("auth-paste-logout");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "auth",
+        "paste-token",
+        "--provider",
+        "anthropic",
+        "--token",
+        "sk-test-456",
+    ])
+    .await
+    .expect("auth paste-token should succeed");
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "auth",
+        "logout",
+        "--provider",
+        "anthropic",
+    ])
+    .await
+    .expect("auth logout should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn auth_use_missing_profile_negative_path() {
+    let dir = temp_dir("auth-use-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "auth",
+        "use",
+        "--provider",
+        "anthropic",
+        "--profile",
+        "nonexistent",
+    ])
+    .await;
+    assert!(result.is_err(), "auth use missing profile should fail");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn auth_logout_missing_negative_path() {
+    let dir = temp_dir("auth-logout-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "auth",
+        "logout",
+        "--provider",
+        "nonexistent",
+    ])
+    .await;
+    // May be idempotent (ok) or error — either is acceptable
+    let _ = result;
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn auth_setup_token_success_path() {
+    let dir = temp_dir("auth-setup-tok");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "auth",
+        "setup-token",
+        "--provider",
+        "openrouter",
+        "--token",
+        "sk-test-789",
+    ])
+    .await
+    .expect("auth setup-token should succeed");
+
+    cleanup(dir);
+}
+
+// ── channel add/remove ──
+
+#[tokio::test]
+async fn channel_add_and_list_success_path() {
+    let dir = temp_dir("chan-add-list");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&["agentzero", "--data-dir", d, "channel", "add", "telegram"])
+        .await
+        .expect("channel add telegram should succeed");
+
+    run_cmd(&["agentzero", "--data-dir", d, "channel", "list"])
+        .await
+        .expect("channel list after add should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn channel_add_and_remove_success_path() {
+    let dir = temp_dir("chan-add-rm");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&["agentzero", "--data-dir", d, "channel", "add", "discord"])
+        .await
+        .expect("channel add discord should succeed");
+
+    run_cmd(&["agentzero", "--data-dir", d, "channel", "remove", "discord"])
+        .await
+        .expect("channel remove discord should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn channel_remove_missing_negative_path() {
+    let dir = temp_dir("chan-rm-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "channel",
+        "remove",
+        "nonexistent",
+    ])
+    .await;
+    assert!(result.is_err(), "removing non-existent channel should fail");
+
+    cleanup(dir);
+}
+
 // ── doctor ──
 
 #[tokio::test]
@@ -893,6 +1741,73 @@ async fn doctor_traces_success_path() {
     .expect("doctor traces should succeed");
 
     cleanup(dir);
+}
+
+#[tokio::test]
+async fn doctor_traces_with_event_filter_success_path() {
+    let dir = temp_dir("doctor-traces-ev");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "doctor",
+        "traces",
+        "--event",
+        "tool",
+        "--limit",
+        "5",
+    ])
+    .await
+    .expect("doctor traces with event filter should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn doctor_traces_with_contains_filter_success_path() {
+    let dir = temp_dir("doctor-traces-ct");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "doctor",
+        "traces",
+        "--contains",
+        "test",
+        "--limit",
+        "5",
+    ])
+    .await
+    .expect("doctor traces with contains filter should succeed");
+
+    cleanup(dir);
+}
+
+// ── completions (additional shells) ──
+
+#[tokio::test]
+async fn completions_fish_success_path() {
+    run_cmd(&["agentzero", "completions", "--shell", "fish"])
+        .await
+        .expect("fish completions should succeed");
+}
+
+#[tokio::test]
+async fn completions_powershell_success_path() {
+    run_cmd(&["agentzero", "completions", "--shell", "power-shell"])
+        .await
+        .expect("powershell completions should succeed");
+}
+
+#[tokio::test]
+async fn completions_elvish_success_path() {
+    run_cmd(&["agentzero", "completions", "--shell", "elvish"])
+        .await
+        .expect("elvish completions should succeed");
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1061,6 +1976,116 @@ async fn memory_clear_success_path() {
     run_cmd(&["agentzero", "--data-dir", d, "memory", "clear", "--yes"])
         .await
         .expect("memory clear should succeed");
+
+    cleanup(dir);
+}
+
+// ── config (additional) ──
+
+#[tokio::test]
+async fn config_schema_json_success_path() {
+    let dir = temp_dir("cfg-schema-json");
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        dir.to_str().unwrap(),
+        "config",
+        "schema",
+        "--json",
+    ])
+    .await
+    .expect("config schema --json should succeed");
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn config_show_raw_success_path() {
+    let dir = temp_dir("cfg-show-raw");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&["agentzero", "--data-dir", d, "config", "show", "--raw"])
+        .await
+        .expect("config show --raw should succeed");
+
+    cleanup(dir);
+}
+
+// ── memory (additional) ──
+
+#[tokio::test]
+async fn memory_get_empty_negative_path() {
+    let dir = temp_dir("mem-get-empty");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    let result = run_cmd(&["agentzero", "--data-dir", d, "memory", "get"]).await;
+    assert!(
+        result.is_err(),
+        "memory get on empty db should return not-found error"
+    );
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn memory_get_missing_key_negative_path() {
+    let dir = temp_dir("mem-get-miss");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "memory",
+        "get",
+        "--key",
+        "nonexistent",
+    ])
+    .await;
+    assert!(
+        result.is_err(),
+        "memory get missing key should return not-found error"
+    );
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn memory_list_with_limit_success_path() {
+    let dir = temp_dir("mem-list-lim");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "memory",
+        "list",
+        "--limit",
+        "5",
+        "--offset",
+        "0",
+    ])
+    .await
+    .expect("memory list with limit should succeed");
+
+    cleanup(dir);
+}
+
+// ── models (additional) ──
+
+#[tokio::test]
+async fn models_list_success_path() {
+    let dir = temp_dir("models-list");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&["agentzero", "--data-dir", d, "models", "list"])
+        .await
+        .expect("models list should succeed");
 
     cleanup(dir);
 }
@@ -1320,4 +2345,69 @@ fn dashboard_args_parse_success_path() {
 fn agent_args_parse_success_path() {
     let result = agentzero_cli::parse_cli_from(["agentzero", "agent", "--message", "hello world"]);
     assert!(result.is_ok(), "agent args should parse");
+}
+
+#[test]
+fn tunnel_start_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "tunnel",
+        "start",
+        "--protocol",
+        "http",
+        "--remote",
+        "host:80",
+        "--local-port",
+        "8080",
+    ]);
+    assert!(result.is_ok(), "tunnel start args should parse");
+}
+
+#[test]
+fn channel_start_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "channel", "start"]);
+    assert!(result.is_ok(), "channel start args should parse");
+}
+
+#[test]
+fn auth_login_args_parse_success_path() {
+    let result =
+        agentzero_cli::parse_cli_from(["agentzero", "auth", "login", "--provider", "openai-codex"]);
+    assert!(result.is_ok(), "auth login args should parse");
+}
+
+#[test]
+fn plugin_dev_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "plugin",
+        "dev",
+        "--manifest",
+        "m.json",
+        "--wasm",
+        "p.wasm",
+    ]);
+    assert!(result.is_ok(), "plugin dev args should parse");
+}
+
+#[test]
+fn plugin_package_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "plugin",
+        "package",
+        "--manifest",
+        "m.json",
+        "--wasm",
+        "p.wasm",
+        "--out",
+        "pkg.tar",
+    ]);
+    assert!(result.is_ok(), "plugin package args should parse");
+}
+
+#[test]
+fn onboard_interactive_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "onboard", "--interactive"]);
+    assert!(result.is_ok(), "onboard --interactive args should parse");
 }

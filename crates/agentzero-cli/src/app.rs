@@ -64,9 +64,22 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             .await
         }
         Commands::Status => commands::status::StatusCommand::run(&ctx, ()).await,
-        Commands::Agent { message } => {
-            commands::agent::AgentCommand::run(&ctx, commands::agent::AgentOptions { message })
-                .await
+        Commands::Agent {
+            message,
+            provider,
+            model,
+            profile,
+        } => {
+            commands::agent::AgentCommand::run(
+                &ctx,
+                commands::agent::AgentOptions {
+                    message,
+                    provider,
+                    model,
+                    profile,
+                },
+            )
+            .await
         }
         Commands::Auth { command } => commands::auth::AuthCommand::run(&ctx, command).await,
         Commands::Cron { command } => commands::cron::CronCommand::run(&ctx, command).await,

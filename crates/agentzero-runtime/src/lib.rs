@@ -1,4 +1,5 @@
-use agentzero_common::local_providers::is_local_provider;
+use agentzero_auth::AuthManager;
+use agentzero_common::local_providers::{is_local_provider, local_provider_meta};
 use agentzero_config::{load, load_audit_policy, load_env_var, load_tool_security_policy};
 use agentzero_core::{
     Agent, AgentConfig, AuditEvent, AuditSink, HookEvent, HookFailureMode, HookSink, MemoryStore,
@@ -10,9 +11,8 @@ use agentzero_infra::tools::default_tools;
 use agentzero_memory::SqliteMemoryStore;
 #[cfg(feature = "memory-turso")]
 use agentzero_memory::{TursoMemoryStore, TursoSettings};
-use agentzero_providers::OpenAiCompatibleProvider;
+use agentzero_providers::{find_models_for_provider, find_provider, OpenAiCompatibleProvider};
 use agentzero_routing::{ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter};
-use anyhow::Context;
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
@@ -24,6 +24,12 @@ pub struct RunAgentRequest {
     pub workspace_root: PathBuf,
     pub config_path: PathBuf,
     pub message: String,
+    /// Override the provider kind from config (e.g. "openrouter", "openai-codex").
+    pub provider_override: Option<String>,
+    /// Override the model name from config.
+    pub model_override: Option<String>,
+    /// Use a specific auth profile by name (from `auth list`).
+    pub profile_override: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,8 +64,30 @@ impl HookSink for AuditHookSink {
 }
 
 pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutput> {
-    let config = load(&req.config_path)?;
-    let key = resolve_api_key(&req.config_path, &config.provider.kind)?;
+    let mut config = load(&req.config_path)?;
+
+    // Apply CLI overrides before resolving the API key / constructing provider.
+    if let Some(ref kind) = req.provider_override {
+        config.provider.kind = kind.clone();
+        // Auto-resolve the base_url: local providers → localhost, cloud → catalog URL.
+        if let Some(meta) = local_provider_meta(kind) {
+            config.provider.base_url = meta.default_base_url.to_string();
+        } else if let Some(descriptor) = find_provider(kind) {
+            if let Some(url) = descriptor.default_base_url {
+                config.provider.base_url = url.to_string();
+            }
+        }
+    }
+    if let Some(ref model) = req.model_override {
+        config.provider.model = model.clone();
+    }
+
+    let key = resolve_api_key(
+        &req.config_path,
+        &mut config,
+        req.profile_override.as_deref(),
+        req.provider_override.is_some(),
+    )?;
 
     let router = build_model_router(&config);
     let delegate_agents = build_delegate_agents(&config);
@@ -197,16 +225,102 @@ pub async fn run_agent_with_runtime(
     })
 }
 
-fn resolve_api_key(config_path: &Path, provider_kind: &str) -> anyhow::Result<String> {
+/// Unified API key resolution. Priority:
+///   1. If `profile_override` is set, use that profile's token directly.
+///   2. `OPENAI_API_KEY` env var / `.env` files.
+///   3. Active auth profile for the current provider.
+///   4. Error.
+///
+/// When an auth profile provides credentials and `--provider` was not given,
+/// the config's provider kind, base URL, and model are updated to match.
+fn resolve_api_key(
+    config_path: &Path,
+    config: &mut agentzero_config::AgentZeroConfig,
+    profile_override: Option<&str>,
+    provider_was_overridden: bool,
+) -> anyhow::Result<String> {
+    // --- explicit --profile flag ---
+    if let Some(profile_name) = profile_override {
+        let config_dir = config_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("config path has no parent directory"))?;
+        let manager = AuthManager::in_config_dir(config_dir)?;
+        let (prof_provider, token) = manager
+            .token_for_profile(profile_name)?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "auth profile '{profile_name}' not found — run `agentzero auth list` to see available profiles"
+                )
+            })?;
+        anyhow::ensure!(
+            !token.trim().is_empty(),
+            "auth profile '{profile_name}' has an empty token — re-authenticate with `agentzero auth login`"
+        );
+        if !provider_was_overridden {
+            apply_provider_defaults(config, &prof_provider);
+        }
+        info!("using auth profile '{profile_name}' (provider '{prof_provider}')");
+        return Ok(token);
+    }
+
+    // --- no explicit profile: use env / active auth profile ---
+    resolve_api_key_for_provider(config_path, &config.provider.kind)
+}
+
+/// Core key resolution by provider kind (env var -> auth profile -> error).
+fn resolve_api_key_for_provider(config_path: &Path, provider_kind: &str) -> anyhow::Result<String> {
     if is_local_provider(provider_kind) {
         return Ok(load_env_var(config_path, "OPENAI_API_KEY")?.unwrap_or_default());
     }
-    require_openai_api_key(config_path)
+
+    if let Some(key) = load_env_var(config_path, "OPENAI_API_KEY")? {
+        return Ok(key);
+    }
+
+    if let Some(config_dir) = config_path.parent() {
+        if let Ok(manager) = AuthManager::in_config_dir(config_dir) {
+            if let Ok(Some(token)) = manager.active_token_for_provider(provider_kind) {
+                if !token.trim().is_empty() {
+                    info!("using auth profile token for provider '{provider_kind}'");
+                    return Ok(token);
+                }
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "missing API key for provider '{provider_kind}': \
+         set OPENAI_API_KEY (env var or .env) or run `agentzero auth login`"
+    )
 }
 
-fn require_openai_api_key(config_path: &Path) -> anyhow::Result<String> {
-    load_env_var(config_path, "OPENAI_API_KEY")?
-        .context("missing OPENAI_API_KEY (set env var or .env/.env.local/.env.<environment>)")
+/// Update config's provider base URL and default model to match a provider kind.
+fn apply_provider_defaults(config: &mut agentzero_config::AgentZeroConfig, provider_kind: &str) {
+    if config.provider.kind != provider_kind {
+        config.provider.kind = provider_kind.to_string();
+    }
+    if let Some(meta) = local_provider_meta(provider_kind) {
+        config.provider.base_url = meta.default_base_url.to_string();
+    } else if let Some(descriptor) = find_provider(provider_kind) {
+        if let Some(url) = descriptor.default_base_url {
+            config.provider.base_url = url.to_string();
+        }
+    }
+    // If the current model doesn't belong to this provider, pick the default model.
+    if let Some((_, models)) = find_models_for_provider(provider_kind) {
+        let model_matches = models
+            .iter()
+            .any(|m| m.id == config.provider.model.as_str());
+        if !model_matches {
+            if let Some(default_model) = models.iter().find(|m| m.is_default) {
+                info!(
+                    "switching model from '{}' to '{}' for provider '{provider_kind}'",
+                    config.provider.model, default_model.id,
+                );
+                config.provider.model = default_model.id.to_string();
+            }
+        }
+    }
 }
 
 async fn build_memory_store(config_path: &Path) -> anyhow::Result<Box<dyn MemoryStore>> {
@@ -316,7 +430,8 @@ fn build_delegate_agents(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_hook_mode, require_openai_api_key, resolve_api_key};
+    use super::{parse_hook_mode, resolve_api_key_for_provider};
+    use agentzero_auth::AuthManager;
     use agentzero_core::HookFailureMode;
     use std::fs;
     use std::path::PathBuf;
@@ -337,14 +452,15 @@ mod tests {
     }
 
     #[test]
-    fn require_openai_api_key_reads_from_dotenv() {
+    fn resolve_api_key_reads_from_dotenv_for_cloud_provider() {
         let dir = temp_dir();
         let config_path = dir.join("agentzero.toml");
         fs::write(&config_path, "").expect("config file should exist");
         fs::write(dir.join(".env"), "OPENAI_API_KEY=sk-test\n").expect("dotenv should be written");
 
         temp_env::with_var_unset("OPENAI_API_KEY", || {
-            let key = require_openai_api_key(&config_path).expect("api key should resolve");
+            let key = resolve_api_key_for_provider(&config_path, "openrouter")
+                .expect("cloud provider api key should resolve from dotenv");
             assert_eq!(key, "sk-test");
         });
 
@@ -352,14 +468,41 @@ mod tests {
     }
 
     #[test]
-    fn require_openai_api_key_fails_when_missing() {
+    fn resolve_api_key_falls_back_to_auth_profile() {
         let dir = temp_dir();
         let config_path = dir.join("agentzero.toml");
         fs::write(&config_path, "").expect("config file should exist");
 
+        let manager = AuthManager::in_config_dir(&dir).expect("auth manager should construct");
+        manager
+            .login("default", "openrouter", "tok-from-profile", true)
+            .expect("auth login should succeed");
+
         temp_env::with_var_unset("OPENAI_API_KEY", || {
-            let err = require_openai_api_key(&config_path).expect_err("missing key should fail");
-            assert!(err.to_string().contains("missing OPENAI_API_KEY"));
+            let key = resolve_api_key_for_provider(&config_path, "openrouter")
+                .expect("should fall back to auth profile token");
+            assert_eq!(key, "tok-from-profile");
+        });
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_api_key_prefers_env_over_auth_profile() {
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        fs::write(&config_path, "").expect("config file should exist");
+        fs::write(dir.join(".env"), "OPENAI_API_KEY=sk-env\n").expect("dotenv should be written");
+
+        let manager = AuthManager::in_config_dir(&dir).expect("auth manager should construct");
+        manager
+            .login("default", "openrouter", "tok-from-profile", true)
+            .expect("auth login should succeed");
+
+        temp_env::with_var_unset("OPENAI_API_KEY", || {
+            let key = resolve_api_key_for_provider(&config_path, "openrouter")
+                .expect("env var should take priority over auth profile");
+            assert_eq!(key, "sk-env");
         });
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
@@ -372,7 +515,7 @@ mod tests {
         fs::write(&config_path, "").expect("config file should exist");
 
         temp_env::with_var_unset("OPENAI_API_KEY", || {
-            let key = resolve_api_key(&config_path, "ollama")
+            let key = resolve_api_key_for_provider(&config_path, "ollama")
                 .expect("local provider should not require key");
             assert!(key.is_empty(), "local provider key should be empty string");
         });
@@ -388,7 +531,7 @@ mod tests {
         fs::write(dir.join(".env"), "OPENAI_API_KEY=sk-local\n").expect("dotenv should be written");
 
         temp_env::with_var_unset("OPENAI_API_KEY", || {
-            let key = resolve_api_key(&config_path, "llamacpp")
+            let key = resolve_api_key_for_provider(&config_path, "llamacpp")
                 .expect("local provider should resolve key");
             assert_eq!(key, "sk-local");
         });
@@ -403,9 +546,9 @@ mod tests {
         fs::write(&config_path, "").expect("config file should exist");
 
         temp_env::with_var_unset("OPENAI_API_KEY", || {
-            let err = resolve_api_key(&config_path, "openrouter")
+            let err = resolve_api_key_for_provider(&config_path, "openrouter")
                 .expect_err("cloud provider should require key");
-            assert!(err.to_string().contains("missing OPENAI_API_KEY"));
+            assert!(err.to_string().contains("missing API key"));
         });
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
@@ -419,7 +562,7 @@ mod tests {
 
         temp_env::with_var_unset("OPENAI_API_KEY", || {
             for provider in &["ollama", "llamacpp", "lmstudio", "vllm", "sglang"] {
-                let result = resolve_api_key(&config_path, provider);
+                let result = resolve_api_key_for_provider(&config_path, provider);
                 assert!(
                     result.is_ok(),
                     "resolve_api_key should succeed for local provider '{provider}'"

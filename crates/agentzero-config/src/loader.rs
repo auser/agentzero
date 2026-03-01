@@ -23,6 +23,7 @@ pub fn load(path: &Path) -> anyhow::Result<AgentZeroConfig> {
         .context("failed to deserialize config into typed model")?;
     let config = apply_dotenv_overrides(parsed, &dotenv_overrides)?;
     let mut config = apply_legacy_env_overrides(config)?;
+    normalize_base_url(&mut config);
     resolve_local_provider_defaults(&mut config);
     config.validate()?;
     Ok(config)
@@ -197,7 +198,18 @@ fn apply_legacy_env_overrides(mut config: AgentZeroConfig) -> anyhow::Result<Age
     Ok(config)
 }
 
-const DEFAULT_CLOUD_BASE_URL: &str = "https://openrouter.ai/api/v1";
+const DEFAULT_CLOUD_BASE_URL: &str = "https://openrouter.ai/api";
+
+/// Strip a trailing `/v1` (or `/v1/`) from `base_url` so the provider code
+/// can unconditionally append `/v1/chat/completions` without doubling the
+/// version prefix.  This keeps backwards compatibility for configs that
+/// already include `/v1` in their `base_url`.
+fn normalize_base_url(config: &mut AgentZeroConfig) {
+    let trimmed = config.provider.base_url.trim_end_matches('/');
+    if let Some(stripped) = trimmed.strip_suffix("/v1") {
+        config.provider.base_url = stripped.to_string();
+    }
+}
 
 fn resolve_local_provider_defaults(config: &mut AgentZeroConfig) {
     if let Some(meta) = local_provider_meta(&config.provider.kind) {

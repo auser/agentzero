@@ -96,6 +96,15 @@ pub enum Commands {
         /// User message text to send.
         #[arg(short, long)]
         message: String,
+        /// Override the provider (e.g. openrouter, openai, ollama).
+        #[arg(short, long)]
+        provider: Option<String>,
+        /// Override the model name.
+        #[arg(long)]
+        model: Option<String>,
+        /// Use a specific auth profile by name (from `auth list`).
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Manage provider subscription authentication profiles.
     Auth {

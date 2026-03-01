@@ -5,6 +5,12 @@ use async_trait::async_trait;
 pub struct AgentOptions {
     /// Message to send to agent
     pub message: String,
+    /// Override the provider kind (e.g. openrouter, openai, ollama)
+    pub provider: Option<String>,
+    /// Override the model name
+    pub model: Option<String>,
+    /// Use a specific auth profile by name (from `auth list`)
+    pub profile: Option<String>,
 }
 
 pub struct AgentCommand;
@@ -18,6 +24,9 @@ impl AgentZeroCommand for AgentCommand {
             workspace_root: ctx.workspace_root.clone(),
             config_path: ctx.config_path.clone(),
             message: opts.message,
+            provider_override: opts.provider,
+            model_override: opts.model,
+            profile_override: opts.profile,
         })
         .await?;
 
@@ -67,11 +76,14 @@ mod tests {
             &ctx,
             AgentOptions {
                 message: "hello".to_string(),
+                provider: None,
+                model: None,
+                profile: None,
             },
         )
         .await
         .expect_err("missing api key should fail");
-        assert!(err.to_string().contains("missing OPENAI_API_KEY"));
+        assert!(err.to_string().contains("missing API key"));
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
@@ -89,6 +101,9 @@ mod tests {
             &ctx,
             AgentOptions {
                 message: "hello".to_string(),
+                provider: None,
+                model: None,
+                profile: None,
             },
         )
         .await
@@ -101,12 +116,21 @@ mod tests {
     fn agent_options_struct_construction_success_path() {
         let opts = AgentOptions {
             message: "test message".to_string(),
+            provider: None,
+            model: None,
+            profile: None,
         };
         assert_eq!(opts.message, "test message");
 
         let empty_opts = AgentOptions {
             message: String::new(),
+            provider: Some("ollama".to_string()),
+            model: Some("llama3".to_string()),
+            profile: Some("myprofile".to_string()),
         };
         assert!(empty_opts.message.is_empty());
+        assert_eq!(empty_opts.provider.as_deref(), Some("ollama"));
+        assert_eq!(empty_opts.model.as_deref(), Some("llama3"));
+        assert_eq!(empty_opts.profile.as_deref(), Some("myprofile"));
     }
 }

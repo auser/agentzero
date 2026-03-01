@@ -1,3 +1,4 @@
+use agentzero_common::local_providers::is_local_provider;
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -46,6 +47,20 @@ impl AgentZeroConfig {
             .map_err(|_| anyhow!("provider.base_url must be a valid URL"))?;
         if !matches!(provider_url.scheme(), "http" | "https") {
             return Err(anyhow!("provider.base_url scheme must be http or https"));
+        }
+        if is_local_provider(&self.provider.kind) {
+            let is_localhost = matches!(
+                provider_url.host_str(),
+                Some("localhost") | Some("127.0.0.1") | Some("0.0.0.0") | Some("::1")
+            );
+            if !is_localhost {
+                tracing::warn!(
+                    "provider '{}' is a local provider but base_url '{}' is not localhost \
+                     — did you mean to use a different provider?",
+                    self.provider.kind,
+                    self.provider.base_url,
+                );
+            }
         }
         if self.provider.model.trim().is_empty() {
             return Err(anyhow!("provider.model must not be empty"));
@@ -212,7 +227,7 @@ impl Default for ProviderConfig {
     fn default() -> Self {
         Self {
             kind: "openrouter".to_string(),
-            base_url: "https://openrouter.ai/api/v1".to_string(),
+            base_url: "https://openrouter.ai/api".to_string(),
             model: "anthropic/claude-sonnet-4-6".to_string(),
             default_temperature: 0.7,
             provider_api: None,

@@ -35,6 +35,21 @@ channel-mattermost = ["reqwest"]
 channel-email = []
 channel-irc = []
 channel-webhook = []
+channel-matrix = ["reqwest"]
+channel-whatsapp = ["reqwest"]
+channel-lark = ["reqwest"]
+channel-feishu = ["reqwest"]
+channel-dingtalk = ["reqwest"]
+channel-nextcloud-talk = ["reqwest"]
+channel-linq = ["reqwest"]
+channel-wati = ["reqwest"]
+channel-qq-official = ["reqwest"]
+channel-napcat = ["reqwest"]
+channel-acp = ["reqwest"]
+channel-clawdtalk = ["reqwest"]
+channel-signal = ["reqwest"]
+channel-imessage = []
+channel-nostr = ["tokio-tungstenite", "futures-util"]
 all-channels = [
     "channel-cli",
     "channel-telegram",
@@ -44,4 +59,19 @@ all-channels = [
     "channel-email",
     "channel-irc",
     "channel-webhook",
+    "channel-matrix",
+    "channel-whatsapp",
+    "channel-lark",
+    "channel-feishu",
+    "channel-dingtalk",
+    "channel-nextcloud-talk",
+    "channel-linq",
+    "channel-wati",
+    "channel-qq-official",
+    "channel-napcat",
+    "channel-acp",
+    "channel-clawdtalk",
+    "channel-signal",
+    "channel-imessage",
+    "channel-nostr",
 ]

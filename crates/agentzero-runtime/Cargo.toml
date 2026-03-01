@@ -14,6 +14,7 @@ memory-turso = ["agentzero-memory/memory-turso"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+agentzero-auth = { workspace = true }
 agentzero-common = { workspace = true }
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
