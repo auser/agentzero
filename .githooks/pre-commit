@@ -1,0 +1,47 @@
+#!/bin/bash
+#
+# Pre-commit hook for agentzero
+# - Formats code with cargo fmt
+# - Runs clippy
+# - Runs tests
+#
+# To install this hook, run:
+#   git config core.hooksPath .githooks
+# Or copy this file to .git/hooks/pre-commit
+#
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Format code
+echo "Auto-formatting code..."
+if ! cargo fmt --all; then
+    echo "Formatting failed!"
+    exit 1
+fi
+
+# Stage any formatting changes automatically
+if ! git diff --quiet --exit-code; then
+    echo "Auto-staging formatted files..."
+    git add -u
+fi
+echo "Code formatting applied and staged"
+echo ""
+
+# Run clippy check (zero warnings required)
+# Note: Use 'cargo clippy --fix' manually if you want auto-fixes
+echo "Running clippy check (zero warnings required)..."
+if ! cargo clippy --workspace --all-targets -- -D warnings; then
+    echo "Clippy check failed!"
+    echo "   Run 'cargo clippy --workspace --all-targets --fix --allow-dirty' to auto-fix"
+    exit 1
+fi
+echo "Clippy passed"
+echo ""
+
+# Run tests (prefer nextest for speed, fallback to cargo test)
+echo "Running tests..."
+cargo test --workspace --lib
+
+echo "All pre-commit checks passed!"

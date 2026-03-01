@@ -13,10 +13,10 @@ AgentZero is under active development. The architecture is stable but individual
 
 ## Why AgentZero
 
-- **Learn by building.** Clean crate boundaries make the entire system inspectable and understandable.
-- **Security is not optional.** Scoped tools, allowlists, audit logging, and encrypted storage are baseline — not plugins.
-- **No lock-in.** Swap providers, memory backends, tools, and channels through trait interfaces.
-- **Deploy anywhere.** Single native binary. No container, no runtime, no external dependencies.
+- **Security that ships with the product.** Scoped tools, allowlists, audit logging, and encrypted storage are built into the core — not bolted on as plugins. Every agent runs with fail-closed defaults from day one.
+- **Zero vendor lock-in.** Swap LLM providers, memory backends, tools, and communication channels through clean trait interfaces. Your agent logic stays the same whether you're running GPT-4, Claude, or a local model.
+- **One binary, deploy anywhere.** A single native Rust binary gives you the full runtime — CLI, gateway, daemon, and tools. No containers, no interpreters, no external dependencies. Cold starts in milliseconds.
+- **Built for production.** OTP-gated tool execution, secret redaction, audit trails, and an emergency stop give you the operational controls that real deployments demand.
 
 ## Features
 

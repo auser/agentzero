@@ -30,5 +30,17 @@ channel-cli = []
 channel-telegram = ["reqwest"]
 channel-discord = ["reqwest", "tokio-tungstenite", "futures-util"]
 channel-slack = ["reqwest", "futures-util"]
+channel-mattermost = ["reqwest"]
+channel-email = []
+channel-irc = []
 channel-webhook = []
-all-channels = ["channel-cli", "channel-telegram", "channel-discord", "channel-slack", "channel-webhook"]
+all-channels = [
+    "channel-cli",
+    "channel-telegram",
+    "channel-discord",
+    "channel-slack",
+    "channel-mattermost",
+    "channel-email",
+    "channel-irc",
+    "channel-webhook",
+]

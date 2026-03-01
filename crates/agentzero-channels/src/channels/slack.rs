@@ -198,7 +198,7 @@ mod impl_ {
                 .bearer_auth(&self.bot_token)
                 .send()
                 .await
-                .and_then(|r| Ok(r.status().is_success()))
+                .map(|r| r.status().is_success())
                 .unwrap_or(false)
         }
     }
