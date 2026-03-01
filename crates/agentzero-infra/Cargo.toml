@@ -9,6 +9,8 @@ license.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 agentzero-core = { workspace = true }
+agentzero-delegation = { workspace = true }
+agentzero-routing = { workspace = true }
 agentzero-tools = { workspace = true }
 agentzero-memory = { workspace = true }
 agentzero-providers = { workspace = true }

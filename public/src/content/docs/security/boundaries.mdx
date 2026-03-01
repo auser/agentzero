@@ -1,0 +1,190 @@
+---
+title: Security Boundaries
+description: Layered security boundaries and defense-in-depth model in the AgentZero runtime
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+AgentZero enforces security through **defense in depth** — multiple independent layers that each constrain what the system can do. Every request passes through each boundary before reaching external resources. All boundaries operate on a **fail-closed** principle: capabilities are denied unless explicitly enabled.
+
+## Boundary Layers
+
+<CardGrid>
+  <Card title="User Terminal" icon="laptop">
+    Entry point for all interaction. Every input is validated before it reaches the CLI parser. Malformed commands are rejected at the boundary.
+  </Card>
+
+  <Card title="CLI Parser" icon="setting">
+    Parses and sanitizes all input. Validates argument shapes, rejects unknown flags, and normalizes paths before dispatch.
+  </Card>
+
+  <Card title="Config + Policy" icon="document">
+    **Fail-closed defaults** — all capabilities are denied unless explicitly enabled. Config validation enforces bounded values and safe constraints before runtime execution.
+  </Card>
+
+  <Card title="Agent Orchestrator" icon="rocket">
+    Guards against runaway execution with **max iteration limits** and **timeout enforcement**. Every agent loop is bounded.
+  </Card>
+</CardGrid>
+
+## Tool Execution Sandbox
+
+The most security-sensitive boundary. All tool execution is **policy-gated** from config and enforced by the `ToolSecurityPolicy` struct.
+
+<CardGrid>
+  <Card title="read_file" icon="open-book">
+    **No path traversal** — blocks absolute and `../` paths. Enforces allowed root directory. Blocks binary files. **Size cap: 64 KiB** per read. Hard-link guard (B7) prevents symlink attacks.
+  </Card>
+
+  <Card title="write_file" icon="warning">
+    **Disabled by default.** Must be explicitly enabled in `agentzero.toml` under `[security.*]`. When enabled, scoped to allowed directories only. Supports dry-run mode for safe preview.
+  </Card>
+
+  <Card title="shell" icon="error">
+    **Deny-by-default allowlist.** Only pre-approved commands can execute. Quote-aware validation blocks metacharacters (`|`, `;`, `` ` ``, `$()`) outside quotes. Max 8 args of 128 bytes each. Output capped at 8 KiB.
+  </Card>
+</CardGrid>
+
+### File Tool Security Pipeline
+
+Every file operation passes through this validation chain:
+
+```
+Input → Path Validation (absolute rejection, .. rejection) →
+Canonicalization (symlink resolution) → Allowed Root Check →
+Hard-link Check (B7) → Sensitive Path Check → Size Check → Execute
+```
+
+**Sensitive file patterns blocked** (unless explicitly allowed):
+- `.env`, `.env.local`, `.env.production`
+- `.aws/credentials`, `.ssh/id_rsa`, `.ssh/id_ed25519`
+- `.gnupg/`, `credentials.json`, `service-account.json`
+- `.npmrc`, `.pypirc`
+
+### Shell Security Pipeline
+
+```
+Input → Tokenize (quote-aware) → Command Allowlist Check →
+Argument Count Check → Argument Length Check →
+Forbidden Char Check (context-aware) → Execute → Output Truncation
+```
+
+**Default allowed commands:** `ls`, `pwd`, `cat`, `echo`
+
+**Quote-aware validation examples:**
+
+| Command | Result | Reason |
+|---|---|---|
+| `echo 'hello;world'` | Allowed | Semicolon inside single quotes |
+| `echo hello;world` | **Blocked** | Unquoted semicolon (shell injection) |
+| `` echo `whoami` `` | **Blocked** | Backtick always forbidden |
+| `grep "pattern" file.txt` | Allowed | Quoted pattern |
+
+## Infrastructure Boundaries
+
+<CardGrid>
+  <Card title="Provider Network" icon="external">
+    All provider, Turso, and MCP remote traffic requires **TLS**. Certificate validation is enforced. Timeout and retry bounds prevent hang or amplification. DNS rebinding protection validates resolved IPs.
+  </Card>
+
+  <Card title="Memory / Storage" icon="document">
+    All persisted secret material and sensitive artifacts are **encrypted at rest**. Keys are never hardcoded in source or config committed to VCS. Agent IPC uses `EncryptedJsonStore` for all inter-process messages.
+  </Card>
+
+  <Card title="WASM Plugins" icon="puzzle">
+    Plugins run in a **sandboxed** WASM environment. Network is disabled by default. Filesystem write is disabled by default. **Fuel limits** bound CPU consumption. Memory capped at 64 MB. Symlink modules rejected.
+  </Card>
+
+  <Card title="Gateway" icon="star">
+    Binds to **localhost only** by default. Remote pairing requires a one-time password (OTP). All gateway listeners validate the origin of HTTP callers.
+  </Card>
+</CardGrid>
+
+### Network Security (SSRF Prevention)
+
+All network tools (`http_request`, `web_fetch`, `web_search`) share a unified **URL Access Policy** that prevents Server-Side Request Forgery (SSRF):
+
+```
+URL Parse → Scheme Check (http/https only) → Domain Blocklist →
+IP Resolution → Private IP Check → DNS Rebinding Check →
+Domain Allowlist Check → Execute
+```
+
+**Private IP ranges blocked by default:**
+
+| Range | Description |
+|---|---|
+| `10.0.0.0/8` | Private Class A |
+| `172.16.0.0/12` | Private Class B |
+| `192.168.0.0/16` | Private Class C |
+| `169.254.0.0/16` | Link-local |
+| `100.64.0.0/10` | Carrier-grade NAT |
+| `0.0.0.0/8` | Unspecified |
+| `240.0.0.0/4` | Reserved |
+| `fc00::/7` | IPv6 unique local |
+| `fe80::/10` | IPv6 link-local |
+
+**DNS rebinding protection:** Domain names are resolved to IP addresses and verified against the blocklist. This prevents an attacker from registering a domain that initially resolves to a public IP, then changing DNS to point to an internal IP.
+
+## Autonomy Levels
+
+The autonomy policy controls which tools require user approval:
+
+| Level | Read Tools | Write Tools | Network Tools |
+|---|---|---|---|
+| `ReadOnly` | Auto-approve | **Blocked** | **Blocked** |
+| `Supervised` | Auto-approve | Requires approval | Requires approval |
+| `Full` | Auto-approve | Auto-approve | Auto-approve |
+
+**Read tools** (auto-approved at all levels): `read_file`, `glob`, `search`, `memory_read`
+
+**Write tools** (gated): `write_file`, `shell`, `apply_patch`, `browser`, `http_request`
+
+**Forbidden paths** (all levels): `/etc`, `/root`, `/proc`, `/sys`, `~/.ssh`, `~/.gnupg`, `~/.aws`
+
+## Redaction System
+
+The `agentzero-security` crate provides automatic redaction of sensitive data across all error messages, logs, and panic output.
+
+**Patterns automatically redacted:**
+
+| Pattern | Example | Replacement |
+|---|---|---|
+| `OPENAI_API_KEY=sk-*` | `OPENAI_API_KEY=sk-abc123` | `OPENAI_API_KEY=[REDACTED]` |
+| `TURSO_AUTH_TOKEN=*` | `TURSO_AUTH_TOKEN=eyJ...` | `TURSO_AUTH_TOKEN=[REDACTED]` |
+| JSON `"api_key": "..."` | `{"api_key": "secret"}` | `{"api_key":"[REDACTED]"}` |
+| JSON `"auth_token": "..."` | `{"auth_token": "tok"}` | `{"auth_token":"[REDACTED]"}` |
+| `Authorization: Bearer ...` | `Authorization: Bearer sk-123` | `Authorization: Bearer [REDACTED]` |
+| `sk-[A-Za-z0-9_-]{10,}` | `sk-proj-abcdef1234` | `sk-[REDACTED]` |
+
+**Error chain redaction:** Walks the entire error chain (including `anyhow` contexts) and redacts each level before surfacing to the user.
+
+**Panic hook:** A redacting panic hook is installed at startup. If the runtime panics, the message is redacted before display.
+
+## Risk Domains
+
+Security controls are organized by risk domain, each with required controls enforced by `agentzero-security::policy`:
+
+| Domain | Priority | Controls |
+|---|---|---|
+| **Tool Execution** | P0 Critical | Deny by default, explicit allowlist, redaction, timeout |
+| **Channel Ingress** | P0 Critical | Deny by default, explicit allowlist, redaction, timeout |
+| **Provider Network** | P1 High | Authenticated transport, redaction, timeout |
+| **Remote Memory** | P1 High | Authenticated transport, redaction, timeout |
+
+## Key Principles
+
+- Tool execution is policy-gated from config and **fails closed** by default.
+- Optional capabilities (`write_file`, MCP, plugins) require **explicit enablement**.
+- Audit events can be enabled via `[security.audit]` for full traceability.
+- Config validation enforces bounded values and safe constraints before runtime execution.
+- Fail-closed behavior is required when encryption preconditions are not met.
+- All secrets are automatically redacted from errors, logs, and panic output.
+
+## See Also
+
+- [Tools & Plugins](/agentzero/reference/tools/) — Complete tool reference with configuration
+- [Threat Model](/agentzero/security/threat-model/) — Security threat analysis and risk tiers
+- [Dependency Policy](/agentzero/security/dependency-policy/) — Third-party dependency standards
+- [Config Reference](/agentzero/config/reference/) — Full annotated `agentzero.toml` including `[security.*]`
+- [System Architecture](/agentzero/architecture/) — Overall runtime architecture

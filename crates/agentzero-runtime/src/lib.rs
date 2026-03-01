@@ -3,15 +3,18 @@ use agentzero_core::{
     Agent, AgentConfig, AuditEvent, AuditSink, HookEvent, HookFailureMode, HookSink, MemoryStore,
     Provider, RuntimeMetrics, Tool, ToolContext, UserMessage,
 };
+use agentzero_delegation::DelegateConfig;
 use agentzero_infra::audit::FileAuditSink;
 use agentzero_infra::tools::default_tools;
 use agentzero_memory::SqliteMemoryStore;
 #[cfg(feature = "memory-turso")]
 use agentzero_memory::{TursoMemoryStore, TursoSettings};
 use agentzero_providers::OpenAiCompatibleProvider;
+use agentzero_routing::{ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter};
 use anyhow::Context;
 use async_trait::async_trait;
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::info;
 
@@ -57,11 +60,13 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
     let key = require_openai_api_key(&req.config_path)?;
     let config = load(&req.config_path)?;
 
+    let router = build_model_router(&config);
+    let delegate_agents = build_delegate_agents(&config);
     let provider =
         OpenAiCompatibleProvider::new(config.provider.base_url, key, config.provider.model);
     let memory = build_memory_store(&req.config_path).await?;
     let tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
-    let tools: Vec<Box<dyn Tool>> = default_tools(&tool_policy)?;
+    let tools: Vec<Box<dyn Tool>> = default_tools(&tool_policy, router, delegate_agents)?;
     let audit_policy = load_audit_policy(&req.workspace_root, &req.config_path)?;
     let audit_path = audit_policy.path.clone();
     let execution = RuntimeExecution {
@@ -71,9 +76,28 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
             memory_window_size: config.agent.memory_window_size,
             max_prompt_chars: config.agent.max_prompt_chars,
             parallel_tools: config.agent.parallel_tools,
+            gated_tools: config.autonomy.always_ask.iter().cloned().collect(),
             loop_detection_no_progress_threshold: config.agent.loop_detection_no_progress_threshold,
             loop_detection_ping_pong_cycles: config.agent.loop_detection_ping_pong_cycles,
             loop_detection_failure_streak: config.agent.loop_detection_failure_streak,
+            research: agentzero_core::ResearchPolicy {
+                enabled: config.research.enabled,
+                trigger: match config.research.trigger.as_str() {
+                    "always" => agentzero_core::ResearchTrigger::Always,
+                    "keywords" => agentzero_core::ResearchTrigger::Keywords,
+                    "length" => agentzero_core::ResearchTrigger::Length,
+                    "question" => agentzero_core::ResearchTrigger::Question,
+                    _ => agentzero_core::ResearchTrigger::Never,
+                },
+                keywords: config.research.keywords.clone(),
+                min_message_length: config.research.min_message_length,
+                max_iterations: config.research.max_iterations,
+                show_progress: config.research.show_progress,
+            },
+            reasoning: agentzero_core::ReasoningConfig {
+                enabled: config.runtime.reasoning_enabled,
+                level: config.provider_options.reasoning_level.clone(),
+            },
             hooks: agentzero_core::HookPolicy {
                 enabled: config.agent.hooks.enabled,
                 timeout_ms: config.agent.hooks.timeout_ms,
@@ -199,6 +223,87 @@ async fn build_memory_store(config_path: &Path) -> anyhow::Result<Box<dyn Memory
         }
         backend => anyhow::bail!("unsupported memory backend: {backend}"),
     }
+}
+
+fn build_model_router(config: &agentzero_config::AgentZeroConfig) -> Option<ModelRouter> {
+    if config.model_routes.is_empty()
+        && config.embedding_routes.is_empty()
+        && config.query_classification.rules.is_empty()
+    {
+        return None;
+    }
+
+    Some(ModelRouter {
+        model_routes: config
+            .model_routes
+            .iter()
+            .map(|r| ModelRoute {
+                hint: r.hint.clone(),
+                provider: r.provider.clone(),
+                model: r.model.clone(),
+                max_tokens: r.max_tokens,
+                api_key: r.api_key.clone(),
+                transport: r.transport.clone(),
+            })
+            .collect(),
+        embedding_routes: config
+            .embedding_routes
+            .iter()
+            .map(|r| EmbeddingRoute {
+                hint: r.hint.clone(),
+                provider: r.provider.clone(),
+                model: r.model.clone(),
+                dimensions: r.dimensions,
+                api_key: r.api_key.clone(),
+            })
+            .collect(),
+        classification_rules: config
+            .query_classification
+            .rules
+            .iter()
+            .map(|r| ClassificationRule {
+                hint: r.hint.clone(),
+                keywords: r.keywords.clone(),
+                patterns: r.patterns.clone(),
+                min_length: r.min_length,
+                max_length: r.max_length,
+                priority: r.priority,
+            })
+            .collect(),
+        classification_enabled: config.query_classification.enabled,
+    })
+}
+
+fn build_delegate_agents(
+    config: &agentzero_config::AgentZeroConfig,
+) -> Option<HashMap<String, DelegateConfig>> {
+    if config.agents.is_empty() {
+        return None;
+    }
+
+    let map: HashMap<String, DelegateConfig> = config
+        .agents
+        .iter()
+        .map(|(name, agent)| {
+            (
+                name.clone(),
+                DelegateConfig {
+                    name: name.clone(),
+                    provider: agent.provider.clone(),
+                    model: agent.model.clone(),
+                    system_prompt: agent.system_prompt.clone(),
+                    api_key: agent.api_key.clone(),
+                    temperature: agent.temperature,
+                    max_depth: agent.max_depth,
+                    agentic: agent.agentic,
+                    allowed_tools: agent.allowed_tools.iter().cloned().collect(),
+                    max_iterations: agent.max_iterations,
+                },
+            )
+        })
+        .collect();
+
+    Some(map)
 }
 
 #[cfg(test)]

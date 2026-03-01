@@ -10,6 +10,7 @@
   "dependencies": {
     "@astrojs/starlight": "^0.37.6",
     "@astrojs/starlight-tailwind": "^4.0.2",
+    "@pasqal-io/starlight-client-mermaid": "^0.1.0",
     "@tailwindcss/vite": "^4.2.1",
     "astro": "^5.5.0",
     "sharp": "^0.33.0",

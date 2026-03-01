@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -11,9 +12,15 @@ pub struct AgentConfig {
     pub max_prompt_chars: usize,
     pub hooks: HookPolicy,
     pub parallel_tools: bool,
+    /// Tools that require approval before execution (from autonomy.always_ask).
+    /// When parallel_tools is enabled, any batch containing a gated tool falls
+    /// back to sequential execution to preserve the approval flow.
+    pub gated_tools: HashSet<String>,
     pub loop_detection_no_progress_threshold: usize,
     pub loop_detection_ping_pong_cycles: usize,
     pub loop_detection_failure_streak: usize,
+    pub research: ResearchPolicy,
+    pub reasoning: ReasoningConfig,
 }
 
 impl Default for AgentConfig {
@@ -25,9 +32,12 @@ impl Default for AgentConfig {
             max_prompt_chars: 8_000,
             hooks: HookPolicy::default(),
             parallel_tools: false,
+            gated_tools: HashSet::new(),
             loop_detection_no_progress_threshold: 3,
             loop_detection_ping_pong_cycles: 2,
             loop_detection_failure_streak: 3,
+            research: ResearchPolicy::default(),
+            reasoning: ReasoningConfig::default(),
         }
     }
 }
@@ -69,6 +79,44 @@ pub enum HookRiskTier {
     Low,
     Medium,
     High,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResearchPolicy {
+    pub enabled: bool,
+    pub trigger: ResearchTrigger,
+    pub keywords: Vec<String>,
+    pub min_message_length: usize,
+    pub max_iterations: usize,
+    pub show_progress: bool,
+}
+
+impl Default for ResearchPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            trigger: ResearchTrigger::Never,
+            keywords: Vec::new(),
+            min_message_length: 50,
+            max_iterations: 5,
+            show_progress: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResearchTrigger {
+    Never,
+    Always,
+    Keywords,
+    Length,
+    Question,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ReasoningConfig {
+    pub enabled: Option<bool>,
+    pub level: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +207,13 @@ pub enum AgentError {
 #[async_trait]
 pub trait Provider: Send + Sync {
     async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult>;
+    async fn complete_with_reasoning(
+        &self,
+        prompt: &str,
+        _reasoning: &ReasoningConfig,
+    ) -> anyhow::Result<ChatResult> {
+        self.complete(prompt).await
+    }
 }
 
 #[async_trait]

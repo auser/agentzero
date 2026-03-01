@@ -1,0 +1,15 @@
+# AgentZero — Basic Configuration
+# Only the essentials to get started.
+# Copy this file to your project root as `agentzero.toml` and edit.
+
+[provider]
+kind = "openrouter"                        # openrouter | openai | anthropic | ollama
+model = "anthropic/claude-sonnet-4-6"    # model identifier for the provider
+# api_key is read from AGENTZERO_API_KEY or OPENAI_API_KEY env var
+
+[security]
+allowed_root = "."                         # restrict file access to this directory
+allowed_commands = ["ls", "pwd", "cat", "echo", "grep", "find"]
+
+[gateway]
+port = 42617                               # local HTTP gateway port

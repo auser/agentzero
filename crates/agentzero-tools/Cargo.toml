@@ -11,6 +11,9 @@ async-trait.workspace = true
 agentzero-autonomy = { workspace = true }
 agentzero-core = { workspace = true }
 agentzero-common = { workspace = true }
+agentzero-delegation = { workspace = true }
+agentzero-providers = { workspace = true }
+agentzero-routing = { workspace = true }
 agentzero-storage = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true

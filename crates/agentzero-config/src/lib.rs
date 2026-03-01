@@ -2,8 +2,9 @@ mod loader;
 mod model;
 mod policy;
 mod templates;
+pub mod watcher;
 
-pub use loader::{load, load_env_var};
+pub use loader::{load, load_env_var, update_auto_approve};
 pub use model::{
     AgentSettings, AgentZeroConfig, AuditConfig, AutonomyConfig, BrowserConfig,
     ChannelsGlobalConfig, ComposioConfig, ComputerUseConfig, CostConfig, CredentialProfile,

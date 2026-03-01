@@ -1,4 +1,4 @@
-use agentzero_core::{ChatResult, Provider};
+use agentzero_core::{ChatResult, Provider, ReasoningConfig};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use reqwest::StatusCode;
@@ -159,6 +159,8 @@ impl OpenAiCompatibleProvider {
 struct ChatRequest {
     model: String,
     messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -291,16 +293,30 @@ fn map_status_error(status: StatusCode, body: &str) -> anyhow::Error {
 #[async_trait]
 impl Provider for OpenAiCompatibleProvider {
     async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult> {
+        self.complete_with_reasoning(prompt, &ReasoningConfig::default())
+            .await
+    }
+
+    async fn complete_with_reasoning(
+        &self,
+        prompt: &str,
+        reasoning: &ReasoningConfig,
+    ) -> anyhow::Result<ChatResult> {
         let url = format!(
             "{}/v1/chat/completions",
             self.base_url.trim_end_matches('/')
         );
+        let reasoning_effort = match reasoning.enabled {
+            Some(false) => None,
+            _ => reasoning.level.clone(),
+        };
         let payload = ChatRequest {
             model: self.model.clone(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: prompt.to_string(),
             }],
+            reasoning_effort,
         };
 
         let mut last_error: Option<anyhow::Error> = None;
@@ -595,5 +611,118 @@ mod tests {
             .to_string()
             .contains("rate limited (429)"));
         assert_eq!(transport.calls(), 3);
+    }
+
+    // --- Reasoning tests ---
+
+    struct CapturingTransport {
+        payloads: Mutex<Vec<String>>,
+    }
+
+    impl CapturingTransport {
+        fn new() -> Self {
+            Self {
+                payloads: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn captured_payloads(&self) -> Vec<Value> {
+            self.payloads
+                .lock()
+                .expect("lock")
+                .iter()
+                .map(|s| serde_json::from_str(s).expect("payload should be valid JSON"))
+                .collect()
+        }
+    }
+
+    #[async_trait]
+    impl HttpTransport for CapturingTransport {
+        async fn send_chat(
+            &self,
+            _url: &str,
+            _api_key: &str,
+            payload: &ChatRequest,
+        ) -> Result<TransportResponse, TransportError> {
+            let json = serde_json::to_string(payload).expect("payload should serialize");
+            self.payloads.lock().expect("lock").push(json);
+            Ok(TransportResponse {
+                status: 200,
+                headers: HashMap::new(),
+                body: r#"{"choices":[{"message":{"content":"ok"}}]}"#.to_string(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn reasoning_effort_included_in_request() {
+        let transport = Arc::new(CapturingTransport::new());
+        let provider = OpenAiCompatibleProvider::with_transport(
+            "https://example.invalid".to_string(),
+            "key".to_string(),
+            "model".to_string(),
+            transport.clone(),
+        );
+
+        let reasoning = ReasoningConfig {
+            enabled: Some(true),
+            level: Some("high".to_string()),
+        };
+        let result = provider
+            .complete_with_reasoning("test", &reasoning)
+            .await
+            .expect("should succeed");
+        assert_eq!(result.output_text, "ok");
+
+        let payloads = transport.captured_payloads();
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["reasoning_effort"], "high");
+    }
+
+    #[tokio::test]
+    async fn reasoning_disabled_omits_effort_field() {
+        let transport = Arc::new(CapturingTransport::new());
+        let provider = OpenAiCompatibleProvider::with_transport(
+            "https://example.invalid".to_string(),
+            "key".to_string(),
+            "model".to_string(),
+            transport.clone(),
+        );
+
+        let reasoning = ReasoningConfig {
+            enabled: Some(false),
+            level: Some("high".to_string()),
+        };
+        provider
+            .complete_with_reasoning("test", &reasoning)
+            .await
+            .expect("should succeed");
+
+        let payloads = transport.captured_payloads();
+        assert_eq!(payloads.len(), 1);
+        assert!(
+            payloads[0].get("reasoning_effort").is_none(),
+            "reasoning_effort should be omitted when reasoning is disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn reasoning_default_config_omits_effort_field() {
+        let transport = Arc::new(CapturingTransport::new());
+        let provider = OpenAiCompatibleProvider::with_transport(
+            "https://example.invalid".to_string(),
+            "key".to_string(),
+            "model".to_string(),
+            transport.clone(),
+        );
+
+        provider.complete("test").await.expect("should succeed");
+
+        let payloads = transport.captured_payloads();
+        assert_eq!(payloads.len(), 1);
+        assert!(
+            payloads[0].get("reasoning_effort").is_none(),
+            "default config should not include reasoning_effort"
+        );
     }
 }

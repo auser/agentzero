@@ -1,6 +1,8 @@
 pub mod agents_ipc;
 pub mod apply_patch;
+pub mod delegate;
 pub mod http_request;
+pub mod model_routing_config;
 pub mod read_file;
 pub mod shell;
 pub mod shell_parse;
@@ -13,7 +15,9 @@ use std::path::PathBuf;
 pub use agents_ipc::AgentsIpcTool;
 pub use agentzero_common::url_policy::UrlAccessPolicy;
 pub use apply_patch::ApplyPatchTool;
+pub use delegate::DelegateTool;
 pub use http_request::HttpRequestTool;
+pub use model_routing_config::ModelRoutingConfigTool;
 pub use read_file::{ReadFilePolicy, ReadFileTool};
 pub use shell::{ShellPolicy, ShellTool};
 pub use url_validation::UrlValidationTool;

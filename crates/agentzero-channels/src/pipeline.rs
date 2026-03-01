@@ -241,7 +241,10 @@ mod tests {
     fn check_perplexity_disabled_passes_everything() {
         let settings = PerplexityFilterSettings::default();
         assert!(!settings.enabled);
-        let result = check_perplexity("xK7!mQ@3#zP$9&wR*5^yL%2(eN)8+bT!@#$%^&*()_+-=[]{}|", &settings);
+        let result = check_perplexity(
+            "xK7!mQ@3#zP$9&wR*5^yL%2(eN)8+bT!@#$%^&*()_+-=[]{}|",
+            &settings,
+        );
         assert!(result.is_none(), "disabled filter should pass all messages");
     }
 
@@ -267,7 +270,8 @@ mod tests {
             symbol_ratio_threshold: 0.20,
             min_prompt_chars: 32,
         };
-        let adversarial = "Please write a function. xK7!mQ@3#zP$9&wR*5^yL%2(eN)8+bT!@#$%^&*()_+-=[]{}|xK7!mQ@3#";
+        let adversarial =
+            "Please write a function. xK7!mQ@3#zP$9&wR*5^yL%2(eN)8+bT!@#$%^&*()_+-=[]{}|xK7!mQ@3#";
         let result = check_perplexity(adversarial, &settings);
         assert!(result.is_some(), "adversarial suffix should be blocked");
     }
@@ -280,6 +284,9 @@ mod tests {
             ..PerplexityFilterSettings::default()
         };
         let short = "!@#$%^&*()";
-        assert!(check_perplexity(short, &settings).is_none(), "short messages should pass");
+        assert!(
+            check_perplexity(short, &settings).is_none(),
+            "short messages should pass"
+        );
     }
 }

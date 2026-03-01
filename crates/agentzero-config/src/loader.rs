@@ -220,3 +220,35 @@ fn first_nonempty_value(values: &HashMap<String, String>, keys: &[&str]) -> Opti
         })
     })
 }
+
+/// Update the `[autonomy].auto_approve` list in a config TOML file on disk.
+///
+/// Reads the existing file (or starts from an empty doc), merges the new list,
+/// and writes back. This preserves all other config sections.
+pub fn update_auto_approve(path: &Path, tools: &[String]) -> anyhow::Result<()> {
+    let content = if path.exists() {
+        std::fs::read_to_string(path).context("failed to read config file for update")?
+    } else {
+        String::new()
+    };
+
+    let mut doc: toml::Table =
+        toml::from_str(&content).context("failed to parse config TOML for update")?;
+
+    let autonomy = doc
+        .entry("autonomy")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+
+    if let toml::Value::Table(table) = autonomy {
+        let arr = tools
+            .iter()
+            .map(|t| toml::Value::String(t.clone()))
+            .collect();
+        table.insert("auto_approve".to_string(), toml::Value::Array(arr));
+    }
+
+    let serialized = toml::to_string_pretty(&doc).context("failed to serialize updated config")?;
+    std::fs::write(path, serialized).context("failed to write updated config file")?;
+
+    Ok(())
+}

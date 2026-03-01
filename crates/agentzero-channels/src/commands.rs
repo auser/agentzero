@@ -1,4 +1,6 @@
 use crate::ChannelMessage;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 /// Result of attempting to parse a message as a runtime command.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,6 +10,16 @@ pub enum CommandResult {
     Response(String),
     /// The message is not a command; pass it through to the LLM pipeline.
     PassThrough,
+}
+
+/// Runtime context for command execution.
+///
+/// Carries mutable state (e.g. approval list) and the config path so that
+/// commands like `/approve` can persist changes to disk.
+#[derive(Clone)]
+pub struct CommandContext {
+    pub auto_approve: Arc<Mutex<Vec<String>>>,
+    pub config_path: Option<PathBuf>,
 }
 
 /// Parsed in-chat command.
@@ -65,6 +77,15 @@ pub fn parse_command(text: &str) -> Option<ChatCommand> {
 /// Handle a parsed command and produce a response string.
 /// This provides default responses; the runtime can override with richer behavior.
 pub fn handle_command(cmd: &ChatCommand, _msg: &ChannelMessage) -> CommandResult {
+    handle_command_with_context(cmd, _msg, None)
+}
+
+/// Handle a parsed command with optional runtime context for stateful operations.
+pub fn handle_command_with_context(
+    cmd: &ChatCommand,
+    _msg: &ChannelMessage,
+    ctx: Option<&CommandContext>,
+) -> CommandResult {
     match cmd {
         ChatCommand::Models(provider) => {
             let response = if let Some(p) = provider {
@@ -84,13 +105,30 @@ pub fn handle_command(cmd: &ChatCommand, _msg: &ChannelMessage) -> CommandResult
         }
         ChatCommand::New => CommandResult::Response("Conversation history cleared.".to_string()),
         ChatCommand::Approve(tool) => {
-            CommandResult::Response(format!("Auto-approved tool `{tool}` for this session."))
+            if let Some(ctx) = ctx {
+                approve_tool(tool, ctx)
+            } else {
+                CommandResult::Response(format!("Auto-approved tool `{tool}` for this session."))
+            }
         }
         ChatCommand::Unapprove(tool) => {
-            CommandResult::Response(format!("Removed auto-approval for tool `{tool}`."))
+            if let Some(ctx) = ctx {
+                unapprove_tool(tool, ctx)
+            } else {
+                CommandResult::Response(format!("Removed auto-approval for tool `{tool}`."))
+            }
         }
         ChatCommand::Approvals => {
-            CommandResult::Response("Current approvals: (none configured)".to_string())
+            if let Some(ctx) = ctx {
+                let list = ctx.auto_approve.lock().unwrap();
+                if list.is_empty() {
+                    CommandResult::Response("Current approvals: (none)".to_string())
+                } else {
+                    CommandResult::Response(format!("Current approvals: {}", list.join(", ")))
+                }
+            } else {
+                CommandResult::Response("Current approvals: (none configured)".to_string())
+            }
         }
         ChatCommand::ApproveRequest(tool) => {
             CommandResult::Response(format!("Approval requested for tool `{tool}`."))
@@ -118,12 +156,53 @@ pub fn handle_command(cmd: &ChatCommand, _msg: &ChannelMessage) -> CommandResult
     }
 }
 
+fn approve_tool(tool: &str, ctx: &CommandContext) -> CommandResult {
+    let mut list = ctx.auto_approve.lock().unwrap();
+    if list.contains(&tool.to_string()) {
+        return CommandResult::Response(format!("Tool `{tool}` is already approved."));
+    }
+    list.push(tool.to_string());
+    let persist_msg = persist_approvals(&list, ctx.config_path.as_deref());
+    CommandResult::Response(format!("Auto-approved tool `{tool}`.{persist_msg}"))
+}
+
+fn unapprove_tool(tool: &str, ctx: &CommandContext) -> CommandResult {
+    let mut list = ctx.auto_approve.lock().unwrap();
+    let before = list.len();
+    list.retain(|t| t != tool);
+    if list.len() == before {
+        return CommandResult::Response(format!("Tool `{tool}` was not in the approval list."));
+    }
+    let persist_msg = persist_approvals(&list, ctx.config_path.as_deref());
+    CommandResult::Response(format!(
+        "Removed auto-approval for tool `{tool}`.{persist_msg}"
+    ))
+}
+
+fn persist_approvals(tools: &[String], config_path: Option<&Path>) -> String {
+    let Some(path) = config_path else {
+        return String::new();
+    };
+    match agentzero_config::update_auto_approve(path, tools) {
+        Ok(()) => " Saved to config.".to_string(),
+        Err(e) => format!(" (warning: failed to persist: {e})"),
+    }
+}
+
 /// Check if a message is a runtime command and handle it.
 /// Returns `CommandResult::Response` with the reply if it's a command,
 /// or `CommandResult::PassThrough` if the message should go to the LLM.
 pub fn intercept_command(msg: &ChannelMessage) -> CommandResult {
     match parse_command(&msg.content) {
         Some(cmd) => handle_command(&cmd, msg),
+        None => CommandResult::PassThrough,
+    }
+}
+
+/// Check if a message is a runtime command and handle it with context.
+pub fn intercept_command_with_context(msg: &ChannelMessage, ctx: &CommandContext) -> CommandResult {
+    match parse_command(&msg.content) {
+        Some(cmd) => handle_command_with_context(&cmd, msg, Some(ctx)),
         None => CommandResult::PassThrough,
     }
 }
@@ -278,5 +357,124 @@ mod tests {
             }
             CommandResult::PassThrough => panic!("expected Response"),
         }
+    }
+
+    fn test_ctx() -> CommandContext {
+        CommandContext {
+            auto_approve: Arc::new(Mutex::new(Vec::new())),
+            config_path: None,
+        }
+    }
+
+    #[test]
+    fn approve_adds_tool_to_list() {
+        let ctx = test_ctx();
+        let msg = test_msg("/approve shell");
+        match intercept_command_with_context(&msg, &ctx) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("Auto-approved tool `shell`"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+        let list = ctx.auto_approve.lock().unwrap();
+        assert_eq!(*list, vec!["shell".to_string()]);
+    }
+
+    #[test]
+    fn approve_duplicate_rejected() {
+        let ctx = test_ctx();
+        ctx.auto_approve.lock().unwrap().push("shell".to_string());
+        let msg = test_msg("/approve shell");
+        match intercept_command_with_context(&msg, &ctx) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("already approved"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+    }
+
+    #[test]
+    fn unapprove_removes_tool() {
+        let ctx = test_ctx();
+        ctx.auto_approve.lock().unwrap().push("shell".to_string());
+        let msg = test_msg("/unapprove shell");
+        match intercept_command_with_context(&msg, &ctx) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("Removed auto-approval"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+        let list = ctx.auto_approve.lock().unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn unapprove_missing_tool_reports_not_found() {
+        let ctx = test_ctx();
+        let msg = test_msg("/unapprove shell");
+        match intercept_command_with_context(&msg, &ctx) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("was not in the approval list"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+    }
+
+    #[test]
+    fn approvals_lists_current() {
+        let ctx = test_ctx();
+        {
+            let mut list = ctx.auto_approve.lock().unwrap();
+            list.push("shell".to_string());
+            list.push("browser".to_string());
+        }
+        let msg = test_msg("/approvals");
+        match intercept_command_with_context(&msg, &ctx) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("shell"));
+                assert!(text.contains("browser"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+    }
+
+    #[test]
+    fn approvals_empty_shows_none() {
+        let ctx = test_ctx();
+        let msg = test_msg("/approvals");
+        match intercept_command_with_context(&msg, &ctx) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("(none)"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+    }
+
+    #[test]
+    fn approve_persists_to_disk() {
+        let dir = std::env::temp_dir().join("agentzero-test-approve");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "").unwrap();
+
+        let ctx = CommandContext {
+            auto_approve: Arc::new(Mutex::new(Vec::new())),
+            config_path: Some(path.clone()),
+        };
+
+        let msg = test_msg("/approve shell");
+        let result = intercept_command_with_context(&msg, &ctx);
+        match result {
+            CommandResult::Response(text) => {
+                assert!(text.contains("Saved to config"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("auto_approve"));
+        assert!(content.contains("shell"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

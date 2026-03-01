@@ -132,7 +132,10 @@ impl SyscallAnomalyDetector {
 
         for event in &events {
             self.total_events_this_window += 1;
-            *self.syscall_counts.entry(event.syscall.clone()).or_insert(0) += 1;
+            *self
+                .syscall_counts
+                .entry(event.syscall.clone())
+                .or_insert(0) += 1;
 
             if event.denied {
                 self.denied_events_this_window += 1;
@@ -180,8 +183,7 @@ impl SyscallAnomalyDetector {
         self.alerts_this_window += 1;
         if self.alerts_this_window > self.config.max_alerts_per_minute {
             self.cooldown_until = Some(
-                Instant::now()
-                    + std::time::Duration::from_secs(self.config.alert_cooldown_secs),
+                Instant::now() + std::time::Duration::from_secs(self.config.alert_cooldown_secs),
             );
             return AnomalyVerdict::Suppressed {
                 reason: format!(
@@ -252,10 +254,7 @@ fn parse_strace_line(line: &str) -> Option<SyscallEvent> {
     let syscall_name = line[..paren_idx].trim();
 
     // Filter out lines that don't look like syscall names
-    if syscall_name.is_empty()
-        || syscall_name.contains(' ')
-        || syscall_name.len() > 32
-    {
+    if syscall_name.is_empty() || syscall_name.contains(' ') || syscall_name.len() > 32 {
         return None;
     }
 
@@ -336,7 +335,8 @@ mod tests {
 
     #[test]
     fn parse_strace_denied() {
-        let line = r#"openat(AT_FDCWD, "/root/.ssh/id_rsa", O_RDONLY) = -1 EACCES (Permission denied)"#;
+        let line =
+            r#"openat(AT_FDCWD, "/root/.ssh/id_rsa", O_RDONLY) = -1 EACCES (Permission denied)"#;
         let events = parse_syscall_events(line);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].syscall, "openat");
@@ -431,7 +431,8 @@ close(3) = 0
         let config = SyscallAnomalyConfig::default();
         let mut detector = SyscallAnomalyDetector::new(config);
 
-        let output = r#"openat(AT_FDCWD, "/root/.ssh/id_rsa", O_RDONLY) = -1 EACCES (Permission denied)"#;
+        let output =
+            r#"openat(AT_FDCWD, "/root/.ssh/id_rsa", O_RDONLY) = -1 EACCES (Permission denied)"#;
         match detector.analyze(output) {
             AnomalyVerdict::Alert { alerts } => {
                 assert!(alerts.iter().any(|a| a.contains("denied")));
@@ -463,8 +464,14 @@ close(3) = 0
         let bad_output = r#"ptrace(PTRACE_ATTACH, 1234) = 0"#;
 
         // First two alerts should go through
-        assert!(matches!(detector.analyze(bad_output), AnomalyVerdict::Alert { .. }));
-        assert!(matches!(detector.analyze(bad_output), AnomalyVerdict::Alert { .. }));
+        assert!(matches!(
+            detector.analyze(bad_output),
+            AnomalyVerdict::Alert { .. }
+        ));
+        assert!(matches!(
+            detector.analyze(bad_output),
+            AnomalyVerdict::Alert { .. }
+        ));
 
         // Third should be suppressed
         match detector.analyze(bad_output) {

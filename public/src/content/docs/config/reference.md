@@ -1,0 +1,274 @@
+---
+title: Config Reference
+description: Complete annotated agentzero.toml configuration reference with all sections and defaults.
+---
+
+AgentZero uses a single `agentzero.toml` file located in the data directory (default: `~/.agentzero/`). Generate a starter config with `agentzero onboard`.
+
+## Full Configuration Template
+
+```toml
+# ─── Provider ────────────────────────────────────────────
+[provider]
+kind = "openrouter"                              # openai, openrouter, anthropic, ollama, custom
+base_url = "https://openrouter.ai/api/v1"        # provider API endpoint
+model = "anthropic/claude-sonnet-4-6"         # model identifier
+default_temperature = 0.7                        # 0.0 – 2.0
+# provider_api = "openai-chat-completions"       # or "openai-responses"
+# model_support_vision = true                    # enable vision/multimodal
+
+# ─── Memory ──────────────────────────────────────────────
+[memory]
+backend = "sqlite"                               # sqlite or turso
+sqlite_path = "~/.agentzero/agentzero.db"        # database file path
+
+# ─── Agent Settings ──────────────────────────────────────
+[agent]
+max_tool_iterations = 20                         # max tool calls per turn
+request_timeout_ms = 30000                       # per-request timeout
+memory_window_size = 50                          # context window (message count)
+max_prompt_chars = 8000                          # max prompt character length
+mode = "development"                             # development or production
+parallel_tools = false                           # parallel tool execution
+tool_dispatcher = "auto"                         # auto or sequential
+compact_context = true                           # compress context when large
+
+# Loop detection thresholds
+loop_detection_no_progress_threshold = 3
+loop_detection_ping_pong_cycles = 2
+loop_detection_failure_streak = 3
+
+[agent.hooks]
+enabled = false
+timeout_ms = 250
+fail_closed = false
+on_error_default = "warn"                        # block, warn, or ignore
+# on_error_low = "ignore"
+# on_error_medium = "warn"
+# on_error_high = "block"
+
+# ─── Security ────────────────────────────────────────────
+[security]
+allowed_root = "."                               # filesystem scope root
+allowed_commands = ["ls", "pwd", "cat", "echo"]  # shell command allowlist
+
+[security.read_file]
+max_read_bytes = 65536                           # 64 KiB
+allow_binary = false
+
+[security.write_file]
+enabled = false                                  # explicit opt-in required
+max_write_bytes = 65536
+
+[security.shell]
+max_args = 8
+max_arg_length = 128
+max_output_bytes = 8192
+forbidden_chars = ";&|><$`\n\r"
+context_aware_parsing = true
+
+[security.mcp]
+enabled = false
+allowed_servers = []                             # must be non-empty when enabled
+
+[security.plugin]
+enabled = false
+
+[security.audit]
+enabled = false
+path = "./agentzero-audit.log"
+
+[security.url_access]
+block_private_ip = true
+allow_loopback = false
+enforce_domain_allowlist = false
+domain_allowlist = []
+domain_blocklist = []
+
+[security.otp]
+enabled = false
+method = "totp"
+token_ttl_secs = 30
+cache_valid_secs = 300
+gated_actions = ["shell", "file_write", "browser_open", "browser", "memory_forget"]
+
+[security.estop]
+enabled = false
+state_file = "~/.agentzero/estop-state.json"
+require_otp_to_resume = true
+
+[security.outbound_leak_guard]
+enabled = true
+action = "redact"                                # redact or block
+sensitivity = 0.7
+
+[security.syscall_anomaly]
+enabled = true
+strict_mode = false
+alert_on_unknown_syscall = true
+max_denied_events_per_minute = 5
+max_alerts_per_minute = 30
+
+# ─── Autonomy ────────────────────────────────────────────
+[autonomy]
+level = "supervised"                             # supervised or autonomous
+workspace_only = true
+forbidden_paths = ["/etc", "/root", "/proc", "/sys", "~/.ssh", "~/.gnupg", "~/.aws"]
+max_actions_per_hour = 20
+max_cost_per_day_cents = 500
+require_approval_for_medium_risk = true
+block_high_risk_commands = true
+
+# ─── Gateway ─────────────────────────────────────────────
+[gateway]
+host = "127.0.0.1"
+port = 42617
+require_pairing = true
+allow_public_bind = false
+
+[gateway.node_control]
+enabled = false
+# auth_token = "****"
+allowed_node_ids = []
+
+# ─── Observability ───────────────────────────────────────
+[observability]
+backend = "none"                                 # none or otel
+otel_endpoint = "http://localhost:4318"
+otel_service_name = "agentzero"
+runtime_trace_mode = "none"                      # none or file
+runtime_trace_path = "state/runtime-trace.jsonl"
+runtime_trace_max_entries = 200
+
+# ─── Cost Tracking ───────────────────────────────────────
+[cost]
+enabled = false
+daily_limit_usd = 10.0
+monthly_limit_usd = 100.0
+warn_at_percent = 80
+
+# ─── Identity ────────────────────────────────────────────
+[identity]
+format = "openclaw"                              # openclaw or aieos
+# aieos_path = "identity.json"
+
+# ─── Runtime ─────────────────────────────────────────────
+[runtime]
+kind = "native"                                  # native or docker
+# reasoning_enabled = true
+
+[runtime.wasm]
+tools_dir = "tools/wasm"
+fuel_limit = 1000000
+memory_limit_mb = 64
+max_module_size_mb = 50
+allow_workspace_read = false
+allow_workspace_write = false
+allowed_hosts = []
+
+[runtime.wasm.security]
+require_workspace_relative_tools_dir = true
+reject_symlink_modules = true
+reject_symlink_tools_dir = true
+strict_host_validation = true
+capability_escalation_mode = "deny"
+module_hash_policy = "warn"                      # warn or enforce
+
+# ─── Tools ───────────────────────────────────────────────
+[browser]
+enabled = false
+backend = "agent_browser"
+
+[http_request]
+enabled = false
+allowed_domains = []
+max_response_size = 1000000
+timeout_secs = 30
+
+[web_fetch]
+enabled = false
+provider = "fast_html2md"
+max_response_size = 500000
+
+[web_search]
+enabled = false
+provider = "duckduckgo"
+max_results = 5
+
+[composio]
+enabled = false
+
+# ─── Skills ──────────────────────────────────────────────
+[skills]
+open_skills_enabled = false
+prompt_injection_mode = "full"
+
+# ─── Multimodal ──────────────────────────────────────────
+[multimodal]
+max_images = 4
+max_image_size_mb = 5
+allow_remote_fetch = false
+
+# ─── Research Mode ───────────────────────────────────────
+[research]
+enabled = false
+trigger = "never"                                # never, always, or keyword
+max_iterations = 5
+
+# ─── Model Provider Profiles ─────────────────────────────
+# [model_providers.local-ollama]
+# base_url = "http://localhost:11434/v1"
+# model = "llama3.2"
+
+# ─── Model Routes ────────────────────────────────────────
+# [[model_routes]]
+# hint = "code"
+# provider = "openrouter"
+# model = "anthropic/claude-sonnet-4-6"
+
+# ─── Delegate Sub-Agents ─────────────────────────────────
+# [agents.researcher]
+# provider = "openrouter"
+# model = "anthropic/claude-sonnet-4-6"
+# max_depth = 3
+# agentic = true
+# allowed_tools = ["web_search", "web_fetch"]
+```
+
+## Config Inspection Commands
+
+```bash
+# Show effective config (secrets masked)
+agentzero config show
+
+# Show raw config (secrets visible)
+agentzero config show --raw
+
+# Query a single value
+agentzero config get provider.model
+
+# Set a value
+agentzero config set provider.model "anthropic/claude-sonnet-4-6"
+
+# Print TOML template
+agentzero config schema
+
+# Print JSON schema
+agentzero config schema --json
+```
+
+## Config Precedence
+
+1. CLI flags (highest)
+2. Environment variables
+3. `agentzero.toml` file
+4. Compiled defaults (lowest)
+
+## Data Directory
+
+Default: `~/.agentzero/`
+
+Override with:
+- `--data-dir <path>` flag (highest)
+- `AGENTZERO_DATA_DIR` env var
+- `data_dir` in config file

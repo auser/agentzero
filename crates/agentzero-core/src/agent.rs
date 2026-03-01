@@ -1,7 +1,7 @@
 use crate::types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, HookEvent, HookFailureMode,
-    HookRiskTier, HookSink, MemoryEntry, MemoryStore, MetricsSink, Provider, Tool, ToolContext,
-    UserMessage,
+    HookRiskTier, HookSink, MemoryEntry, MemoryStore, MetricsSink, Provider, ResearchTrigger, Tool,
+    ToolContext, UserMessage,
 };
 use agentzero_security::redaction::redact_text;
 use serde_json::json;
@@ -49,6 +49,22 @@ fn build_provider_prompt(
     prompt.push_str(current_prompt);
 
     cap_prompt(&prompt, max_prompt_chars)
+}
+
+/// Extract tool calls from a prompt. Each line starting with `tool:` is a call.
+fn parse_tool_calls(prompt: &str) -> Vec<(&str, &str)> {
+    prompt
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("tool:").map(|rest| {
+                let rest = rest.trim();
+                let mut parts = rest.splitn(2, ' ');
+                let name = parts.next().unwrap_or_default();
+                let input = parts.next().unwrap_or_default();
+                (name, input)
+            })
+        })
+        .collect()
 }
 
 pub struct Agent {
@@ -247,6 +263,310 @@ impl Agent {
         }
     }
 
+    async fn execute_tool(
+        &self,
+        tool: &dyn Tool,
+        tool_name: &str,
+        tool_input: &str,
+        ctx: &ToolContext,
+        request_id: &str,
+        iteration: usize,
+    ) -> Result<crate::types::ToolResult, AgentError> {
+        let is_plugin_call = tool_name.starts_with("plugin:");
+        self.hook(
+            "before_tool_call",
+            json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
+        )
+        .await?;
+        if is_plugin_call {
+            self.hook(
+                "before_plugin_call",
+                json!({"request_id": request_id, "iteration": iteration, "plugin_tool": tool_name}),
+            )
+            .await?;
+        }
+        self.audit(
+            "tool_execute_start",
+            json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
+        )
+        .await;
+        let tool_started = Instant::now();
+        let result = match tool.execute(tool_input, ctx).await {
+            Ok(result) => result,
+            Err(source) => {
+                self.observe_histogram(
+                    "tool_latency_ms",
+                    tool_started.elapsed().as_secs_f64() * 1000.0,
+                );
+                self.increment_counter("tool_errors_total");
+                return Err(AgentError::Tool {
+                    tool: tool_name.to_string(),
+                    source,
+                });
+            }
+        };
+        self.observe_histogram(
+            "tool_latency_ms",
+            tool_started.elapsed().as_secs_f64() * 1000.0,
+        );
+        self.audit(
+            "tool_execute_success",
+            json!({
+                "request_id": request_id,
+                "iteration": iteration,
+                "tool_name": tool_name,
+                "tool_output_len": result.output.len(),
+                "duration_ms": tool_started.elapsed().as_millis(),
+            }),
+        )
+        .await;
+        info!(
+            request_id = %request_id,
+            stage = "tool",
+            tool_name = %tool_name,
+            duration_ms = %tool_started.elapsed().as_millis(),
+            "tool execution finished"
+        );
+        self.hook(
+            "after_tool_call",
+            json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name, "status": "ok"}),
+        )
+        .await?;
+        if is_plugin_call {
+            self.hook(
+                "after_plugin_call",
+                json!({"request_id": request_id, "iteration": iteration, "plugin_tool": tool_name, "status": "ok"}),
+            )
+            .await?;
+        }
+        Ok(result)
+    }
+
+    async fn call_provider_with_context(
+        &self,
+        prompt: &str,
+        request_id: &str,
+    ) -> Result<String, AgentError> {
+        let recent_memory = self
+            .memory
+            .recent(self.config.memory_window_size)
+            .await
+            .map_err(|source| AgentError::Memory { source })?;
+        self.audit(
+            "memory_recent_loaded",
+            json!({"request_id": request_id, "items": recent_memory.len()}),
+        )
+        .await;
+        let (provider_prompt, prompt_truncated) =
+            build_provider_prompt(prompt, &recent_memory, self.config.max_prompt_chars);
+        if prompt_truncated {
+            self.audit(
+                "provider_prompt_truncated",
+                json!({
+                    "request_id": request_id,
+                    "max_prompt_chars": self.config.max_prompt_chars,
+                }),
+            )
+            .await;
+        }
+        self.hook(
+            "before_provider_call",
+            json!({
+                "request_id": request_id,
+                "prompt_len": provider_prompt.len(),
+                "memory_items": recent_memory.len(),
+                "prompt_truncated": prompt_truncated
+            }),
+        )
+        .await?;
+        self.audit(
+            "provider_call_start",
+            json!({
+                "request_id": request_id,
+                "prompt_len": provider_prompt.len(),
+                "memory_items": recent_memory.len(),
+                "prompt_truncated": prompt_truncated
+            }),
+        )
+        .await;
+        let provider_started = Instant::now();
+        let completion = match self
+            .provider
+            .complete_with_reasoning(&provider_prompt, &self.config.reasoning)
+            .await
+        {
+            Ok(result) => result,
+            Err(source) => {
+                self.observe_histogram(
+                    "provider_latency_ms",
+                    provider_started.elapsed().as_secs_f64() * 1000.0,
+                );
+                self.increment_counter("provider_errors_total");
+                return Err(AgentError::Provider { source });
+            }
+        };
+        self.observe_histogram(
+            "provider_latency_ms",
+            provider_started.elapsed().as_secs_f64() * 1000.0,
+        );
+        self.audit(
+            "provider_call_success",
+            json!({
+                "request_id": request_id,
+                "response_len": completion.output_text.len(),
+                "duration_ms": provider_started.elapsed().as_millis(),
+            }),
+        )
+        .await;
+        info!(
+            request_id = %request_id,
+            stage = "provider",
+            duration_ms = %provider_started.elapsed().as_millis(),
+            "provider call finished"
+        );
+        self.hook(
+            "after_provider_call",
+            json!({"request_id": request_id, "response_len": completion.output_text.len(), "status": "ok"}),
+        )
+        .await?;
+        Ok(completion.output_text)
+    }
+
+    async fn write_to_memory(
+        &self,
+        role: &str,
+        content: &str,
+        request_id: &str,
+    ) -> Result<(), AgentError> {
+        self.hook(
+            "before_memory_write",
+            json!({"request_id": request_id, "role": role}),
+        )
+        .await?;
+        self.memory
+            .append(MemoryEntry {
+                role: role.to_string(),
+                content: content.to_string(),
+            })
+            .await
+            .map_err(|source| AgentError::Memory { source })?;
+        self.hook(
+            "after_memory_write",
+            json!({"request_id": request_id, "role": role}),
+        )
+        .await?;
+        self.audit(
+            &format!("memory_append_{role}"),
+            json!({"request_id": request_id}),
+        )
+        .await;
+        Ok(())
+    }
+
+    fn should_research(&self, user_text: &str) -> bool {
+        if !self.config.research.enabled {
+            return false;
+        }
+        match self.config.research.trigger {
+            ResearchTrigger::Never => false,
+            ResearchTrigger::Always => true,
+            ResearchTrigger::Keywords => {
+                let lower = user_text.to_lowercase();
+                self.config
+                    .research
+                    .keywords
+                    .iter()
+                    .any(|kw| lower.contains(&kw.to_lowercase()))
+            }
+            ResearchTrigger::Length => user_text.len() >= self.config.research.min_message_length,
+            ResearchTrigger::Question => user_text.trim_end().ends_with('?'),
+        }
+    }
+
+    async fn run_research_phase(
+        &self,
+        user_text: &str,
+        ctx: &ToolContext,
+        request_id: &str,
+    ) -> Result<String, AgentError> {
+        self.audit(
+            "research_phase_start",
+            json!({
+                "request_id": request_id,
+                "max_iterations": self.config.research.max_iterations,
+            }),
+        )
+        .await;
+        self.increment_counter("research_phase_started");
+
+        let research_prompt = format!(
+            "You are in RESEARCH mode. The user asked: \"{user_text}\"\n\
+             Gather relevant information using available tools. \
+             Respond with tool: calls to collect data. \
+             When done gathering, summarize your findings without a tool: prefix."
+        );
+        let mut prompt = self
+            .call_provider_with_context(&research_prompt, request_id)
+            .await?;
+        let mut findings: Vec<String> = Vec::new();
+
+        for iteration in 0..self.config.research.max_iterations {
+            if !prompt.starts_with("tool:") {
+                findings.push(prompt.clone());
+                break;
+            }
+
+            let calls = parse_tool_calls(&prompt);
+            if calls.is_empty() {
+                break;
+            }
+
+            let (name, input) = calls[0];
+            if let Some(tool) = self.tools.iter().find(|t| t.name() == name) {
+                let result = self
+                    .execute_tool(&**tool, name, input, ctx, request_id, iteration)
+                    .await?;
+                findings.push(format!("{name}: {}", result.output));
+
+                if self.config.research.show_progress {
+                    info!(iteration, tool = name, "research phase: tool executed");
+                    self.audit(
+                        "research_phase_iteration",
+                        json!({
+                            "request_id": request_id,
+                            "iteration": iteration,
+                            "tool_name": name,
+                        }),
+                    )
+                    .await;
+                }
+
+                let next_prompt = format!(
+                    "Research iteration {iteration}: tool `{name}` returned: {}\n\
+                     Continue researching or summarize findings.",
+                    result.output
+                );
+                prompt = self
+                    .call_provider_with_context(&next_prompt, request_id)
+                    .await?;
+            } else {
+                break;
+            }
+        }
+
+        self.audit(
+            "research_phase_complete",
+            json!({
+                "request_id": request_id,
+                "findings_count": findings.len(),
+            }),
+        )
+        .await;
+        self.increment_counter("research_phase_completed");
+
+        Ok(findings.join("\n"))
+    }
+
     pub async fn respond(
         &self,
         user: UserMessage,
@@ -308,331 +628,213 @@ impl Agent {
             }),
         )
         .await;
+        self.write_to_memory("user", &user.text, request_id).await?;
 
-        self.hook(
-            "before_memory_write",
-            json!({"request_id": request_id, "role": "user"}),
-        )
-        .await?;
-        self.memory
-            .append(MemoryEntry {
-                role: "user".to_string(),
-                content: user.text.clone(),
-            })
-            .await
-            .map_err(|source| AgentError::Memory { source })?;
-        self.hook(
-            "after_memory_write",
-            json!({"request_id": request_id, "role": "user"}),
-        )
-        .await?;
-        self.audit("memory_append_user", json!({"request_id": request_id}))
-            .await;
+        let research_context = if self.should_research(&user.text) {
+            self.run_research_phase(&user.text, ctx, request_id).await?
+        } else {
+            String::new()
+        };
 
         let mut prompt = user.text;
+        let mut tool_history: Vec<(String, String, String)> = Vec::new();
 
-        // Loop detection state.
-        let mut tool_history: Vec<(String, String, String)> = Vec::new(); // (name, args, output)
-
-        // Minimal iteration guard to avoid accidental runaway tool loops.
         for iteration in 0..self.config.max_tool_iterations {
-            if let Some(rest) = prompt.strip_prefix("tool:") {
-                let mut parts = rest.trim().splitn(2, ' ');
-                let tool_name = parts.next().unwrap_or_default();
-                let tool_input = parts.next().unwrap_or_default();
-                self.audit(
-                    "tool_requested",
-                    json!({
-                        "request_id": request_id,
-                        "iteration": iteration,
-                        "tool_name": tool_name,
-                        "tool_input_len": tool_input.len(),
-                    }),
-                )
-                .await;
-                if let Some(tool) = self.tools.iter().find(|t| t.name() == tool_name) {
-                    let is_plugin_call = tool_name.starts_with("plugin:");
-                    self.hook(
-                        "before_tool_call",
-                        json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
-                    )
-                    .await?;
-                    if is_plugin_call {
-                        self.hook(
-                            "before_plugin_call",
-                            json!({"request_id": request_id, "iteration": iteration, "plugin_tool": tool_name}),
-                        )
-                        .await?;
+            if !prompt.starts_with("tool:") {
+                break;
+            }
+
+            let calls = parse_tool_calls(&prompt);
+            if calls.is_empty() {
+                break;
+            }
+
+            // C3: Parallel tool execution when enabled and multiple calls present.
+            // Falls back to sequential if any tool in the batch is gated
+            // (requires approval), preserving the interactive approval flow.
+            let has_gated = calls
+                .iter()
+                .any(|(name, _)| self.config.gated_tools.contains(*name));
+            if calls.len() > 1 && self.config.parallel_tools && !has_gated {
+                let mut resolved: Vec<(&str, &str, &dyn Tool)> = Vec::new();
+                for &(name, input) in &calls {
+                    let tool = self.tools.iter().find(|t| t.name() == name);
+                    match tool {
+                        Some(t) => resolved.push((name, input, &**t)),
+                        None => {
+                            self.audit(
+                                "tool_not_found",
+                                json!({"request_id": request_id, "iteration": iteration, "tool_name": name}),
+                            )
+                            .await;
+                        }
                     }
-                    self.audit(
-                        "tool_execute_start",
-                        json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
-                    )
-                    .await;
-                    let tool_started = Instant::now();
-                    let result = match tool.execute(tool_input, ctx).await {
-                        Ok(result) => result,
+                }
+                if resolved.is_empty() {
+                    break;
+                }
+
+                let futs: Vec<_> = resolved
+                    .iter()
+                    .map(|&(name, input, tool)| async move {
+                        let r = tool.execute(input, ctx).await;
+                        (name, input, r)
+                    })
+                    .collect();
+                let results = futures_util::future::join_all(futs).await;
+
+                let mut output_parts: Vec<String> = Vec::new();
+                for (name, input, result) in results {
+                    match result {
+                        Ok(r) => {
+                            tool_history.push((
+                                name.to_string(),
+                                input.to_string(),
+                                r.output.clone(),
+                            ));
+                            output_parts.push(format!("Tool output from {name}: {}", r.output));
+                        }
                         Err(source) => {
-                            self.observe_histogram(
-                                "tool_latency_ms",
-                                tool_started.elapsed().as_secs_f64() * 1000.0,
-                            );
-                            self.increment_counter("tool_errors_total");
-
-                            // TODO(C1): Failure streak detection requires error
-                            // recovery (continue instead of return) to accumulate
-                            // state across iterations. Implement in Phase C.
-
                             return Err(AgentError::Tool {
-                                tool: tool_name.to_string(),
+                                tool: name.to_string(),
                                 source,
                             });
                         }
-                    };
-                    self.observe_histogram(
-                        "tool_latency_ms",
-                        tool_started.elapsed().as_secs_f64() * 1000.0,
-                    );
-                    self.audit(
-                        "tool_execute_success",
-                        json!({
-                            "request_id": request_id,
-                            "iteration": iteration,
-                            "tool_name": tool_name,
-                            "tool_output_len": result.output.len(),
-                            "duration_ms": tool_started.elapsed().as_millis(),
-                        }),
-                    )
-                    .await;
-                    info!(
-                        request_id = %request_id,
-                        stage = "tool",
-                        tool_name = %tool_name,
-                        duration_ms = %tool_started.elapsed().as_millis(),
-                        "tool execution finished"
-                    );
-                    self.hook(
-                        "after_tool_call",
-                        json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name, "status": "ok"}),
-                    )
-                    .await?;
-                    if is_plugin_call {
-                        self.hook(
-                            "after_plugin_call",
-                            json!({"request_id": request_id, "iteration": iteration, "plugin_tool": tool_name, "status": "ok"}),
-                        )
-                        .await?;
                     }
-                    // Record tool call for loop detection.
-                    tool_history.push((
-                        tool_name.to_string(),
-                        tool_input.to_string(),
-                        result.output.clone(),
-                    ));
-
-                    // No-progress detection (C1): same tool+args+output N times.
-                    if self.config.loop_detection_no_progress_threshold > 0 {
-                        let threshold = self.config.loop_detection_no_progress_threshold;
-                        if tool_history.len() >= threshold {
-                            let recent = &tool_history[tool_history.len() - threshold..];
-                            let all_same = recent.iter().all(|entry| {
-                                entry.0 == recent[0].0
-                                    && entry.1 == recent[0].1
-                                    && entry.2 == recent[0].2
-                            });
-                            if all_same {
-                                warn!(
-                                    tool_name,
-                                    threshold, "loop detection: no-progress threshold reached"
-                                );
-                                self.audit(
-                                    "loop_detection_no_progress",
-                                    json!({
-                                        "request_id": request_id,
-                                        "tool_name": tool_name,
-                                        "threshold": threshold,
-                                    }),
-                                )
-                                .await;
-                                // C1: Self-correction — give provider context about the loop.
-                                prompt = format!(
-                                    "SYSTEM NOTICE: Loop detected — the tool `{tool_name}` was called \
-                                     {threshold} times with identical arguments and output. You are stuck \
-                                     in a loop. Stop calling this tool and try a different approach, or \
-                                     provide your best answer with the information you already have."
-                                );
-                                break;
-                            }
-                        }
-                    }
-
-                    // Ping-pong detection (C1): A→B→A→B alternation.
-                    if self.config.loop_detection_ping_pong_cycles > 0 {
-                        let cycles = self.config.loop_detection_ping_pong_cycles;
-                        let needed = cycles * 2;
-                        if tool_history.len() >= needed {
-                            let recent = &tool_history[tool_history.len() - needed..];
-                            let is_ping_pong = (0..needed).all(|i| recent[i].0 == recent[i % 2].0)
-                                && recent[0].0 != recent[1].0;
-                            if is_ping_pong {
-                                warn!(
-                                    tool_a = recent[0].0,
-                                    tool_b = recent[1].0,
-                                    cycles,
-                                    "loop detection: ping-pong pattern detected"
-                                );
-                                self.audit(
-                                    "loop_detection_ping_pong",
-                                    json!({
-                                        "request_id": request_id,
-                                        "tool_a": recent[0].0,
-                                        "tool_b": recent[1].0,
-                                        "cycles": cycles,
-                                    }),
-                                )
-                                .await;
-                                // C1: Self-correction — give provider context about the loop.
-                                prompt = format!(
-                                    "SYSTEM NOTICE: Loop detected — tools `{}` and `{}` have been \
-                                     alternating for {} cycles in a ping-pong pattern. Stop this \
-                                     alternation and try a different approach, or provide your best \
-                                     answer with the information you already have.",
-                                    recent[0].0, recent[1].0, cycles
-                                );
-                                break;
-                            }
-                        }
-                    }
-
-                    // If tool output is itself a tool directive, chain directly
-                    // so multi-step tool use works. Otherwise, format for the
-                    // provider prompt with context about which tool ran.
-                    if result.output.starts_with("tool:") {
-                        prompt = result.output.clone();
-                    } else {
-                        prompt =
-                            format!("Tool output from {tool_name}: {}", result.output);
-                    }
-                    continue;
                 }
-                self.audit(
-                    "tool_not_found",
-                    json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
-                )
-                .await;
+                prompt = output_parts.join("\n");
+                continue;
             }
-            break;
-        }
 
-        let recent_memory = self
-            .memory
-            .recent(self.config.memory_window_size)
-            .await
-            .map_err(|source| AgentError::Memory { source })?;
-        self.audit(
-            "memory_recent_loaded",
-            json!({"request_id": request_id, "items": recent_memory.len()}),
-        )
-        .await;
-        let (provider_prompt, prompt_truncated) =
-            build_provider_prompt(&prompt, &recent_memory, self.config.max_prompt_chars);
-        if prompt_truncated {
+            // Sequential: process the first call only.
+            let (tool_name, tool_input) = calls[0];
             self.audit(
-                "provider_prompt_truncated",
+                "tool_requested",
                 json!({
                     "request_id": request_id,
-                    "max_prompt_chars": self.config.max_prompt_chars,
+                    "iteration": iteration,
+                    "tool_name": tool_name,
+                    "tool_input_len": tool_input.len(),
                 }),
             )
             .await;
+
+            if let Some(tool) = self.tools.iter().find(|t| t.name() == tool_name) {
+                let result = self
+                    .execute_tool(&**tool, tool_name, tool_input, ctx, request_id, iteration)
+                    .await?;
+
+                tool_history.push((
+                    tool_name.to_string(),
+                    tool_input.to_string(),
+                    result.output.clone(),
+                ));
+
+                // C1: No-progress detection — same tool+args+output N times.
+                if self.config.loop_detection_no_progress_threshold > 0 {
+                    let threshold = self.config.loop_detection_no_progress_threshold;
+                    if tool_history.len() >= threshold {
+                        let recent = &tool_history[tool_history.len() - threshold..];
+                        let all_same = recent.iter().all(|entry| {
+                            entry.0 == recent[0].0
+                                && entry.1 == recent[0].1
+                                && entry.2 == recent[0].2
+                        });
+                        if all_same {
+                            warn!(
+                                tool_name,
+                                threshold, "loop detection: no-progress threshold reached"
+                            );
+                            self.audit(
+                                "loop_detection_no_progress",
+                                json!({
+                                    "request_id": request_id,
+                                    "tool_name": tool_name,
+                                    "threshold": threshold,
+                                }),
+                            )
+                            .await;
+                            prompt = format!(
+                                "SYSTEM NOTICE: Loop detected — the tool `{tool_name}` was called \
+                                 {threshold} times with identical arguments and output. You are stuck \
+                                 in a loop. Stop calling this tool and try a different approach, or \
+                                 provide your best answer with the information you already have."
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                // C1: Ping-pong detection — A→B→A→B alternation.
+                if self.config.loop_detection_ping_pong_cycles > 0 {
+                    let cycles = self.config.loop_detection_ping_pong_cycles;
+                    let needed = cycles * 2;
+                    if tool_history.len() >= needed {
+                        let recent = &tool_history[tool_history.len() - needed..];
+                        let is_ping_pong = (0..needed).all(|i| recent[i].0 == recent[i % 2].0)
+                            && recent[0].0 != recent[1].0;
+                        if is_ping_pong {
+                            warn!(
+                                tool_a = recent[0].0,
+                                tool_b = recent[1].0,
+                                cycles,
+                                "loop detection: ping-pong pattern detected"
+                            );
+                            self.audit(
+                                "loop_detection_ping_pong",
+                                json!({
+                                    "request_id": request_id,
+                                    "tool_a": recent[0].0,
+                                    "tool_b": recent[1].0,
+                                    "cycles": cycles,
+                                }),
+                            )
+                            .await;
+                            prompt = format!(
+                                "SYSTEM NOTICE: Loop detected — tools `{}` and `{}` have been \
+                                 alternating for {} cycles in a ping-pong pattern. Stop this \
+                                 alternation and try a different approach, or provide your best \
+                                 answer with the information you already have.",
+                                recent[0].0, recent[1].0, cycles
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                if result.output.starts_with("tool:") {
+                    prompt = result.output.clone();
+                } else {
+                    prompt = format!("Tool output from {tool_name}: {}", result.output);
+                }
+                continue;
+            }
+
+            self.audit(
+                "tool_not_found",
+                json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
+            )
+            .await;
+            break;
         }
 
-        self.hook(
-            "before_provider_call",
-            json!({
-                "request_id": request_id,
-                "prompt_len": provider_prompt.len(),
-                "memory_items": recent_memory.len(),
-                "prompt_truncated": prompt_truncated
-            }),
-        )
-        .await?;
-        self.audit(
-            "provider_call_start",
-            json!({
-                "request_id": request_id,
-                "prompt_len": provider_prompt.len(),
-                "memory_items": recent_memory.len(),
-                "prompt_truncated": prompt_truncated
-            }),
-        )
-        .await;
-        let provider_started = Instant::now();
-        let completion = match self.provider.complete(&provider_prompt).await {
-            Ok(result) => result,
-            Err(source) => {
-                self.observe_histogram(
-                    "provider_latency_ms",
-                    provider_started.elapsed().as_secs_f64() * 1000.0,
-                );
-                self.increment_counter("provider_errors_total");
-                return Err(AgentError::Provider { source });
-            }
-        };
-        self.observe_histogram(
-            "provider_latency_ms",
-            provider_started.elapsed().as_secs_f64() * 1000.0,
-        );
-        self.audit(
-            "provider_call_success",
-            json!({
-                "request_id": request_id,
-                "response_len": completion.output_text.len(),
-                "duration_ms": provider_started.elapsed().as_millis(),
-            }),
-        )
-        .await;
-        info!(
-            request_id = %request_id,
-            stage = "provider",
-            duration_ms = %provider_started.elapsed().as_millis(),
-            "provider call finished"
-        );
-        self.hook(
-            "after_provider_call",
-            json!({"request_id": request_id, "response_len": completion.output_text.len(), "status": "ok"}),
-        )
-        .await?;
+        if !research_context.is_empty() {
+            prompt = format!("Research findings:\n{research_context}\n\nUser request:\n{prompt}");
+        }
 
-        self.hook(
-            "before_memory_write",
-            json!({"request_id": request_id, "role": "assistant"}),
-        )
-        .await?;
-        self.memory
-            .append(MemoryEntry {
-                role: "assistant".to_string(),
-                content: completion.output_text.clone(),
-            })
-            .await
-            .map_err(|source| AgentError::Memory { source })?;
-        self.hook(
-            "after_memory_write",
-            json!({"request_id": request_id, "role": "assistant"}),
-        )
-        .await?;
-        self.audit("memory_append_assistant", json!({"request_id": request_id}))
-            .await;
+        let response_text = self.call_provider_with_context(&prompt, request_id).await?;
+        self.write_to_memory("assistant", &response_text, request_id)
+            .await?;
         self.audit("respond_success", json!({"request_id": request_id}))
             .await;
 
         self.hook(
             "before_response_emit",
-            json!({"request_id": request_id, "response_len": completion.output_text.len()}),
+            json!({"request_id": request_id, "response_len": response_text.len()}),
         )
         .await?;
         let response = AssistantMessage {
-            text: completion.output_text,
+            text: response_text,
         };
         self.hook(
             "after_response_emit",
@@ -647,7 +849,10 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ChatResult, HookEvent, HookFailureMode, HookPolicy, ToolResult};
+    use crate::types::{
+        ChatResult, HookEvent, HookFailureMode, HookPolicy, ReasoningConfig, ResearchPolicy,
+        ResearchTrigger, ToolResult,
+    };
     use async_trait::async_trait;
     use serde_json::Value;
     use std::collections::HashMap;
@@ -758,12 +963,20 @@ mod tests {
         }
     }
 
-    /// Provider that returns a scripted sequence of responses, cycling through
-    /// them in order. When all responses are consumed, repeats the last one.
     struct ScriptedProvider {
         responses: Vec<String>,
         call_count: AtomicUsize,
         received_prompts: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl ScriptedProvider {
+        fn new(responses: Vec<&str>) -> Self {
+            Self {
+                responses: responses.into_iter().map(|s| s.to_string()).collect(),
+                call_count: AtomicUsize::new(0),
+                received_prompts: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
     }
 
     #[async_trait]
@@ -775,12 +988,12 @@ mod tests {
                 .push(prompt.to_string());
             let idx = self.call_count.fetch_add(1, Ordering::Relaxed);
             let response = if idx < self.responses.len() {
-                &self.responses[idx]
+                self.responses[idx].clone()
             } else {
-                self.responses.last().expect("responses must not be empty")
+                self.responses.last().cloned().unwrap_or_default()
             };
             Ok(ChatResult {
-                output_text: response.clone(),
+                output_text: response,
             })
         }
     }
@@ -1600,5 +1813,681 @@ mod tests {
             !last_prompt.contains("Loop detected"),
             "should not contain self-correction when detection is disabled"
         );
+    }
+
+    // ── C3: Parallel tool execution tests ───────────────────────────────────
+
+    #[tokio::test]
+    async fn parallel_tools_executes_multiple_calls() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "parallel done".to_string(),
+        };
+        let agent = Agent::new(
+            AgentConfig {
+                parallel_tools: true,
+                max_tool_iterations: 5,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool), Box::new(UpperTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo hello\ntool:upper world".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("parallel tools should succeed");
+
+        assert_eq!(response.text, "parallel done");
+
+        let received = prompts.lock().expect("provider lock poisoned");
+        let last_prompt = received.last().expect("provider should have been called");
+        assert!(
+            last_prompt.contains("echoed:hello"),
+            "should contain echo output, got: {last_prompt}"
+        );
+        assert!(
+            last_prompt.contains("WORLD"),
+            "should contain upper output, got: {last_prompt}"
+        );
+    }
+
+    #[tokio::test]
+    async fn parallel_tools_maintains_stable_ordering() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "ordered".to_string(),
+        };
+        let agent = Agent::new(
+            AgentConfig {
+                parallel_tools: true,
+                max_tool_iterations: 5,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool), Box::new(UpperTool)],
+        );
+
+        // echo comes first in the prompt; its output should appear first.
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo aaa\ntool:upper bbb".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("parallel tools should succeed");
+
+        assert_eq!(response.text, "ordered");
+
+        let received = prompts.lock().expect("provider lock poisoned");
+        let last_prompt = received.last().expect("provider should have been called");
+        let echo_pos = last_prompt
+            .find("echoed:aaa")
+            .expect("echo output should exist");
+        let upper_pos = last_prompt.find("BBB").expect("upper output should exist");
+        assert!(
+            echo_pos < upper_pos,
+            "echo output should come before upper output in the prompt"
+        );
+    }
+
+    #[tokio::test]
+    async fn parallel_disabled_runs_first_call_only() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "sequential".to_string(),
+        };
+        let agent = Agent::new(
+            AgentConfig {
+                parallel_tools: false,
+                max_tool_iterations: 5,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool), Box::new(UpperTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo hello\ntool:upper world".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("sequential tools should succeed");
+
+        assert_eq!(response.text, "sequential");
+
+        // Only the first tool (echo) should have executed.
+        let received = prompts.lock().expect("provider lock poisoned");
+        let last_prompt = received.last().expect("provider should have been called");
+        assert!(
+            last_prompt.contains("echoed:hello"),
+            "should contain first tool output, got: {last_prompt}"
+        );
+        assert!(
+            !last_prompt.contains("WORLD"),
+            "should NOT contain second tool output when parallel is disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn single_call_parallel_matches_sequential() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "single".to_string(),
+        };
+        let agent = Agent::new(
+            AgentConfig {
+                parallel_tools: true,
+                max_tool_iterations: 5,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo ping".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("single tool with parallel enabled should succeed");
+
+        assert_eq!(response.text, "single");
+
+        let received = prompts.lock().expect("provider lock poisoned");
+        let last_prompt = received.last().expect("provider should have been called");
+        assert!(
+            last_prompt.contains("echoed:ping"),
+            "single tool call should work same as sequential, got: {last_prompt}"
+        );
+    }
+
+    #[tokio::test]
+    async fn parallel_falls_back_to_sequential_for_gated_tools() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "gated sequential".to_string(),
+        };
+        let mut gated = std::collections::HashSet::new();
+        gated.insert("upper".to_string());
+        let agent = Agent::new(
+            AgentConfig {
+                parallel_tools: true,
+                gated_tools: gated,
+                max_tool_iterations: 5,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool), Box::new(UpperTool)],
+        );
+
+        // Both tools present, but upper is gated → sequential fallback.
+        // Sequential processes only the first call per iteration.
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo hello\ntool:upper world".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("gated fallback should succeed");
+
+        assert_eq!(response.text, "gated sequential");
+
+        let received = prompts.lock().expect("provider lock poisoned");
+        let last_prompt = received.last().expect("provider should have been called");
+        assert!(
+            last_prompt.contains("echoed:hello"),
+            "first tool should execute, got: {last_prompt}"
+        );
+        assert!(
+            !last_prompt.contains("WORLD"),
+            "gated tool should NOT execute in parallel, got: {last_prompt}"
+        );
+    }
+
+    // ── C2: Research Phase tests ──────────────────────────────────────
+
+    fn research_config(trigger: ResearchTrigger) -> ResearchPolicy {
+        ResearchPolicy {
+            enabled: true,
+            trigger,
+            keywords: vec!["search".to_string(), "find".to_string()],
+            min_message_length: 10,
+            max_iterations: 5,
+            show_progress: true,
+        }
+    }
+
+    fn config_with_research(trigger: ResearchTrigger) -> AgentConfig {
+        AgentConfig {
+            research: research_config(trigger),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn research_trigger_never() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "final answer".to_string(),
+        };
+        let agent = Agent::new(
+            config_with_research(ResearchTrigger::Never),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "search for something".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "final answer");
+        let received = prompts.lock().expect("lock");
+        assert_eq!(
+            received.len(),
+            1,
+            "should have exactly 1 provider call (no research)"
+        );
+    }
+
+    #[tokio::test]
+    async fn research_trigger_always() {
+        let provider = ScriptedProvider::new(vec![
+            "tool:echo gathering data",
+            "Found relevant information",
+            "Final answer with research context",
+        ]);
+        let prompts = provider.received_prompts.clone();
+        let agent = Agent::new(
+            config_with_research(ResearchTrigger::Always),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "hello world".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "Final answer with research context");
+        let received = prompts.lock().expect("lock");
+        let last = received.last().expect("should have provider calls");
+        assert!(
+            last.contains("Research findings:"),
+            "final prompt should contain research findings, got: {last}"
+        );
+    }
+
+    #[tokio::test]
+    async fn research_trigger_keywords_match() {
+        let provider = ScriptedProvider::new(vec!["Summary of search", "Answer based on research"]);
+        let prompts = provider.received_prompts.clone();
+        let agent = Agent::new(
+            config_with_research(ResearchTrigger::Keywords),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "please search for the config".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "Answer based on research");
+        let received = prompts.lock().expect("lock");
+        assert!(received.len() >= 2, "should have at least 2 provider calls");
+        assert!(
+            received[0].contains("RESEARCH mode"),
+            "first call should be research prompt"
+        );
+    }
+
+    #[tokio::test]
+    async fn research_trigger_keywords_no_match() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "direct answer".to_string(),
+        };
+        let agent = Agent::new(
+            config_with_research(ResearchTrigger::Keywords),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "hello world".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "direct answer");
+        let received = prompts.lock().expect("lock");
+        assert_eq!(received.len(), 1, "no research phase should fire");
+    }
+
+    #[tokio::test]
+    async fn research_trigger_length_short_skips() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "short".to_string(),
+        };
+        let config = AgentConfig {
+            research: ResearchPolicy {
+                min_message_length: 20,
+                ..research_config(ResearchTrigger::Length)
+            },
+            ..Default::default()
+        };
+        let agent = Agent::new(
+            config,
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![],
+        );
+        agent
+            .respond(
+                UserMessage {
+                    text: "hi".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+        let received = prompts.lock().expect("lock");
+        assert_eq!(received.len(), 1, "short message should skip research");
+    }
+
+    #[tokio::test]
+    async fn research_trigger_length_long_triggers() {
+        let provider = ScriptedProvider::new(vec!["research summary", "answer with research"]);
+        let prompts = provider.received_prompts.clone();
+        let config = AgentConfig {
+            research: ResearchPolicy {
+                min_message_length: 20,
+                ..research_config(ResearchTrigger::Length)
+            },
+            ..Default::default()
+        };
+        let agent = Agent::new(
+            config,
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![],
+        );
+        agent
+            .respond(
+                UserMessage {
+                    text: "this is a longer message that exceeds the threshold".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+        let received = prompts.lock().expect("lock");
+        assert!(received.len() >= 2, "long message should trigger research");
+    }
+
+    #[tokio::test]
+    async fn research_trigger_question_with_mark() {
+        let provider = ScriptedProvider::new(vec!["research summary", "answer with research"]);
+        let prompts = provider.received_prompts.clone();
+        let agent = Agent::new(
+            config_with_research(ResearchTrigger::Question),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![],
+        );
+        agent
+            .respond(
+                UserMessage {
+                    text: "what is the meaning of life?".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+        let received = prompts.lock().expect("lock");
+        assert!(received.len() >= 2, "question should trigger research");
+    }
+
+    #[tokio::test]
+    async fn research_trigger_question_without_mark() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "no research".to_string(),
+        };
+        let agent = Agent::new(
+            config_with_research(ResearchTrigger::Question),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![],
+        );
+        agent
+            .respond(
+                UserMessage {
+                    text: "do this thing".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+        let received = prompts.lock().expect("lock");
+        assert_eq!(received.len(), 1, "non-question should skip research");
+    }
+
+    #[tokio::test]
+    async fn research_respects_max_iterations() {
+        let provider = ScriptedProvider::new(vec![
+            "tool:echo step1",
+            "tool:echo step2",
+            "tool:echo step3",
+            "tool:echo step4",
+            "tool:echo step5",
+            "tool:echo step6",
+            "tool:echo step7",
+            "answer after research",
+        ]);
+        let prompts = provider.received_prompts.clone();
+        let config = AgentConfig {
+            research: ResearchPolicy {
+                max_iterations: 3,
+                ..research_config(ResearchTrigger::Always)
+            },
+            ..Default::default()
+        };
+        let agent = Agent::new(
+            config,
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "test".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert!(!response.text.is_empty(), "should get a response");
+        let received = prompts.lock().expect("lock");
+        let research_calls = received
+            .iter()
+            .filter(|p| p.contains("RESEARCH mode") || p.contains("Research iteration"))
+            .count();
+        // 1 initial research prompt + 3 iteration prompts = 4
+        assert_eq!(
+            research_calls, 4,
+            "should have 4 research provider calls (1 initial + 3 iterations)"
+        );
+    }
+
+    #[tokio::test]
+    async fn research_disabled_skips_phase() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "direct answer".to_string(),
+        };
+        let config = AgentConfig {
+            research: ResearchPolicy {
+                enabled: false,
+                trigger: ResearchTrigger::Always,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let agent = Agent::new(
+            config,
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "search for something".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "direct answer");
+        let received = prompts.lock().expect("lock");
+        assert_eq!(
+            received.len(),
+            1,
+            "disabled research should not fire even with Always trigger"
+        );
+    }
+
+    // --- Reasoning tests ---
+
+    struct ReasoningCapturingProvider {
+        captured_reasoning: Arc<Mutex<Vec<ReasoningConfig>>>,
+        response_text: String,
+    }
+
+    #[async_trait]
+    impl Provider for ReasoningCapturingProvider {
+        async fn complete(&self, _prompt: &str) -> anyhow::Result<ChatResult> {
+            self.captured_reasoning
+                .lock()
+                .expect("lock")
+                .push(ReasoningConfig::default());
+            Ok(ChatResult {
+                output_text: self.response_text.clone(),
+            })
+        }
+
+        async fn complete_with_reasoning(
+            &self,
+            _prompt: &str,
+            reasoning: &ReasoningConfig,
+        ) -> anyhow::Result<ChatResult> {
+            self.captured_reasoning
+                .lock()
+                .expect("lock")
+                .push(reasoning.clone());
+            Ok(ChatResult {
+                output_text: self.response_text.clone(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn reasoning_config_passed_to_provider() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let provider = ReasoningCapturingProvider {
+            captured_reasoning: captured.clone(),
+            response_text: "ok".to_string(),
+        };
+        let config = AgentConfig {
+            reasoning: ReasoningConfig {
+                enabled: Some(true),
+                level: Some("high".to_string()),
+            },
+            ..Default::default()
+        };
+        let agent = Agent::new(
+            config,
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![],
+        );
+
+        agent
+            .respond(
+                UserMessage {
+                    text: "test".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        let configs = captured.lock().expect("lock");
+        assert_eq!(configs.len(), 1, "provider should be called once");
+        assert_eq!(configs[0].enabled, Some(true));
+        assert_eq!(configs[0].level.as_deref(), Some("high"));
+    }
+
+    #[tokio::test]
+    async fn reasoning_disabled_passes_config_through() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let provider = ReasoningCapturingProvider {
+            captured_reasoning: captured.clone(),
+            response_text: "ok".to_string(),
+        };
+        let config = AgentConfig {
+            reasoning: ReasoningConfig {
+                enabled: Some(false),
+                level: None,
+            },
+            ..Default::default()
+        };
+        let agent = Agent::new(
+            config,
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![],
+        );
+
+        agent
+            .respond(
+                UserMessage {
+                    text: "test".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        let configs = captured.lock().expect("lock");
+        assert_eq!(configs.len(), 1);
+        assert_eq!(
+            configs[0].enabled,
+            Some(false),
+            "disabled reasoning should still be passed to provider"
+        );
+        assert_eq!(configs[0].level, None);
     }
 }

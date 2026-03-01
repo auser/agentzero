@@ -1,36 +1,85 @@
 ---
-title: Architecture
-description: High-level view of the agentzero runtime and crate boundaries.
+title: System Architecture
+description: High-level view of the AgentZero runtime, crate boundaries, and execution flow.
 ---
 
-This document provides a high-level view of the current `agentzero` runtime and crate boundaries.
+This document provides a high-level view of the AgentZero runtime architecture.
+
+## Design Principles
+
+1. **Traits define boundaries.** Core crate has zero infrastructure dependencies.
+2. **Fail closed.** Security defaults deny everything; capabilities require explicit opt-in.
+3. **Single binary.** One `cargo install` gives you CLI, gateway, daemon, and all tools.
+4. **Crate isolation.** Each subsystem lives in its own crate with minimal dependencies.
 
 ## Crate Diagram
 
 ```mermaid
 flowchart TD
-    U[User / CLI Invocation] --> B[bin/agentzero]
-    B --> C[crates/agentzero-cli]
+    U[User / CLI] --> B[bin/agentzero]
+    B --> CLI[agentzero-cli]
 
-    C --> CFG[crates/agentzero-config]
-    C --> CORE[crates/agentzero-core]
-    C --> RT[crates/agentzero-runtime]
-    C --> GW[crates/agentzero-gateway]
-    C --> INFRA[crates/agentzero-infra]
-    C --> MEM[crates/agentzero-memory]
-    C --> PROV[crates/agentzero-providers]
-    C --> SEC[crates/agentzero-security]
-    C --> TOOLS[crates/agentzero-tools]
-    C --> WASM[crates/agentzero-plugins]
-    C --> TK[crates/agentzero-testkit]
+    CLI --> CFG[agentzero-config]
+    CLI --> CORE[agentzero-core]
+    CLI --> RT[agentzero-runtime]
+    CLI --> GW[agentzero-gateway]
+    CLI --> INFRA[agentzero-infra]
 
-    CORE --> INFRA
+    CORE --> PROV[agentzero-providers]
+    CORE --> MEM[agentzero-memory]
+    CORE --> TOOLS[agentzero-tools]
+    CORE --> SEC[agentzero-security]
+
+    INFRA --> PROV
+    INFRA --> MEM
     INFRA --> TOOLS
-    INFRA --> SEC
+    INFRA --> WASM[agentzero-plugins]
+
     RT --> CORE
     RT --> CFG
     RT --> INFRA
 ```
+
+## Workspace Crates (34)
+
+| Crate | Purpose |
+|---|---|
+| `bin/agentzero` | Thin binary entrypoint |
+| `agentzero-cli` | Command parsing, dispatch, and UX |
+| `agentzero-core` | Agent traits, orchestrator, and domain types |
+| `agentzero-config` | Typed config model and policy validation |
+| `agentzero-runtime` | Runtime orchestration for agent flows |
+| `agentzero-providers` | OpenAI-compatible provider implementation |
+| `agentzero-memory` | SQLite + Turso memory backends |
+| `agentzero-tools` | Built-in tool implementations |
+| `agentzero-security` | Policy enforcement, redaction, audit |
+| `agentzero-infra` | Wiring layer (connects traits to implementations) |
+| `agentzero-gateway` | HTTP gateway (Axum) |
+| `agentzero-channels` | Channel trait + messaging implementations |
+| `agentzero-plugins` | WASM plugin host + packaging |
+| `agentzero-skills` | Skillforge + SOP engine |
+| `agentzero-daemon` | Daemon runtime state + lifecycle |
+| `agentzero-service` | OS service lifecycle (systemd/OpenRC) |
+| `agentzero-health` | Health/freshness assessment |
+| `agentzero-heartbeat` | Encrypted heartbeat persistence |
+| `agentzero-doctor` | Diagnostics collection |
+| `agentzero-cron` | Scheduled task engine |
+| `agentzero-hooks` | Lifecycle hooks |
+| `agentzero-cost` | Cost tracking primitives |
+| `agentzero-coordination` | Runtime coordination |
+| `agentzero-goals` | Goals management |
+| `agentzero-rag` | Local retrieval index |
+| `agentzero-multimodal` | Media-kind inference |
+| `agentzero-hardware` | Hardware discovery (feature-gated) |
+| `agentzero-peripherals` | Peripheral registry (feature-gated) |
+| `agentzero-integrations` | External integration catalog |
+| `agentzero-crypto` | Cryptographic primitives |
+| `agentzero-storage` | Persistent key-value store |
+| `agentzero-update` | Self-update and migration |
+| `agentzero-common` | Shared helpers and types |
+| `agentzero-auth` | Subscription auth profiles |
+| `agentzero-testkit` | Test doubles and mocks |
+| `agentzero-bench` | Criterion benchmark suite |
 
 ## Command Execution Flow
 
@@ -41,55 +90,27 @@ sequenceDiagram
     participant CLI as agentzero-cli
     participant Config as agentzero-config
     participant Core as agentzero-core
-    participant Infra as agentzero-infra
-    participant Provider as agentzero-providers
-    participant Memory as sqlite/turso memory crate
-    participant Tools as agentzero-tools
+    participant Provider as Provider trait
+    participant Memory as MemoryStore trait
+    participant Tools as Tool trait
 
-    User->>Bin: agentzero <command>
-    Bin->>CLI: parse_cli_from + execute
-    CLI->>Config: load config + policy
-    alt command=agent
-        CLI->>Core: Agent::respond(message)
-        Core->>Provider: complete(prompt)
-        Core->>Memory: recent/append
-        Core->>Tools: tool execution via infra registry
-        Core-->>CLI: response text
-    else command=status
-        CLI->>Memory: recent()
-    else command=gateway
-        CLI->>Infra: build runtime deps
-        CLI->>Bin: start HTTP server loop
-    else command=doctor
-        CLI->>CLI: run local diagnostics
-    end
-    CLI-->>User: stdout/stderr + exit code
+    User->>Bin: agentzero agent -m "hello"
+    Bin->>CLI: parse + execute
+    CLI->>Config: load config + validate policy
+    CLI->>Core: Agent::respond(message)
+    Core->>Memory: recent(window_size)
+    Core->>Provider: complete(prompt + history)
+    Provider-->>Core: response (may contain tool calls)
+    Core->>Tools: execute(tool_name, params)
+    Tools-->>Core: tool result
+    Core->>Memory: append(exchange)
+    Core-->>CLI: response text
+    CLI-->>User: stdout
 ```
 
-## Current Responsibilities
+## See Also
 
-- `bin/agentzero`: Thin executable entrypoint and process exit behavior.
-- `agentzero-cli`: Command parsing, command dispatch, UX, diagnostics, and orchestration glue.
-- `agentzero-runtime`: Runtime orchestration for agent execution flows used by CLI commands.
-- `agentzero-config`: Typed config model, validation, dotenv/env/file layering, policy loading.
-- `agentzero-core`: Agent domain loop and trait-driven orchestration.
-- `agentzero-providers`: OpenAI-compatible provider implementation and retry/error mapping.
-- `agentzero-memory`: Unified memory crate (SQLite default + optional Turso/libsql backend via feature).
-- `agentzero-tools`: Hardened tool implementations (`read_file`, `write_file`, `shell`) with policy gates.
-- `agentzero-security`: Redaction and security policy utilities used by infra/runtime paths.
-- `agentzero-infra`: Integration layer for provider/memory/tool wiring and optional plugin/mcp tools.
-- `agentzero-gateway`: HTTP service surface for runtime access and health/ping.
-- `agentzero-plugins`: plugin packaging/lifecycle and WASM preflight/runtime policy checks.
-- `agentzero-testkit`: Reusable test doubles/mocks for provider, memory, and tool trait testing.
-
-## Security Boundaries
-
-- Tool execution is policy-gated from config (`[security.*]`) and fails closed by default.
-- Optional capabilities (`write_file`, `mcp`, process plugins) require explicit enablement.
-- Audit events can be enabled via `[security.audit]` for traceability of execution steps.
-- Config validation enforces bounded values and safe URL/path constraints before runtime execution.
-
-## Notes
-
-- Runtime orchestration is being moved from CLI command handlers into `agentzero-runtime`; some CLI paths may still have light transitional glue.
-- Doctor diagnostics are currently CLI-local checks; deeper daemon/scheduler freshness checks are tracked in Sprint 11.
+- [Security Boundaries](/agentzero/security/boundaries/) — Layered defense-in-depth model
+- [Trait System](/agentzero/architecture/traits/) — Detailed trait interfaces and crate boundaries
+- [Config Reference](/agentzero/config/reference/) — Full annotated `agentzero.toml`
+- [Threat Model](/agentzero/security/threat-model/) — Security threat analysis

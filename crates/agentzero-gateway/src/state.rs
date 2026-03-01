@@ -41,6 +41,7 @@ impl GatewayState {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn with_perplexity_filter(mut self, settings: PerplexityFilterSettings) -> Self {
         self.perplexity_filter = Arc::new(settings);
         self

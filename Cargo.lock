@@ -88,6 +88,7 @@ dependencies = [
 name = "agentzero-channels"
 version = "0.1.0"
 dependencies = [
+ "agentzero-config",
  "agentzero-leak-guard",
  "agentzero-security",
  "agentzero-storage",
@@ -180,6 +181,9 @@ dependencies = [
  "serde",
  "serde_json",
  "temp-env",
+ "tokio",
+ "toml",
+ "tracing",
  "url",
 ]
 
@@ -197,6 +201,7 @@ dependencies = [
  "agentzero-security",
  "anyhow",
  "async-trait",
+ "futures-util",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -339,8 +344,10 @@ name = "agentzero-infra"
 version = "0.1.0"
 dependencies = [
  "agentzero-core",
+ "agentzero-delegation",
  "agentzero-memory",
  "agentzero-providers",
+ "agentzero-routing",
  "agentzero-security",
  "agentzero-tools",
  "anyhow",
@@ -455,9 +462,11 @@ version = "0.1.0"
 dependencies = [
  "agentzero-config",
  "agentzero-core",
+ "agentzero-delegation",
  "agentzero-infra",
  "agentzero-memory",
  "agentzero-providers",
+ "agentzero-routing",
  "agentzero-testkit",
  "anyhow",
  "async-trait",
@@ -525,6 +534,9 @@ dependencies = [
  "agentzero-autonomy",
  "agentzero-common",
  "agentzero-core",
+ "agentzero-delegation",
+ "agentzero-providers",
+ "agentzero-routing",
  "agentzero-storage",
  "anyhow",
  "async-trait",

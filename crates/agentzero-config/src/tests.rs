@@ -1,4 +1,6 @@
-use crate::{load, load_audit_policy, load_env_var, load_tool_security_policy};
+use crate::{
+    load, load_audit_policy, load_env_var, load_tool_security_policy, update_auto_approve,
+};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -1078,4 +1080,76 @@ fn shell_context_aware_parsing_can_be_disabled() {
     });
 
     fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+// --- D2: Approval persistence tests ---
+
+#[test]
+fn update_auto_approve_creates_section_from_empty_file() {
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(&config_path, "").expect("empty file should be written");
+
+    update_auto_approve(&config_path, &["shell".to_string(), "browser".to_string()])
+        .expect("update should succeed");
+
+    let content = fs::read_to_string(&config_path).expect("file should be readable");
+    assert!(content.contains("[autonomy]"));
+    assert!(content.contains("auto_approve"));
+    assert!(content.contains("shell"));
+    assert!(content.contains("browser"));
+
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn update_auto_approve_preserves_other_sections() {
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind = \"openai\"\nmodel = \"gpt-4o\"\n",
+    )
+    .expect("config should be written");
+
+    update_auto_approve(&config_path, &["shell".to_string()]).expect("update should succeed");
+
+    let content = fs::read_to_string(&config_path).expect("file should be readable");
+    assert!(content.contains("[provider]"));
+    assert!(content.contains("kind = \"openai\""));
+    assert!(content.contains("[autonomy]"));
+    assert!(content.contains("shell"));
+
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn update_auto_approve_overwrites_existing_list() {
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(&config_path, "[autonomy]\nauto_approve = [\"old_tool\"]\n")
+        .expect("config should be written");
+
+    update_auto_approve(&config_path, &["new_tool".to_string()]).expect("update should succeed");
+
+    let content = fs::read_to_string(&config_path).expect("file should be readable");
+    assert!(content.contains("new_tool"));
+    assert!(!content.contains("old_tool"));
+
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn update_auto_approve_empty_list_clears() {
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(&config_path, "[autonomy]\nauto_approve = [\"shell\"]\n")
+        .expect("config should be written");
+
+    update_auto_approve(&config_path, &[]).expect("update should succeed");
+
+    let content = fs::read_to_string(&config_path).expect("file should be readable");
+    assert!(content.contains("auto_approve = []"));
+
+    fs::remove_dir_all(dir).expect("cleanup");
 }

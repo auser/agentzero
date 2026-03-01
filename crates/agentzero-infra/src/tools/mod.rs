@@ -2,17 +2,24 @@ mod mcp;
 mod plugin;
 
 use agentzero_core::Tool;
+use agentzero_delegation::DelegateConfig;
+use agentzero_routing::ModelRouter;
 use anyhow::Context;
 use serde::Deserialize;
+use std::collections::HashMap;
 
 pub use agentzero_tools::{
-    ReadFilePolicy, ReadFileTool, ShellPolicy, ShellTool, ToolSecurityPolicy, WriteFilePolicy,
-    WriteFileTool,
+    DelegateTool, ModelRoutingConfigTool, ReadFilePolicy, ReadFileTool, ShellPolicy, ShellTool,
+    ToolSecurityPolicy, WriteFilePolicy, WriteFileTool,
 };
 pub use mcp::McpTool;
 pub use plugin::ProcessPluginTool;
 
-pub fn default_tools(policy: &ToolSecurityPolicy) -> anyhow::Result<Vec<Box<dyn Tool>>> {
+pub fn default_tools(
+    policy: &ToolSecurityPolicy,
+    router: Option<ModelRouter>,
+    delegate_agents: Option<HashMap<String, DelegateConfig>>,
+) -> anyhow::Result<Vec<Box<dyn Tool>>> {
     let mut tools: Vec<Box<dyn Tool>> = vec![
         Box::new(ReadFileTool::new(policy.read_file.clone())),
         Box::new(ShellTool::new(policy.shell.clone())),
@@ -32,6 +39,16 @@ pub fn default_tools(policy: &ToolSecurityPolicy) -> anyhow::Result<Vec<Box<dyn 
             anyhow::anyhow!("plugin tool enabled but AGENTZERO_PLUGIN_TOOL is missing")
         })?;
         tools.push(Box::new(plugin_tool));
+    }
+
+    if let Some(r) = router {
+        tools.push(Box::new(ModelRoutingConfigTool::new(r)));
+    }
+
+    if let Some(agents) = delegate_agents {
+        if !agents.is_empty() {
+            tools.push(Box::new(DelegateTool::new(agents, 0)));
+        }
     }
 
     Ok(tools)
@@ -90,7 +107,7 @@ mod tests {
         );
         policy.enable_process_plugin = true;
 
-        let result = default_tools(&policy);
+        let result = default_tools(&policy, None, None);
         assert!(result.is_err());
         let err = result.err().expect("missing plugin env should fail closed");
         assert!(err.to_string().contains("AGENTZERO_PLUGIN_TOOL"));
@@ -101,7 +118,7 @@ mod tests {
         let policy = ToolSecurityPolicy::default_for_workspace(
             std::env::current_dir().expect("cwd should be readable"),
         );
-        let tools = default_tools(&policy).expect("default tools should build");
+        let tools = default_tools(&policy, None, None).expect("default tools should build");
         let names = tools
             .into_iter()
             .map(|tool| tool.name())

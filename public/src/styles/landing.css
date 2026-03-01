@@ -1,21 +1,21 @@
 /* ── Landing Page Styles ─────────────────────────────────
-   Scoped to .az-* classes. Colors from global.css (--sl-*).
+   Scoped to .az-* classes. ALL colors and typography
+   derive from --sl-* variables defined in global.css.
    ─────────────────────────────────────────────────────── */
 
 :root {
-  --az-bg-card-hover: #1a1a26;
   --az-max-width: 1120px;
-  color-scheme: dark;
+  --az-bg-card-hover: color-mix(in srgb, var(--sl-color-gray-6) 70%, var(--sl-color-gray-5));
 }
 
 /* ── Landing page base (scoped to .az-page) ──── */
 
 .az-page {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  background: var(--sl-color-bg, #0a0a0f);
-  color: var(--sl-color-text, #e4e4ef);
-  line-height: 1.6;
+  font-family: var(--__sl-font);
+  background: var(--sl-color-bg);
+  color: var(--sl-color-text);
+  line-height: var(--sl-line-height);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -28,7 +28,7 @@
 }
 
 .az-page a {
-  color: var(--sl-color-accent, #38bdf8);
+  color: var(--sl-color-accent);
   text-decoration: none;
 }
 
@@ -37,12 +37,8 @@
 }
 
 .az-page code {
-  font-family: ui-monospace, "Cascadia Code", "Fira Code", Menlo, monospace;
+  font-family: var(--__sl-font-mono);
   font-size: 0.9em;
-}
-
-.az-page html {
-  scroll-behavior: smooth;
 }
 
 /* ── Nav ───────────────────────────────────────── */
@@ -51,9 +47,9 @@
   position: sticky;
   top: 0;
   z-index: 100;
-  background: rgba(10, 10, 15, 0.85);
+  background: color-mix(in srgb, var(--sl-color-bg) 85%, transparent);
   backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--sl-color-gray-5);
+  border-bottom: 1px solid var(--sl-color-hairline-light);
 }
 
 .az-nav-inner {
@@ -68,7 +64,7 @@
 .az-logo {
   font-weight: 700;
   font-size: 1.25rem;
-  color: var(--sl-color-text);
+  color: var(--sl-color-accent);
   letter-spacing: -0.02em;
   text-decoration: none;
 }
@@ -82,7 +78,7 @@
   display: flex;
   align-items: center;
   gap: 1.5rem;
-  font-size: 0.9rem;
+  font-size: var(--sl-text-sm);
 }
 
 .az-nav-links a {
@@ -111,7 +107,7 @@
   padding: 0.65rem 1.5rem;
   border-radius: 0.5rem;
   font-weight: 600;
-  font-size: 0.95rem;
+  font-size: var(--sl-text-sm);
   text-decoration: none;
   transition: background 0.15s, transform 0.1s;
 }
@@ -123,18 +119,18 @@
 
 .az-btn-primary {
   background: var(--sl-color-accent);
-  color: #0a0a0f !important;
+  color: var(--sl-color-text-invert) !important;
 }
 
 .az-btn-primary:hover {
-  background: #0ea5e9;
-  color: #0a0a0f !important;
+  background: var(--sl-color-accent-high);
+  color: var(--sl-color-text-invert) !important;
 }
 
 .az-btn-secondary {
   background: var(--sl-color-gray-6);
   color: var(--sl-color-text) !important;
-  border: 1px solid var(--sl-color-gray-5);
+  border: 1px solid var(--sl-color-hairline-light);
 }
 
 .az-btn-secondary:hover {
@@ -157,7 +153,7 @@
 }
 
 .az-eyebrow {
-  font-size: 0.8rem;
+  font-size: var(--sl-text-xs);
   font-weight: 600;
   letter-spacing: 0.12em;
   color: var(--sl-color-accent);
@@ -178,14 +174,14 @@
 }
 
 .az-lead {
-  font-size: 1.15rem;
+  font-size: var(--sl-text-body);
   color: var(--sl-color-gray-2);
   max-width: 480px;
   margin-bottom: 0.5rem;
 }
 
 .az-sub {
-  font-size: 1rem;
+  font-size: var(--sl-text-base, 1rem);
   color: var(--sl-color-gray-2);
   margin-bottom: 2rem;
 }
@@ -200,13 +196,13 @@
 
 .az-command-lane {
   background: var(--sl-color-gray-6);
-  border: 1px solid var(--sl-color-gray-5);
+  border: 1px solid var(--sl-color-hairline-light);
   border-radius: 0.5rem;
   padding: 1.5rem;
 }
 
 .az-command-lane h2 {
-  font-size: 0.85rem;
+  font-size: var(--sl-text-xs);
   font-weight: 600;
   color: var(--sl-color-gray-2);
   text-transform: uppercase;
@@ -229,11 +225,11 @@
 
 .az-command-lane code {
   color: var(--sl-color-accent);
-  font-size: 0.85rem;
+  font-size: var(--sl-text-sm);
 }
 
 .az-command-lane span {
-  font-size: 0.8rem;
+  font-size: var(--sl-text-xs);
   color: var(--sl-color-gray-2);
 }
 
@@ -251,7 +247,7 @@
 .az-metrics article {
   text-align: center;
   background: var(--sl-color-gray-6);
-  border: 1px solid var(--sl-color-gray-5);
+  border: 1px solid var(--sl-color-hairline-light);
   border-radius: 0.5rem;
   padding: 1.5rem 1rem;
 }
@@ -264,7 +260,7 @@
 }
 
 .az-metric-label {
-  font-size: 0.85rem;
+  font-size: var(--sl-text-sm);
   color: var(--sl-color-gray-2);
   margin-top: 0.25rem;
 }
@@ -281,7 +277,7 @@
 .az-steps h2,
 .az-arch h2,
 .az-cta h2 {
-  font-size: 2rem;
+  font-size: var(--sl-text-h1);
   font-weight: 800;
   letter-spacing: -0.02em;
   margin-bottom: 2.5rem;
@@ -296,27 +292,27 @@
 
 .az-features-grid article {
   background: var(--sl-color-gray-6);
-  border: 1px solid var(--sl-color-gray-5);
+  border: 1px solid var(--sl-color-hairline-light);
   border-radius: 0.5rem;
   padding: 1.5rem;
   transition: border-color 0.15s, background 0.15s;
 }
 
 .az-features-grid article:hover {
-  border-color: #0ea5e9;
+  border-color: var(--sl-color-accent);
   background: var(--az-bg-card-hover);
 }
 
 .az-features-grid h3 {
-  font-size: 1.05rem;
+  font-size: var(--sl-text-h4);
   font-weight: 700;
   margin-bottom: 0.5rem;
 }
 
 .az-features-grid p {
-  font-size: 0.9rem;
+  font-size: var(--sl-text-sm);
   color: var(--sl-color-gray-2);
-  line-height: 1.5;
+  line-height: var(--sl-line-height);
 }
 
 /* ── Steps ─────────────────────────────────────── */
@@ -335,37 +331,37 @@
 
 .az-steps-grid article {
   background: var(--sl-color-gray-6);
-  border: 1px solid var(--sl-color-gray-5);
+  border: 1px solid var(--sl-color-hairline-light);
   border-radius: 0.5rem;
   padding: 1.5rem;
 }
 
 .az-step-num {
-  font-size: 0.8rem;
+  font-size: var(--sl-text-xs);
   font-weight: 700;
   color: var(--sl-color-accent);
   letter-spacing: 0.05em;
 }
 
 .az-steps-grid h3 {
-  font-size: 1.1rem;
+  font-size: var(--sl-text-h4);
   font-weight: 700;
   margin: 0.5rem 0;
 }
 
 .az-steps-grid code {
   display: block;
-  background: rgba(56, 189, 248, 0.08);
+  background: var(--sl-color-accent-low);
   color: var(--sl-color-accent);
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
-  font-size: 0.8rem;
+  font-size: var(--sl-text-xs);
   margin-bottom: 0.75rem;
   word-break: break-all;
 }
 
 .az-steps-grid p {
-  font-size: 0.85rem;
+  font-size: var(--sl-text-sm);
   color: var(--sl-color-gray-2);
 }
 
@@ -385,13 +381,13 @@
 
 .az-arch-grid article {
   background: var(--sl-color-gray-6);
-  border: 1px solid var(--sl-color-gray-5);
+  border: 1px solid var(--sl-color-hairline-light);
   border-radius: 0.5rem;
   padding: 1.5rem;
 }
 
 .az-arch-grid h3 {
-  font-size: 1.05rem;
+  font-size: var(--sl-text-h4);
   font-weight: 700;
   margin-bottom: 1rem;
   color: var(--sl-color-accent);
@@ -405,7 +401,7 @@
 }
 
 .az-arch-grid li {
-  font-size: 0.9rem;
+  font-size: var(--sl-text-sm);
   color: var(--sl-color-gray-2);
   padding-left: 1rem;
   position: relative;
@@ -429,7 +425,7 @@
 }
 
 .az-cta p {
-  font-size: 1.1rem;
+  font-size: var(--sl-text-body);
   color: var(--sl-color-gray-2);
   margin-bottom: 2rem;
 }
@@ -444,7 +440,7 @@
 /* ── Footer ────────────────────────────────────── */
 
 .az-footer {
-  border-top: 1px solid var(--sl-color-gray-5);
+  border-top: 1px solid var(--sl-color-hairline-light);
   padding: 2rem 1.5rem;
 }
 
@@ -460,13 +456,13 @@
 
 .az-footer-brand {
   font-weight: 700;
-  font-size: 1rem;
+  font-size: var(--sl-text-base, 1rem);
 }
 
 .az-footer-links {
   display: flex;
   gap: 1.5rem;
-  font-size: 0.85rem;
+  font-size: var(--sl-text-sm);
 }
 
 .az-footer-links a {
@@ -479,7 +475,7 @@
 }
 
 .az-footer-copy {
-  font-size: 0.8rem;
+  font-size: var(--sl-text-xs);
   color: var(--sl-color-gray-2);
 }
 
@@ -507,7 +503,7 @@
 @media (max-width: 600px) {
   .az-nav-links {
     gap: 0.75rem;
-    font-size: 0.8rem;
+    font-size: var(--sl-text-xs);
   }
 
   .az-hero {

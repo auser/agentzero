@@ -117,6 +117,29 @@ pub fn validate_image_refs(
     Ok(())
 }
 
+/// Check whether the provider supports vision before sending images.
+///
+/// - `vision_support = Some(true)` → allowed
+/// - `vision_support = Some(false)` → error: provider explicitly does not support vision
+/// - `vision_support = None` → allowed (assume provider handles it; no explicit config)
+pub fn check_vision_support(
+    image_refs: &[ImageRef],
+    vision_support: Option<bool>,
+) -> Result<(), String> {
+    if image_refs.is_empty() {
+        return Ok(());
+    }
+
+    match vision_support {
+        Some(false) => Err(format!(
+            "Provider does not support vision, but message contains {} image(s). \
+             Set model_support_vision = true in config or remove images.",
+            image_refs.len()
+        )),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +249,41 @@ mod tests {
             end: 10,
         }];
         assert!(validate_image_refs(&refs, 4, false).is_ok());
+    }
+
+    fn sample_image_ref() -> ImageRef {
+        ImageRef {
+            source: "/tmp/a.png".into(),
+            kind: ImageSourceKind::LocalFile,
+            start: 0,
+            end: 10,
+        }
+    }
+
+    #[test]
+    fn vision_check_no_images_always_ok() {
+        assert!(check_vision_support(&[], Some(false)).is_ok());
+        assert!(check_vision_support(&[], Some(true)).is_ok());
+        assert!(check_vision_support(&[], None).is_ok());
+    }
+
+    #[test]
+    fn vision_check_explicit_false_rejects_images() {
+        let refs = vec![sample_image_ref()];
+        let err = check_vision_support(&refs, Some(false)).unwrap_err();
+        assert!(err.contains("does not support vision"));
+        assert!(err.contains("1 image(s)"));
+    }
+
+    #[test]
+    fn vision_check_explicit_true_allows_images() {
+        let refs = vec![sample_image_ref()];
+        assert!(check_vision_support(&refs, Some(true)).is_ok());
+    }
+
+    #[test]
+    fn vision_check_none_allows_images() {
+        let refs = vec![sample_image_ref()];
+        assert!(check_vision_support(&refs, None).is_ok());
     }
 }

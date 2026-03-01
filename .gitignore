@@ -22,3 +22,4 @@ externals/
 auth_profiles.json
 
 .playwright-mcp
+.astro

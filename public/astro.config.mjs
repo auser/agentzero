@@ -1,5 +1,6 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import starlightClientMermaid from "@pasqal-io/starlight-client-mermaid";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
@@ -8,10 +9,16 @@ export default defineConfig({
   outDir: "../gh-pages",
   integrations: [
     starlight({
+      plugins: [starlightClientMermaid()],
       title: "AgentZero",
       social: [
         { icon: "github", label: "GitHub", href: "https://github.com/auser/agentzero" },
       ],
+      components: {
+        Header: "./src/components/Header.astro",
+        ThemeProvider: "./src/components/ThemeProvider.astro",
+        ThemeSelect: "./src/components/ThemeSelect.astro",
+      },
       customCss: [
         "./src/styles/global.css",
         "./src/styles/landing.css",
@@ -21,14 +28,31 @@ export default defineConfig({
           label: "Getting Started",
           items: [
             { label: "Overview", slug: "overview" },
-            { label: "Architecture", slug: "architecture" },
+            { label: "Installation", slug: "installation" },
+            { label: "Quick Start", slug: "quickstart" },
+          ],
+        },
+        {
+          label: "Configuration",
+          items: [
+            { label: "Config Reference", slug: "config/reference" },
+            { label: "Environment Variables", slug: "config/environment" },
+          ],
+        },
+        {
+          label: "Architecture",
+          items: [
+            { label: "System Overview", slug: "architecture" },
+            { label: "Trait System", slug: "architecture/traits" },
             { label: "Roadmap", slug: "roadmap" },
           ],
         },
         {
           label: "Reference",
           items: [
-            { label: "Command Reference", slug: "reference/commands" },
+            { label: "CLI Commands", slug: "reference/commands" },
+            { label: "Gateway API", slug: "reference/gateway" },
+            { label: "Tools & Plugins", slug: "reference/tools" },
             { label: "Benchmarks", slug: "reference/benchmarks" },
             { label: "Release Process", slug: "reference/release" },
           ],
@@ -40,11 +64,9 @@ export default defineConfig({
         {
           label: "Security",
           items: [
+            { label: "Security Boundaries", slug: "security/boundaries" },
             { label: "Threat Model", slug: "security/threat-model" },
-            {
-              label: "Dependency Policy",
-              slug: "security/dependency-policy",
-            },
+            { label: "Dependency Policy", slug: "security/dependency-policy" },
           ],
         },
       ],

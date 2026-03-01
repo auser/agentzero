@@ -91,6 +91,10 @@ Project-level operating rules for all contributors and coding agents working in 
 - **Prefer `impl` blocks over free functions**: Attach behavior to the type it operates on. Use free functions only for true module-level utilities with no obvious owning type.
 - **`where` clauses for readability**: Use `where` clauses (not inline bounds) when generic constraints span more than one trait bound.
 
+### 11) Screenshots saved to `/tmp`
+- When taking screenshots (browser, UI verification, etc.), always save images to the `/tmp` directory.
+- Do not save screenshot files in the repository root or any tracked directory.
+
 ## Preferred PR Checklist
 - [ ] Functionality implemented
 - [ ] Success-path tests added

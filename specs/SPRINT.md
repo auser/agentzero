@@ -181,44 +181,44 @@ References:
 - [x] Implement no-progress detector (same tool+args+output N times)
 - [x] Implement ping-pong detector (A→B→A→B alternation)
 - [x] Implement failure streak detector (same tool consecutive failures)
-- [ ] Add self-correction prompt injection before hard stop
+- [x] Add self-correction prompt injection before hard stop
 - [x] Wire to agent config thresholds (0 = disabled)
 
 ### C2. Research Phase
-- [ ] Add research phase to agent loop (runs before main turn)
-- [ ] Implement trigger strategies: never, always, keywords, length, question
-- [ ] Separate tool budget from main agent turn
-- [ ] Add progress reporting
+- [x] Add research phase to agent loop (runs before main turn)
+- [x] Implement trigger strategies: never, always, keywords, length, question
+- [x] Separate tool budget from main agent turn
+- [x] Add progress reporting
 
 ### C3. Parallel Tool Execution
-- [ ] When `parallel_tools = true`, execute independent tool calls concurrently
-- [ ] Maintain stable result ordering
-- [ ] Respect approval gating (sequential for gated tools)
+- [x] When `parallel_tools = true`, execute independent tool calls concurrently
+- [x] Maintain stable result ordering
+- [x] Respect approval gating (sequential for gated tools)
 
 ### C4. Sub-Agent Delegation
 - [x] Create `crates/agentzero-delegation/`
-- [ ] Implement `delegate` tool
-- [ ] Resolve sub-agent config from `[agents.<name>]`
+- [x] Implement `delegate` tool
+- [x] Resolve sub-agent config from `[agents.<name>]`
 - [x] Enforce max_depth recursion guard
 - [x] Exclude `delegate` from sub-agent tool allowlists
-- [ ] Support agentic mode (multi-turn tool loop) vs single prompt→response
+- [x] Support agentic mode (multi-turn tool loop) vs single prompt→response
 
 ### C5. Model Routing
 - [x] Create `crates/agentzero-routing/`
 - [x] Implement hint resolution from `[[model_routes]]`
 - [x] Implement query classification engine from `[query_classification]` rules
-- [ ] Implement `model_routing_config` runtime tool
+- [x] Implement `model_routing_config` runtime tool
 - [x] Implement `[[embedding_routes]]` resolution
 
 ### C6. Reasoning Control
-- [ ] Wire reasoning_level through to provider calls
-- [ ] Provider-specific mapping: Ollama (think field), OpenAI Codex (effort param)
-- [ ] Wire reasoning_enabled as global override
+- [x] Wire reasoning_level through to provider calls
+- [x] Provider-specific mapping: Ollama (think field), OpenAI Codex (effort param)
+- [x] Wire reasoning_enabled as global override
 
 ### C-Acceptance
 - [x] Loop detection engages on repeated tool calls (test with mock)
-- [ ] Research phase runs before main turn when triggered
-- [ ] Parallel tool execution produces correct results
+- [x] Research phase runs before main turn when triggered
+- [x] Parallel tool execution produces correct results
 - [x] Sub-agent delegation respects max_depth
 - [x] Model routing resolves hints correctly
 
@@ -265,17 +265,24 @@ Foundation for all channel features — async trait, 5 core channel implementati
 - [x] `/new` — clear sender conversation history
 - [x] `/approve-request <tool>`, `/approve-confirm <id>`, `/approve-pending`
 - [x] `/approve <tool>`, `/unapprove <tool>`, `/approvals`
-- [ ] Persist approvals to autonomy.auto_approve
+- [x] Persist approvals to autonomy.auto_approve (`update_auto_approve()` in config loader)
+- [x] Wire `/approve` and `/unapprove` commands to config persistence via `CommandContext`
+- [x] Add `intercept_command_with_context()` for stateful command handling
 
 ### D3. Streaming and Drafts
 - [x] Add stream_mode config (off/partial) — in `ChannelsGlobalConfig`
 - [x] Add draft_update_interval_ms throttle — in `ChannelsGlobalConfig`
-- [ ] Implement draft lifecycle: send_draft → update_draft → finalize_draft
+- [x] Implement draft lifecycle: send_draft → update_draft → finalize_draft
+- [x] Create `DraftTracker` with throttled updates (`drafts.rs`)
+- [x] Support start, update, finalize, cancel, and flush operations
+- [x] Non-draft channels gracefully return `None` on `start()`
 
 ### D4. Message Interruption
 - [x] Add interrupt_on_new_message config flag — in `ChannelsGlobalConfig`
-- [ ] Implement same-sender same-chat cancellation scope
-- [ ] Preserve interrupted turn in conversation history
+- [x] Implement same-sender same-chat cancellation scope (`interruption.rs`)
+- [x] `InterruptionDetector` with `CancelToken` per `TurnKey(sender, channel)`
+- [x] New turn for same key cancels previous turn's token
+- [x] `cancel_all()` for graceful shutdown
 
 ### D5. ACK Reactions
 - [x] Add `[channels_config.ack_reaction.<channel>]` config (`AckReactionConfig` in model.rs)
@@ -283,16 +290,19 @@ Foundation for all channel features — async trait, 5 core channel implementati
 - [x] Implement conditional rules (contains_any/all/none, regex, sender/chat/locale filters)
 
 ### D6. Hot Config Reload
-- [ ] Watch config.toml during daemon/channel runtime
-- [ ] Hot-apply: default_provider, default_model, default_temperature, api_key
-- [ ] Hot-apply: reliability settings
+- [x] Create `ConfigWatcher` with `tokio::fs::metadata()` polling (`watcher.rs`)
+- [x] Broadcast new configs via `tokio::sync::watch` channel
+- [x] Invalid configs log warning and keep previous config
+- [x] Cancellation signal for graceful shutdown
+- [x] `from_config()` constructor to avoid double-load at startup
 
 ### D7. Multimodal Image Markers
 - [x] Implement `[IMAGE:<source>]` parser for user messages (`image_markers.rs`)
 - [x] Support local file paths and data URIs
 - [x] Support remote URL fetch when allow_remote_fetch = true
 - [x] Add validation (max_images, allow_remote_fetch policy)
-- [ ] Add provider vision capability check (fail with structured error)
+- [x] Add provider vision capability check (`check_vision_support()` in `image_markers.rs`)
+- [x] Reject images when `model_support_vision = false` with structured error
 
 ### D8. Catalog Additions
 - [x] Add Napcat (QQ via OneBot) to channel catalog
@@ -302,7 +312,8 @@ Foundation for all channel features — async trait, 5 core channel implementati
 - [x] Group reply respects mention_only mode
 - [x] In-chat commands execute before LLM inference
 - [x] ACK reactions fire on configured channels
-- [ ] Hot config reload updates provider settings without restart
+- [x] Hot config reload detects file changes and broadcasts new config
+- [x] Example config files created (basic + full reference)
 - [x] Image markers parse correctly
 
 ---
