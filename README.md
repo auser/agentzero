@@ -57,40 +57,60 @@ WASM runtime sandbox controls are also enforced in the same crate:
 
 ## Quick start
 
-### 1. Prerequisites
-
-- Rust 1.80+
-- Cargo
-
-### 2. Build
+### 1. Install
 
 ```bash
-cargo build
+curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash
 ```
 
-### 3. Run onboarding
+Or with options:
 
 ```bash
-cargo run -p agentzero -- onboard
+# Install specific version to custom directory
+curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash -s -- \
+  --version 0.1.0 --dir /usr/local/bin
+
+# Install with shell completions
+curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash -s -- --completions zsh
+
+# Build from source (requires Rust 1.80+)
+curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash -s -- --from-source
+```
+
+Run `install.sh --help` for all options.
+
+### 2. Run onboarding
+
+```bash
+agentzero onboard
 ```
 
 This launches an interactive setup flow and writes `agentzero.toml`.
 
-### 4. Set your API key
+### 3. Set your API key
 
 ```bash
 export OPENAI_API_KEY="<your-key>"
 ```
 
-### 5. Run commands
+### 4. Run commands
 
 ```bash
-cargo run -p agentzero -- status
-cargo run -p agentzero -- doctor
-cargo run -p agentzero -- providers
-cargo run -p agentzero -- auth list
-cargo run -p agentzero -- agent -m "hello"
-cargo run -p agentzero -- gateway
+agentzero status
+agentzero doctor
+agentzero providers
+agentzero auth list
+agentzero agent -m "hello"
+agentzero gateway
+```
+
+### Build from source (development)
+
+```bash
+git clone https://github.com/auser/agentzero.git
+cd agentzero
+cargo build --release
+cargo run -p agentzero -- --help
 ```
 
 ## CLI overview

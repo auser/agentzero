@@ -5,18 +5,20 @@ description: Get AgentZero running in under 5 minutes — from build to first ag
 
 This guide gets you from zero to a working agent in under 5 minutes.
 
-## 1. Build
+## 1. Install
 
 ```bash
-cargo build -p agentzero --release
+curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash
 ```
+
+See [Installation](/agentzero/installation/) for more options (custom directory, specific version, shell completions).
 
 ## 2. Run Onboarding
 
 The onboarding wizard creates your `agentzero.toml` config file:
 
 ```bash
-cargo run -p agentzero -- onboard --interactive
+agentzero onboard --interactive
 ```
 
 This walks you through:
@@ -28,7 +30,7 @@ This walks you through:
 For non-interactive setup with explicit flags:
 
 ```bash
-cargo run -p agentzero -- onboard \
+agentzero onboard \
   --provider openrouter \
   --model anthropic/claude-sonnet-4-6 \
   --memory sqlite \
@@ -52,32 +54,32 @@ export OPENAI_API_KEY="sk-or-v1-..."
 ## 4. Send a Message
 
 ```bash
-cargo run -p agentzero -- agent -m "What is the capital of France?"
+agentzero agent -m "What is the capital of France?"
 ```
 
 ## 5. Explore Commands
 
 ```bash
 # System health check
-cargo run -p agentzero -- status
+agentzero status
 
 # Diagnostics
-cargo run -p agentzero -- doctor models
+agentzero doctor models
 
 # List providers
-cargo run -p agentzero -- providers
+agentzero providers
 
 # View config
-cargo run -p agentzero -- config show
+agentzero config show
 
 # Start HTTP gateway
-cargo run -p agentzero -- gateway
+agentzero gateway
 
 # Start daemon
-cargo run -p agentzero -- daemon
+agentzero daemon
 ```
 
-## 6. Quality Gates
+## 6. Quality Gates (Development)
 
 Run the full quality check suite before committing changes:
 
@@ -137,10 +139,10 @@ agentzero service status
 
 ```bash
 # Debug with verbose output
-cargo run -p agentzero -- -vvv agent -m "test"
+agentzero -vvv agent -m "test"
 
 # Run diagnostics
-cargo run -p agentzero -- doctor models
+agentzero doctor models
 ```
 
 ## Next Steps
