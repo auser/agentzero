@@ -10,7 +10,7 @@ anyhow.workspace = true
 agentzero-security = { workspace = true }
 agentzero-storage = { workspace = true }
 agentzero-channels = { workspace = true }
-axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "ws"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "ws"] }
 futures-util = "0.3"
 serde.workspace = true
 serde_json.workspace = true

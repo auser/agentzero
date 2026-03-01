@@ -12,7 +12,7 @@ serde_json.workspace = true
 sha2 = "0.10"
 tar = "0.4"
 thiserror.workspace = true
-wasmtime = "30.0"
+wasmtime = "42.0"
 
 [dev-dependencies]
 tempfile = "3"
