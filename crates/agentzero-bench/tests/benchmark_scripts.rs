@@ -126,14 +126,14 @@ fn verify_release_version_script_passes_for_current_workspace_version() {
     let output = Command::new("bash")
         .arg("scripts/verify-release-version.sh")
         .arg("--version")
-        .arg("0.1.0")
+        .arg("0.2.0")
         .current_dir(&root)
         .output()
         .expect("script should execute");
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("PASS: changelog + Cargo package versions validated for 0.1.0"));
+    assert!(stdout.contains("PASS: changelog + Cargo package versions validated for 0.2.0"));
 }
 
 #[test]

@@ -78,11 +78,16 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_db_path() -> PathBuf {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("agentzero-memory-{nanos}.db"))
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "agentzero-memory-{}-{nanos}-{seq}.db",
+            std::process::id()
+        ))
     }
 
     #[tokio::test]

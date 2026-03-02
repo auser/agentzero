@@ -66,7 +66,10 @@ mod tests {
             .expect("clock should be after unix epoch")
             .as_nanos();
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("agentzero-audit-{nanos}-{id}"));
+        let dir = std::env::temp_dir().join(format!(
+            "agentzero-audit-{}-{nanos}-{id}",
+            std::process::id()
+        ));
         fs::create_dir_all(&dir).expect("temp dir should be created");
         dir
     }

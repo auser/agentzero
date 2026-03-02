@@ -19,7 +19,10 @@ fn temp_dir(prefix: &str) -> std::path::PathBuf {
         .expect("time should move forward")
         .as_nanos();
     let seq = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("az-integ-{prefix}-{nanos}-{seq}"));
+    let dir = std::env::temp_dir().join(format!(
+        "az-integ-{prefix}-{}-{nanos}-{seq}",
+        std::process::id()
+    ));
     fs::create_dir_all(&dir).expect("temp dir should be created");
     dir
 }

@@ -3,17 +3,23 @@ use crate::{
 };
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_dir() -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock should be after unix epoch")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("agentzero-config-{nanos}"));
+    let seq = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "agentzero-config-{}-{nanos}-{seq}",
+        std::process::id()
+    ));
     fs::create_dir_all(&dir).expect("temp dir should be created");
     dir
 }

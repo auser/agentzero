@@ -183,7 +183,10 @@ mod tests {
             .expect("time should move forward")
             .as_nanos();
         let seq = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("agentzero-queue-{now}-{seq}"));
+        let dir = std::env::temp_dir().join(format!(
+            "agentzero-queue-{}-{now}-{seq}",
+            std::process::id()
+        ));
         let key = StorageKey::from_config_dir(&dir).expect("key should load");
         EncryptedQueue::new(dir, key).expect("queue should construct")
     }

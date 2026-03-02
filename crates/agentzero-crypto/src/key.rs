@@ -102,7 +102,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time should move forward")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("agentzero-crypto-{now}"));
+        let dir =
+            std::env::temp_dir().join(format!("agentzero-crypto-{}-{now}", std::process::id()));
         fs::create_dir_all(&dir).expect("temp dir should be created");
         dir
     }
