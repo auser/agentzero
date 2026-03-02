@@ -23,6 +23,7 @@ impl AgentZeroCommand for GatewayCommand {
             agentzero_gateway::GatewayRunOptions {
                 token_store_path: Some(token_store_path),
                 new_pairing: opts.new_pairing,
+                ..Default::default()
             },
         )
         .await

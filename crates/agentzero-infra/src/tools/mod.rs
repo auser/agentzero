@@ -15,8 +15,8 @@ pub use agentzero_tools::{
     GitOperationsTool, GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool,
     HardwareMemoryReadTool, ImageInfoTool, MemoryForgetTool, MemoryRecallTool, MemoryStoreTool,
     ModelRoutingConfigTool, PdfReadTool, ProcessTool, ProxyConfigTool, PushoverTool,
-    ReadFilePolicy, ReadFileTool, ScreenshotTool, ShellPolicy, ShellTool, SopAdvanceTool,
-    SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, SubAgentListTool,
+    ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool, ShellPolicy, ShellTool,
+    SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, SubAgentListTool,
     SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool, ToolSecurityPolicy, WasmModuleTool,
     WasmToolExecTool, WebSearchTool, WriteFilePolicy, WriteFileTool,
 };
@@ -80,6 +80,7 @@ pub fn default_tools(
         tools.push(Box::new(CronUpdateTool));
         tools.push(Box::new(CronPauseTool));
         tools.push(Box::new(CronResumeTool));
+        tools.push(Box::new(ScheduleTool));
     }
 
     if policy.enable_web_search {

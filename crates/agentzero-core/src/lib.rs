@@ -7,6 +7,6 @@ pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ChatResult, HookEvent,
     HookFailureMode, HookPolicy, HookRiskTier, HookSink, MemoryEntry, MemoryStore, MetricsSink,
-    Provider, ReasoningConfig, ResearchPolicy, ResearchTrigger, Tool, ToolContext, ToolResult,
-    UserMessage,
+    Provider, ReasoningConfig, ResearchPolicy, ResearchTrigger, StreamChunk, Tool, ToolContext,
+    ToolResult, UserMessage,
 };

@@ -324,6 +324,9 @@ pub enum LocalCommands {
         /// Probe timeout in milliseconds.
         #[arg(long, default_value_t = 2000)]
         timeout_ms: u64,
+        /// Retry unreachable providers up to N times with backoff.
+        #[arg(long, default_value_t = 0)]
+        retries: u32,
         /// Emit machine-readable JSON output.
         #[arg(long)]
         json: bool,

@@ -221,6 +221,29 @@ pub struct ProviderConfig {
     pub default_temperature: f64,
     pub provider_api: Option<String>,
     pub model_support_vision: Option<bool>,
+    #[serde(default)]
+    pub transport: TransportSettings,
+}
+
+/// Transport-level settings loaded from `[provider.transport]` in TOML.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TransportSettings {
+    pub timeout_ms: u64,
+    pub max_retries: usize,
+    pub circuit_breaker_threshold: u32,
+    pub circuit_breaker_reset_ms: u64,
+}
+
+impl Default for TransportSettings {
+    fn default() -> Self {
+        Self {
+            timeout_ms: 30_000,
+            max_retries: 3,
+            circuit_breaker_threshold: 5,
+            circuit_breaker_reset_ms: 30_000,
+        }
+    }
 }
 
 impl Default for ProviderConfig {
@@ -232,6 +255,7 @@ impl Default for ProviderConfig {
             default_temperature: 0.7,
             provider_api: None,
             model_support_vision: None,
+            transport: TransportSettings::default(),
         }
     }
 }

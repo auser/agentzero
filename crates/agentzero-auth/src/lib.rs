@@ -467,6 +467,51 @@ impl AuthManager {
         })
     }
 
+    /// Return the health of all profiles (for `auth status` display).
+    pub fn token_health(&self) -> anyhow::Result<Vec<ProfileHealth>> {
+        let state = self.load_state()?;
+        let now = now_epoch_secs();
+        Ok(state
+            .profiles
+            .iter()
+            .map(|profile| ProfileHealth {
+                name: profile.name.clone(),
+                provider: profile.provider.clone(),
+                health: assess_token_health(profile.token_expires_at_epoch_secs, now),
+                has_refresh_token: profile
+                    .refresh_token
+                    .as_deref()
+                    .is_some_and(|v| !v.trim().is_empty()),
+                expires_at_epoch_secs: profile.token_expires_at_epoch_secs,
+            })
+            .collect())
+    }
+
+    /// Check that the active profile for `provider` has a valid token.
+    /// If the token is expired and has a refresh token, attempts a local
+    /// refresh (extends expiry). Returns the token if valid/refreshed, or
+    /// an error if the token is expired and cannot be refreshed.
+    ///
+    /// This is designed to be called by the runtime before each provider call.
+    pub fn ensure_valid_token(&self, provider: &str) -> anyhow::Result<Option<String>> {
+        let result = self.refresh_for_provider(provider, None)?;
+        match result {
+            None => Ok(None),
+            Some(ref r) if r.status == RefreshStatus::Valid => {
+                self.active_token_for_provider(provider)
+            }
+            Some(ref r) if r.status == RefreshStatus::Refreshed => {
+                self.active_token_for_provider(provider)
+            }
+            Some(r) => Err(anyhow!(
+                "auth token for profile '{}' has expired and cannot be auto-refreshed — \
+                 run `agentzero auth login --provider {}`",
+                r.profile,
+                provider
+            )),
+        }
+    }
+
     fn upsert_token(
         &self,
         profile_name: &str,
@@ -579,11 +624,54 @@ impl AuthManager {
     }
 }
 
+/// Token health status for display and pre-call validation.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum TokenHealth {
+    /// Token has no expiry or expiry is more than 5 minutes away.
+    Valid,
+    /// Token expires within 5 minutes (but is not yet expired).
+    ExpiringSoon,
+    /// Token has expired.
+    Expired,
+    /// No token expiry information available (API key flow).
+    NoExpiry,
+}
+
+impl TokenHealth {
+    pub fn label(&self) -> &'static str {
+        match self {
+            TokenHealth::Valid => "valid",
+            TokenHealth::ExpiringSoon => "expiring soon",
+            TokenHealth::Expired => "expired",
+            TokenHealth::NoExpiry => "no expiry",
+        }
+    }
+}
+
+/// Per-profile health report returned by `token_health`.
+#[derive(Debug, Clone)]
+pub struct ProfileHealth {
+    pub name: String,
+    pub provider: String,
+    pub health: TokenHealth,
+    pub has_refresh_token: bool,
+    pub expires_at_epoch_secs: Option<u64>,
+}
+
 fn now_epoch_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time should be after epoch")
         .as_secs()
+}
+
+fn assess_token_health(expires_at: Option<u64>, now: u64) -> TokenHealth {
+    match expires_at {
+        None => TokenHealth::NoExpiry,
+        Some(exp) if exp <= now => TokenHealth::Expired,
+        Some(exp) if exp <= now.saturating_add(300) => TokenHealth::ExpiringSoon,
+        Some(_) => TokenHealth::Valid,
+    }
 }
 
 pub fn extract_oauth_code_from_input(redirect_or_code: &str) -> String {
@@ -611,6 +699,152 @@ pub fn extract_oauth_state(redirect_or_code: &str) -> Option<String> {
             .find(|(key, _)| key.eq_ignore_ascii_case("state"))
             .map(|(_, value)| value.to_string())
     })
+}
+
+// ---------------------------------------------------------------------------
+// Gemini OAuth helpers
+// ---------------------------------------------------------------------------
+
+/// Google Gemini OAuth configuration.
+pub struct GeminiOAuthConfig {
+    pub client_id: String,
+    pub client_secret: String,
+    pub redirect_uri: String,
+}
+
+/// Build the Google OAuth2 authorization URL for Gemini API access.
+pub fn gemini_authorize_url(config: &GeminiOAuthConfig, state: &str) -> String {
+    let scope = "https://www.googleapis.com/auth/generative-language";
+    format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?\
+         client_id={client_id}&\
+         redirect_uri={redirect_uri}&\
+         response_type=code&\
+         scope={scope}&\
+         state={state}&\
+         access_type=offline&\
+         prompt=consent",
+        client_id =
+            url::form_urlencoded::byte_serialize(config.client_id.as_bytes()).collect::<String>(),
+        redirect_uri = url::form_urlencoded::byte_serialize(config.redirect_uri.as_bytes())
+            .collect::<String>(),
+        scope = url::form_urlencoded::byte_serialize(scope.as_bytes()).collect::<String>(),
+        state = url::form_urlencoded::byte_serialize(state.as_bytes()).collect::<String>(),
+    )
+}
+
+/// Exchange a Google OAuth authorization code for tokens.
+/// Returns `(access_token, refresh_token, expires_in_secs)`.
+pub async fn gemini_exchange_code(
+    config: &GeminiOAuthConfig,
+    code: &str,
+) -> anyhow::Result<(String, Option<String>, Option<u64>)> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://oauth2.googleapis.com/token")
+        .form(&[
+            ("code", code),
+            ("client_id", &config.client_id),
+            ("client_secret", &config.client_secret),
+            ("redirect_uri", &config.redirect_uri),
+            ("grant_type", "authorization_code"),
+        ])
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("Gemini token exchange failed: {body}");
+    }
+
+    let json: serde_json::Value = response.json().await?;
+    let access_token = json["access_token"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing access_token in Gemini response"))?
+        .to_string();
+    let refresh_token = json["refresh_token"].as_str().map(|s| s.to_string());
+    let expires_in = json["expires_in"].as_u64();
+
+    Ok((access_token, refresh_token, expires_in))
+}
+
+/// Refresh a Google OAuth access token using a refresh token.
+/// Returns `(new_access_token, expires_in_secs)`.
+pub async fn gemini_refresh_token(
+    config: &GeminiOAuthConfig,
+    refresh_token: &str,
+) -> anyhow::Result<(String, Option<u64>)> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://oauth2.googleapis.com/token")
+        .form(&[
+            ("refresh_token", refresh_token),
+            ("client_id", &config.client_id),
+            ("client_secret", &config.client_secret),
+            ("grant_type", "refresh_token"),
+        ])
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("Gemini token refresh failed: {body}");
+    }
+
+    let json: serde_json::Value = response.json().await?;
+    let access_token = json["access_token"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing access_token in refresh response"))?
+        .to_string();
+    let expires_in = json["expires_in"].as_u64();
+
+    Ok((access_token, expires_in))
+}
+
+// ---------------------------------------------------------------------------
+// Token storage migration
+// ---------------------------------------------------------------------------
+
+const AUTH_STATE_VERSION: u32 = 2;
+
+/// Internal versioned wrapper for auth state persistence.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct VersionedAuthState {
+    #[serde(default = "default_version")]
+    version: u32,
+    #[serde(flatten)]
+    state: AuthState,
+}
+
+#[allow(dead_code)]
+fn default_version() -> u32 {
+    1
+}
+
+impl AuthManager {
+    /// Migrate auth state from v1 to v2 format if needed.
+    /// v1 → v2: adds `refresh_token` and `token_expires_at_epoch_secs` fields
+    /// to profiles (handled by serde `#[serde(default)]`). The migration
+    /// just bumps the version marker.
+    pub fn migrate_if_needed(&self) -> anyhow::Result<bool> {
+        let raw: Option<serde_json::Value> = self.state_store.load_optional()?;
+        let Some(mut value) = raw else {
+            return Ok(false);
+        };
+
+        let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+
+        if version >= AUTH_STATE_VERSION {
+            return Ok(false);
+        }
+
+        // v1 → v2: just stamp the new version. The serde defaults handle
+        // missing fields (refresh_token, token_expires_at_epoch_secs).
+        value["version"] = serde_json::json!(AUTH_STATE_VERSION);
+        self.state_store.save(&value)?;
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -929,6 +1163,155 @@ mod tests {
             .expect_err("missing profile should fail");
         assert!(err.to_string().contains("not found"));
 
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    // --- Token health tests ---
+
+    #[test]
+    fn assess_token_health_valid_when_no_expiry() {
+        assert_eq!(
+            super::assess_token_health(None, 1000),
+            super::TokenHealth::NoExpiry
+        );
+    }
+
+    #[test]
+    fn assess_token_health_valid_when_far_future() {
+        assert_eq!(
+            super::assess_token_health(Some(2000), 1000),
+            super::TokenHealth::Valid
+        );
+    }
+
+    #[test]
+    fn assess_token_health_expiring_soon_within_5_minutes() {
+        // 200 seconds from now is within 300 seconds (5 min) threshold.
+        assert_eq!(
+            super::assess_token_health(Some(1200), 1000),
+            super::TokenHealth::ExpiringSoon
+        );
+    }
+
+    #[test]
+    fn assess_token_health_expired_when_past() {
+        assert_eq!(
+            super::assess_token_health(Some(999), 1000),
+            super::TokenHealth::Expired
+        );
+    }
+
+    #[test]
+    fn token_health_returns_health_for_all_profiles() {
+        let dir = temp_dir();
+        let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
+
+        // Profile with no expiry (API key flow).
+        manager
+            .login("key-profile", "anthropic", "sk-ant-test", true)
+            .expect("login should succeed");
+
+        // Profile with future expiry (OAuth flow).
+        manager
+            .store_oauth_tokens(
+                "oauth-profile",
+                "openai-codex",
+                "access-tok",
+                Some("refresh-tok"),
+                Some(7200),
+                false,
+            )
+            .expect("store oauth tokens should succeed");
+
+        let health = manager.token_health().expect("health should succeed");
+        assert_eq!(health.len(), 2);
+
+        let key_health = health
+            .iter()
+            .find(|h| h.name == "key-profile")
+            .expect("key profile should be in health");
+        assert_eq!(key_health.health, super::TokenHealth::NoExpiry);
+        assert!(!key_health.has_refresh_token);
+
+        let oauth_health = health
+            .iter()
+            .find(|h| h.name == "oauth-profile")
+            .expect("oauth profile should be in health");
+        assert_eq!(oauth_health.health, super::TokenHealth::Valid);
+        assert!(oauth_health.has_refresh_token);
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn ensure_valid_token_returns_none_when_no_profile() {
+        let dir = temp_dir();
+        let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
+
+        let result = manager
+            .ensure_valid_token("openrouter")
+            .expect("ensure should succeed");
+        assert!(result.is_none());
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn ensure_valid_token_returns_token_when_valid() {
+        let dir = temp_dir();
+        let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
+        manager
+            .login("default", "openrouter", "sk-valid", true)
+            .expect("login should succeed");
+
+        let token = manager
+            .ensure_valid_token("openrouter")
+            .expect("ensure should succeed")
+            .expect("token should be returned");
+        assert_eq!(token, "sk-valid");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    // --- Gemini OAuth ---
+
+    #[test]
+    fn gemini_authorize_url_contains_required_params() {
+        let config = super::GeminiOAuthConfig {
+            client_id: "test-client-id".to_string(),
+            client_secret: "secret".to_string(),
+            redirect_uri: "http://localhost:8080/callback".to_string(),
+        };
+        let url = super::gemini_authorize_url(&config, "test-state-123");
+        assert!(url.contains("client_id=test-client-id"));
+        assert!(url.contains("state=test-state-123"));
+        assert!(url.contains("access_type=offline"));
+        assert!(url.contains("generative-language"));
+    }
+
+    // --- Token storage migration ---
+
+    #[test]
+    fn migrate_if_needed_returns_false_on_empty_store() {
+        let dir = temp_dir();
+        let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
+        let migrated = manager.migrate_if_needed().expect("migrate should succeed");
+        assert!(!migrated);
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn migrate_if_needed_returns_false_when_already_current() {
+        let dir = temp_dir();
+        let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
+        manager
+            .login("default", "openai", "tok-1", true)
+            .expect("login should succeed");
+        // First migration stamps v2.
+        let _ = manager.migrate_if_needed();
+        // Second call should return false.
+        let migrated = manager.migrate_if_needed().expect("migrate should succeed");
+        assert!(!migrated);
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
 }

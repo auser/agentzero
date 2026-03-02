@@ -1,0 +1,242 @@
+---
+title: Provider Setup Guides
+description: Step-by-step instructions for connecting AgentZero to OpenAI, Anthropic, OpenRouter, Ollama, and other providers.
+---
+
+This guide covers setup for the most common providers. AgentZero supports 37 providers — run `agentzero providers` for the full list.
+
+## OpenAI
+
+1. Get an API key from [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
+2. Configure:
+
+```bash
+agentzero onboard --provider openai --model gpt-4o --yes
+agentzero auth setup-token --provider openai --token sk-...
+```
+
+Or set the environment variable:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+**TOML config:**
+
+```toml
+[provider]
+kind = "openai"
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o"
+```
+
+**Available models:** `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `o1`, `o1-mini`, `o3-mini`
+
+---
+
+## Anthropic
+
+1. Get an API key from [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
+2. Configure:
+
+```bash
+agentzero onboard --provider anthropic --model claude-sonnet-4-6 --yes
+agentzero auth setup-token --provider anthropic --token sk-ant-...
+```
+
+Or set the environment variable:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+**TOML config:**
+
+```toml
+[provider]
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "claude-sonnet-4-6"
+```
+
+**Available models:** `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`
+
+:::note
+Anthropic uses a different API format (Messages API) from OpenAI. AgentZero handles this automatically when `kind = "anthropic"`.
+:::
+
+---
+
+## OpenRouter
+
+OpenRouter gives you access to hundreds of models through a single API key.
+
+1. Get an API key from [openrouter.ai/keys](https://openrouter.ai/keys).
+2. Configure:
+
+```bash
+agentzero onboard --provider openrouter --model anthropic/claude-sonnet-4-6 --yes
+agentzero auth setup-token --provider openrouter --token sk-or-v1-...
+```
+
+Or set the environment variable:
+
+```bash
+export OPENROUTER_API_KEY="sk-or-v1-..."
+```
+
+**TOML config:**
+
+```toml
+[provider]
+kind = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+model = "anthropic/claude-sonnet-4-6"
+```
+
+**Model names** use the format `provider/model` — e.g., `openai/gpt-4o`, `google/gemini-pro`, `meta-llama/llama-3.1-70b-instruct`.
+
+---
+
+## Ollama (local)
+
+Ollama runs models locally. No API key needed.
+
+1. Install Ollama from [ollama.com](https://ollama.com).
+2. Pull a model:
+
+```bash
+ollama pull llama3.1:8b
+```
+
+3. Start Ollama (it runs on `http://localhost:11434` by default):
+
+```bash
+ollama serve
+```
+
+4. Configure AgentZero:
+
+```bash
+agentzero onboard --provider ollama --model llama3.1:8b --yes
+```
+
+**TOML config:**
+
+```toml
+[provider]
+kind = "ollama"
+base_url = "http://localhost:11434/v1"
+model = "llama3.1:8b"
+```
+
+AgentZero can auto-discover local Ollama instances:
+
+```bash
+agentzero local discover
+```
+
+---
+
+## Other Local Providers
+
+### LM Studio
+
+```toml
+[provider]
+kind = "lmstudio"
+base_url = "http://localhost:1234/v1"
+model = "your-model-name"
+```
+
+### llama.cpp server
+
+```toml
+[provider]
+kind = "llamacpp"
+base_url = "http://localhost:8080/v1"
+model = "default"
+```
+
+### vLLM
+
+```toml
+[provider]
+kind = "vllm"
+base_url = "http://localhost:8000/v1"
+model = "your-model-name"
+```
+
+---
+
+## Cloud Providers with Default URLs
+
+These providers have built-in base URLs — you only need to set the API key:
+
+| Provider | Kind | Env Var |
+|---|---|---|
+| Groq | `groq` | `GROQ_API_KEY` |
+| Mistral | `mistral` | `MISTRAL_API_KEY` |
+| xAI (Grok) | `xai` | `XAI_API_KEY` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` |
+| Together AI | `together` | `TOGETHER_API_KEY` |
+| Fireworks AI | `fireworks` | — |
+| Perplexity | `perplexity` | — |
+| Cohere | `cohere` | — |
+| NVIDIA NIM | `nvidia` | — |
+
+Example for Groq:
+
+```bash
+agentzero onboard --provider groq --model llama-3.1-70b-versatile --yes
+export GROQ_API_KEY="gsk_..."
+```
+
+---
+
+## Custom Endpoints
+
+For any OpenAI-compatible API not in the catalog:
+
+```toml
+[provider]
+kind = "custom:https://my-api.example.com/v1"
+model = "my-model"
+```
+
+For Anthropic-compatible APIs:
+
+```toml
+[provider]
+kind = "anthropic-custom:https://my-proxy.example.com"
+model = "claude-sonnet-4-6"
+```
+
+---
+
+## Transport Configuration
+
+Per-provider transport settings can be configured for timeout, retries, and circuit breaking:
+
+```toml
+[provider.transport]
+timeout_ms = 30000              # request timeout (default: 30s)
+max_retries = 2                 # retry count on failure
+circuit_breaker_threshold = 5   # failures before circuit opens
+circuit_breaker_reset_ms = 60000 # time before half-open retry
+```
+
+---
+
+## Checking Provider Status
+
+```bash
+# List all supported providers (marks active one)
+agentzero providers
+
+# Check provider quota and API key status
+agentzero providers quota
+
+# Diagnose model availability
+agentzero doctor models
+```

@@ -1026,11 +1026,13 @@ Scan default ports for running local AI services.
 ```bash
 agentzero local discover
 agentzero local discover --timeout-ms 5000 --json
+agentzero local discover --retries 2    # Retry unreachable providers with backoff
 ```
 
 | Flag | Description |
 |---|---|
 | `--timeout-ms <MS>` | Probe timeout in milliseconds (default: `2000`) |
+| `--retries <N>` | Retry unreachable providers up to N times with backoff (default: `0`) |
 | `--json` | Emit machine-readable JSON output |
 
 #### `local status`

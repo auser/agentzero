@@ -1,15 +1,18 @@
 use crate::transport::{
-    jittered_backoff, map_reqwest_error, map_status_error, parse_retry_after, should_retry_status,
-    should_retry_transport, TransportError, TransportErrorKind, TransportResponse, MAX_ATTEMPTS,
+    jittered_backoff, log_request, log_response, log_retry, map_reqwest_error, map_status_error,
+    parse_retry_after, should_retry_status, should_retry_transport, TransportError,
+    TransportErrorKind, TransportResponse, MAX_ATTEMPTS,
 };
-use agentzero_core::{ChatResult, Provider, ReasoningConfig};
+use agentzero_core::{ChatResult, Provider, ReasoningConfig, StreamChunk};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::time::sleep;
 
 // ---------------------------------------------------------------------------
@@ -125,6 +128,8 @@ struct ChatRequest {
     messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stream: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -234,7 +239,11 @@ impl Provider for OpenAiCompatibleProvider {
                 content: prompt.to_string(),
             }],
             reasoning_effort,
+            stream: false,
         };
+
+        log_request("openai-compat", &url, &self.model);
+        let start = Instant::now();
 
         let mut last_error: Option<anyhow::Error> = None;
         for attempt in 0..MAX_ATTEMPTS {
@@ -244,10 +253,21 @@ impl Provider for OpenAiCompatibleProvider {
                 .await
             {
                 Ok(response) => {
+                    log_response(
+                        "openai-compat",
+                        response.status,
+                        response.body.len(),
+                        start.elapsed(),
+                    );
                     let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
                     if !status.is_success() {
                         let mapped = map_status_error(status, &response.body);
                         if attempt + 1 < MAX_ATTEMPTS && should_retry_status(status) {
+                            log_retry(
+                                "openai-compat",
+                                attempt,
+                                &format!("status {}", response.status),
+                            );
                             sleep(
                                 parse_retry_after(&response.headers)
                                     .unwrap_or_else(|| jittered_backoff(attempt)),
@@ -266,6 +286,7 @@ impl Provider for OpenAiCompatibleProvider {
                 Err(error) => {
                     let mapped = anyhow!("provider request failed: {}", error.message);
                     if attempt + 1 < MAX_ATTEMPTS && should_retry_transport(error.kind) {
+                        log_retry("openai-compat", attempt, &error.message);
                         sleep(jittered_backoff(attempt)).await;
                         last_error = Some(mapped);
                         continue;
@@ -277,6 +298,100 @@ impl Provider for OpenAiCompatibleProvider {
 
         Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
     }
+
+    async fn complete_streaming(
+        &self,
+        prompt: &str,
+        sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+    ) -> anyhow::Result<ChatResult> {
+        let url = format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        );
+        let payload = ChatRequest {
+            model: self.model.clone(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            }],
+            reasoning_effort: None,
+            stream: true,
+        };
+
+        log_request("openai-compat", &url, &self.model);
+        let start = Instant::now();
+
+        let client = reqwest::Client::new();
+        let mut request = client.post(&url).json(&payload);
+        if !self.api_key.is_empty() {
+            request = request.bearer_auth(&self.api_key);
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| anyhow!("streaming request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(map_status_error(status, &body));
+        }
+
+        let mut byte_stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut accumulated = String::new();
+
+        while let Some(chunk_result) = byte_stream.next().await {
+            let bytes = chunk_result.context("error reading SSE chunk")?;
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+            while let Some(event_end) = buffer.find("\n\n") {
+                let event_block = buffer[..event_end].to_string();
+                buffer = buffer[event_end + 2..].to_string();
+
+                if let Some(delta) = parse_openai_sse_delta(&event_block) {
+                    accumulated.push_str(&delta);
+                    let _ = sender.send(StreamChunk { delta, done: false });
+                }
+            }
+        }
+
+        log_response("openai-compat", 200, accumulated.len(), start.elapsed());
+
+        let _ = sender.send(StreamChunk {
+            delta: String::new(),
+            done: true,
+        });
+
+        Ok(ChatResult {
+            output_text: accumulated,
+        })
+    }
+}
+
+/// Parse a content delta from an OpenAI-compatible SSE event block.
+/// Format: `data: {"choices":[{"delta":{"content":"..."}}]}` or `data: [DONE]`
+fn parse_openai_sse_delta(event_block: &str) -> Option<String> {
+    for line in event_block.lines() {
+        if let Some(data) = line.strip_prefix("data: ") {
+            if data.trim() == "[DONE]" {
+                return None;
+            }
+            let value: serde_json::Value = serde_json::from_str(data).ok()?;
+            let delta = value
+                .get("choices")?
+                .as_array()?
+                .first()?
+                .get("delta")?
+                .get("content")?
+                .as_str()?;
+            if !delta.is_empty() {
+                return Some(delta.to_string());
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -686,5 +801,55 @@ mod tests {
             !api_key.is_empty(),
             "non-empty key should include bearer_auth"
         );
+    }
+
+    // --- SSE parsing ---
+
+    #[test]
+    fn parse_openai_sse_delta_extracts_content() {
+        let event = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}";
+        assert_eq!(parse_openai_sse_delta(event), Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn parse_openai_sse_delta_ignores_done_marker() {
+        let event = "data: [DONE]";
+        assert!(parse_openai_sse_delta(event).is_none());
+    }
+
+    #[test]
+    fn parse_openai_sse_delta_ignores_empty_content() {
+        let event = "data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}";
+        assert!(parse_openai_sse_delta(event).is_none());
+    }
+
+    #[test]
+    fn parse_openai_sse_delta_ignores_role_only_delta() {
+        let event = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}";
+        assert!(parse_openai_sse_delta(event).is_none());
+    }
+
+    #[test]
+    fn stream_request_sets_stream_true() {
+        let req = ChatRequest {
+            model: "gpt-4o-mini".to_string(),
+            messages: vec![],
+            reasoning_effort: None,
+            stream: true,
+        };
+        let json = serde_json::to_value(&req).expect("should serialize");
+        assert_eq!(json["stream"], true);
+    }
+
+    #[test]
+    fn non_stream_request_omits_stream_field() {
+        let req = ChatRequest {
+            model: "gpt-4o-mini".to_string(),
+            messages: vec![],
+            reasoning_effort: None,
+            stream: false,
+        };
+        let json = serde_json::to_value(&req).expect("should serialize");
+        assert!(json.get("stream").is_none());
     }
 }

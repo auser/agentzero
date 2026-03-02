@@ -11,7 +11,7 @@ use agentzero_infra::tools::default_tools;
 use agentzero_memory::SqliteMemoryStore;
 #[cfg(feature = "memory-turso")]
 use agentzero_memory::{TursoMemoryStore, TursoSettings};
-use agentzero_providers::{find_models_for_provider, find_provider};
+use agentzero_providers::{find_models_for_provider, find_provider, model_capabilities};
 use agentzero_routing::{ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter};
 use async_trait::async_trait;
 use serde_json::json;
@@ -91,11 +91,24 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
 
     let router = build_model_router(&config);
     let delegate_agents = build_delegate_agents(&config);
-    let provider = agentzero_providers::build_provider(
+
+    // Wire transport settings from [provider.transport] in config.
+    let transport_config = agentzero_providers::TransportConfig {
+        timeout_ms: config.provider.transport.timeout_ms,
+        max_retries: config.provider.transport.max_retries,
+        circuit_breaker_threshold: config.provider.transport.circuit_breaker_threshold,
+        circuit_breaker_reset_ms: config.provider.transport.circuit_breaker_reset_ms,
+    };
+
+    // Look up model capabilities for the agent loop.
+    let caps = model_capabilities(&config.provider.kind, &config.provider.model);
+
+    let provider = agentzero_providers::build_provider_with_transport(
         &config.provider.kind,
-        config.provider.base_url,
+        config.provider.base_url.clone(),
         key,
-        config.provider.model,
+        config.provider.model.clone(),
+        transport_config,
     );
     let memory = build_memory_store(&req.config_path).await?;
     let tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
@@ -161,6 +174,8 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
                     .transpose()?
                     .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
             },
+            model_supports_tool_use: caps.map_or(true, |c| c.tool_use),
+            model_supports_vision: caps.is_some_and(|c| c.vision),
         },
         provider,
         memory,
@@ -273,8 +288,20 @@ fn resolve_api_key(
     }
 
     // Auth profiles: provider match then any active profile.
+    // Before resolving, attempt auto-refresh if the token is expired.
     if let Some(config_dir) = config_path.parent() {
         if let Ok(manager) = AuthManager::in_config_dir(config_dir) {
+            // Attempt auto-refresh for expired OAuth tokens.
+            if let Ok(Some(refresh_result)) =
+                manager.refresh_for_provider(&config.provider.kind, None)
+            {
+                if refresh_result.status == agentzero_auth::RefreshStatus::Refreshed {
+                    info!(
+                        "auto-refreshed token for profile '{}'",
+                        refresh_result.profile
+                    );
+                }
+            }
             if let Ok(Some(cred)) = manager.resolve_credential(None, &config.provider.kind) {
                 if matches!(cred.source, CredentialSource::ActiveProfile(_))
                     && !provider_was_overridden

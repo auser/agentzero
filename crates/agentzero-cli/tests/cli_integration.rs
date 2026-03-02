@@ -2418,3 +2418,102 @@ fn onboard_interactive_args_parse_success_path() {
     let result = agentzero_cli::parse_cli_from(["agentzero", "onboard", "--interactive"]);
     assert!(result.is_ok(), "onboard --interactive args should parse");
 }
+
+// --- Daemon lifecycle integration tests ---
+
+#[test]
+fn daemon_manager_start_stop_lifecycle_success_path() {
+    let dir = temp_dir("daemon-lifecycle");
+    let manager = agentzero_daemon::DaemonManager::new(&dir).expect("manager should be created");
+    let my_pid = std::process::id();
+
+    // Start
+    let started = manager
+        .mark_started("127.0.0.1".to_string(), 8080, my_pid)
+        .expect("start should succeed");
+    assert!(started.running);
+    assert_eq!(started.pid, Some(my_pid));
+
+    // PID file
+    agentzero_daemon::write_pid_file(&dir, my_pid).expect("pid file write should succeed");
+    assert_eq!(agentzero_daemon::read_pid_file(&dir), Some(my_pid));
+
+    // Status
+    let status = manager.status().expect("status should succeed");
+    assert!(status.running);
+    assert!(status.uptime_secs() < 5);
+
+    // Stop
+    let stopped = manager.mark_stopped().expect("stop should succeed");
+    assert!(!stopped.running);
+
+    // Cleanup PID file
+    agentzero_daemon::remove_pid_file(&dir);
+    assert!(agentzero_daemon::read_pid_file(&dir).is_none());
+
+    cleanup(dir);
+}
+
+#[test]
+fn daemon_log_rotation_integration_success_path() {
+    let dir = temp_dir("daemon-logrot");
+    let log_path = agentzero_daemon::log_file_path(&dir);
+
+    // Write a large log file
+    fs::write(&log_path, "x".repeat(500)).expect("log write should succeed");
+
+    let config = agentzero_daemon::LogRotationConfig {
+        max_bytes: 100,
+        max_files: 3,
+    };
+    let rotated =
+        agentzero_daemon::rotate_log_if_needed(&dir, &config).expect("rotate should succeed");
+    assert!(rotated);
+    assert!(!log_path.exists(), "original should be rotated away");
+    assert!(
+        dir.join("daemon.log.1").exists(),
+        "rotated file should exist"
+    );
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn auth_setup_token_and_list_round_trip_success_path() {
+    let dir = temp_dir("auth-roundtrip");
+    let d = dir.to_str().unwrap();
+
+    // Setup a token
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "auth",
+        "setup-token",
+        "--provider",
+        "openrouter",
+        "--token",
+        "sk-or-test-token-roundtrip",
+    ])
+    .await
+    .expect("setup-token should succeed");
+
+    // List profiles — should not error
+    run_cmd(&["agentzero", "--data-dir", d, "auth", "list"])
+        .await
+        .expect("auth list should succeed");
+
+    // Status — should show the active profile
+    run_cmd(&["agentzero", "--data-dir", d, "auth", "status"])
+        .await
+        .expect("auth status should succeed");
+
+    cleanup(dir);
+}
+
+#[test]
+fn local_discover_retries_arg_parses_success_path() {
+    let result =
+        agentzero_cli::parse_cli_from(["agentzero", "local", "discover", "--retries", "3"]);
+    assert!(result.is_ok(), "local discover --retries should parse");
+}

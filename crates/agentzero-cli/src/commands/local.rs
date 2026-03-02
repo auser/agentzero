@@ -13,7 +13,11 @@ impl AgentZeroCommand for LocalCommand {
 
     async fn run(ctx: &CommandContext, opts: Self::Options) -> anyhow::Result<()> {
         match opts {
-            LocalCommands::Discover { timeout_ms, json } => run_discover(timeout_ms, json).await,
+            LocalCommands::Discover {
+                timeout_ms,
+                retries,
+                json,
+            } => run_discover(timeout_ms, retries, json).await,
             LocalCommands::Status { json } => run_local_status(ctx, json).await,
             LocalCommands::Health { provider, url } => {
                 run_health_check(&provider, url.as_deref()).await
@@ -22,13 +26,17 @@ impl AgentZeroCommand for LocalCommand {
     }
 }
 
-async fn run_discover(timeout_ms: u64, json: bool) -> anyhow::Result<()> {
+async fn run_discover(timeout_ms: u64, retries: u32, json: bool) -> anyhow::Result<()> {
     let opts = DiscoveryOptions {
         timeout_ms,
         providers: Vec::new(),
     };
 
-    let results = discover_local_services(opts).await;
+    let results = if retries > 0 {
+        agentzero_local::discover_with_retry(opts, retries, 500).await
+    } else {
+        discover_local_services(opts).await
+    };
 
     if json {
         let json_results: Vec<serde_json::Value> = results

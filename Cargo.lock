@@ -62,6 +62,7 @@ version = "0.2.0"
 dependencies = [
  "agentzero-storage",
  "anyhow",
+ "reqwest",
  "serde",
  "serde_json",
  "temp-env",
@@ -455,10 +456,12 @@ dependencies = [
  "agentzero-core",
  "anyhow",
  "async-trait",
+ "futures-util",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

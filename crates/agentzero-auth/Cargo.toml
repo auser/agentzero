@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 agentzero-storage = { workspace = true }
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 url.workspace = true

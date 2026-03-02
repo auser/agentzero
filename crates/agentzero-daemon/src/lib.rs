@@ -1,10 +1,17 @@
 use agentzero_storage::EncryptedJsonStore;
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const STATE_FILE: &str = "daemon_state.json";
+const PID_FILE: &str = "daemon.pid";
+const DEFAULT_LOG_FILE: &str = "daemon.log";
+
+/// Maximum log file size before rotation (10 MB).
+const DEFAULT_MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
+/// Maximum number of rotated log files to keep.
+const DEFAULT_MAX_LOG_FILES: usize = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct DaemonStatus {
@@ -13,6 +20,109 @@ pub struct DaemonStatus {
     pub port: Option<u16>,
     pub pid: Option<u32>,
     pub started_at_epoch_seconds: Option<u64>,
+}
+
+impl DaemonStatus {
+    /// Uptime in seconds since the daemon started, or 0 if not running.
+    pub fn uptime_secs(&self) -> u64 {
+        if !self.running {
+            return 0;
+        }
+        self.started_at_epoch_seconds
+            .map(|started| current_epoch_seconds().saturating_sub(started))
+            .unwrap_or(0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Log rotation
+// ---------------------------------------------------------------------------
+
+/// Configuration for daemon log rotation.
+#[derive(Debug, Clone)]
+pub struct LogRotationConfig {
+    /// Maximum size of the log file before rotation.
+    pub max_bytes: u64,
+    /// Maximum number of rotated log files to keep.
+    pub max_files: usize,
+}
+
+impl Default for LogRotationConfig {
+    fn default() -> Self {
+        Self {
+            max_bytes: DEFAULT_MAX_LOG_BYTES,
+            max_files: DEFAULT_MAX_LOG_FILES,
+        }
+    }
+}
+
+/// Rotate the daemon log file if it exceeds the configured size.
+///
+/// Rotation scheme: `daemon.log` → `daemon.log.1` → `daemon.log.2` → ...
+/// Oldest files beyond `max_files` are deleted.
+pub fn rotate_log_if_needed(data_dir: &Path, config: &LogRotationConfig) -> anyhow::Result<bool> {
+    let log_path = data_dir.join(DEFAULT_LOG_FILE);
+    if !log_path.exists() {
+        return Ok(false);
+    }
+
+    let metadata = std::fs::metadata(&log_path)?;
+    if metadata.len() < config.max_bytes {
+        return Ok(false);
+    }
+
+    // Delete oldest rotated file if at capacity.
+    for i in (1..=config.max_files).rev() {
+        let old = rotated_path(&log_path, i);
+        if i == config.max_files {
+            let _ = std::fs::remove_file(&old);
+        } else {
+            let new = rotated_path(&log_path, i + 1);
+            if old.exists() {
+                std::fs::rename(&old, &new)?;
+            }
+        }
+    }
+
+    // Rotate current log to .1
+    let rotated = rotated_path(&log_path, 1);
+    std::fs::rename(&log_path, &rotated)?;
+
+    Ok(true)
+}
+
+fn rotated_path(base: &Path, index: usize) -> PathBuf {
+    let mut name = base.as_os_str().to_os_string();
+    name.push(format!(".{index}"));
+    PathBuf::from(name)
+}
+
+/// Returns the path to the daemon log file.
+pub fn log_file_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(DEFAULT_LOG_FILE)
+}
+
+// ---------------------------------------------------------------------------
+// PID file management
+// ---------------------------------------------------------------------------
+
+/// Write the daemon PID to a file for external monitoring tools.
+pub fn write_pid_file(data_dir: &Path, pid: u32) -> anyhow::Result<PathBuf> {
+    let path = data_dir.join(PID_FILE);
+    std::fs::write(&path, pid.to_string())?;
+    Ok(path)
+}
+
+/// Read the PID from the PID file, if it exists.
+pub fn read_pid_file(data_dir: &Path) -> Option<u32> {
+    let path = data_dir.join(PID_FILE);
+    std::fs::read_to_string(&path).ok()?.trim().parse().ok()
+}
+
+/// Remove the PID file on shutdown.
+pub fn remove_pid_file(data_dir: &Path) {
+    let path = data_dir.join(PID_FILE);
+    let _ = std::fs::remove_file(path);
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +185,25 @@ impl DaemonManager {
         Ok(status)
     }
 
+    /// Internal liveness check: returns structured health information about the
+    /// daemon process including whether the PID is alive, uptime, and log size.
+    pub fn health_check(&self, data_dir: &Path) -> anyhow::Result<DaemonHealth> {
+        let status = self.status()?;
+        let alive = status.running && status.pid.is_some_and(is_process_alive);
+        let log_size = std::fs::metadata(log_file_path(data_dir))
+            .ok()
+            .map(|m| m.len());
+
+        Ok(DaemonHealth {
+            alive,
+            pid: status.pid,
+            uptime_secs: status.uptime_secs(),
+            host: status.host,
+            port: status.port,
+            log_file_bytes: log_size,
+        })
+    }
+
     /// Send SIGTERM to the daemon process and wait for it to exit (up to 5 seconds).
     pub fn stop_process(&self) -> anyhow::Result<()> {
         let status = self.store.load_or_default::<DaemonStatus>()?;
@@ -112,6 +241,17 @@ impl DaemonManager {
     }
 }
 
+/// Structured health information returned by the daemon liveness check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonHealth {
+    pub alive: bool,
+    pub pid: Option<u32>,
+    pub uptime_secs: u64,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub log_file_bytes: Option<u64>,
+}
+
 /// Check if a process with the given PID is alive using `kill(pid, 0)`.
 pub fn is_process_alive(pid: u32) -> bool {
     // SAFETY: kill with signal 0 doesn't send a signal — it just checks existence.
@@ -137,7 +277,7 @@ fn current_epoch_seconds() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_process_alive, DaemonManager};
+    use super::*;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -249,5 +389,204 @@ mod tests {
     #[test]
     fn is_process_alive_returns_false_for_dead_pid() {
         assert!(!is_process_alive(4_000_000));
+    }
+
+    // --- PID file tests ---
+
+    #[test]
+    fn pid_file_write_read_remove() {
+        let dir = temp_dir();
+        let pid = std::process::id();
+
+        let path = write_pid_file(&dir, pid).expect("write should succeed");
+        assert!(path.exists());
+        assert_eq!(read_pid_file(&dir), Some(pid));
+
+        remove_pid_file(&dir);
+        assert!(!path.exists());
+        assert_eq!(read_pid_file(&dir), None);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    // --- Log rotation tests ---
+
+    #[test]
+    fn rotate_log_noop_when_small() {
+        let dir = temp_dir();
+        let log = dir.join("daemon.log");
+        fs::write(&log, "small log").expect("write should succeed");
+
+        let config = LogRotationConfig {
+            max_bytes: 1024,
+            max_files: 3,
+        };
+        let rotated = rotate_log_if_needed(&dir, &config).expect("rotate should succeed");
+        assert!(!rotated);
+        assert!(log.exists());
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn rotate_log_rotates_large_file() {
+        let dir = temp_dir();
+        let log = dir.join("daemon.log");
+
+        // Write a file larger than the threshold.
+        let big_content = "x".repeat(200);
+        fs::write(&log, &big_content).expect("write should succeed");
+
+        let config = LogRotationConfig {
+            max_bytes: 100,
+            max_files: 3,
+        };
+        let rotated = rotate_log_if_needed(&dir, &config).expect("rotate should succeed");
+        assert!(rotated);
+
+        // Original should be gone; .1 should exist.
+        assert!(!log.exists());
+        let rotated_1 = dir.join("daemon.log.1");
+        assert!(rotated_1.exists());
+        assert_eq!(fs::read_to_string(&rotated_1).unwrap(), big_content);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn rotate_log_cascades_existing_rotations() {
+        let dir = temp_dir();
+        let log = dir.join("daemon.log");
+        let config = LogRotationConfig {
+            max_bytes: 10,
+            max_files: 3,
+        };
+
+        // Simulate existing rotated files.
+        fs::write(dir.join("daemon.log.1"), "old-1").expect("write");
+        fs::write(dir.join("daemon.log.2"), "old-2").expect("write");
+
+        // Write current log exceeding threshold.
+        fs::write(&log, "current-log-exceeds").expect("write");
+        let rotated = rotate_log_if_needed(&dir, &config).expect("rotate should succeed");
+        assert!(rotated);
+
+        // .1 = current, .2 = old-1, .3 = old-2
+        assert!(!log.exists());
+        assert!(dir.join("daemon.log.1").exists());
+        assert!(dir.join("daemon.log.2").exists());
+        assert!(dir.join("daemon.log.3").exists());
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn rotate_log_deletes_oldest_beyond_max_files() {
+        let dir = temp_dir();
+        let log = dir.join("daemon.log");
+        let config = LogRotationConfig {
+            max_bytes: 10,
+            max_files: 2,
+        };
+
+        // Create existing rotated files up to max.
+        fs::write(dir.join("daemon.log.1"), "old-1").expect("write");
+        fs::write(dir.join("daemon.log.2"), "should-be-deleted").expect("write");
+
+        fs::write(&log, "current-big-enough").expect("write");
+        rotate_log_if_needed(&dir, &config).expect("rotate should succeed");
+
+        // .2 (the oldest at max_files) should have been deleted, then .1 renamed to .2
+        assert!(dir.join("daemon.log.1").exists());
+        assert!(dir.join("daemon.log.2").exists());
+        let content = fs::read_to_string(dir.join("daemon.log.2")).unwrap();
+        assert_eq!(content, "old-1"); // cascaded from .1
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn rotate_log_noop_when_no_file() {
+        let dir = temp_dir();
+        let config = LogRotationConfig::default();
+        let rotated = rotate_log_if_needed(&dir, &config).expect("rotate should succeed");
+        assert!(!rotated);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    // --- DaemonStatus tests ---
+
+    #[test]
+    fn uptime_secs_when_running() {
+        let status = DaemonStatus {
+            running: true,
+            started_at_epoch_seconds: Some(current_epoch_seconds().saturating_sub(120)),
+            ..Default::default()
+        };
+        let uptime = status.uptime_secs();
+        assert!((119..=121).contains(&uptime));
+    }
+
+    #[test]
+    fn uptime_secs_when_not_running() {
+        let status = DaemonStatus::default();
+        assert_eq!(status.uptime_secs(), 0);
+    }
+
+    // --- Health check tests ---
+
+    #[test]
+    fn health_check_running_process() {
+        let dir = temp_dir();
+        let manager = DaemonManager::new(&dir).expect("manager");
+        let my_pid = std::process::id();
+
+        manager
+            .mark_started("0.0.0.0".to_string(), 8080, my_pid)
+            .expect("start");
+
+        // Create a log file so log_file_bytes is populated.
+        fs::write(dir.join("daemon.log"), "some log output").expect("write log");
+
+        let health = manager.health_check(&dir).expect("health_check");
+        assert!(health.alive);
+        assert_eq!(health.pid, Some(my_pid));
+        assert!(health.uptime_secs < 5);
+        assert_eq!(health.host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(health.port, Some(8080));
+        assert!(health.log_file_bytes.is_some());
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn health_check_dead_process() {
+        let dir = temp_dir();
+        let manager = DaemonManager::new(&dir).expect("manager");
+
+        let dead_pid = 4_000_000;
+        manager
+            .mark_started("127.0.0.1".to_string(), 9090, dead_pid)
+            .expect("start");
+
+        let health = manager.health_check(&dir).expect("health_check");
+        assert!(!health.alive);
+        assert_eq!(health.uptime_secs, 0);
+        assert!(health.log_file_bytes.is_none());
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn health_check_never_started() {
+        let dir = temp_dir();
+        let manager = DaemonManager::new(&dir).expect("manager");
+
+        let health = manager.health_check(&dir).expect("health_check");
+        assert!(!health.alive);
+        assert_eq!(health.pid, None);
+        assert_eq!(health.uptime_secs, 0);
+
+        fs::remove_dir_all(dir).ok();
     }
 }

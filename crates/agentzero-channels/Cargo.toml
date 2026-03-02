@@ -49,6 +49,9 @@ channel-acp = ["reqwest"]
 channel-clawdtalk = ["reqwest"]
 channel-signal = ["reqwest"]
 channel-imessage = []
+channel-mqtt = []
+channel-transcription = []
+channel-whatsapp-web = []
 channel-nostr = ["tokio-tungstenite", "futures-util"]
 all-channels = [
     "channel-cli",
@@ -61,6 +64,9 @@ all-channels = [
     "channel-webhook",
     "channel-matrix",
     "channel-whatsapp",
+    "channel-mqtt",
+    "channel-transcription",
+    "channel-whatsapp-web",
     "channel-lark",
     "channel-feishu",
     "channel-dingtalk",

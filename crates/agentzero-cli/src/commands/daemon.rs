@@ -70,7 +70,21 @@ async fn run_foreground(
 ) -> anyhow::Result<()> {
     let pid = std::process::id();
     manager.mark_started(host.clone(), port, pid)?;
+    agentzero_daemon::write_pid_file(&ctx.data_dir, pid)?;
+    agentzero_daemon::rotate_log_if_needed(
+        &ctx.data_dir,
+        &agentzero_daemon::LogRotationConfig::default(),
+    )?;
     println!("daemon running in foreground (pid {pid}) on {host}:{port}");
+
+    // Auto-discover local AI providers at startup.
+    let discovery = agentzero_local::discover_local_services(agentzero_local::DiscoveryOptions {
+        timeout_ms: 2000,
+        providers: Vec::new(),
+    })
+    .await;
+    let summary = agentzero_local::format_discovery_summary(&discovery);
+    println!("{summary}");
 
     let token_store_path = ctx.data_dir.join("gateway-paired-tokens.json");
     let run_result = agentzero_gateway::run(
@@ -79,10 +93,12 @@ async fn run_foreground(
         agentzero_gateway::GatewayRunOptions {
             token_store_path: Some(token_store_path),
             new_pairing: false,
+            ..Default::default()
         },
     )
     .await;
 
+    agentzero_daemon::remove_pid_file(&ctx.data_dir);
     if let Err(err) = manager.mark_stopped() {
         eprintln!("warning: failed to update daemon state after shutdown: {err}");
     }

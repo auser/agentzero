@@ -1,7 +1,9 @@
 use crate::cli::AuthCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_auth::AuthStatus;
-use agentzero_auth::{AuthManager, AuthProfileSummary, PendingOAuthLogin, RefreshStatus};
+use agentzero_auth::{
+    AuthManager, AuthProfileSummary, PendingOAuthLogin, ProfileHealth, RefreshStatus,
+};
 use agentzero_common::util::build_query_string_ordered;
 use anyhow::{bail, Context};
 use async_trait::async_trait;
@@ -315,7 +317,8 @@ impl AgentZeroCommand for AuthCommand {
                     println!("{}", serde_json::to_string_pretty(&status)?);
                 } else {
                     let profiles = manager.list_profiles()?;
-                    println!("{}", render_auth_status_text(&status, &profiles));
+                    let health = manager.token_health()?;
+                    println!("{}", render_auth_status_text(&status, &profiles, &health));
                 }
             }
             AuthCommands::Use { provider, profile } => {
@@ -634,7 +637,11 @@ fn allocate_callback_port(preferred_port: u16) -> Result<u16, String> {
     }))
 }
 
-fn render_auth_status_text(status: &AuthStatus, profiles: &[AuthProfileSummary]) -> String {
+fn render_auth_status_text(
+    status: &AuthStatus,
+    profiles: &[AuthProfileSummary],
+    health: &[ProfileHealth],
+) -> String {
     if profiles.is_empty() {
         return "No auth profiles configured.".to_string();
     }
@@ -650,8 +657,18 @@ fn render_auth_status_text(status: &AuthStatus, profiles: &[AuthProfileSummary])
         };
         let account = "unknown";
         let expires = format_expiry(profile.token_expires_at_epoch_secs);
+
+        let health_label = health
+            .iter()
+            .find(|h| {
+                h.name.eq_ignore_ascii_case(&profile.name)
+                    && h.provider.eq_ignore_ascii_case(&profile.provider)
+            })
+            .map(|h| h.health.label())
+            .unwrap_or("unknown");
+
         lines.push(format!(
-            "{marker} {profile_id} kind={kind} account={account} expires={expires}"
+            "{marker} {profile_id} kind={kind} account={account} expires={expires} health={health_label}"
         ));
     }
 
@@ -707,6 +724,7 @@ mod tests {
     };
     use crate::cli::AuthCommands;
     use crate::command_core::{AgentZeroCommand, CommandContext};
+    use agentzero_auth::{ProfileHealth, TokenHealth};
     use std::fs;
     use std::io;
     use std::path::PathBuf;
@@ -1069,9 +1087,27 @@ mod tests {
             },
         ];
 
-        let rendered = render_auth_status_text(&status, &profiles);
+        let health = vec![
+            ProfileHealth {
+                name: "default".to_string(),
+                provider: "openai-codex".to_string(),
+                health: TokenHealth::Valid,
+                has_refresh_token: true,
+                expires_at_epoch_secs: Some(4_102_444_800),
+            },
+            ProfileHealth {
+                name: "backup".to_string(),
+                provider: "anthropic".to_string(),
+                health: TokenHealth::NoExpiry,
+                has_refresh_token: false,
+                expires_at_epoch_secs: None,
+            },
+        ];
+
+        let rendered = render_auth_status_text(&status, &profiles, &health);
         assert!(rendered.contains("* openai-codex:default"));
         assert!(rendered.contains("kind=OAuth"));
+        assert!(rendered.contains("health=valid"));
         assert!(rendered.contains("Active profiles:"));
         assert!(rendered.contains("openai-codex: openai-codex:default"));
     }
@@ -1086,7 +1122,7 @@ mod tests {
             total_profiles: 0,
         };
 
-        let rendered = render_auth_status_text(&status, &[]);
+        let rendered = render_auth_status_text(&status, &[], &[]);
         assert_eq!(rendered, "No auth profiles configured.");
     }
 }

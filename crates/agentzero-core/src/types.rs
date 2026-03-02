@@ -21,6 +21,10 @@ pub struct AgentConfig {
     pub loop_detection_failure_streak: usize,
     pub research: ResearchPolicy,
     pub reasoning: ReasoningConfig,
+    /// Whether the current model supports tool use (function calling).
+    pub model_supports_tool_use: bool,
+    /// Whether the current model supports vision (image content blocks).
+    pub model_supports_vision: bool,
 }
 
 impl Default for AgentConfig {
@@ -38,6 +42,8 @@ impl Default for AgentConfig {
             loop_detection_failure_streak: 3,
             research: ResearchPolicy::default(),
             reasoning: ReasoningConfig::default(),
+            model_supports_tool_use: true,
+            model_supports_vision: false,
         }
     }
 }
@@ -134,6 +140,15 @@ pub struct ChatResult {
     pub output_text: String,
 }
 
+/// A single chunk emitted during streaming completion.
+#[derive(Debug, Clone)]
+pub struct StreamChunk {
+    /// Incremental text delta for this chunk.
+    pub delta: String,
+    /// True when the stream is complete (final chunk).
+    pub done: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolContext {
     pub workspace_root: String,
@@ -213,6 +228,20 @@ pub trait Provider: Send + Sync {
         _reasoning: &ReasoningConfig,
     ) -> anyhow::Result<ChatResult> {
         self.complete(prompt).await
+    }
+    /// Stream completion tokens through `sender`. Default implementation falls
+    /// back to `complete()` and sends a single chunk with the full result.
+    async fn complete_streaming(
+        &self,
+        prompt: &str,
+        sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+    ) -> anyhow::Result<ChatResult> {
+        let result = self.complete(prompt).await?;
+        let _ = sender.send(StreamChunk {
+            delta: result.output_text.clone(),
+            done: true,
+        });
+        Ok(result)
     }
 }
 

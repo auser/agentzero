@@ -6,8 +6,12 @@ pub(crate) mod transport;
 
 pub use anthropic::AnthropicProvider;
 pub use catalog::{find_provider, supported_providers, ProviderDescriptor};
-pub use models::{find_models_for_provider, ModelDescriptor};
+pub use models::{
+    find_models_for_provider, model_capabilities, provider_config_fingerprint, ModelCapabilities,
+    ModelDescriptor,
+};
 pub use openai::OpenAiCompatibleProvider;
+pub use transport::{health_probe, CircuitBreaker, HealthProbeResult, TransportConfig};
 
 /// Declarative macro that generates the `build_provider` factory from a
 /// list of `(kind-pattern => ProviderType)` entries. The last `_ =>` arm
@@ -30,4 +34,20 @@ macro_rules! register_providers {
 register_providers! {
     "anthropic" => AnthropicProvider,
     _ => OpenAiCompatibleProvider,
+}
+
+/// Build a provider with explicit transport configuration from TOML.
+pub fn build_provider_with_transport(
+    kind: &str,
+    base_url: String,
+    api_key: String,
+    model: String,
+    transport: TransportConfig,
+) -> Box<dyn agentzero_core::Provider> {
+    match kind {
+        "anthropic" => Box::new(AnthropicProvider::with_config(
+            base_url, api_key, model, transport,
+        )),
+        _ => Box::new(OpenAiCompatibleProvider::new(base_url, api_key, model)),
+    }
 }

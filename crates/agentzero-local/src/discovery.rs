@@ -31,6 +31,75 @@ impl Default for DiscoveryOptions {
     }
 }
 
+/// Discover local services with automatic retry for unreachable providers.
+///
+/// Retries up to `max_retries` times (with a delay between attempts) for any
+/// provider that returned `Unreachable` on the first pass.
+pub async fn discover_with_retry(
+    opts: DiscoveryOptions,
+    max_retries: u32,
+    retry_delay_ms: u64,
+) -> Vec<DiscoveredService> {
+    let mut results = discover_local_services(opts.clone()).await;
+
+    if max_retries == 0 {
+        return results;
+    }
+
+    for attempt in 1..=max_retries {
+        let unreachable_ids: Vec<String> = results
+            .iter()
+            .filter(|r| r.status == ServiceStatus::Unreachable)
+            .map(|r| r.provider_id.clone())
+            .collect();
+
+        if unreachable_ids.is_empty() {
+            break;
+        }
+
+        tokio::time::sleep(Duration::from_millis(retry_delay_ms * attempt as u64)).await;
+
+        let retry_opts = DiscoveryOptions {
+            timeout_ms: opts.timeout_ms,
+            providers: unreachable_ids.clone(),
+        };
+        let retry_results = discover_local_services(retry_opts).await;
+
+        // Replace unreachable results with retry results that improved.
+        for retry in retry_results {
+            if retry.status != ServiceStatus::Unreachable {
+                if let Some(pos) = results
+                    .iter()
+                    .position(|r| r.provider_id == retry.provider_id)
+                {
+                    results[pos] = retry;
+                }
+            }
+        }
+    }
+
+    results
+}
+
+/// Summarize discovered services into a compact log-friendly string.
+pub fn format_discovery_summary(results: &[DiscoveredService]) -> String {
+    let running: Vec<&str> = results
+        .iter()
+        .filter(|r| r.status == ServiceStatus::Running)
+        .map(|r| r.provider_id.as_str())
+        .collect();
+    let total = results.len();
+    if running.is_empty() {
+        format!("discovered {total} local providers, none running")
+    } else {
+        format!(
+            "discovered {total} local providers, {} running: {}",
+            running.len(),
+            running.join(", ")
+        )
+    }
+}
+
 pub async fn discover_local_services(opts: DiscoveryOptions) -> Vec<DiscoveredService> {
     let providers = all_local_providers();
     let mut handles = Vec::new();
@@ -296,5 +365,84 @@ mod tests {
             ServiceStatus::Error("a".to_string()),
             ServiceStatus::Error("b".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn discover_with_retry_returns_immediately_when_zero_retries() {
+        let opts = DiscoveryOptions {
+            timeout_ms: 200,
+            providers: vec!["ollama".to_string()],
+        };
+        let results = discover_with_retry(opts, 0, 100).await;
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn discover_with_retry_handles_unreachable_ports() {
+        // Use a port that's definitely not running a service.
+        let opts = DiscoveryOptions {
+            timeout_ms: 200,
+            providers: vec!["sglang".to_string()],
+        };
+        let results = discover_with_retry(opts, 1, 50).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].provider_id, "sglang");
+        // sglang is very unlikely to be running; if it is, Running is also acceptable.
+        assert!(
+            results[0].status == ServiceStatus::Unreachable
+                || results[0].status == ServiceStatus::Running,
+            "status should be Unreachable or Running, got {:?}",
+            results[0].status
+        );
+    }
+
+    #[test]
+    fn format_discovery_summary_none_running() {
+        let results = vec![
+            DiscoveredService {
+                provider_id: "ollama".to_string(),
+                base_url: "http://localhost:11434".to_string(),
+                models: Vec::new(),
+                status: ServiceStatus::Unreachable,
+            },
+            DiscoveredService {
+                provider_id: "vllm".to_string(),
+                base_url: "http://localhost:8000".to_string(),
+                models: Vec::new(),
+                status: ServiceStatus::Unreachable,
+            },
+        ];
+        let summary = format_discovery_summary(&results);
+        assert!(summary.contains("2 local providers"));
+        assert!(summary.contains("none running"));
+    }
+
+    #[test]
+    fn format_discovery_summary_some_running() {
+        let results = vec![
+            DiscoveredService {
+                provider_id: "ollama".to_string(),
+                base_url: "http://localhost:11434".to_string(),
+                models: vec!["llama3.1:8b".to_string()],
+                status: ServiceStatus::Running,
+            },
+            DiscoveredService {
+                provider_id: "vllm".to_string(),
+                base_url: "http://localhost:8000".to_string(),
+                models: Vec::new(),
+                status: ServiceStatus::Unreachable,
+            },
+        ];
+        let summary = format_discovery_summary(&results);
+        assert!(summary.contains("2 local providers"));
+        assert!(summary.contains("1 running"));
+        assert!(summary.contains("ollama"));
+    }
+
+    #[test]
+    fn format_discovery_summary_empty_results() {
+        let summary = format_discovery_summary(&[]);
+        assert!(summary.contains("0 local providers"));
+        assert!(summary.contains("none running"));
     }
 }

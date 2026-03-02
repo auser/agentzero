@@ -5,6 +5,7 @@ use std::{
     collections::HashSet,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 #[derive(Clone)]
@@ -17,6 +18,18 @@ pub(crate) struct GatewayState {
     pub(crate) otp_secret: Arc<String>,
     pub(crate) token_store_path: Option<Arc<PathBuf>>,
     pub(crate) perplexity_filter: Arc<PerplexityFilterSettings>,
+    /// Pairing code creation timestamp (for TTL-based expiry).
+    #[allow(dead_code)]
+    pub(crate) pairing_created_at: Instant,
+    /// How many seconds the pairing code is valid. `None` = no expiry.
+    #[allow(dead_code)]
+    pub(crate) pairing_ttl_secs: Option<u64>,
+    /// Require pairing flow (from `[gateway]` config).
+    #[allow(dead_code)]
+    pub(crate) require_pairing: bool,
+    /// Allow binding to non-loopback interfaces (from `[gateway]` config).
+    #[allow(dead_code)]
+    pub(crate) allow_public_bind: bool,
 }
 
 impl GatewayState {
@@ -38,7 +51,43 @@ impl GatewayState {
             otp_secret: Arc::new(otp_secret),
             token_store_path: token_store_path.map(Arc::new),
             perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
+            pairing_created_at: Instant::now(),
+            pairing_ttl_secs: None,
+            require_pairing: true,
+            allow_public_bind: false,
         }
+    }
+
+    /// Set the pairing code TTL. After `ttl_secs` seconds, `pairing_code_valid()`
+    /// returns `None` even if a code was set.
+    #[allow(dead_code)]
+    pub(crate) fn with_pairing_ttl(mut self, ttl_secs: u64) -> Self {
+        self.pairing_ttl_secs = Some(ttl_secs);
+        self
+    }
+
+    /// Set gateway config fields from loaded config.
+    #[allow(dead_code)]
+    pub(crate) fn with_gateway_config(
+        mut self,
+        require_pairing: bool,
+        allow_public_bind: bool,
+    ) -> Self {
+        self.require_pairing = require_pairing;
+        self.allow_public_bind = allow_public_bind;
+        self
+    }
+
+    /// Return the current pairing code if it exists and hasn't expired.
+    #[allow(dead_code)]
+    pub(crate) fn pairing_code_valid(&self) -> Option<&str> {
+        let code = self.pairing_code.as_deref()?;
+        if let Some(ttl) = self.pairing_ttl_secs {
+            if self.pairing_created_at.elapsed().as_secs() >= ttl {
+                return None;
+            }
+        }
+        Some(code)
     }
 
     #[allow(dead_code)]
@@ -66,6 +115,10 @@ impl GatewayState {
             otp_secret: Arc::new("OTPSECRET".to_string()),
             token_store_path: None,
             perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
+            pairing_created_at: Instant::now(),
+            pairing_ttl_secs: None,
+            require_pairing: true,
+            allow_public_bind: false,
         }
     }
 
@@ -82,6 +135,49 @@ impl GatewayState {
             otp_secret: Arc::new("OTPSECRET".to_string()),
             token_store_path: None,
             perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
+            pairing_created_at: Instant::now(),
+            pairing_ttl_secs: None,
+            require_pairing: true,
+            allow_public_bind: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pairing_code_valid_returns_code_when_no_ttl() {
+        let state = GatewayState::test_with_bearer(None);
+        assert_eq!(state.pairing_code_valid(), Some("406823"));
+    }
+
+    #[test]
+    fn pairing_code_valid_returns_none_after_ttl_expires() {
+        let mut state = GatewayState::test_with_bearer(None);
+        state.pairing_ttl_secs = Some(0); // Immediately expired
+        assert!(state.pairing_code_valid().is_none());
+    }
+
+    #[test]
+    fn pairing_code_valid_returns_none_when_no_code() {
+        let state = GatewayState::test_with_existing_pair("tok");
+        assert!(state.pairing_code_valid().is_none());
+    }
+
+    #[test]
+    fn with_gateway_config_sets_fields() {
+        let state = GatewayState::test_with_bearer(None).with_gateway_config(false, true);
+        assert!(!state.require_pairing);
+        assert!(state.allow_public_bind);
+    }
+
+    #[test]
+    fn with_pairing_ttl_sets_expiry() {
+        let state = GatewayState::test_with_bearer(None).with_pairing_ttl(300);
+        assert_eq!(state.pairing_ttl_secs, Some(300));
+        // Code should still be valid (just created).
+        assert!(state.pairing_code_valid().is_some());
     }
 }

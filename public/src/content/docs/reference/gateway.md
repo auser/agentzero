@@ -50,6 +50,18 @@ curl -X POST http://127.0.0.1:42617/v1/ping \
   -H "Content-Type: application/json"
 ```
 
+## Middleware
+
+The gateway includes built-in middleware for production hardening:
+
+**Rate Limiting** — Sliding window counter that rejects excess requests with `429 Too Many Requests`.
+
+**Request Size Limits** — Rejects requests with `Content-Length` exceeding the configured maximum (default: 10 MB) with `413 Payload Too Large`.
+
+**CORS** — Configurable origin allowlist for browser clients. Supports exact origin matching and wildcard (`*`). Handles preflight `OPTIONS` requests automatically.
+
+**Graceful Shutdown** — On `SIGTERM` or `SIGINT`, the gateway drains active connections before exiting.
+
 ## Configuration
 
 ```toml
@@ -67,13 +79,24 @@ allowed_node_ids = []
 
 ## Daemon Mode
 
-For long-running operation, use daemon mode:
+Run the gateway as a background process with automatic local AI service discovery, PID file management, and log rotation:
 
 ```bash
-agentzero daemon --host 127.0.0.1 --port 8080
+# Start in background
+agentzero daemon start --host 127.0.0.1 --port 8080
+
+# Check status (includes PID, uptime, address)
+agentzero daemon status
+agentzero daemon status --json
+
+# Stop the daemon
+agentzero daemon stop
+
+# Run in foreground (for debugging or systemd)
+agentzero daemon start --foreground
 ```
 
-The daemon maintains runtime state including heartbeat, service lifecycle, and scheduled tasks.
+Daemon logs are written to `{data_dir}/daemon.log` with automatic rotation (10 MB max, 5 rotated files).
 
 ## Service Installation
 

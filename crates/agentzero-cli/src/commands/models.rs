@@ -2,7 +2,7 @@ use crate::cli::ModelCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_common::local_providers::{is_local_provider, local_provider_meta};
 use agentzero_config::load;
-use agentzero_providers::{find_models_for_provider, supported_providers};
+use agentzero_providers::{find_models_for_provider, model_capabilities, supported_providers};
 use agentzero_storage::EncryptedJsonStore;
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
@@ -191,6 +191,19 @@ fn run_models_status(ctx: &CommandContext) -> anyhow::Result<()> {
     println!();
     println!("  Provider:  {provider}");
     println!("  Model:     {model}");
+
+    // Display model capabilities if known.
+    if let Some(caps) = model_capabilities(provider, model) {
+        let flag = |enabled: bool| if enabled { "yes" } else { "no" };
+        println!("  Vision:    {}", flag(caps.vision));
+        println!("  Tool use:  {}", flag(caps.tool_use));
+        println!("  Streaming: {}", flag(caps.streaming));
+        if caps.max_output_tokens > 0 {
+            println!("  Max tokens: {}", caps.max_output_tokens);
+        }
+    } else {
+        println!("  Capabilities: unknown (model not in catalog)");
+    }
 
     match load_any_cached_models_for_provider(&ctx.data_dir, provider)? {
         Some(cached) => {
