@@ -52,11 +52,11 @@ agentzero-runtime = { workspace = true, features = [] }
 agentzero-security = { workspace = true }
 agentzero-service = { workspace = true }
 base64 = "0.22"
-console = "0.15"
-crossterm = "0.28"
-inquire = "0.7"
-rand = "0.8"
-ratatui = "0.28"
+console = "0.16"
+crossterm = "0.29"
+inquire = "0.9"
+rand = "0.9"
+ratatui = "0.30"
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
