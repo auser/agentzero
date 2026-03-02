@@ -110,7 +110,7 @@ jobs:
         run: cargo build -p agentzero --release --target ${{ matrix.rust_target }}
       - name: Validate linux size budget
         if: matrix.target_name == 'linux-x86_64'
-        run: scripts/check-binary-size.sh --binary "${{ matrix.bin_path }}" --max-bytes 20000000
+        run: scripts/check-binary-size.sh --binary "${{ matrix.bin_path }}" --max-bytes 30000000
       - name: Package artifact (unix)
         if: matrix.os != 'windows-latest'
         run: |

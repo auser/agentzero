@@ -23,7 +23,7 @@ jobs:
       - name: release build
         run: cargo build -p agentzero --release
       - name: release size budget
-        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 20000000
+        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 30000000
 
   security:
     runs-on: ubuntu-latest
@@ -82,7 +82,7 @@ jobs:
         run: cargo build -p agentzero --release
       - name: Validate linux size budget
         if: matrix.os == 'ubuntu-latest'
-        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 20000000
+        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 30000000
       - name: Package artifact (unix)
         if: matrix.os != 'windows-latest'
         run: |

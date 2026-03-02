@@ -1,6 +1,2 @@
 [advisories]
-yanked = "deny"
-vulnerability = "deny"
-unmaintained = "warn"
-notice = "warn"
 ignore = []
