@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-03-02
+
+### Fixed
+- Eliminate flaky test failures from temp directory collisions (add PID to temp dir names)
+- Skip TTY-dependent dashboard test when running in interactive terminal
+- Use dynamic version in release verification benchmark test
+
+### Added
+- Channel setup module with `register_configured_channels` and `channels-standard` feature flag
+- Expanded delegate tool with coordination, status tracking, and multi-agent support
+- Gateway auth hardening with additional token validation and tests
+- Config test coverage for policy flags (git, web_search, browser)
+- `just release` now auto-bumps workspace version in Cargo.toml
+
 ## [0.2.0] - 2026-03-01
 
 ### Added

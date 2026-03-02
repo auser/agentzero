@@ -172,10 +172,21 @@ mod tests {
         .expect("migration import should succeed");
         assert!(data_dir.join("agentzero.toml").exists());
 
+        // Use a version guaranteed to be ahead of the current package version.
+        let next_major = format!(
+            "{}.0.0",
+            env!("CARGO_PKG_VERSION")
+                .split('.')
+                .next()
+                .unwrap()
+                .parse::<u32>()
+                .unwrap()
+                + 1
+        );
         UpdateCommand::run(
             &ctx,
             UpdateCommands::Apply {
-                version: "0.3.0".to_string(),
+                version: next_major,
                 json: false,
             },
         )
