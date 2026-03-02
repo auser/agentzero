@@ -3,7 +3,7 @@ name: Docs quality
 on:
   pull_request:
     paths:
-      - "public/**"
+      - "site/**"
       - "README.md"
       - "AGENTS.md"
       - ".markdownlint-cli2.yaml"
@@ -19,7 +19,7 @@ jobs:
           node-version: "22"
 
       - name: Lint markdown
-        run: npx markdownlint-cli2 "public/src/content/**/*.md" "README.md" "AGENTS.md" --config .markdownlint-cli2.yaml
+        run: npx markdownlint-cli2 "site/src/content/**/*.md" "README.md" "AGENTS.md" --config .markdownlint-cli2.yaml
 
   site-build:
     runs-on: ubuntu-latest
@@ -30,12 +30,12 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: public/package-lock.json
+          cache-dependency-path: site/package-lock.json
 
       - name: Install dependencies
-        working-directory: public
+        working-directory: site
         run: npm ci
 
       - name: Build site
-        working-directory: public
+        working-directory: site
         run: npm run build

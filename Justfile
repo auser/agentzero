@@ -8,23 +8,23 @@ default:
 
 # Install site dependencies
 docs-install:
-    cd public && npm install
+    cd site && npm install
 
 # Run site dev server
 docs-dev:
-    cd public && npm run dev
+    cd site && npm run dev
 
 # Build site for production
 docs-build:
-    cd public && npm run build
+    cd site && npm run build
 
 # Preview production build locally
 docs-preview:
-    cd public && npm run preview
+    cd site && npm run preview
 
 # Lint markdown files
 docs-lint:
-    npx markdownlint-cli2 "public/src/content/**/*.md" "README.md" "AGENTS.md" --config .markdownlint-cli2.yaml
+    npx markdownlint-cli2 "site/src/content/**/*.md" "README.md" "AGENTS.md" --config .markdownlint-cli2.yaml
 
 # -- Test ─────────────────────────────────────────
 

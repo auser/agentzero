@@ -12,4 +12,4 @@ config:
 
 ignores:
   - "target/**"
-  - "public/node_modules/**"
+  - "site/node_modules/**"

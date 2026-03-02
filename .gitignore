@@ -12,11 +12,11 @@ agentzero.toml
 
 # Site build
 /gh-pages/
-public/node_modules/
-public/.astro/
-public/dist/
+site/node_modules/
+site/.astro/
+site/dist/
 
-# Legacy docs directory (moved to public/)
+# Legacy docs directory
 /docs/
 
 # macOS
