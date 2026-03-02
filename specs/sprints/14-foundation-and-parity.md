@@ -68,7 +68,7 @@ References:
 
 ## Functional Coverage Checklist
 - [x] CLI command surface complete and documented.
-- [-] CLI parity with discovered reference command/subcommand/flag surface (from recursive `--help` enumeration of the reference binary).
+- [x] CLI parity with discovered reference command/subcommand/flag surface (from recursive `--help` enumeration of the reference binary). *(completed Sprint 16)*
 - [x] Global machine-output parity: every command accepts `--json` and returns a structured JSON object when passed.
 - [x] Config system complete (file + env + validation).
 - [x] Agent loop hardened (timeouts, retries, bounded context).
@@ -180,8 +180,8 @@ The following major upstream sections are not yet explicitly covered in our spri
 - [x] `apply_patch.rs`
 - [x] `browser.rs`
 - [x] `browser_open.rs`
-- [ ] `cli_discovery.rs`
-- [ ] `composio.rs`
+- [x] `cli_discovery.rs` *(completed Sprint 16)*
+- [x] `composio.rs` *(completed Sprint 16)*
 - [x] `content_search.rs`
 - [x] `cron_add.rs`
 - [x] `cron_list.rs`
@@ -190,16 +190,16 @@ The following major upstream sections are not yet explicitly covered in our spri
 - [x] `cron_runs.rs` (via cron_list)
 - [x] `cron_update.rs`
 - [x] `delegate.rs` (via subagent_spawn)
-- [ ] `delegate_coordination_status.rs`
+- [x] `delegate_coordination_status.rs` *(completed Sprint 16)*
 - [x] `docx_read.rs`
 - [x] `file_edit.rs`
 - [x] `file_read.rs` (read_file)
 - [x] `file_write.rs` (write_file)
 - [x] `git_operations.rs`
 - [x] `glob_search.rs`
-- [ ] `hardware_board_info.rs`
-- [ ] `hardware_memory_map.rs`
-- [ ] `hardware_memory_read.rs`
+- [x] `hardware_board_info.rs` *(completed Sprint 16)*
+- [x] `hardware_memory_map.rs` *(completed Sprint 16)*
+- [x] `hardware_memory_read.rs` *(completed Sprint 16)*
 - [x] `http_request.rs`
 - [x] `image_info.rs`
 - [x] `mcp_client.rs` (mcp_tool bridge)
@@ -210,20 +210,20 @@ The following major upstream sections are not yet explicitly covered in our spri
 - [x] `memory_recall.rs`
 - [x] `memory_store.rs`
 - [x] `mod.rs`
-- [ ] `model_routing_config.rs`
+- [x] `model_routing_config.rs` *(completed Sprint 15)*
 - [x] `pdf_read.rs`
 - [x] `process.rs`
-- [ ] `proxy_config.rs`
-- [ ] `pushover.rs`
-- [ ] `schedule.rs`
+- [x] `proxy_config.rs` *(completed Sprint 16)*
+- [x] `pushover.rs` *(completed Sprint 16)*
+- [ ] `schedule.rs` → *carried forward to Sprint 17*
 - [x] `schema.rs` (tool trait + ToolResult)
 - [x] `screenshot.rs`
 - [x] `shell.rs`
-- [ ] `sop_advance.rs`
-- [ ] `sop_approve.rs`
-- [ ] `sop_execute.rs`
-- [ ] `sop_list.rs`
-- [ ] `sop_status.rs`
+- [x] `sop_advance.rs` *(completed Sprint 16)*
+- [x] `sop_approve.rs` *(completed Sprint 16)*
+- [x] `sop_execute.rs` *(completed Sprint 16)*
+- [x] `sop_list.rs` *(completed Sprint 16)*
+- [x] `sop_status.rs` *(completed Sprint 16)*
 - [x] `subagent_list.rs`
 - [x] `subagent_manage.rs`
 - [x] `subagent_registry.rs` (in subagent_tools)
@@ -231,56 +231,56 @@ The following major upstream sections are not yet explicitly covered in our spri
 - [x] `task_plan.rs`
 - [x] `traits.rs` (Tool trait in agentzero-core)
 - [x] `url_validation.rs`
-- [ ] `wasm_module.rs`
-- [ ] `wasm_tool.rs`
+- [x] `wasm_module.rs` *(completed Sprint 16)*
+- [x] `wasm_tool.rs` *(completed Sprint 16)*
 - [x] `web_fetch.rs`
 - [x] `web_search_tool.rs`
 
 ## Channel Parity Checklist (from upstream `src/channels`)
-- [ ] `clawdtalk.rs`
-- [ ] `cli.rs`
-- [ ] `dingtalk.rs`
-- [-] `discord.rs`
-- [ ] `email_channel.rs`
-- [ ] `imessage.rs`
-- [ ] `irc.rs`
-- [ ] `lark.rs`
-- [ ] `linq.rs`
-- [ ] `matrix.rs`
-- [ ] `mattermost.rs`
-- [ ] `mqtt.rs`
-- [ ] `nextcloud_talk.rs`
-- [ ] `nostr.rs`
-- [ ] `qq.rs`
-- [ ] `signal.rs`
-- [-] `slack.rs`
-- [-] `telegram.rs`
-- [ ] `transcription.rs`
-- [ ] `wati.rs`
-- [ ] `whatsapp.rs`
-- [ ] `whatsapp_storage.rs`
-- [ ] `whatsapp_web.rs`
-- [ ] `traits.rs` (channel trait surface)
+- [x] `clawdtalk.rs` *(completed Sprint 16)*
+- [x] `cli.rs` *(completed Sprint 16)*
+- [x] `dingtalk.rs` *(completed Sprint 16)*
+- [x] `discord.rs` *(completed Sprint 15/16)*
+- [x] `email_channel.rs` *(completed Sprint 16)*
+- [x] `imessage.rs` *(completed Sprint 16)*
+- [x] `irc.rs` *(completed Sprint 16)*
+- [x] `lark.rs` *(completed Sprint 16)*
+- [x] `linq.rs` *(completed Sprint 16)*
+- [x] `matrix.rs` *(completed Sprint 16)*
+- [x] `mattermost.rs` *(completed Sprint 16)*
+- [ ] `mqtt.rs` → *carried forward to Sprint 17*
+- [x] `nextcloud_talk.rs` *(completed Sprint 16)*
+- [x] `nostr.rs` *(completed Sprint 16)*
+- [x] `qq.rs` *(completed Sprint 16 — qq_official + napcat)*
+- [x] `signal.rs` *(completed Sprint 16)*
+- [x] `slack.rs` *(completed Sprint 15/16)*
+- [x] `telegram.rs` *(completed Sprint 15/16)*
+- [ ] `transcription.rs` → *carried forward to Sprint 17*
+- [x] `wati.rs` *(completed Sprint 16)*
+- [x] `whatsapp.rs` *(completed Sprint 16)*
+- [ ] `whatsapp_storage.rs` → *carried forward to Sprint 17*
+- [ ] `whatsapp_web.rs` → *carried forward to Sprint 17*
+- [x] `traits.rs` (channel trait surface) *(completed Sprint 15/16)*
 
 ## Template Usage Parity
 Goal: support the same workspace template model and usage flow.
 
-- [-] `AGENTS.md` template support.
-- [ ] `BOOT.md` template support.
-- [ ] `BOOTSTRAP.md` template support.
-- [ ] `HEARTBEAT.md` template support.
-- [ ] `IDENTITY` template support.
-- [ ] `SOUL.md` template support.
-- [ ] `TOOLS.md` template support.
-- [ ] `USER` template support.
-- [-] Define template load order and session behavior in runtime.
-- [ ] Add CLI/config support to scaffold and validate template files.
-- [ ] Add docs for template responsibilities and safe usage boundaries.
-- [ ] Add tests for template discovery, precedence, and missing-file behavior.
+- [x] `AGENTS.md` template support. *(completed Sprint 16)*
+- [x] `BOOT.md` template support. *(completed Sprint 16)*
+- [x] `BOOTSTRAP.md` template support. *(completed Sprint 16)*
+- [x] `HEARTBEAT.md` template support. *(completed Sprint 16)*
+- [x] `IDENTITY` template support. *(completed Sprint 16)*
+- [x] `SOUL.md` template support. *(completed Sprint 16)*
+- [x] `TOOLS.md` template support. *(completed Sprint 16)*
+- [x] `USER` template support. *(completed Sprint 16)*
+- [x] Define template load order and session behavior in runtime. *(completed Sprint 16)*
+- [x] Add CLI/config support to scaffold and validate template files. *(completed Sprint 16)*
+- [x] Add docs for template responsibilities and safe usage boundaries. *(completed Sprint 16)*
+- [x] Add tests for template discovery, precedence, and missing-file behavior. *(completed Sprint 16)*
 - Acceptance:
-- [ ] Template loading is deterministic and documented.
-- [ ] Missing templates fail safely with actionable guidance.
-- [ ] Main-session vs shared-session template behavior is test-covered.
+- [x] Template loading is deterministic and documented. *(completed Sprint 16)*
+- [x] Missing templates fail safely with actionable guidance. *(completed Sprint 16)*
+- [x] Main-session vs shared-session template behavior is test-covered. *(completed Sprint 16)*
 
 ## Module Parity Mapping (Planned)
 - Core runtime (`agent`, `memory`, `providers`, `tools`, `runtime`, `config`, `observability`, `security`): Sprints 0-8.
