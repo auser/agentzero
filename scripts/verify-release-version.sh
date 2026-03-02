@@ -58,11 +58,31 @@ if ! grep -Eq "^## \\[$version\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$changelog"; t
 fi
 
 failures=0
+
+# Check workspace-level version in root Cargo.toml
+workspace_version="$(
+  awk '
+    /^\[workspace\.package\]/ {in_ws=1; next}
+    /^\[/ && in_ws {in_ws=0}
+    in_ws && $1=="version" && $2=="=" {
+      gsub(/"/, "", $3);
+      print $3;
+      exit
+    }
+  ' Cargo.toml
+)"
+if [[ -n "$workspace_version" && "$workspace_version" != "$version" ]]; then
+  echo "Version mismatch: Cargo.toml [workspace.package] has $workspace_version (expected $version)" >&2
+  failures=1
+fi
+
+# Check each crate's version (skip crates using version.workspace = true)
 while IFS= read -r cargo_toml; do
   pkg_version="$(
     awk '
       /^\[package\]/ {in_pkg=1; next}
       /^\[/ && in_pkg {in_pkg=0}
+      in_pkg && /version\.workspace/ { print "workspace"; exit }
       in_pkg && $1=="version" && $2=="=" {
         gsub(/"/, "", $3);
         print $3;
@@ -70,6 +90,11 @@ while IFS= read -r cargo_toml; do
       }
     ' "$cargo_toml"
   )"
+
+  # Crates using version.workspace = true inherit from [workspace.package]
+  if [[ "$pkg_version" == "workspace" ]]; then
+    continue
+  fi
 
   if [[ -n "$pkg_version" && "$pkg_version" != "$version" ]]; then
     echo "Version mismatch: $cargo_toml has $pkg_version (expected $version)" >&2

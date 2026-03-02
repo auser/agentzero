@@ -673,9 +673,9 @@ pub enum PluginCommands {
 pub enum AuthCommands {
     /// Login with OAuth (OpenAI Codex or Gemini).
     Login {
-        /// Provider (`openai-codex` or `gemini`).
+        /// Provider (`openai-codex` or `gemini`). Interactive prompt if omitted.
         #[arg(long)]
-        provider: String,
+        provider: Option<String>,
         /// Profile name (default: default).
         #[arg(long, default_value = "default")]
         profile: String,

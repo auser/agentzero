@@ -68,6 +68,29 @@ pub struct RefreshResult {
     pub status: RefreshStatus,
 }
 
+/// The result of credential resolution from auth profiles.
+#[derive(Debug, Clone)]
+pub struct ResolvedCredential {
+    /// The API token / access token.
+    pub token: String,
+    /// The provider kind the token belongs to (e.g. "openai-codex").
+    pub provider: String,
+    /// How the credential was resolved.
+    pub source: CredentialSource,
+}
+
+/// Describes which resolution path produced the credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CredentialSource {
+    /// An explicitly requested profile by name.
+    ExplicitProfile(String),
+    /// The active profile matched the requested provider.
+    ProviderMatch,
+    /// The active profile is for a different provider than requested.
+    /// The caller should update its provider config to match.
+    ActiveProfile(String),
+}
+
 pub struct AuthManager {
     state_store: EncryptedJsonStore,
     pending_store: EncryptedJsonStore,
@@ -362,6 +385,65 @@ impl AuthManager {
         Ok(found.map(|p| (p.provider.clone(), p.token.clone())))
     }
 
+    /// Resolve credentials from stored auth profiles.
+    ///
+    /// Resolution order:
+    /// 1. If `profile_name` is `Some`, look up that profile by name.
+    /// 2. Active profile matching `current_provider`.
+    /// 3. Any active profile (provider may differ — caller should update config).
+    ///
+    /// Returns `None` if no usable credential is found.
+    pub fn resolve_credential(
+        &self,
+        profile_name: Option<&str>,
+        current_provider: &str,
+    ) -> anyhow::Result<Option<ResolvedCredential>> {
+        // 1. Explicit profile by name.
+        if let Some(name) = profile_name {
+            let (provider, token) = self.token_for_profile(name)?.ok_or_else(|| {
+                anyhow!(
+                    "auth profile '{name}' not found — run `agentzero auth list` to see available profiles"
+                )
+            })?;
+            anyhow::ensure!(
+                !token.trim().is_empty(),
+                "auth profile '{name}' has an empty token — re-authenticate with `agentzero auth login`"
+            );
+            return Ok(Some(ResolvedCredential {
+                token,
+                provider,
+                source: CredentialSource::ExplicitProfile(name.to_string()),
+            }));
+        }
+
+        // 2. Profile matching current provider.
+        if let Some(token) = self.active_token_for_provider(current_provider)? {
+            if !token.trim().is_empty() {
+                return Ok(Some(ResolvedCredential {
+                    token,
+                    provider: current_provider.to_string(),
+                    source: CredentialSource::ProviderMatch,
+                }));
+            }
+        }
+
+        // 3. Any active profile (may differ from current_provider).
+        let status = self.status()?;
+        if let Some(ref active_name) = status.active_profile {
+            if let Some((provider, token)) = self.token_for_profile(active_name)? {
+                if !token.trim().is_empty() {
+                    return Ok(Some(ResolvedCredential {
+                        token,
+                        provider,
+                        source: CredentialSource::ActiveProfile(active_name.clone()),
+                    }));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     pub fn status(&self) -> anyhow::Result<AuthStatus> {
         let state = self.load_state()?;
         let active_profile = state.active_profile.clone();
@@ -533,7 +615,9 @@ pub fn extract_oauth_state(redirect_or_code: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_oauth_state, AuthManager, PendingOAuthLogin, RefreshStatus};
+    use super::{
+        extract_oauth_state, AuthManager, CredentialSource, PendingOAuthLogin, RefreshStatus,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -756,5 +840,95 @@ mod tests {
             extract_oauth_state("https://example.test/callback?code=abc"),
             None
         );
+    }
+
+    #[test]
+    fn resolve_credential_explicit_profile_success_path() {
+        let dir = temp_dir();
+        let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
+        manager
+            .login("default", "openai-codex", "tok-explicit", true)
+            .expect("login should succeed");
+
+        let cred = manager
+            .resolve_credential(Some("default"), "openrouter")
+            .expect("resolve should succeed")
+            .expect("credential should be found");
+        assert_eq!(cred.token, "tok-explicit");
+        assert_eq!(cred.provider, "openai-codex");
+        assert_eq!(
+            cred.source,
+            CredentialSource::ExplicitProfile("default".to_string())
+        );
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_credential_provider_match_success_path() {
+        let dir = temp_dir();
+        let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
+        manager
+            .login("default", "openrouter", "tok-match", true)
+            .expect("login should succeed");
+
+        let cred = manager
+            .resolve_credential(None, "openrouter")
+            .expect("resolve should succeed")
+            .expect("credential should be found");
+        assert_eq!(cred.token, "tok-match");
+        assert_eq!(cred.provider, "openrouter");
+        assert_eq!(cred.source, CredentialSource::ProviderMatch);
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_credential_active_profile_fallback_success_path() {
+        let dir = temp_dir();
+        let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
+        manager
+            .login("default", "openai-codex", "tok-fallback", true)
+            .expect("login should succeed");
+
+        // Config says "openrouter" but active profile is "openai-codex".
+        let cred = manager
+            .resolve_credential(None, "openrouter")
+            .expect("resolve should succeed")
+            .expect("credential should be found");
+        assert_eq!(cred.token, "tok-fallback");
+        assert_eq!(cred.provider, "openai-codex");
+        assert_eq!(
+            cred.source,
+            CredentialSource::ActiveProfile("default".to_string())
+        );
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_credential_returns_none_when_empty() {
+        let dir = temp_dir();
+        let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
+
+        let result = manager
+            .resolve_credential(None, "openrouter")
+            .expect("resolve should succeed");
+        assert!(result.is_none());
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_credential_explicit_missing_profile_fails() {
+        let dir = temp_dir();
+        let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
+
+        let err = manager
+            .resolve_credential(Some("nonexistent"), "openrouter")
+            .expect_err("missing profile should fail");
+        assert!(err.to_string().contains("not found"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
 }

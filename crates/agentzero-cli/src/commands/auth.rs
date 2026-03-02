@@ -28,7 +28,44 @@ impl AgentZeroCommand for AuthCommand {
                 profile,
                 device_code,
             } => {
-                let provider = normalize_oauth_provider(&provider)?;
+                let provider = match provider {
+                    Some(p) => normalize_oauth_provider(&p)?.to_string(),
+                    None => {
+                        let options = vec![
+                            "OpenAI Codex  (browser login)",
+                            "Anthropic     (paste API key)",
+                            "Google Gemini (paste API key)",
+                        ];
+                        let selection = inquire::Select::new(
+                            "Which provider do you want to log in with?",
+                            options,
+                        )
+                        .prompt()?;
+                        if selection.starts_with("OpenAI") {
+                            "openai-codex".to_string()
+                        } else if selection.starts_with("Anthropic") {
+                            "anthropic".to_string()
+                        } else {
+                            "gemini".to_string()
+                        }
+                    }
+                };
+
+                // Anthropic and Gemini use paste-key flow, not browser OAuth.
+                if provider == "anthropic" || provider == "gemini" {
+                    let label = if provider == "anthropic" {
+                        "Paste your Anthropic API key"
+                    } else {
+                        "Paste your Google AI Studio API key"
+                    };
+                    let value = read_plain_input(label)?;
+                    manager.paste_token(&profile, &provider, &value, true)?;
+                    println!("Saved profile {profile}");
+                    println!("Active profile for {provider}: {profile}");
+                    return Ok(());
+                }
+
+                let provider = provider.as_str();
                 if device_code {
                     println!(
                         "Device-code flow is not available yet. Falling back to browser/paste flow."
@@ -325,7 +362,10 @@ fn normalize_oauth_provider(provider: &str) -> anyhow::Result<&str> {
     if trimmed.eq_ignore_ascii_case("gemini") || trimmed.eq_ignore_ascii_case("google-gemini") {
         return Ok("gemini");
     }
-    bail!("`auth login` supports --provider openai-codex or gemini");
+    if trimmed.eq_ignore_ascii_case("anthropic") {
+        return Ok("anthropic");
+    }
+    bail!("`auth login` supports --provider openai-codex, gemini, or anthropic");
 }
 
 fn provider_to_pending_label(provider: &str) -> &'static str {
@@ -698,7 +738,7 @@ mod tests {
         AuthCommand::run(
             &ctx,
             AuthCommands::Login {
-                provider: "openai-codex".to_string(),
+                provider: Some("openai-codex".to_string()),
                 profile: "default".to_string(),
                 device_code: false,
             },

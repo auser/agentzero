@@ -1204,10 +1204,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_cli_from_rejects_auth_login_without_provider() {
-        let err = parse_cli_from(["agentzero", "auth", "login", "--profile", "default"])
-            .expect_err("auth login missing provider should fail");
-        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    fn parse_cli_from_accepts_auth_login_without_provider() {
+        let parsed = parse_cli_from(["agentzero", "auth", "login", "--profile", "default"])
+            .expect("auth login without provider should parse (interactive mode)");
+        assert!(matches!(
+            parsed.command,
+            Commands::Auth {
+                command: AuthCommands::Login { provider: None, .. }
+            }
+        ));
     }
 
     #[test]

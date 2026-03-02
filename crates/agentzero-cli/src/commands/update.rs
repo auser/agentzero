@@ -172,7 +172,7 @@ mod tests {
         UpdateCommand::run(
             &ctx,
             UpdateCommands::Apply {
-                version: "0.2.0".to_string(),
+                version: "0.3.0".to_string(),
                 json: false,
             },
         )

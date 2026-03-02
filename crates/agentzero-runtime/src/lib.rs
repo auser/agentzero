@@ -11,7 +11,7 @@ use agentzero_infra::tools::default_tools;
 use agentzero_memory::SqliteMemoryStore;
 #[cfg(feature = "memory-turso")]
 use agentzero_memory::{TursoMemoryStore, TursoSettings};
-use agentzero_providers::{find_models_for_provider, find_provider, OpenAiCompatibleProvider};
+use agentzero_providers::{find_models_for_provider, find_provider};
 use agentzero_routing::{ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter};
 use async_trait::async_trait;
 use serde_json::json;
@@ -91,8 +91,12 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
 
     let router = build_model_router(&config);
     let delegate_agents = build_delegate_agents(&config);
-    let provider =
-        OpenAiCompatibleProvider::new(config.provider.base_url, key, config.provider.model);
+    let provider = agentzero_providers::build_provider(
+        &config.provider.kind,
+        config.provider.base_url,
+        key,
+        config.provider.model,
+    );
     let memory = build_memory_store(&req.config_path).await?;
     let tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
     let tools: Vec<Box<dyn Tool>> = default_tools(&tool_policy, router, delegate_agents)?;
@@ -158,7 +162,7 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
                     .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
             },
         },
-        provider: Box::new(provider),
+        provider,
         memory,
         tools,
         audit_sink: if audit_policy.enabled {
@@ -227,8 +231,8 @@ pub async fn run_agent_with_runtime(
 
 /// Unified API key resolution. Priority:
 ///   1. If `profile_override` is set, use that profile's token directly.
-///   2. `OPENAI_API_KEY` env var / `.env` files.
-///   3. Active auth profile for the current provider.
+///   2. `OPENAI_API_KEY` env var / `.env` files (local providers: optional).
+///   3. Auth profile (provider match, then any active profile).
 ///   4. Error.
 ///
 /// When an auth profile provides credentials and `--provider` was not given,
@@ -239,35 +243,61 @@ fn resolve_api_key(
     profile_override: Option<&str>,
     provider_was_overridden: bool,
 ) -> anyhow::Result<String> {
-    // --- explicit --profile flag ---
-    if let Some(profile_name) = profile_override {
+    use agentzero_auth::CredentialSource;
+
+    // --- explicit --profile flag: handled by resolve_credential ---
+    if profile_override.is_some() {
         let config_dir = config_path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("config path has no parent directory"))?;
         let manager = AuthManager::in_config_dir(config_dir)?;
-        let (prof_provider, token) = manager
-            .token_for_profile(profile_name)?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "auth profile '{profile_name}' not found — run `agentzero auth list` to see available profiles"
-                )
-            })?;
-        anyhow::ensure!(
-            !token.trim().is_empty(),
-            "auth profile '{profile_name}' has an empty token — re-authenticate with `agentzero auth login`"
-        );
+        let cred = manager
+            .resolve_credential(profile_override, &config.provider.kind)?
+            .ok_or_else(|| anyhow::anyhow!("no auth credential found"))?;
         if !provider_was_overridden {
-            apply_provider_defaults(config, &prof_provider);
+            apply_provider_defaults(config, &cred.provider);
         }
-        info!("using auth profile '{profile_name}' (provider '{prof_provider}')");
-        return Ok(token);
+        info!("using auth profile (provider '{}')", cred.provider);
+        return Ok(cred.token);
     }
 
-    // --- no explicit profile: use env / active auth profile ---
-    resolve_api_key_for_provider(config_path, &config.provider.kind)
+    // --- no explicit profile ---
+    // For local providers, a key is optional.
+    if is_local_provider(&config.provider.kind) {
+        return Ok(load_env_var(config_path, "OPENAI_API_KEY")?.unwrap_or_default());
+    }
+
+    // Env var takes highest priority for cloud providers.
+    if let Some(key) = load_env_var(config_path, "OPENAI_API_KEY")? {
+        return Ok(key);
+    }
+
+    // Auth profiles: provider match then any active profile.
+    if let Some(config_dir) = config_path.parent() {
+        if let Ok(manager) = AuthManager::in_config_dir(config_dir) {
+            if let Ok(Some(cred)) = manager.resolve_credential(None, &config.provider.kind) {
+                if matches!(cred.source, CredentialSource::ActiveProfile(_))
+                    && !provider_was_overridden
+                {
+                    apply_provider_defaults(config, &cred.provider);
+                }
+                info!("using auth credential for provider '{}'", cred.provider);
+                return Ok(cred.token);
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "missing API key for provider '{}': \
+         set OPENAI_API_KEY (env var or .env) or run `agentzero auth login`",
+        config.provider.kind
+    )
 }
 
 /// Core key resolution by provider kind (env var -> auth profile -> error).
+/// Used by unit tests; the main path uses `resolve_api_key` which also falls
+/// back to any active profile.
+#[cfg(test)]
 fn resolve_api_key_for_provider(config_path: &Path, provider_kind: &str) -> anyhow::Result<String> {
     if is_local_provider(provider_kind) {
         return Ok(load_env_var(config_path, "OPENAI_API_KEY")?.unwrap_or_default());

@@ -205,7 +205,7 @@ impl AgentZeroCommand for ProvidersQuotaCommand {
             .unwrap_or_default();
 
         let descriptor = agentzero_providers::find_provider(&provider_kind);
-        let api_key_available = resolve_api_key(&provider_kind).is_some();
+        let api_key_available = resolve_api_key(&provider_kind, ctx).is_some();
 
         let quota_info = QuotaInfo {
             provider: provider_kind.clone(),
@@ -256,8 +256,8 @@ struct QuotaInfo {
     quota_api_supported: bool,
 }
 
-fn resolve_api_key(provider: &str) -> Option<String> {
-    // Check provider-specific env vars, then generic fallback
+fn resolve_api_key(provider: &str, ctx: &CommandContext) -> Option<String> {
+    // Check provider-specific env vars first.
     let env_keys = match provider {
         "openrouter" => &["OPENROUTER_API_KEY"][..],
         "anthropic" => &["ANTHROPIC_API_KEY"][..],
@@ -278,7 +278,11 @@ fn resolve_api_key(provider: &str) -> Option<String> {
             }
         }
     }
-    None
+
+    // Fall back to auth profiles.
+    let manager = agentzero_auth::AuthManager::in_config_dir(&ctx.data_dir).ok()?;
+    let cred = manager.resolve_credential(None, provider).ok()??;
+    Some(cred.token)
 }
 
 fn supports_quota_api(provider: &str) -> bool {

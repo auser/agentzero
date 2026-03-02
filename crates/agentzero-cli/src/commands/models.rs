@@ -32,9 +32,9 @@ impl AgentZeroCommand for ModelsCommand {
                     if provider.is_some() {
                         anyhow::bail!("`models refresh --all` cannot be combined with --provider");
                     }
-                    run_models_refresh_all(ctx, force)
+                    run_models_refresh_all(ctx, force).await
                 } else {
-                    run_models_refresh(ctx, provider.as_deref(), force)
+                    run_models_refresh(ctx, provider.as_deref(), force).await
                 }
             }
             ModelCommands::List { provider } => run_models_list(ctx, provider.as_deref()),
@@ -54,7 +54,7 @@ struct CachedModelCatalog {
     updated_at_epoch_secs: u64,
 }
 
-fn run_models_refresh(
+async fn run_models_refresh(
     ctx: &CommandContext,
     provider_override: Option<&str>,
     force: bool,
@@ -84,7 +84,7 @@ fn run_models_refresh(
         }
     }
 
-    match fetch_live_models_for_provider(&provider_name) {
+    match fetch_live_models_for_provider(&provider_name).await {
         Ok(models) if !models.is_empty() => {
             cache_live_models_for_provider(&ctx.data_dir, &provider_name, &models)?;
             println!(
@@ -216,7 +216,7 @@ fn run_models_status(ctx: &CommandContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_models_refresh_all(ctx: &CommandContext, force: bool) -> anyhow::Result<()> {
+async fn run_models_refresh_all(ctx: &CommandContext, force: bool) -> anyhow::Result<()> {
     let mut targets: Vec<String> = supported_providers()
         .iter()
         .map(|provider| provider.id.to_string())
@@ -242,7 +242,7 @@ fn run_models_refresh_all(ctx: &CommandContext, force: bool) -> anyhow::Result<(
 
     for provider_name in &targets {
         println!("== {provider_name} ==");
-        match run_models_refresh(ctx, Some(provider_name), force) {
+        match run_models_refresh(ctx, Some(provider_name), force).await {
             Ok(()) => {
                 ok_count += 1;
             }
@@ -275,15 +275,10 @@ fn supports_live_model_fetch(provider: &str) -> bool {
     find_models_for_provider(provider).is_some()
 }
 
-fn fetch_live_models_for_provider(provider: &str) -> anyhow::Result<Vec<String>> {
+async fn fetch_live_models_for_provider(provider: &str) -> anyhow::Result<Vec<String>> {
     if is_local_provider(provider) {
         if let Some(meta) = local_provider_meta(provider) {
-            let rt = tokio::runtime::Handle::current();
-            match rt.block_on(agentzero_local::list_models(
-                provider,
-                meta.default_base_url,
-                5000,
-            )) {
+            match agentzero_local::list_models(provider, meta.default_base_url, 5000).await {
                 Ok(models) => {
                     return Ok(models.into_iter().map(|m| m.id).collect());
                 }

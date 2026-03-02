@@ -38,15 +38,15 @@ const OPENAI_MODELS: &[ModelDescriptor] = &[
 
 const ANTHROPIC_MODELS: &[ModelDescriptor] = &[
     ModelDescriptor {
-        id: "claude-3-5-sonnet-latest",
+        id: "claude-sonnet-4-20250514",
         is_default: true,
     },
     ModelDescriptor {
-        id: "claude-3-5-haiku-latest",
+        id: "claude-haiku-4-20250414",
         is_default: false,
     },
     ModelDescriptor {
-        id: "claude-3-opus-latest",
+        id: "claude-opus-4-20250514",
         is_default: false,
     },
 ];
