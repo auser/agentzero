@@ -277,6 +277,7 @@ mod tests {
     use super::{extract_toml_string_value, format_uptime, DashboardCommand, DashboardSnapshot};
     use crate::command_core::{AgentZeroCommand, CommandContext};
     use std::fs;
+    use std::io::IsTerminal;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -321,6 +322,11 @@ mod tests {
 
     #[tokio::test]
     async fn dashboard_command_requires_tty_negative_path() {
+        // This test validates non-TTY behavior; skip when stdout is a real terminal
+        // (e.g. `cargo test` from an interactive shell / pre-commit hook).
+        if std::io::stdout().is_terminal() {
+            return;
+        }
         let dir = temp_dir();
         let ctx = CommandContext {
             workspace_root: dir.clone(),
