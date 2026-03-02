@@ -14,7 +14,6 @@ struct Input {
 /// Tool that discovers available CLI tools and capabilities at runtime.
 ///
 /// Operations:
-/// - `list_tools`: List all registered tools by name
 /// - `check_command`: Check if a shell command is available on PATH
 /// - `runtime_info`: Return runtime environment information
 #[derive(Debug, Default, Clone, Copy)]

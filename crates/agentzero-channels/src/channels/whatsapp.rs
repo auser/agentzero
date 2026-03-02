@@ -54,7 +54,7 @@ mod impl_ {
             Ok(())
         }
 
-        async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
+        async fn listen(&self, _tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
             // WhatsApp Cloud API uses webhooks (push-based). In standalone mode, poll a local
             // webhook receiver or wait for injected messages. This implementation provides the
             // webhook verification and message parsing infrastructure.

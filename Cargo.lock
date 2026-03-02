@@ -580,6 +580,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "temp-env",
  "tokio",
  "url",
  "zip",

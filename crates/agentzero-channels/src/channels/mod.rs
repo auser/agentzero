@@ -1,3 +1,4 @@
+pub mod channel_setup;
 pub mod helpers;
 
 // ---------------------------------------------------------------------------
@@ -5,6 +6,7 @@ pub mod helpers;
 // Generates struct, descriptor, and async Channel impl that bail!s.
 // ---------------------------------------------------------------------------
 
+#[allow(unused_macros)]
 macro_rules! channel_stub {
     ($name:ident, $descriptor:ident, $id:literal, $display:literal) => {
         #[allow(dead_code)]
@@ -39,6 +41,7 @@ macro_rules! channel_stub {
     };
 }
 
+#[allow(unused_imports)]
 pub(crate) use channel_stub;
 
 // ---------------------------------------------------------------------------

@@ -27,3 +27,6 @@ serde_json.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
 zip.workspace = true
+
+[dev-dependencies]
+temp-env = "0.3"

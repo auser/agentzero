@@ -17,6 +17,7 @@ memory-sqlite = ["agentzero-cli/memory-sqlite"]
 memory-turso = ["agentzero-cli/memory-turso"]
 rag = ["agentzero-cli/rag"]
 hardware = ["agentzero-cli/hardware"]
+channels-standard = ["agentzero-cli/channels-standard"]
 
 [dependencies]
 anyhow.workspace = true

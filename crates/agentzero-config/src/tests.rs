@@ -1350,3 +1350,130 @@ fn normalize_base_url_preserves_url_without_v1() {
 
     fs::remove_dir_all(dir).expect("temp dir should be removed");
 }
+
+// --- Policy flag coverage ---
+
+#[test]
+fn enable_git_derived_from_allowed_commands() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+
+    // Config with git in allowed_commands.
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\", \"git\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert!(
+            policy.enable_git,
+            "enable_git should be true when 'git' is in allowed_commands"
+        );
+    });
+
+    // Config without git.
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\", \"ls\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert!(
+            !policy.enable_git,
+            "enable_git should be false without 'git' in allowed_commands"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn enable_web_search_from_config() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[web_search]\nenabled = true\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert!(policy.enable_web_search);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn enable_browser_from_config() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[browser]\nenabled = true\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert!(policy.enable_browser);
+        assert!(policy.enable_browser_open);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn cidr_parse_error_returns_err() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[security.url_access]\nallow_cidrs = [\"not-a-cidr\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load_tool_security_policy(&dir, &config_path);
+        assert!(result.is_err(), "invalid CIDR should fail");
+        assert!(
+            result.unwrap_err().to_string().contains("CIDR"),
+            "error should mention CIDR"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn absolute_allowed_root_is_accepted() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    // Use the temp dir as the absolute allowed_root (it exists and is canonical).
+    let abs_root = dir.to_string_lossy().to_string();
+    fs::write(
+        &config_path,
+        format!("[security]\nallowed_root = \"{abs_root}\"\nallowed_commands = [\"echo\"]\n"),
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert!(
+            policy.read_file.allowed_root.is_absolute(),
+            "allowed_root should be absolute"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}

@@ -4,9 +4,11 @@ mod plugin;
 use agentzero_core::Tool;
 use agentzero_delegation::DelegateConfig;
 use agentzero_routing::ModelRouter;
+use agentzero_tools::ToolBuilder;
 use anyhow::Context;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub use agentzero_tools::{
     ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool, ComposioTool,
@@ -121,7 +123,10 @@ pub fn default_tools(
 
     if let Some(agents) = delegate_agents {
         if !agents.is_empty() {
-            tools.push(Box::new(DelegateTool::new(agents, 0)));
+            let policy_for_builder = policy.clone();
+            let builder: ToolBuilder =
+                Arc::new(move || default_tools(&policy_for_builder, None, None));
+            tools.push(Box::new(DelegateTool::new(agents, 0, builder)));
         }
     }
 

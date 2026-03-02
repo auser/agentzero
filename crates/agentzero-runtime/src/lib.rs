@@ -464,11 +464,15 @@ fn build_delegate_agents(
         .agents
         .iter()
         .map(|(name, agent)| {
+            let provider_kind = agent.provider.clone();
+            let base_url = resolve_delegate_base_url(&provider_kind);
+
             (
                 name.clone(),
                 DelegateConfig {
                     name: name.clone(),
-                    provider: agent.provider.clone(),
+                    provider_kind,
+                    provider: base_url,
                     model: agent.model.clone(),
                     system_prompt: agent.system_prompt.clone(),
                     api_key: agent.api_key.clone(),
@@ -483,6 +487,19 @@ fn build_delegate_agents(
         .collect();
 
     Some(map)
+}
+
+/// Resolve a provider kind string to a base URL. If the kind looks like a URL
+/// already (starts with `http://` or `https://`), return it as-is. Otherwise
+/// look it up in the provider catalog.
+fn resolve_delegate_base_url(provider_kind: &str) -> String {
+    if provider_kind.starts_with("http://") || provider_kind.starts_with("https://") {
+        return provider_kind.to_string();
+    }
+    find_provider(provider_kind)
+        .and_then(|desc| desc.default_base_url)
+        .map(|url| url.to_string())
+        .unwrap_or_else(|| provider_kind.to_string())
 }
 
 #[cfg(test)]
@@ -653,5 +670,63 @@ mod tests {
     fn parse_hook_mode_rejects_unknown_mode_negative_path() {
         let err = parse_hook_mode("panic").expect_err("unknown mode should fail");
         assert!(err.to_string().contains("invalid hook error mode"));
+    }
+
+    #[test]
+    fn resolve_delegate_base_url_resolves_known_provider() {
+        let url = super::resolve_delegate_base_url("openrouter");
+        assert!(
+            url.contains("openrouter.ai"),
+            "openrouter should resolve to openrouter.ai URL, got: {url}"
+        );
+    }
+
+    #[test]
+    fn resolve_delegate_base_url_resolves_anthropic() {
+        let url = super::resolve_delegate_base_url("anthropic");
+        assert!(
+            url.contains("anthropic.com"),
+            "anthropic should resolve to anthropic.com URL, got: {url}"
+        );
+    }
+
+    #[test]
+    fn resolve_delegate_base_url_passes_through_urls() {
+        let custom_url = "https://my-proxy.example.com/v1";
+        let url = super::resolve_delegate_base_url(custom_url);
+        assert_eq!(url, custom_url);
+    }
+
+    #[test]
+    fn resolve_delegate_base_url_passes_through_unknown_kind() {
+        let url = super::resolve_delegate_base_url("unknown-provider-xyz");
+        assert_eq!(url, "unknown-provider-xyz");
+    }
+
+    #[test]
+    fn build_delegate_agents_resolves_provider_url() {
+        let mut agents = std::collections::HashMap::new();
+        agents.insert(
+            "researcher".to_string(),
+            agentzero_config::DelegateAgentConfig {
+                provider: "openrouter".to_string(),
+                model: "gpt-4o".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let config = agentzero_config::AgentZeroConfig {
+            agents,
+            ..Default::default()
+        };
+
+        let result = super::build_delegate_agents(&config).expect("should build delegate agents");
+        let researcher = result.get("researcher").expect("researcher should exist");
+        assert_eq!(researcher.provider_kind, "openrouter");
+        assert!(
+            researcher.provider.contains("openrouter.ai"),
+            "provider URL should be resolved, got: {}",
+            researcher.provider
+        );
     }
 }

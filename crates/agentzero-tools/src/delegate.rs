@@ -2,10 +2,16 @@ use agentzero_core::{
     Agent, AgentConfig, ChatResult, MemoryEntry, MemoryStore, Provider, Tool, ToolContext,
     ToolResult,
 };
-use agentzero_delegation::{validate_delegation, DelegateConfig, DelegateRequest};
+use agentzero_delegation::{filter_tools, validate_delegation, DelegateConfig, DelegateRequest};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
+
+/// Function that builds a tool set for sub-agents. The delegate tool calls this
+/// when running in agentic mode, then filters the result based on each agent's
+/// `allowed_tools` configuration.
+pub type ToolBuilder = Arc<dyn Fn() -> anyhow::Result<Vec<Box<dyn Tool>>> + Send + Sync>;
 
 #[derive(Debug, Deserialize)]
 struct Input {
@@ -16,13 +22,19 @@ struct Input {
 pub struct DelegateTool {
     agents: HashMap<String, DelegateConfig>,
     current_depth: usize,
+    tool_builder: ToolBuilder,
 }
 
 impl DelegateTool {
-    pub fn new(agents: HashMap<String, DelegateConfig>, current_depth: usize) -> Self {
+    pub fn new(
+        agents: HashMap<String, DelegateConfig>,
+        current_depth: usize,
+        tool_builder: ToolBuilder,
+    ) -> Self {
         Self {
             agents,
             current_depth,
+            tool_builder,
         }
     }
 }
@@ -49,26 +61,63 @@ impl Tool for DelegateTool {
         };
         validate_delegation(&request, config)?;
 
-        let api_key = config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .unwrap_or_default();
+        let api_key = resolve_delegate_api_key(config);
 
-        let provider = agentzero_providers::OpenAiCompatibleProvider::new(
+        let provider = agentzero_providers::build_provider(
+            &config.provider_kind,
             config.provider.clone(),
             api_key,
             config.model.clone(),
         );
 
+        let effective_prompt = match &config.system_prompt {
+            Some(sp) => format!("System: {sp}\n\nUser: {}", parsed.prompt),
+            None => parsed.prompt.clone(),
+        };
+
         let output = if config.agentic {
-            run_agentic(provider, config, &parsed.prompt, ctx).await?
+            run_agentic(provider, config, &effective_prompt, ctx, &self.tool_builder).await?
         } else {
-            run_single_shot(&provider, &parsed.prompt).await?
+            run_single_shot(provider.as_ref(), &effective_prompt).await?
         };
 
         Ok(ToolResult { output })
     }
+}
+
+/// Resolve an API key for a delegate agent. Checks (in order):
+/// 1. Explicit `api_key` in the delegate config
+/// 2. Provider-specific environment variable
+/// 3. Generic `OPENAI_API_KEY` fallback
+fn resolve_delegate_api_key(config: &DelegateConfig) -> String {
+    if let Some(ref key) = config.api_key {
+        if !key.is_empty() {
+            return key.clone();
+        }
+    }
+
+    let provider_env_keys: &[&str] = match config.provider_kind.as_str() {
+        "anthropic" => &["ANTHROPIC_API_KEY"],
+        "openrouter" => &["OPENROUTER_API_KEY"],
+        "openai" => &["OPENAI_API_KEY"],
+        "google" | "gemini" => &["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+        "groq" => &["GROQ_API_KEY"],
+        "together" | "together-ai" => &["TOGETHER_API_KEY"],
+        "deepseek" => &["DEEPSEEK_API_KEY"],
+        "mistral" => &["MISTRAL_API_KEY"],
+        "xai" | "grok" => &["XAI_API_KEY"],
+        _ => &[],
+    };
+
+    for key in provider_env_keys {
+        if let Ok(val) = std::env::var(key) {
+            if !val.is_empty() {
+                return val;
+            }
+        }
+    }
+
+    std::env::var("OPENAI_API_KEY").unwrap_or_default()
 }
 
 async fn run_single_shot(provider: &dyn Provider, prompt: &str) -> anyhow::Result<String> {
@@ -77,22 +126,30 @@ async fn run_single_shot(provider: &dyn Provider, prompt: &str) -> anyhow::Resul
 }
 
 async fn run_agentic(
-    provider: agentzero_providers::OpenAiCompatibleProvider,
+    provider: Box<dyn Provider>,
     config: &DelegateConfig,
     prompt: &str,
     ctx: &ToolContext,
+    tool_builder: &ToolBuilder,
 ) -> anyhow::Result<String> {
     let agent_config = AgentConfig {
         max_tool_iterations: config.max_iterations,
         ..Default::default()
     };
     let memory = EphemeralMemory::default();
-    let agent = Agent::new(
-        agent_config,
-        Box::new(provider),
-        Box::new(memory),
-        vec![], // Sub-agent tools can be populated in a future enhancement.
-    );
+
+    // Build tools for the sub-agent. The builder creates the full set; we
+    // filter to only those in the agent's allowed_tools (filter_tools also
+    // excludes "delegate" to prevent infinite chains).
+    let all_tools = tool_builder().unwrap_or_else(|_| vec![]);
+    let all_tool_names: Vec<String> = all_tools.iter().map(|t| t.name().to_string()).collect();
+    let allowed_names = filter_tools(&all_tool_names, &config.allowed_tools);
+    let tools: Vec<Box<dyn Tool>> = all_tools
+        .into_iter()
+        .filter(|t| allowed_names.contains(&t.name().to_string()))
+        .collect();
+
+    let agent = Agent::new(agent_config, provider, Box::new(memory), tools);
 
     let response = agent
         .respond(
@@ -131,12 +188,17 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    fn noop_builder() -> ToolBuilder {
+        Arc::new(|| Ok(vec![]))
+    }
+
     fn test_agents() -> HashMap<String, DelegateConfig> {
         let mut map = HashMap::new();
         map.insert(
             "researcher".to_string(),
             DelegateConfig {
                 name: "researcher".into(),
+                provider_kind: "openai".into(),
                 provider: "https://api.example.invalid/v1".into(),
                 model: "gpt-4o-mini".into(),
                 max_depth: 3,
@@ -149,6 +211,7 @@ mod tests {
             "coder".to_string(),
             DelegateConfig {
                 name: "coder".into(),
+                provider_kind: "openai".into(),
                 provider: "https://api.example.invalid/v1".into(),
                 model: "gpt-4o".into(),
                 max_depth: 2,
@@ -166,7 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn delegate_unknown_agent_returns_error() {
-        let tool = DelegateTool::new(test_agents(), 0);
+        let tool = DelegateTool::new(test_agents(), 0, noop_builder());
         let result = tool
             .execute(r#"{"agent":"nonexistent","prompt":"hello"}"#, &test_ctx())
             .await;
@@ -176,7 +239,7 @@ mod tests {
 
     #[tokio::test]
     async fn delegate_depth_exceeded_returns_error() {
-        let tool = DelegateTool::new(test_agents(), 3);
+        let tool = DelegateTool::new(test_agents(), 3, noop_builder());
         let result = tool
             .execute(r#"{"agent":"researcher","prompt":"hello"}"#, &test_ctx())
             .await;
@@ -186,7 +249,7 @@ mod tests {
 
     #[tokio::test]
     async fn delegate_invalid_input_returns_error() {
-        let tool = DelegateTool::new(test_agents(), 0);
+        let tool = DelegateTool::new(test_agents(), 0, noop_builder());
         let result = tool.execute(r#"not json"#, &test_ctx()).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("invalid input"));
@@ -201,6 +264,7 @@ mod tests {
             "bad".to_string(),
             DelegateConfig {
                 name: "bad".into(),
+                provider_kind: "openai".into(),
                 provider: "https://api.example.invalid/v1".into(),
                 model: "gpt-4o".into(),
                 max_depth: 3,
@@ -209,11 +273,128 @@ mod tests {
                 ..Default::default()
             },
         );
-        let tool = DelegateTool::new(agents, 0);
+        let tool = DelegateTool::new(agents, 0, noop_builder());
         let result = tool
             .execute(r#"{"agent":"bad","prompt":"hello"}"#, &test_ctx())
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("delegate"));
+    }
+
+    #[test]
+    fn resolve_api_key_prefers_explicit_config() {
+        let config = DelegateConfig {
+            api_key: Some("explicit-key".into()),
+            provider_kind: "openai".into(),
+            ..Default::default()
+        };
+        assert_eq!(resolve_delegate_api_key(&config), "explicit-key");
+    }
+
+    #[test]
+    fn resolve_api_key_uses_provider_specific_env_var() {
+        let config = DelegateConfig {
+            provider_kind: "anthropic".into(),
+            ..Default::default()
+        };
+        temp_env::with_vars(
+            [
+                ("ANTHROPIC_API_KEY", Some("ant-key")),
+                ("OPENAI_API_KEY", Some("oai-key")),
+            ],
+            || {
+                assert_eq!(resolve_delegate_api_key(&config), "ant-key");
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_api_key_falls_back_to_openai_env() {
+        let config = DelegateConfig {
+            provider_kind: "custom".into(),
+            ..Default::default()
+        };
+        temp_env::with_vars(
+            [
+                ("OPENAI_API_KEY", Some("oai-fallback")),
+                ("ANTHROPIC_API_KEY", None),
+            ],
+            || {
+                assert_eq!(resolve_delegate_api_key(&config), "oai-fallback");
+            },
+        );
+    }
+
+    #[test]
+    fn system_prompt_is_prepended_to_user_prompt() {
+        let config = DelegateConfig {
+            system_prompt: Some("You are a research assistant.".into()),
+            ..Default::default()
+        };
+        let user_prompt = "Find docs about X";
+        let effective = match &config.system_prompt {
+            Some(sp) => format!("System: {sp}\n\nUser: {user_prompt}"),
+            None => user_prompt.to_string(),
+        };
+        assert!(effective.starts_with("System: You are a research assistant."));
+        assert!(effective.ends_with("User: Find docs about X"));
+    }
+
+    #[test]
+    fn no_system_prompt_passes_user_prompt_unchanged() {
+        let config = DelegateConfig::default();
+        let user_prompt = "Find docs about X";
+        let effective = match &config.system_prompt {
+            Some(sp) => format!("System: {sp}\n\nUser: {user_prompt}"),
+            None => user_prompt.to_string(),
+        };
+        assert_eq!(effective, "Find docs about X");
+    }
+
+    #[test]
+    fn tool_builder_filters_by_allowed_tools() {
+        use agentzero_core::{ToolContext, ToolResult};
+
+        // A simple test tool.
+        struct FakeTool(&'static str);
+        #[async_trait]
+        impl Tool for FakeTool {
+            fn name(&self) -> &'static str {
+                self.0
+            }
+            async fn execute(
+                &self,
+                _input: &str,
+                _ctx: &ToolContext,
+            ) -> anyhow::Result<ToolResult> {
+                Ok(ToolResult {
+                    output: "ok".into(),
+                })
+            }
+        }
+
+        let builder: ToolBuilder = Arc::new(|| {
+            Ok(vec![
+                Box::new(FakeTool("read_file")) as Box<dyn Tool>,
+                Box::new(FakeTool("shell")),
+                Box::new(FakeTool("delegate")),
+                Box::new(FakeTool("web_search")),
+            ])
+        });
+
+        // Build with an allowlist of just "read_file".
+        let all_tools = builder().unwrap();
+        let all_names: Vec<String> = all_tools.iter().map(|t| t.name().to_string()).collect();
+        let mut allowed = HashSet::new();
+        allowed.insert("read_file".to_string());
+        let filtered = filter_tools(&all_names, &allowed);
+        assert_eq!(filtered, vec!["read_file".to_string()]);
+
+        // Build with an empty allowlist (all except delegate).
+        let filtered_all = filter_tools(&all_names, &HashSet::new());
+        assert!(filtered_all.contains(&"read_file".to_string()));
+        assert!(filtered_all.contains(&"shell".to_string()));
+        assert!(filtered_all.contains(&"web_search".to_string()));
+        assert!(!filtered_all.contains(&"delegate".to_string()));
     }
 }

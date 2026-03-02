@@ -8,6 +8,7 @@ pub mod interruption;
 pub mod outbound;
 pub mod pipeline;
 
+pub use channels::channel_setup::{register_configured_channels, ChannelInstanceConfig};
 pub use channels::CHANNEL_CATALOG;
 
 use async_trait::async_trait;

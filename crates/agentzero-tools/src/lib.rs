@@ -48,7 +48,7 @@ pub use content_search::ContentSearchTool;
 pub use cron_tools::{
     CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool,
 };
-pub use delegate::DelegateTool;
+pub use delegate::{DelegateTool, ToolBuilder};
 pub use delegate_coordination_status::DelegateCoordinationStatusTool;
 pub use docx_read::DocxReadTool;
 pub use file_edit::FileEditTool;

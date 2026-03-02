@@ -30,7 +30,7 @@ default = ["channel-cli", "channel-webhook"]
 channel-cli = []
 channel-telegram = ["reqwest"]
 channel-discord = ["reqwest", "tokio-tungstenite", "futures-util"]
-channel-slack = ["reqwest", "futures-util"]
+channel-slack = ["reqwest", "tokio-tungstenite", "futures-util"]
 channel-mattermost = ["reqwest"]
 channel-email = []
 channel-irc = []
@@ -53,6 +53,18 @@ channel-mqtt = []
 channel-transcription = []
 channel-whatsapp-web = []
 channel-nostr = ["tokio-tungstenite", "futures-util"]
+channels-standard = [
+    "channel-cli",
+    "channel-telegram",
+    "channel-discord",
+    "channel-slack",
+    "channel-mattermost",
+    "channel-matrix",
+    "channel-email",
+    "channel-irc",
+    "channel-nostr",
+    "channel-webhook",
+]
 all-channels = [
     "channel-cli",
     "channel-telegram",

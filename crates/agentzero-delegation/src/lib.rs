@@ -6,6 +6,10 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelegateConfig {
     pub name: String,
+    /// Provider kind string (e.g. `"openrouter"`, `"anthropic"`). Used to
+    /// dispatch to the correct provider implementation via `build_provider`.
+    pub provider_kind: String,
+    /// Resolved base URL for the provider API (e.g. `"https://openrouter.ai/api/v1"`).
     pub provider: String,
     pub model: String,
     pub system_prompt: Option<String>,
@@ -21,6 +25,7 @@ impl Default for DelegateConfig {
     fn default() -> Self {
         Self {
             name: String::new(),
+            provider_kind: String::new(),
             provider: String::new(),
             model: String::new(),
             system_prompt: None,
@@ -114,7 +119,8 @@ mod tests {
     fn config() -> DelegateConfig {
         DelegateConfig {
             name: "researcher".into(),
-            provider: "openrouter".into(),
+            provider_kind: "openrouter".into(),
+            provider: "https://openrouter.ai/api/v1".into(),
             model: "anthropic/claude-sonnet-4-6".into(),
             max_depth: 3,
             agentic: true,
