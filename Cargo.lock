@@ -603,9 +603,12 @@ version = "0.1.4"
 dependencies = [
  "agentzero-storage",
  "anyhow",
+ "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

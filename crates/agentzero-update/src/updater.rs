@@ -1,6 +1,7 @@
 use agentzero_storage::EncryptedJsonStore;
 use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -131,6 +132,246 @@ pub fn rollback_update(
         from_version: from,
         to_version: previous,
     })
+}
+
+/// Fetch the latest published version from the GitHub releases API.
+///
+/// Strips a leading `v` from the tag name so the returned string is a bare
+/// semver like `"0.2.0"`.  Pass `github_token` to avoid anonymous rate-limits.
+pub async fn fetch_latest_version(github_token: Option<&str>) -> anyhow::Result<String> {
+    let client = build_client(github_token)?;
+    let body: serde_json::Value = client
+        .get("https://api.github.com/repos/auser/agentzero/releases/latest")
+        .send()
+        .await
+        .context("failed to reach GitHub releases API")?
+        .error_for_status()
+        .context("GitHub releases API returned an error status")?
+        .json()
+        .await
+        .context("failed to parse GitHub releases API response")?;
+
+    let tag = body["tag_name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("GitHub API response missing 'tag_name' field"))?;
+
+    Ok(tag.trim_start_matches('v').to_string())
+}
+
+/// Download the release artifact for the current platform, verify its SHA256
+/// checksum, back up the running binary, and atomically replace it.
+///
+/// After the binary is replaced this process calls the existing
+/// [`apply_update`] to record the version transition in the encrypted state
+/// file so that [`rollback_update`] / [`restore_backup`] can undo it.
+pub async fn download_and_install(
+    state_path: impl AsRef<Path>,
+    current_version: &str,
+    target_version: &str,
+    github_token: Option<&str>,
+) -> anyhow::Result<ApplyUpdateResult> {
+    if target_version.trim().is_empty() {
+        return Err(anyhow!("target version cannot be empty"));
+    }
+
+    let (platform, arch) = current_target_name()?;
+    let ext = if platform == "windows" { ".exe" } else { "" };
+    let artifact_name = format!("agentzero-v{target_version}-{platform}-{arch}{ext}");
+
+    let client = build_client(github_token)?;
+
+    // --- download and parse SHA256SUMS ---
+    let sums_url = format!(
+        "https://github.com/auser/agentzero/releases/download/v{target_version}/SHA256SUMS"
+    );
+    let sums_text = client
+        .get(&sums_url)
+        .send()
+        .await
+        .context("failed to download SHA256SUMS")?
+        .error_for_status()
+        .context("SHA256SUMS download returned an error status")?
+        .text()
+        .await
+        .context("failed to read SHA256SUMS body")?;
+
+    let expected_hash = expected_checksum(&sums_text, &artifact_name)?;
+
+    // --- download artifact and verify checksum ---
+    let artifact_url = format!(
+        "https://github.com/auser/agentzero/releases/download/v{target_version}/{artifact_name}"
+    );
+    let bytes = download_verified(&client, &artifact_url, &expected_hash).await?;
+
+    // --- locate running binary ---
+    let exe_path =
+        std::env::current_exe().context("failed to determine current executable path")?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or_else(|| anyhow!("executable has no parent directory"))?;
+    let exe_stem = exe_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+
+    // --- back up current binary ---
+    let backup_path = exe_dir.join(format!("{exe_stem}.backup"));
+    tokio::fs::copy(&exe_path, &backup_path)
+        .await
+        .with_context(|| format!("failed to back up binary to {}", backup_path.display()))?;
+
+    // --- write new binary to a temp file in the same directory ---
+    // Must be on the same filesystem as the target for atomic rename.
+    let tmp_path = exe_dir.join(format!("{exe_stem}.tmp"));
+    tokio::fs::write(&tmp_path, &bytes)
+        .await
+        .with_context(|| format!("failed to write new binary to {}", tmp_path.display()))?;
+
+    // --- make executable on Unix ---
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&tmp_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&tmp_path, perms)
+            .context("failed to set executable permissions on new binary")?;
+    }
+
+    // --- atomic replace ---
+    tokio::fs::rename(&tmp_path, &exe_path)
+        .await
+        .with_context(|| format!("failed to replace binary at {}", exe_path.display()))?;
+
+    apply_update(state_path, current_version, target_version)
+}
+
+/// Restore the `.backup` binary created by [`download_and_install`] and
+/// update the version state accordingly.
+///
+/// Returns an error if no backup file is found.
+pub async fn restore_backup(
+    state_path: impl AsRef<Path>,
+    current_version: &str,
+) -> anyhow::Result<RollbackUpdateResult> {
+    let exe_path =
+        std::env::current_exe().context("failed to determine current executable path")?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or_else(|| anyhow!("executable has no parent directory"))?;
+    let exe_stem = exe_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let backup_path = exe_dir.join(format!("{exe_stem}.backup"));
+
+    if !backup_path.exists() {
+        return Err(anyhow!(
+            "no backup binary found at {}; cannot restore",
+            backup_path.display()
+        ));
+    }
+
+    tokio::fs::rename(&backup_path, &exe_path)
+        .await
+        .with_context(|| format!("failed to restore backup from {}", backup_path.display()))?;
+
+    rollback_update(state_path, current_version)
+}
+
+// ── internal helpers ──────────────────────────────────────────────────────────
+
+fn build_client(github_token: Option<&str>) -> anyhow::Result<reqwest::Client> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::ACCEPT,
+        reqwest::header::HeaderValue::from_static("application/vnd.github+json"),
+    );
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static("agentzero-updater"),
+    );
+    if let Some(token) = github_token {
+        let value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+            .context("invalid GitHub token")?;
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+    }
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .context("failed to build HTTP client")
+}
+
+/// Map the current OS and CPU architecture to the platform/arch labels used in
+/// release artifact names (e.g. `"macos"`, `"aarch64"`).
+fn current_target_name() -> anyhow::Result<(&'static str, &'static str)> {
+    let platform = match std::env::consts::OS {
+        "macos" => "macos",
+        "linux" => "linux",
+        "windows" => "windows",
+        other => return Err(anyhow!("unsupported platform: {}", other)),
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "aarch64" => "aarch64",
+        "arm" => "armv7",
+        other => return Err(anyhow!("unsupported CPU architecture: {}", other)),
+    };
+    Ok((platform, arch))
+}
+
+/// Parse a `SHA256SUMS` file and return the hex digest for `artifact_name`.
+///
+/// Supports both `sha256sum` format (`<hash>  <name>`) and BSD format
+/// (`<hash> *<name>`).
+fn expected_checksum(sums: &str, artifact_name: &str) -> anyhow::Result<String> {
+    for line in sums.lines() {
+        if let Some((hash, name)) = line.split_once("  ") {
+            if name.trim() == artifact_name {
+                return Ok(hash.trim().to_string());
+            }
+        } else if let Some((hash, name)) = line.split_once(" *") {
+            if name.trim() == artifact_name {
+                return Ok(hash.trim().to_string());
+            }
+        }
+    }
+    Err(anyhow!(
+        "artifact '{}' not found in SHA256SUMS",
+        artifact_name
+    ))
+}
+
+/// Download `url`, compute its SHA-256, and return the bytes only if the
+/// digest matches `expected_hex`.
+async fn download_verified(
+    client: &reqwest::Client,
+    url: &str,
+    expected_hex: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let bytes = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("failed to download {url}"))?
+        .error_for_status()
+        .with_context(|| format!("download of {url} returned an error status"))?
+        .bytes()
+        .await
+        .with_context(|| format!("failed to read body of {url}"))?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let actual = format!("{:x}", hasher.finalize());
+
+    if actual != expected_hex {
+        return Err(anyhow!(
+            "SHA256 mismatch for {url}: expected {expected_hex}, got {actual}"
+        ));
+    }
+
+    Ok(bytes.to_vec())
 }
 
 fn now_epoch_secs() -> u64 {

@@ -363,6 +363,9 @@ fn run_with_io(
         seed
     };
 
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("failed to create config directory")?;
+    }
     fs::write(path, render_template(&config)).context("failed to write agentzero.toml")?;
     writeln!(writer, "Created {}", path.display()).context("failed to write output")?;
     writeln!(
@@ -535,6 +538,9 @@ fn run_with_inquire(
         allowed_commands,
     };
 
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("failed to create config directory")?;
+    }
     fs::write(path, render_template(&config)).context("failed to write agentzero.toml")?;
     print_summary(writer, ctx, path, &config)?;
     Ok(())

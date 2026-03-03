@@ -1,7 +1,10 @@
 use crate::cli::{MigrateCommands, UpdateCommands};
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_update::migration::{import_from_source, inspect_source};
-use agentzero_update::updater::{apply_update, check_for_updates, load_state, rollback_update};
+use agentzero_update::updater::{
+    check_for_updates, download_and_install, fetch_latest_version, load_state, restore_backup,
+    rollback_update,
+};
 use async_trait::async_trait;
 use std::path::PathBuf;
 
@@ -55,9 +58,16 @@ impl AgentZeroCommand for UpdateCommand {
 
         match opts {
             UpdateCommands::Check { channel: _, json } => {
-                let latest_override = std::env::var("AGENTZERO_UPDATE_LATEST").ok();
+                // Env var override lets tests bypass the network.
+                let latest = match std::env::var("AGENTZERO_UPDATE_LATEST").ok() {
+                    Some(v) => v,
+                    None => {
+                        let github_token = std::env::var("GITHUB_TOKEN").ok();
+                        fetch_latest_version(github_token.as_deref()).await?
+                    }
+                };
                 let result =
-                    check_for_updates(&state_path, current_version, latest_override.as_deref())?;
+                    check_for_updates(&state_path, current_version, Some(latest.as_str()))?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
                 } else if result.up_to_date {
@@ -70,23 +80,41 @@ impl AgentZeroCommand for UpdateCommand {
                 }
             }
             UpdateCommands::Apply { version, json } => {
-                let result = apply_update(&state_path, current_version, &version)?;
+                let github_token = std::env::var("GITHUB_TOKEN").ok();
+                let target = match version {
+                    Some(v) => v,
+                    None => fetch_latest_version(github_token.as_deref()).await?,
+                };
+                if !json {
+                    println!("Downloading agentzero v{target}…");
+                }
+                let result = download_and_install(
+                    &state_path,
+                    current_version,
+                    &target,
+                    github_token.as_deref(),
+                )
+                .await?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
                 } else {
                     println!(
-                        "Applied update: {} -> {}",
+                        "Updated: {} -> {} — restart to use the new version",
                         result.from_version, result.to_version
                     );
                 }
             }
             UpdateCommands::Rollback { json } => {
-                let result = rollback_update(&state_path, current_version)?;
+                // Try restoring a backed-up binary first; fall back to state-only rollback.
+                let result = match restore_backup(&state_path, current_version).await {
+                    Ok(r) => r,
+                    Err(_) => rollback_update(&state_path, current_version)?,
+                };
                 if json {
                     println!("{}", serde_json::to_string_pretty(&result)?);
                 } else {
                     println!(
-                        "Rolled back update: {} -> {}",
+                        "Rolled back: {} -> {} — restart to use the previous version",
                         result.from_version, result.to_version
                     );
                 }
@@ -171,27 +199,6 @@ mod tests {
         .await
         .expect("migration import should succeed");
         assert!(data_dir.join("agentzero.toml").exists());
-
-        // Use a version guaranteed to be ahead of the current package version.
-        let next_major = format!(
-            "{}.0.0",
-            env!("CARGO_PKG_VERSION")
-                .split('.')
-                .next()
-                .unwrap()
-                .parse::<u32>()
-                .unwrap()
-                + 1
-        );
-        UpdateCommand::run(
-            &ctx,
-            UpdateCommands::Apply {
-                version: next_major,
-                json: false,
-            },
-        )
-        .await
-        .expect("update apply should succeed");
 
         fs::remove_dir_all(data_dir).expect("temp dir should be removed");
         fs::remove_dir_all(source_dir).expect("temp dir should be removed");

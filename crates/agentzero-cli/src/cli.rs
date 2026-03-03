@@ -796,11 +796,11 @@ pub enum UpdateCommands {
         #[arg(long)]
         json: bool,
     },
-    /// Apply an update target version.
+    /// Download and install an update, replacing the running binary.
     Apply {
-        /// Target version to apply.
+        /// Target version to install (defaults to the latest published release).
         #[arg(long)]
-        version: String,
+        version: Option<String>,
         /// Emit machine-readable JSON output.
         #[arg(long)]
         json: bool,
