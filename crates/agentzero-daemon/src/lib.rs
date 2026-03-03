@@ -220,24 +220,33 @@ impl DaemonManager {
             return Ok(());
         }
 
-        // Send SIGTERM.
-        send_signal(pid, libc::SIGTERM)?;
-
-        // Wait up to 5 seconds for the process to exit.
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            if !is_process_alive(pid) {
-                self.mark_stopped()?;
-                return Ok(());
+        #[cfg(unix)]
+        {
+            // Send SIGTERM and wait up to 5 seconds for the process to exit.
+            send_signal(pid, libc::SIGTERM)?;
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                if !is_process_alive(pid) {
+                    self.mark_stopped()?;
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(100));
             }
-            std::thread::sleep(Duration::from_millis(100));
+            // Still alive — force kill.
+            send_signal(pid, libc::SIGKILL)?;
+            std::thread::sleep(Duration::from_millis(200));
+            self.mark_stopped()?;
+            Ok(())
         }
 
-        // Still alive — force kill.
-        send_signal(pid, libc::SIGKILL)?;
-        std::thread::sleep(Duration::from_millis(200));
-        self.mark_stopped()?;
-        Ok(())
+        #[cfg(windows)]
+        {
+            // Windows has no cross-process SIGTERM equivalent; terminate directly.
+            terminate_process(pid)?;
+            std::thread::sleep(Duration::from_millis(200));
+            self.mark_stopped()?;
+            Ok(())
+        }
     }
 }
 
@@ -252,18 +261,55 @@ pub struct DaemonHealth {
     pub log_file_bytes: Option<u64>,
 }
 
-/// Check if a process with the given PID is alive using `kill(pid, 0)`.
+/// Check if a process with the given PID is alive.
+#[cfg(unix)]
 pub fn is_process_alive(pid: u32) -> bool {
-    // SAFETY: kill with signal 0 doesn't send a signal — it just checks existence.
+    // SAFETY: kill(pid, 0) only checks existence; it sends no signal.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
+/// Check if a process with the given PID is alive.
+#[cfg(windows)]
+pub fn is_process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    // SAFETY: OpenProcess returns 0 (NULL) if the process doesn't exist or
+    // if we lack permission. Either way the process is not accessible.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle == 0 {
+        return false;
+    }
+    unsafe { CloseHandle(handle) };
+    true
+}
+
+#[cfg(unix)]
 fn send_signal(pid: u32, signal: libc::c_int) -> anyhow::Result<()> {
     // SAFETY: Sending a signal to a known PID.
     let result = unsafe { libc::kill(pid as libc::pid_t, signal) };
     if result != 0 {
         let err = std::io::Error::last_os_error();
         bail!("failed to send signal {signal} to pid {pid}: {err}");
+    }
+    Ok(())
+}
+
+/// Forcibly terminate a process on Windows (equivalent to SIGKILL).
+#[cfg(windows)]
+fn terminate_process(pid: u32) -> anyhow::Result<()> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    // SAFETY: TerminateProcess forcibly ends the target process.
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+    if handle == 0 {
+        let err = std::io::Error::last_os_error();
+        bail!("failed to open process {pid} for termination: {err}");
+    }
+    let result = unsafe { TerminateProcess(handle, 1) };
+    unsafe { CloseHandle(handle) };
+    if result == 0 {
+        let err = std::io::Error::last_os_error();
+        bail!("failed to terminate process {pid}: {err}");
     }
     Ok(())
 }
