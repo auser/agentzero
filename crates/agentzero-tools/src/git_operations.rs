@@ -277,6 +277,25 @@ mod tests {
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    /// Returns a `Command` for `git` with the working dir set to `dir` and all
+    /// inherited git environment variables removed so the subprocess cannot
+    /// accidentally operate on the parent repository's object store or index.
+    fn git_cmd(dir: &std::path::Path) -> std::process::Command {
+        let mut cmd = std::process::Command::new("git");
+        cmd.current_dir(dir);
+        for var in &[
+            "GIT_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+        ] {
+            cmd.env_remove(var);
+        }
+        cmd
+    }
+
     fn temp_git_dir() -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -289,34 +308,29 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("temp dir should be created");
         // Initialize a git repo.
-        std::process::Command::new("git")
+        git_cmd(&dir)
             .args(["init"])
-            .current_dir(&dir)
             .output()
             .expect("git init should succeed");
-        std::process::Command::new("git")
+        git_cmd(&dir)
             .args(["config", "user.email", "test@test.com"])
-            .current_dir(&dir)
             .output()
             .ok();
-        std::process::Command::new("git")
+        git_cmd(&dir)
             .args(["config", "user.name", "Test"])
-            .current_dir(&dir)
             .output()
             .ok();
         // Point hooksPath to an empty directory so inherited global/system
         // hooks (e.g. core.hooksPath = .githooks) never fire in test repos.
         let empty_hooks = dir.join(".no-hooks");
         fs::create_dir_all(&empty_hooks).ok();
-        std::process::Command::new("git")
+        git_cmd(&dir)
             .args(["config", "core.hooksPath", &empty_hooks.to_string_lossy()])
-            .current_dir(&dir)
             .output()
             .ok();
         // Disable GPG signing that may be inherited from global config.
-        std::process::Command::new("git")
+        git_cmd(&dir)
             .args(["config", "commit.gpgsign", "false"])
-            .current_dir(&dir)
             .output()
             .ok();
         dir
@@ -341,14 +355,9 @@ mod tests {
     async fn git_log_in_repo_with_commits() {
         let dir = temp_git_dir();
         fs::write(dir.join("test.txt"), "hello").unwrap();
-        std::process::Command::new("git")
-            .args(["add", "test.txt"])
-            .current_dir(&dir)
-            .output()
-            .unwrap();
-        let commit_out = std::process::Command::new("git")
+        git_cmd(&dir).args(["add", "test.txt"]).output().unwrap();
+        let commit_out = git_cmd(&dir)
             .args(["commit", "-m", "initial"])
-            .current_dir(&dir)
             .output()
             .unwrap();
         assert!(

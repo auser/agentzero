@@ -968,26 +968,33 @@ post_install() {
       debug "Install directory is already in PATH"
       ;;
     *)
-      printf "\n" >&2
-      warn "${INSTALL_DIR} is not in your PATH"
-      printf "\n" >&2
-      info "Add it by running:"
-
       local shell_name
       shell_name="$(basename "${SHELL:-/bin/bash}")"
-      local rc_file
-
-      case "$shell_name" in
-        zsh)  rc_file="~/.zshrc" ;;
-        fish) rc_file="~/.config/fish/config.fish" ;;
-        *)    rc_file="~/.bashrc" ;;
-      esac
 
       if [[ "$shell_name" == "fish" ]]; then
-        printf "\n    ${BOLD}fish_add_path %s${NC}\n\n" "$INSTALL_DIR" >&2
+        local fish_config="$HOME/.config/fish/config.fish"
+        mkdir -p "$(dirname "$fish_config")"
+        if ! grep -qF "fish_add_path ${INSTALL_DIR}" "$fish_config" 2>/dev/null; then
+          printf "\nfish_add_path %s\n" "$INSTALL_DIR" >> "$fish_config"
+          success "Added ${INSTALL_DIR} to PATH in ${fish_config}"
+        else
+          debug "${INSTALL_DIR} already in ${fish_config}"
+        fi
       else
-        printf "\n    ${BOLD}echo 'export PATH=\"%s:\$PATH\"' >> %s${NC}\n" "$INSTALL_DIR" "$rc_file" >&2
-        printf "    ${BOLD}source %s${NC}\n\n" "$rc_file" >&2
+        local rc_file
+        case "$shell_name" in
+          zsh) rc_file="${HOME}/.zshrc" ;;
+          *)   rc_file="${HOME}/.bashrc" ;;
+        esac
+        local export_line="export PATH=\"${INSTALL_DIR}:\$PATH\""
+        if ! grep -qF "$export_line" "$rc_file" 2>/dev/null; then
+          printf "\n%s\n" "$export_line" >> "$rc_file"
+          success "Added ${INSTALL_DIR} to PATH in ${rc_file}"
+          # Reflect in the current process so the success banner is accurate
+          export PATH="${INSTALL_DIR}:${PATH}"
+        else
+          debug "${INSTALL_DIR} already in ${rc_file}"
+        fi
       fi
       ;;
   esac
