@@ -77,9 +77,16 @@ release VERSION:
         git add Cargo.toml Cargo.lock
         git commit -m "chore: bump workspace version to {{VERSION}}"
     fi
-    # 4. Verify changelog & crate versions match
+    # 4. Add changelog entry if not already present (moves [Unreleased] → [VERSION] - DATE)
+    today=$(date +%Y-%m-%d)
+    if ! grep -q "^## \[{{VERSION}}\]" CHANGELOG.md; then
+        sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [{{VERSION}}] - $today/" CHANGELOG.md
+        git add CHANGELOG.md
+        git commit -m "chore: add changelog entry for v{{VERSION}}"
+    fi
+    # 5. Verify changelog & crate versions match
     scripts/verify-release-version.sh --version "{{VERSION}}"
-    # 5. Tag and push (triggers .github/workflows/release.yml)
+    # 6. Tag and push (triggers .github/workflows/release.yml)
     git tag "v{{VERSION}}"
     git push origin "v{{VERSION}}"
     echo "==> Tag v{{VERSION}} pushed. Release workflow will build and publish."
