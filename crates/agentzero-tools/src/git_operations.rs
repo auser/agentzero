@@ -304,6 +304,21 @@ mod tests {
             .current_dir(&dir)
             .output()
             .ok();
+        // Point hooksPath to an empty directory so inherited global/system
+        // hooks (e.g. core.hooksPath = .githooks) never fire in test repos.
+        let empty_hooks = dir.join(".no-hooks");
+        fs::create_dir_all(&empty_hooks).ok();
+        std::process::Command::new("git")
+            .args(["config", "core.hooksPath", &empty_hooks.to_string_lossy()])
+            .current_dir(&dir)
+            .output()
+            .ok();
+        // Disable GPG signing that may be inherited from global config.
+        std::process::Command::new("git")
+            .args(["config", "commit.gpgsign", "false"])
+            .current_dir(&dir)
+            .output()
+            .ok();
         dir
     }
 
@@ -331,11 +346,16 @@ mod tests {
             .current_dir(&dir)
             .output()
             .unwrap();
-        std::process::Command::new("git")
+        let commit_out = std::process::Command::new("git")
             .args(["commit", "-m", "initial"])
             .current_dir(&dir)
             .output()
             .unwrap();
+        assert!(
+            commit_out.status.success(),
+            "git commit failed: {}",
+            String::from_utf8_lossy(&commit_out.stderr)
+        );
 
         let tool = GitOperationsTool::new();
         let result = tool

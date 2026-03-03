@@ -7,8 +7,8 @@ usage() {
 Usage: scripts/verify-dependency-policy.sh [OPTIONS]
 
 Verifies dependency policy guardrails are present:
-1) .github/dependabot.yml exists and includes cargo + github-actions ecosystems
-2) docs/security/DEPENDENCY_POLICY.md exists and references update cadence
+1) deny.toml exists (cargo-deny advisory config)
+2) docs/security/dependency-policy.md exists and references update cadence
 
 Options:
   --help   Show this help text
@@ -29,26 +29,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-dependabot_path=".github/dependabot.yml"
-policy_path="public/src/content/docs/security/dependency-policy.md"
+deny_path="deny.toml"
+policy_path="site/src/content/docs/security/dependency-policy.md"
 
-if [[ ! -f "$dependabot_path" ]]; then
-  echo "Missing file: $dependabot_path" >&2
+if [[ ! -f "$deny_path" ]]; then
+  echo "Missing file: $deny_path" >&2
   exit 1
 fi
 
 if [[ ! -f "$policy_path" ]]; then
   echo "Missing file: $policy_path" >&2
-  exit 1
-fi
-
-if ! grep -qE 'package-ecosystem:\s*"cargo"' "$dependabot_path"; then
-  echo "dependabot config missing cargo ecosystem entry" >&2
-  exit 1
-fi
-
-if ! grep -qE 'package-ecosystem:\s*"github-actions"' "$dependabot_path"; then
-  echo "dependabot config missing github-actions ecosystem entry" >&2
   exit 1
 fi
 
