@@ -121,25 +121,6 @@ fn verify_release_version_script_fails_without_version() {
 }
 
 #[test]
-fn verify_release_version_script_passes_for_current_workspace_version() {
-    let version = env!("CARGO_PKG_VERSION");
-    let root = repo_root();
-    let output = Command::new("bash")
-        .arg("scripts/verify-release-version.sh")
-        .arg("--version")
-        .arg(version)
-        .current_dir(&root)
-        .output()
-        .expect("script should execute");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(&format!(
-        "PASS: changelog + Cargo package versions validated for {version}"
-    )));
-}
-
-#[test]
 fn run_coverage_script_help_succeeds() {
     let root = repo_root();
     let output = Command::new("bash")

@@ -493,8 +493,6 @@ detect_arch() {
       ;;
     armv7l|armv7)
       ARCH="armv7"
-      warn "ARMv7 detected. Pre-built binaries may not be available."
-      warn "Consider using --from-source if download fails."
       ;;
     *)
       error "Unsupported architecture: ${machine}. Supported: x86_64, aarch64, arm64, armv7, i686"
@@ -503,6 +501,16 @@ detect_arch() {
 
   debug "Detected architecture: ${ARCH} (raw: ${machine})"
   success "Architecture: ${BOLD}${ARCH}${NC}"
+}
+
+# Prefer static musl binaries on Linux x86_64/aarch64 for broader compatibility
+# (works on glibc and musl systems alike, including Alpine and containers)
+detect_musl() {
+  if [[ "$PLATFORM" == "linux" ]] && [[ "$ARCH" == "x86_64" || "$ARCH" == "aarch64" ]]; then
+    ARCH="${ARCH}-musl"
+    debug "Preferring static musl binary for portability"
+    success "Variant: ${BOLD}static musl${NC}"
+  fi
 }
 
 # Build the artifact name matching the release workflow convention
@@ -1025,6 +1033,7 @@ main() {
   step 1 "Detecting platform"
   detect_platform
   detect_arch
+  detect_musl
 
   step 2 "Checking dependencies"
   check_dependencies

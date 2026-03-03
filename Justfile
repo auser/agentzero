@@ -67,17 +67,16 @@ release VERSION:
     sed -i '' 's/^version = ".*"/version = "{{VERSION}}"/' Cargo.toml
     # Bump inline version on internal workspace dep entries (path = "crates/…", version = "…")
     perl -i -pe 's|(agentzero-[a-z-]+ = \{ path = "crates/[^"]+", version = )"[^"]+"|${1}"{{VERSION}}"|g' Cargo.toml
-    cargo check --workspace --quiet
     echo "    Cargo.toml [workspace.package] version set to {{VERSION}}"
-    # 2. Commit the version bump (if anything changed)
+    # 2. Quality gates (also updates Cargo.lock as a side-effect of compilation)
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo nextest run --workspace
+    # 3. Commit the version bump + updated Cargo.lock
     if ! git diff --quiet Cargo.toml Cargo.lock; then
         git add Cargo.toml Cargo.lock
         git commit -m "chore: bump workspace version to {{VERSION}}"
     fi
-    # 3. Quality gates
-    cargo fmt --all --check
-    cargo clippy --workspace --all-targets -- -D warnings
-    cargo nextest run --workspace
     # 4. Verify changelog & crate versions match
     scripts/verify-release-version.sh --version "{{VERSION}}"
     # 5. Tag and push (triggers .github/workflows/release.yml)
