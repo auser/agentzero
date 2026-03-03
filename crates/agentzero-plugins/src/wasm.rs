@@ -1,13 +1,7 @@
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::{Path, PathBuf};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
-use std::time::{Duration, Instant};
-use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WasmIsolationPolicy {
@@ -76,193 +70,261 @@ pub struct WasmExecutionResult {
     pub status_code: i32,
 }
 
-impl WasmPluginRuntime {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn preflight(&self, container: &WasmPluginContainer) -> anyhow::Result<()> {
-        self.preflight_with_policy(container, &WasmIsolationPolicy::default())
-    }
-
-    pub fn preflight_with_policy(
-        &self,
-        container: &WasmPluginContainer,
-        policy: &WasmIsolationPolicy,
-    ) -> anyhow::Result<()> {
-        container.validate()?;
-        if container.max_execution_ms > policy.max_execution_ms {
-            return Err(anyhow!(
-                "max_execution_ms exceeds policy limit ({} > {})",
-                container.max_execution_ms,
-                policy.max_execution_ms
-            ));
-        }
-        if container.max_memory_mb > policy.max_memory_mb {
-            return Err(anyhow!(
-                "max_memory_mb exceeds policy limit ({} > {})",
-                container.max_memory_mb,
-                policy.max_memory_mb
-            ));
-        }
-        if container.allow_network && !policy.allow_network {
-            return Err(anyhow!(
-                "network access is not permitted by isolation policy"
-            ));
-        }
-        if container.allow_fs_write && !policy.allow_fs_write {
-            return Err(anyhow!(
-                "filesystem write is not permitted by isolation policy"
-            ));
-        }
-
-        let path = Path::new(&container.module_path);
-        if !path.exists() {
-            return Err(anyhow!("plugin module does not exist: {}", path.display()));
-        }
-        let metadata = std::fs::metadata(path)
-            .with_context(|| format!("failed to read metadata for {}", path.display()))?;
-        if metadata.len() > policy.max_module_bytes {
-            return Err(anyhow!(
-                "plugin module exceeds size policy ({} > {} bytes)",
-                metadata.len(),
-                policy.max_module_bytes
-            ));
-        }
-
-        let engine = Engine::default();
-        let module = Module::from_file(&engine, path)
-            .map_err(|e| anyhow!("failed to compile module at {}: {e}", path.display()))?;
-        validate_host_call_allowlist(&module, policy)?;
-
-        Ok(())
-    }
-
-    pub fn execute(
-        &self,
-        container: &WasmPluginContainer,
-        request: &WasmExecutionRequest,
-    ) -> anyhow::Result<WasmExecutionResult> {
-        self.execute_with_policy(container, request, &WasmIsolationPolicy::default())
-    }
-
-    pub fn execute_with_policy(
-        &self,
-        container: &WasmPluginContainer,
-        _request: &WasmExecutionRequest,
-        policy: &WasmIsolationPolicy,
-    ) -> anyhow::Result<WasmExecutionResult> {
-        self.preflight_with_policy(container, policy)?;
-
-        let mut config = Config::new();
-        config.epoch_interruption(true);
-        let engine = Engine::new(&config)
-            .map_err(|e| anyhow!("failed to configure wasmtime engine: {e}"))?;
-        let module = Module::from_file(&engine, &container.module_path).map_err(|e| {
-            anyhow!(
-                "failed to compile module at {}: {e}",
-                container.module_path.display()
-            )
-        })?;
-        validate_host_call_allowlist(&module, policy)?;
-
-        let effective_memory_mb = container.max_memory_mb.min(policy.max_memory_mb);
-        let limits = StoreLimitsBuilder::new()
-            .memory_size((effective_memory_mb as usize) * 1024 * 1024)
-            .build();
-        let mut store = Store::new(&engine, limits);
-        store.limiter(|limiter: &mut StoreLimits| limiter);
-        store.set_epoch_deadline(1);
-
-        let effective_timeout_ms = container.max_execution_ms.min(policy.max_execution_ms);
-        let timer_engine = engine.clone();
-        let timer_cancel = Arc::new(AtomicBool::new(false));
-        let timer_cancel_worker = Arc::clone(&timer_cancel);
-        let timer_handle = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_millis(effective_timeout_ms);
-            while Instant::now() < deadline {
-                if timer_cancel_worker.load(Ordering::Relaxed) {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(2));
-            }
-            if !timer_cancel_worker.load(Ordering::Relaxed) {
-                timer_engine.increment_epoch();
-            }
-        });
-
-        let linker = Linker::new(&engine);
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .map_err(|e| anyhow!("failed to instantiate plugin module: {e}"))?;
-
-        let entrypoint = instance
-            .get_typed_func::<(), i32>(&mut store, &container.entrypoint)
-            .map_err(|e| {
-                anyhow!(
-                    "missing or incompatible entrypoint '{}' (expected fn() -> i32): {e}",
-                    container.entrypoint
-                )
-            })?;
-
-        let started = Instant::now();
-        let call_result: Result<i32, wasmtime::Error> = entrypoint.call(&mut store, ());
-        let status_code = match call_result {
-            Ok(status) => status,
-            Err(err) => {
-                let err_text = err.to_string();
-                let timed_out = started.elapsed() >= Duration::from_millis(effective_timeout_ms);
-                if err_text.contains("epoch deadline exceeded")
-                    || err_text.contains("interrupt")
-                    || err_text.contains("interrupted")
-                    || err_text.contains("deadline")
-                    || timed_out
-                {
-                    timer_cancel.store(true, Ordering::Relaxed);
-                    let _ = timer_handle.join();
-                    return Err(anyhow!(
-                        "plugin execution exceeded time limit ({} ms)",
-                        effective_timeout_ms
-                    ));
-                }
-                timer_cancel.store(true, Ordering::Relaxed);
-                let _ = timer_handle.join();
-                return Err(anyhow!("plugin entrypoint call failed: {err}"));
-            }
-        };
-        timer_cancel.store(true, Ordering::Relaxed);
-        let _ = timer_handle.join();
-
-        Ok(WasmExecutionResult { status_code })
-    }
-}
-
-fn validate_host_call_allowlist(
-    module: &Module,
-    policy: &WasmIsolationPolicy,
-) -> anyhow::Result<()> {
-    for import in module.imports() {
-        let key = format!("{}::{}", import.module(), import.name());
-        if !policy
-            .allowed_host_calls
-            .iter()
-            .any(|allowed| allowed == &key)
-        {
-            return Err(anyhow!(
-                "host call `{key}` is not allowed by isolation policy"
-            ));
-        }
-    }
-    Ok(())
-}
-
 impl Default for WasmPluginRuntime {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(test)]
+// ---------------------------------------------------------------------------
+// wasm-runtime feature: full wasmtime-backed implementation
+// ---------------------------------------------------------------------------
+#[cfg(feature = "wasm-runtime")]
+mod runtime_impl {
+    use super::*;
+    use anyhow::Context;
+    use std::path::Path;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::{Duration, Instant};
+    use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+
+    impl WasmPluginRuntime {
+        pub fn new() -> Self {
+            Self
+        }
+
+        pub fn preflight(&self, container: &WasmPluginContainer) -> anyhow::Result<()> {
+            self.preflight_with_policy(container, &WasmIsolationPolicy::default())
+        }
+
+        pub fn preflight_with_policy(
+            &self,
+            container: &WasmPluginContainer,
+            policy: &WasmIsolationPolicy,
+        ) -> anyhow::Result<()> {
+            container.validate()?;
+            if container.max_execution_ms > policy.max_execution_ms {
+                return Err(anyhow!(
+                    "max_execution_ms exceeds policy limit ({} > {})",
+                    container.max_execution_ms,
+                    policy.max_execution_ms
+                ));
+            }
+            if container.max_memory_mb > policy.max_memory_mb {
+                return Err(anyhow!(
+                    "max_memory_mb exceeds policy limit ({} > {})",
+                    container.max_memory_mb,
+                    policy.max_memory_mb
+                ));
+            }
+            if container.allow_network && !policy.allow_network {
+                return Err(anyhow!(
+                    "network access is not permitted by isolation policy"
+                ));
+            }
+            if container.allow_fs_write && !policy.allow_fs_write {
+                return Err(anyhow!(
+                    "filesystem write is not permitted by isolation policy"
+                ));
+            }
+
+            let path = Path::new(&container.module_path);
+            if !path.exists() {
+                return Err(anyhow!("plugin module does not exist: {}", path.display()));
+            }
+            let metadata = std::fs::metadata(path)
+                .with_context(|| format!("failed to read metadata for {}", path.display()))?;
+            if metadata.len() > policy.max_module_bytes {
+                return Err(anyhow!(
+                    "plugin module exceeds size policy ({} > {} bytes)",
+                    metadata.len(),
+                    policy.max_module_bytes
+                ));
+            }
+
+            let engine = Engine::default();
+            let module = Module::from_file(&engine, path)
+                .map_err(|e| anyhow!("failed to compile module at {}: {e}", path.display()))?;
+            validate_host_call_allowlist(&module, policy)?;
+
+            Ok(())
+        }
+
+        pub fn execute(
+            &self,
+            container: &WasmPluginContainer,
+            request: &WasmExecutionRequest,
+        ) -> anyhow::Result<WasmExecutionResult> {
+            self.execute_with_policy(container, request, &WasmIsolationPolicy::default())
+        }
+
+        pub fn execute_with_policy(
+            &self,
+            container: &WasmPluginContainer,
+            _request: &WasmExecutionRequest,
+            policy: &WasmIsolationPolicy,
+        ) -> anyhow::Result<WasmExecutionResult> {
+            self.preflight_with_policy(container, policy)?;
+
+            let mut config = Config::new();
+            config.epoch_interruption(true);
+            let engine = Engine::new(&config)
+                .map_err(|e| anyhow!("failed to configure wasmtime engine: {e}"))?;
+            let module = Module::from_file(&engine, &container.module_path).map_err(|e| {
+                anyhow!(
+                    "failed to compile module at {}: {e}",
+                    container.module_path.display()
+                )
+            })?;
+            validate_host_call_allowlist(&module, policy)?;
+
+            let effective_memory_mb = container.max_memory_mb.min(policy.max_memory_mb);
+            let limits = StoreLimitsBuilder::new()
+                .memory_size((effective_memory_mb as usize) * 1024 * 1024)
+                .build();
+            let mut store = Store::new(&engine, limits);
+            store.limiter(|limiter: &mut StoreLimits| limiter);
+            store.set_epoch_deadline(1);
+
+            let effective_timeout_ms = container.max_execution_ms.min(policy.max_execution_ms);
+            let timer_engine = engine.clone();
+            let timer_cancel = Arc::new(AtomicBool::new(false));
+            let timer_cancel_worker = Arc::clone(&timer_cancel);
+            let timer_handle = std::thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_millis(effective_timeout_ms);
+                while Instant::now() < deadline {
+                    if timer_cancel_worker.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                if !timer_cancel_worker.load(Ordering::Relaxed) {
+                    timer_engine.increment_epoch();
+                }
+            });
+
+            let linker = Linker::new(&engine);
+            let instance = linker
+                .instantiate(&mut store, &module)
+                .map_err(|e| anyhow!("failed to instantiate plugin module: {e}"))?;
+
+            let entrypoint = instance
+                .get_typed_func::<(), i32>(&mut store, &container.entrypoint)
+                .map_err(|e| {
+                    anyhow!(
+                        "missing or incompatible entrypoint '{}' (expected fn() -> i32): {e}",
+                        container.entrypoint
+                    )
+                })?;
+
+            let started = Instant::now();
+            let call_result: Result<i32, wasmtime::Error> = entrypoint.call(&mut store, ());
+            let status_code = match call_result {
+                Ok(status) => status,
+                Err(err) => {
+                    let err_text = err.to_string();
+                    let timed_out =
+                        started.elapsed() >= Duration::from_millis(effective_timeout_ms);
+                    if err_text.contains("epoch deadline exceeded")
+                        || err_text.contains("interrupt")
+                        || err_text.contains("interrupted")
+                        || err_text.contains("deadline")
+                        || timed_out
+                    {
+                        timer_cancel.store(true, Ordering::Relaxed);
+                        let _ = timer_handle.join();
+                        return Err(anyhow!(
+                            "plugin execution exceeded time limit ({} ms)",
+                            effective_timeout_ms
+                        ));
+                    }
+                    timer_cancel.store(true, Ordering::Relaxed);
+                    let _ = timer_handle.join();
+                    return Err(anyhow!("plugin entrypoint call failed: {err}"));
+                }
+            };
+            timer_cancel.store(true, Ordering::Relaxed);
+            let _ = timer_handle.join();
+
+            Ok(WasmExecutionResult { status_code })
+        }
+    }
+
+    fn validate_host_call_allowlist(
+        module: &Module,
+        policy: &WasmIsolationPolicy,
+    ) -> anyhow::Result<()> {
+        for import in module.imports() {
+            let key = format!("{}::{}", import.module(), import.name());
+            if !policy
+                .allowed_host_calls
+                .iter()
+                .any(|allowed| allowed == &key)
+            {
+                return Err(anyhow!(
+                    "host call `{key}` is not allowed by isolation policy"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stub implementation when wasm-runtime is disabled
+// ---------------------------------------------------------------------------
+#[cfg(not(feature = "wasm-runtime"))]
+mod runtime_impl {
+    use super::*;
+
+    impl WasmPluginRuntime {
+        pub fn new() -> Self {
+            Self
+        }
+
+        pub fn preflight(&self, _container: &WasmPluginContainer) -> anyhow::Result<()> {
+            Err(anyhow!(
+                "WASM runtime is not available (built without wasm-runtime feature)"
+            ))
+        }
+
+        pub fn preflight_with_policy(
+            &self,
+            _container: &WasmPluginContainer,
+            _policy: &WasmIsolationPolicy,
+        ) -> anyhow::Result<()> {
+            Err(anyhow!(
+                "WASM runtime is not available (built without wasm-runtime feature)"
+            ))
+        }
+
+        pub fn execute(
+            &self,
+            _container: &WasmPluginContainer,
+            _request: &WasmExecutionRequest,
+        ) -> anyhow::Result<WasmExecutionResult> {
+            Err(anyhow!(
+                "WASM runtime is not available (built without wasm-runtime feature)"
+            ))
+        }
+
+        pub fn execute_with_policy(
+            &self,
+            _container: &WasmPluginContainer,
+            _request: &WasmExecutionRequest,
+            _policy: &WasmIsolationPolicy,
+        ) -> anyhow::Result<WasmExecutionResult> {
+            Err(anyhow!(
+                "WASM runtime is not available (built without wasm-runtime feature)"
+            ))
+        }
+    }
+}
+
+#[cfg(all(test, feature = "wasm-runtime"))]
 mod tests {
     use super::{
         WasmExecutionRequest, WasmIsolationPolicy, WasmPluginContainer, WasmPluginRuntime,

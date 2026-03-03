@@ -71,6 +71,7 @@ pub enum Commands {
         allowed_commands: Vec<String>,
     },
     /// Start the HTTP gateway server.
+    #[cfg(feature = "gateway")]
     Gateway {
         /// Host interface to bind (default: 127.0.0.1).
         #[arg(long)]
@@ -128,6 +129,7 @@ pub enum Commands {
         command: TunnelCommands,
     },
     /// Plugin developer lifecycle commands.
+    #[cfg(feature = "plugins")]
     Plugin {
         #[command(subcommand)]
         command: PluginCommands,
@@ -219,6 +221,7 @@ pub enum Commands {
         command: ServiceCommands,
     },
     /// Launch interactive terminal dashboard.
+    #[cfg(feature = "tui")]
     Dashboard,
     /// Migrate data from external runtimes.
     Migrate {
@@ -590,6 +593,7 @@ pub enum TunnelCommands {
     },
 }
 
+#[cfg(feature = "plugins")]
 #[derive(Debug, Subcommand)]
 pub enum PluginCommands {
     /// Scaffold a plugin manifest template.

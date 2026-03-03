@@ -84,6 +84,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
 
     match command {
         Commands::Onboard { .. } => "onboard",
+        #[cfg(feature = "gateway")]
         Commands::Gateway { .. } => "gateway",
         Commands::Daemon { .. } => "daemon",
         Commands::Agent { .. } => "agent",
@@ -92,6 +93,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Hooks { .. } => "hooks",
         Commands::Skill { .. } => "skill",
         Commands::Tunnel { .. } => "tunnel",
+        #[cfg(feature = "plugins")]
         Commands::Plugin { .. } => "plugin",
         Commands::Providers { .. } => "providers",
         Commands::Estop { .. } => "estop",
@@ -107,6 +109,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Status => "status",
         Commands::Doctor { .. } => "doctor",
         Commands::Service { .. } => "service",
+        #[cfg(feature = "tui")]
         Commands::Dashboard => "dashboard",
         Commands::Migrate { .. } => "migrate",
         Commands::Update { .. } => "update",
@@ -450,6 +453,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "tui")]
     #[test]
     fn parse_cli_from_parses_dashboard_command() {
         let parsed = parse_cli_from(["agentzero", "dashboard"]).expect("dashboard should parse");
@@ -791,6 +795,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "plugins")]
     #[test]
     fn parse_cli_from_parses_plugin_package_command() {
         let parsed = parse_cli_from([
@@ -813,6 +818,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "plugins")]
     #[test]
     fn parse_cli_from_parses_plugin_dev_command() {
         let parsed = parse_cli_from([
@@ -835,6 +841,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "plugins")]
     #[test]
     fn parse_cli_from_parses_plugin_list_command() {
         let parsed = parse_cli_from(["agentzero", "plugin", "list", "--json"])
@@ -847,6 +854,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "plugins")]
     #[test]
     fn parse_cli_from_rejects_plugin_without_subcommand() {
         let err = parse_cli_from(["agentzero", "plugin"])
@@ -1138,6 +1146,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "gateway")]
     #[test]
     fn parse_cli_from_parses_gateway_with_new_pairing_flag() {
         let parsed = parse_cli_from(["agentzero", "gateway", "--new-pairing"])
@@ -1151,6 +1160,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "gateway")]
     #[test]
     fn parse_cli_from_gateway_defaults_new_pairing_to_false() {
         let parsed = parse_cli_from(["agentzero", "gateway"]).expect("gateway should parse");

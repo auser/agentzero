@@ -8,9 +8,11 @@ pub mod coordination;
 pub mod cost;
 pub mod cron;
 pub mod daemon;
+#[cfg(feature = "tui")]
 pub mod dashboard;
 pub mod doctor;
 pub mod estop;
+#[cfg(feature = "gateway")]
 pub mod gateway;
 pub mod goals;
 pub mod hardware;
@@ -22,6 +24,7 @@ pub mod memory;
 pub mod models;
 pub mod onboard;
 pub mod peripheral;
+#[cfg(feature = "plugins")]
 pub mod plugin;
 pub mod providers;
 pub mod rag;

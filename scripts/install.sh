@@ -720,7 +720,7 @@ verify_checksum() {
   fi
 
   local expected_hash
-  expected_hash="$(grep "${ARTIFACT_NAME}" "$checksums_path" | awk '{print $1}')"
+  expected_hash="$(grep "[[:space:]]${ARTIFACT_NAME}$" "$checksums_path" | awk '{print $1}')"
 
   if [[ -z "$expected_hash" ]]; then
     warn "No checksum found for ${ARTIFACT_NAME} in SHA256SUMS. Skipping verification."

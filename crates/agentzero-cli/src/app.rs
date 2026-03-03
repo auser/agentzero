@@ -41,6 +41,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             )
             .await
         }
+        #[cfg(feature = "gateway")]
         Commands::Gateway {
             host,
             port,
@@ -80,6 +81,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Hooks { command } => commands::hooks::HooksCommand::run(&ctx, command).await,
         Commands::Skill { command } => commands::skill::SkillCommand::run(&ctx, command).await,
         Commands::Tunnel { command } => commands::tunnel::TunnelCommand::run(&ctx, command).await,
+        #[cfg(feature = "plugins")]
         Commands::Plugin { command } => commands::plugin::PluginCommand::run(&ctx, command).await,
         Commands::Providers { json, no_color } => {
             commands::providers::ProvidersCommand::run(
@@ -131,6 +133,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             service_init: _service_init,
             command,
         } => commands::service::ServiceCommand::run(&ctx, command).await,
+        #[cfg(feature = "tui")]
         Commands::Dashboard => commands::dashboard::DashboardCommand::run(&ctx, ()).await,
         Commands::Migrate { command } => commands::update::MigrateCommand::run(&ctx, command).await,
         Commands::Update { check, command } => {

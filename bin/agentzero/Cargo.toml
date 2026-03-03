@@ -12,12 +12,16 @@ categories = ["command-line-utilities", "development-tools"]
 autobins = false
 
 [features]
-default = ["memory-sqlite"]
+default = ["memory-sqlite", "plugins", "gateway", "tui"]
+minimal = ["memory-sqlite"]
 memory-sqlite = ["agentzero-cli/memory-sqlite"]
 memory-turso = ["agentzero-cli/memory-turso"]
 rag = ["agentzero-cli/rag"]
 hardware = ["agentzero-cli/hardware"]
 channels-standard = ["agentzero-cli/channels-standard"]
+plugins = ["agentzero-cli/plugins"]
+gateway = ["agentzero-cli/gateway"]
+tui = ["agentzero-cli/tui"]
 
 [dependencies]
 anyhow.workspace = true

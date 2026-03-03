@@ -64,7 +64,7 @@ agentzero-approval = { path = "crates/agentzero-approval", version = "0.1.4" }
 agentzero-auth = { path = "crates/agentzero-auth", version = "0.1.4" }
 agentzero-bench = { path = "crates/agentzero-bench", version = "0.1.4" }
 agentzero-channels = { path = "crates/agentzero-channels", version = "0.1.4" }
-agentzero-cli = { path = "crates/agentzero-cli", version = "0.1.4" }
+agentzero-cli = { path = "crates/agentzero-cli", version = "0.1.4", default-features = false }
 agentzero-common = { path = "crates/agentzero-common", version = "0.1.4" }
 agentzero-config = { path = "crates/agentzero-config", version = "0.1.4" }
 agentzero-coordination = { path = "crates/agentzero-coordination", version = "0.1.4" }
@@ -83,7 +83,7 @@ agentzero-identity = { path = "crates/agentzero-identity", version = "0.1.4" }
 agentzero-integrations = { path = "crates/agentzero-integrations", version = "0.1.4" }
 agentzero-infra = { path = "crates/agentzero-infra", version = "0.1.4" }
 agentzero-memory = { path = "crates/agentzero-memory", version = "0.1.4" }
-agentzero-plugins = { path = "crates/agentzero-plugins", version = "0.1.4" }
+agentzero-plugins = { path = "crates/agentzero-plugins", version = "0.1.4", default-features = false }
 agentzero-skills = { path = "crates/agentzero-skills", version = "0.1.4" }
 agentzero-providers = { path = "crates/agentzero-providers", version = "0.1.4" }
 agentzero-runtime = { path = "crates/agentzero-runtime", version = "0.1.4" }

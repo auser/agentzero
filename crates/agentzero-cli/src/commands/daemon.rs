@@ -60,8 +60,7 @@ impl AgentZeroCommand for DaemonCommand {
     }
 }
 
-/// Run the gateway server in the foreground (blocking). Used with `--foreground`
-/// for debugging or systemd integration.
+#[cfg(feature = "gateway")]
 async fn run_foreground(
     manager: &DaemonManager,
     ctx: &CommandContext,
@@ -104,6 +103,16 @@ async fn run_foreground(
     }
 
     run_result
+}
+
+#[cfg(not(feature = "gateway"))]
+async fn run_foreground(
+    _manager: &DaemonManager,
+    _ctx: &CommandContext,
+    _host: String,
+    _port: u16,
+) -> anyhow::Result<()> {
+    anyhow::bail!("gateway is not available (built without gateway feature)")
 }
 
 /// Spawn the daemon as a detached background process and exit.
