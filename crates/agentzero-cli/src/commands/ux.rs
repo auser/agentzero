@@ -1,12 +1,12 @@
 use anyhow::Context;
-use console::style;
 use std::io::Write;
 
-const ACCENT_LINE: &str = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
 const PAD: &str = "  ";
 
+#[cfg(feature = "interactive")]
+use console::style;
+
 pub fn print_brand_header(writer: &mut dyn Write) -> anyhow::Result<()> {
-    let accent = style(ACCENT_LINE).color256(51);
     let logo = [
         "      _                    _                      ",
         "     / \\   __ _  ___ _ __ | |_ _______ _ __ ___  ",
@@ -16,18 +16,34 @@ pub fn print_brand_header(writer: &mut dyn Write) -> anyhow::Result<()> {
         "          |___/                                   ",
     ];
 
-    writeln!(writer, "\n{PAD}{}", accent).context("failed to write output")?;
-    for line in logo {
-        writeln!(writer, "{PAD}{}", style(line).bold().color256(153))
-            .context("failed to write output")?;
+    #[cfg(feature = "interactive")]
+    {
+        let accent_line = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";
+        let accent = style(accent_line).color256(51);
+        writeln!(writer, "\n{PAD}{}", accent).context("failed to write output")?;
+        for line in logo {
+            writeln!(writer, "{PAD}{}", style(line).bold().color256(153))
+                .context("failed to write output")?;
+        }
+        writeln!(
+            writer,
+            "\n\n{PAD}{}",
+            style("Fast. Secure. Safe. 100% Rust. 100% Agnostic.").color256(151)
+        )
+        .context("failed to write output")?;
+        writeln!(writer, "{PAD}{}", accent).context("failed to write output")?;
     }
-    writeln!(
-        writer,
-        "\n\n{PAD}{}",
-        style("Fast. Secure. Safe. 100% Rust. 100% Agnostic.").color256(151)
-    )
-    .context("failed to write output")?;
-    writeln!(writer, "{PAD}{}", accent).context("failed to write output")?;
+    #[cfg(not(feature = "interactive"))]
+    {
+        for line in logo {
+            writeln!(writer, "{PAD}{line}").context("failed to write output")?;
+        }
+        writeln!(
+            writer,
+            "\n{PAD}Fast. Secure. Safe. 100% Rust. 100% Agnostic."
+        )
+        .context("failed to write output")?;
+    }
     writeln!(writer).context("failed to write output")?;
     Ok(())
 }
@@ -37,7 +53,10 @@ pub fn print_intro(writer: &mut dyn Write, message: &str) -> anyhow::Result<()> 
         anyhow::bail!("intro message cannot be empty");
     }
 
+    #[cfg(feature = "interactive")]
     writeln!(writer, "{PAD}{}", style(message).bold()).context("failed to write output")?;
+    #[cfg(not(feature = "interactive"))]
+    writeln!(writer, "{PAD}{message}").context("failed to write output")?;
     Ok(())
 }
 
@@ -46,8 +65,11 @@ pub fn print_section(writer: &mut dyn Write, title: &str) -> anyhow::Result<()> 
         anyhow::bail!("section title cannot be empty");
     }
 
+    #[cfg(feature = "interactive")]
     writeln!(writer, "\n{PAD}{}", style(title).bold().underlined())
         .context("failed to write output")?;
+    #[cfg(not(feature = "interactive"))]
+    writeln!(writer, "\n{PAD}{title}").context("failed to write output")?;
     Ok(())
 }
 
@@ -56,6 +78,7 @@ pub fn print_success_line(writer: &mut dyn Write, message: &str) -> anyhow::Resu
         anyhow::bail!("summary message cannot be empty");
     }
 
+    #[cfg(feature = "interactive")]
     writeln!(
         writer,
         "{PAD}{} {}",
@@ -63,11 +86,20 @@ pub fn print_success_line(writer: &mut dyn Write, message: &str) -> anyhow::Resu
         style(message).white()
     )
     .context("failed to write output")?;
+    #[cfg(not(feature = "interactive"))]
+    writeln!(writer, "{PAD}* {message}").context("failed to write output")?;
     Ok(())
 }
 
 pub fn cyan_value(value: impl std::fmt::Display) -> String {
-    style(value).cyan().to_string()
+    #[cfg(feature = "interactive")]
+    {
+        style(value).cyan().to_string()
+    }
+    #[cfg(not(feature = "interactive"))]
+    {
+        value.to_string()
+    }
 }
 
 #[cfg(test)]

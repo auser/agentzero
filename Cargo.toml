@@ -58,7 +58,7 @@ license = "MIT"
 anyhow = "1"
 async-trait = "0.1"
 clap = { version = "4.5", features = ["derive"] }
-config = "0.14"
+config = { version = "0.14", default-features = false, features = ["toml"] }
 dotenvy = "0.15"
 agentzero-approval = { path = "crates/agentzero-approval", version = "0.1.4" }
 agentzero-auth = { path = "crates/agentzero-auth", version = "0.1.4" }
@@ -127,3 +127,8 @@ codegen-units = 1
 lto = "thin"
 panic = "abort"
 strip = "symbols"
+
+[profile.release-min]
+inherits = "release"
+lto = "fat"
+opt-level = "z"

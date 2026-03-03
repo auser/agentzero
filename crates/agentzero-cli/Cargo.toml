@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
-default = ["memory-sqlite", "plugins", "gateway", "tui"]
+default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive"]
 memory-sqlite = ["agentzero-runtime/memory-sqlite"]
 memory-turso = ["agentzero-memory/memory-turso", "agentzero-runtime/memory-turso"]
 rag = ["dep:agentzero-rag", "dep:agentzero-multimodal"]
@@ -15,6 +15,7 @@ channels-standard = ["agentzero-channels/channels-standard"]
 plugins = ["dep:agentzero-plugins", "agentzero-plugins?/wasm-runtime"]
 gateway = ["dep:agentzero-gateway"]
 tui = ["dep:ratatui", "dep:crossterm"]
+interactive = ["dep:inquire", "dep:console"]
 
 [dependencies]
 anyhow.workspace = true
@@ -54,9 +55,9 @@ agentzero-runtime = { workspace = true, features = [] }
 agentzero-security = { workspace = true }
 agentzero-service = { workspace = true }
 base64 = "0.22"
-console = "0.15"
+console = { version = "0.15", optional = true }
 crossterm = { version = "0.28", optional = true }
-inquire = "0.7"
+inquire = { version = "0.7", optional = true }
 rand = "0.8"
 ratatui = { version = "0.28", optional = true }
 reqwest.workspace = true

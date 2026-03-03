@@ -3,7 +3,9 @@ use crate::commands::ux;
 use agentzero_providers::{find_models_for_provider, find_provider, supported_providers};
 use anyhow::Context;
 use async_trait::async_trait;
+#[cfg(feature = "interactive")]
 use console::style;
+#[cfg(feature = "interactive")]
 use inquire::{Confirm, Select, Text};
 use std::env;
 use std::fs;
@@ -51,7 +53,15 @@ impl AgentZeroCommand for OnboardCommand {
         let interactive = opts.interactive && stdin.is_terminal() && !opts.yes;
 
         if interactive {
-            run_with_inquire(ctx, &path, &mut stdout, opts.force, resolved)?;
+            #[cfg(feature = "interactive")]
+            {
+                run_with_inquire(ctx, &path, &mut stdout, opts.force, resolved)?;
+            }
+            #[cfg(not(feature = "interactive"))]
+            {
+                let mut reader = stdin.lock();
+                run_with_io(&path, &mut reader, &mut stdout, true, opts.force, resolved)?;
+            }
         } else {
             let mut reader = stdin.lock();
             run_with_io(&path, &mut reader, &mut stdout, false, opts.force, resolved)?;
@@ -376,6 +386,7 @@ fn run_with_io(
     Ok(())
 }
 
+#[cfg(feature = "interactive")]
 fn run_with_inquire(
     ctx: &CommandContext,
     path: &Path,
@@ -708,6 +719,7 @@ fn model_options(provider: &str) -> Vec<String> {
     options
 }
 
+#[cfg(feature = "interactive")]
 fn model_start_cursor(provider: &str, current_model: &str) -> usize {
     let options = model_options(provider);
     options
@@ -728,6 +740,7 @@ fn base_url_options(provider: &str, current_url: &str) -> Vec<String> {
     ])
 }
 
+#[cfg(feature = "interactive")]
 fn base_url_start_cursor(provider: &str, current_url: &str) -> usize {
     let options = base_url_options(provider, current_url);
     options
@@ -752,6 +765,7 @@ fn memory_path_options(current_path: &str) -> Vec<String> {
     ])
 }
 
+#[cfg(feature = "interactive")]
 fn memory_path_start_cursor(current_path: &str) -> usize {
     let options = memory_path_options(current_path);
     options
@@ -769,6 +783,7 @@ fn allowed_root_options(current_root: &str) -> Vec<String> {
     ])
 }
 
+#[cfg(feature = "interactive")]
 fn allowed_root_start_cursor(current_root: &str) -> usize {
     let options = allowed_root_options(current_root);
     options
@@ -787,6 +802,7 @@ fn allowed_commands_options(current_commands: &str) -> Vec<String> {
     ])
 }
 
+#[cfg(feature = "interactive")]
 fn allowed_commands_start_cursor(current_commands: &str) -> usize {
     let options = allowed_commands_options(current_commands);
     options
@@ -805,6 +821,7 @@ fn unique_options(options: Vec<String>) -> Vec<String> {
     unique
 }
 
+#[cfg(feature = "interactive")]
 fn print_summary(
     writer: &mut dyn Write,
     ctx: &CommandContext,

@@ -33,22 +33,29 @@ impl AgentZeroCommand for AuthCommand {
                 let provider = match provider {
                     Some(p) => normalize_oauth_provider(&p)?.to_string(),
                     None => {
-                        let options = vec![
-                            "OpenAI Codex  (browser login)",
-                            "Anthropic     (paste API key)",
-                            "Google Gemini (paste API key)",
-                        ];
-                        let selection = inquire::Select::new(
-                            "Which provider do you want to log in with?",
-                            options,
-                        )
-                        .prompt()?;
-                        if selection.starts_with("OpenAI") {
-                            "openai-codex".to_string()
-                        } else if selection.starts_with("Anthropic") {
-                            "anthropic".to_string()
-                        } else {
-                            "gemini".to_string()
+                        #[cfg(feature = "interactive")]
+                        {
+                            let options = vec![
+                                "OpenAI Codex  (browser login)",
+                                "Anthropic     (paste API key)",
+                                "Google Gemini (paste API key)",
+                            ];
+                            let selection = inquire::Select::new(
+                                "Which provider do you want to log in with?",
+                                options,
+                            )
+                            .prompt()?;
+                            if selection.starts_with("OpenAI") {
+                                "openai-codex".to_string()
+                            } else if selection.starts_with("Anthropic") {
+                                "anthropic".to_string()
+                            } else {
+                                "gemini".to_string()
+                            }
+                        }
+                        #[cfg(not(feature = "interactive"))]
+                        {
+                            bail!("--provider is required (built without interactive feature)")
                         }
                     }
                 };

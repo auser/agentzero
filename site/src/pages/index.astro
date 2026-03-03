@@ -28,10 +28,24 @@ const steps = [
 ];
 
 const metrics = [
-  { value: "34", label: "Crates" },
-  { value: "37+", label: "Commands" },
-  { value: "6", label: "Quality Gates" },
-  { value: "100%", label: "Rust" },
+  { value: "~5MB", label: "Minimal Binary" },
+  { value: "~19ms", label: "Cold Start" },
+  { value: "35+", label: "LLM Providers" },
+  { value: "45+", label: "Built-in Tools" },
+  { value: "8", label: "Platform Targets" },
+  { value: "44", label: "Workspace Crates" },
+];
+
+const differentiators = [
+  { title: "Single Binary", desc: "One static binary, zero runtime dependencies. Download and run — no containers, no interpreters, no package managers." },
+  { title: "Rust Memory Safety", desc: "No GC pauses, no null pointers, no data races. Compile-time guarantees eliminate entire classes of bugs." },
+  { title: "Security First", desc: "TOTP approval, secret leak detection, syscall monitoring, and tool-level policy gates — all built in." },
+  { title: "WASM Plugin Sandbox", desc: "Third-party plugins run in a bounded WebAssembly sandbox with integrity verification and resource limits." },
+  { title: "FFI Bindings", desc: "Native bindings for Swift, Kotlin, Python, and Node.js. Embed the runtime in mobile apps and backend services." },
+  { title: "35+ Providers", desc: "OpenAI, Anthropic, Google, Ollama, and 30+ more. Swap providers with a config change, no code rewrites." },
+  { title: "8 Platform Targets", desc: "Linux (x86/ARM/musl), macOS (Intel/Apple Silicon), Windows, Raspberry Pi. One codebase, native everywhere." },
+  { title: "Self-Update", desc: "Built-in updater with SHA-256 integrity checks and automatic rollback. Stay current without manual steps." },
+  { title: "MCP Support", desc: "Model Context Protocol support for tool interoperability. Connect to any MCP-compatible tool server." },
 ];
 
 const pillars = [
@@ -55,6 +69,7 @@ const pillars = [
         <a href={base} class="az-logo">AgentZero</a>
         <div class="az-nav-links">
           <a href="#features">Features</a>
+          <a href="#why">Why AgentZero</a>
           <a href="#how-it-works">How It Works</a>
           <a href="#architecture">Architecture</a>
           <a href={`${base}overview/`} class="az-nav-docs">Docs</a>
@@ -112,6 +127,37 @@ const pillars = [
             </article>
           ))}
         </div>
+      </section>
+
+      <!-- Why AgentZero -->
+      <section id="why" class="az-why">
+        <h2>Why AgentZero</h2>
+        <p class="az-why-lead">Everything you need to run AI agents in production — nothing you don't.</p>
+        <div class="az-why-grid">
+          {differentiators.map((d) => (
+            <article>
+              <h3>{d.title}</h3>
+              <p>{d.desc}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <!-- Install -->
+      <section class="az-install">
+        <h2>Install in seconds</h2>
+        <p class="az-install-lead">One command. One binary. No dependencies.</p>
+        <div class="az-install-terminal">
+          <div class="az-terminal-bar">
+            <span class="az-terminal-dot"></span>
+            <span class="az-terminal-dot"></span>
+            <span class="az-terminal-dot"></span>
+          </div>
+          <pre><code><span class="az-prompt">$</span> curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash</code></pre>
+        </div>
+        <p class="az-install-alt">
+          Or install with Cargo: <code>cargo install agentzero</code>
+        </p>
       </section>
 
       <!-- How It Works -->

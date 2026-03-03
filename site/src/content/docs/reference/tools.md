@@ -341,39 +341,58 @@ allow_sensitive_file_writes = false
 
 ## WASM Plugins
 
-AgentZero runs plugins in a sandboxed WASM environment with strict resource limits.
+AgentZero runs plugins in a sandboxed WASM environment with WASI capabilities, strict resource limits, and SHA-256 integrity verification. Plugins implement the same `Tool` trait as native tools — the agent loop treats them identically.
 
-### Plugin Structure
+### Four Extension Mechanisms
 
+| Mechanism | Isolation | Overhead | Use Case |
+|---|---|---|---|
+| **WASM plugins** | Sandboxed (memory + CPU + capability-gated) | ~1-5ms (cached) | Third-party tools, community plugins |
+| **FFI plugins** | Host process (not sandboxed) | Native | Embedding in Swift/Kotlin/Python/Node.js apps |
+| **Process plugins** | Full (OS process) | ~5-50ms | Any-language tools via stdin/stdout JSON |
+| **MCP servers** | Full (separate process) | Network | Tool server interoperability |
+
+### Writing a Plugin (10 Lines)
+
+```rust
+use agentzero_plugin_sdk::prelude::*;
+
+declare_tool!("my_tool", execute);
+
+fn execute(input: ToolInput) -> ToolOutput {
+    let req: serde_json::Value = serde_json::from_str(&input.input)
+        .unwrap_or_default();
+    let name = req["name"].as_str().unwrap_or("world");
+    ToolOutput::success(format!("Hello, {name}!"))
+}
 ```
-my-plugin/
-├── manifest.json    # metadata + capabilities
-└── plugin.wasm      # compiled WASM module
-```
+
+Build: `cargo build --target wasm32-wasip1 --release`
+
+See the [Plugin Authoring Guide](/agentzero/guides/plugins/) for the full walkthrough.
+
+### Plugin Discovery
+
+Plugins are auto-discovered from three locations (later overrides earlier):
+
+| Path | Scope | Hot-Reload |
+|---|---|---|
+| `~/.local/share/agentzero/plugins/` | Global (user-wide) | No |
+| `$PROJECT/.agentzero/plugins/` | Project-specific | No |
+| `./plugins/` | Current working directory (development) | Yes |
 
 ### Plugin Lifecycle
 
 ```bash
-# Scaffold a new plugin manifest
-agentzero plugin new --id my-plugin
-
-# Validate manifest
-agentzero plugin validate --manifest manifest.json
-
-# Test plugin (preflight + optional execution)
-agentzero plugin test --manifest manifest.json --wasm plugin.wasm --execute
-
-# Package for distribution
-agentzero plugin package --manifest manifest.json --wasm plugin.wasm --out my-plugin.tar.gz
-
-# Install a packaged plugin
-agentzero plugin install --package my-plugin.tar.gz
-
-# List installed plugins
-agentzero plugin list
-
-# Remove
-agentzero plugin remove --id my-plugin
+agentzero plugin new --id my-tool --scaffold rust   # Scaffold project
+agentzero plugin test --manifest manifest.json --wasm plugin.wasm --execute  # Test
+agentzero plugin package --manifest manifest.json --wasm plugin.wasm  # Package
+agentzero plugin install --package my-tool.tar       # Install from file
+agentzero plugin install my-tool                     # Install from registry
+agentzero plugin list                                # List installed
+agentzero plugin enable <id> / disable <id>          # Toggle state
+agentzero plugin search <query>                      # Search registry
+agentzero plugin remove --id my-tool                 # Remove
 ```
 
 ### Security Controls
@@ -395,16 +414,17 @@ capability_escalation_mode = "deny"
 module_hash_policy = "warn"  # warn or enforce
 ```
 
-Plugin integrity is verified via SHA-256 checksums at install time. Tampered packages are rejected.
-
 ### WASM Isolation Policy
 
 - Network: **disabled** by default
 - Filesystem write: **disabled** by default
-- Bounded execution: fuel limits cap CPU usage
-- Bounded memory: configurable max memory
-- Symlink rejection: prevents escape from tools directory
-- Capability escalation: denied by default
+- WASI capabilities: granted per-plugin via manifest + policy
+- Bounded execution: epoch-based CPU timeout (default: 30s)
+- Bounded memory: configurable max memory (default: 256MB)
+- Capability validation: undeclared imports fail at load time (not runtime)
+- SHA-256 integrity: verified on every install and load
+
+For the full ABI specification, host callbacks, and manifest schema, see the [Plugin API Reference](/agentzero/reference/plugin-api/).
 
 ---
 

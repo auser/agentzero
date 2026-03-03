@@ -3,6 +3,7 @@ use agentzero_config::load;
 use agentzero_providers::supported_providers;
 use anyhow::Context;
 use async_trait::async_trait;
+#[cfg(feature = "interactive")]
 use console::style;
 use serde::Serialize;
 use std::io::{self, Write};
@@ -127,10 +128,17 @@ fn render_providers_table(
     for provider in rows {
         let id_cell = format!("{:<19}", provider.id);
         let styled_id = if colorize {
-            if provider.active {
-                style(id_cell).blue().force_styling(true).to_string()
-            } else {
-                style(id_cell).cyan().force_styling(true).to_string()
+            #[cfg(feature = "interactive")]
+            {
+                if provider.active {
+                    style(&id_cell).blue().force_styling(true).to_string()
+                } else {
+                    style(&id_cell).cyan().force_styling(true).to_string()
+                }
+            }
+            #[cfg(not(feature = "interactive"))]
+            {
+                id_cell.clone()
             }
         } else {
             id_cell
@@ -292,10 +300,12 @@ fn supports_quota_api(provider: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{render_providers_json, render_providers_table};
+    #[cfg(feature = "interactive")]
     use console::strip_ansi_codes;
     use serde_json::Value;
 
     #[test]
+    #[cfg(feature = "interactive")]
     fn render_providers_marks_configured_provider_as_active() {
         let mut out = Vec::new();
         render_providers_table(&mut out, Some("openrouter"), true).expect("render should succeed");
@@ -308,6 +318,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "interactive")]
     fn render_providers_marks_alias_match_as_active() {
         let mut out = Vec::new();
         render_providers_table(&mut out, Some("github-copilot"), true)
@@ -319,6 +330,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "interactive")]
     fn render_providers_warns_when_active_provider_is_unknown() {
         let mut out = Vec::new();
         render_providers_table(&mut out, Some("not-real"), true).expect("render should succeed");
@@ -329,6 +341,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "interactive")]
     fn render_providers_colorizes_provider_id_column() {
         let mut out = Vec::new();
         render_providers_table(&mut out, Some("openrouter"), true).expect("render should succeed");

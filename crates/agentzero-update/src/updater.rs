@@ -12,6 +12,14 @@ pub struct UpdateState {
     pub last_target_version: Option<String>,
     pub last_applied_epoch_secs: Option<u64>,
     pub previous_versions: Vec<String>,
+    /// Build variant: "default" or "minimal". Defaults to "default" for
+    /// backwards compatibility with state files that predate this field.
+    #[serde(default = "default_variant")]
+    pub variant: String,
+}
+
+fn default_variant() -> String {
+    "default".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -47,6 +55,7 @@ pub fn load_state(
             last_target_version: None,
             last_applied_epoch_secs: None,
             previous_versions: vec![],
+            variant: default_variant(),
         });
     if state.current_version.trim().is_empty() {
         state.current_version = current_version.to_string();
@@ -174,9 +183,16 @@ pub async fn download_and_install(
         return Err(anyhow!("target version cannot be empty"));
     }
 
+    let state = load_state(state_path.as_ref(), current_version)?;
+    let variant_suffix = if state.variant == "minimal" {
+        "-minimal"
+    } else {
+        ""
+    };
     let (platform, arch) = current_target_name()?;
     let ext = if platform == "windows" { ".exe" } else { "" };
-    let artifact_name = format!("agentzero-v{target_version}-{platform}-{arch}{ext}");
+    let artifact_name =
+        format!("agentzero-v{target_version}-{platform}-{arch}{variant_suffix}{ext}");
 
     let client = build_client(github_token)?;
 
@@ -243,7 +259,27 @@ pub async fn download_and_install(
         .await
         .with_context(|| format!("failed to replace binary at {}", exe_path.display()))?;
 
-    apply_update(state_path, current_version, target_version)
+    // Record the version transition directly.  We do NOT call apply_update()
+    // here because the state's current_version might already equal
+    // target_version (e.g. if a previous state-only apply ran without actually
+    // downloading the binary), which would cause a spurious "already applied"
+    // error after a successful binary replacement.
+    let from_version = state.current_version.clone();
+    let mut updated = state;
+    if updated.current_version != target_version {
+        updated
+            .previous_versions
+            .push(updated.current_version.clone());
+    }
+    updated.current_version = target_version.to_string();
+    updated.last_target_version = Some(target_version.to_string());
+    updated.last_applied_epoch_secs = Some(now_epoch_secs());
+    save_state(state_path, &updated)?;
+
+    Ok(ApplyUpdateResult {
+        from_version,
+        to_version: target_version.to_string(),
+    })
 }
 
 /// Restore the `.backup` binary created by [`download_and_install`] and

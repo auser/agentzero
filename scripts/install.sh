@@ -22,6 +22,7 @@ GITHUB_RELEASE="https://github.com/${REPO}/releases/download"
 VERSION="latest"
 INSTALL_DIR=""
 CHANNEL="stable"
+VARIANT=""
 FORCE=0
 QUIET=0
 VERBOSE=0
@@ -140,6 +141,7 @@ ${BOLD}OPTIONS${NC}
     ${GREEN}-v${NC}, ${GREEN}--version${NC} ${UNDERLINE}VERSION${NC}     Install specific version ${DIM}[default: latest]${NC}
     ${GREEN}-d${NC}, ${GREEN}--dir${NC} ${UNDERLINE}DIR${NC}             Install directory ${DIM}[default: ~/.local/bin]${NC}
     ${GREEN}-c${NC}, ${GREEN}--channel${NC} ${UNDERLINE}CHANNEL${NC}     Release channel: stable, nightly ${DIM}[default: stable]${NC}
+        ${GREEN}--variant${NC} ${UNDERLINE}VARIANT${NC}        Build variant: default, minimal ${DIM}[default: interactive]${NC}
     ${GREEN}-f${NC}, ${GREEN}--force${NC}                Force reinstall even if already installed
     ${GREEN}-q${NC}, ${GREEN}--quiet${NC}                Suppress non-essential output
     ${GREEN}-V${NC}, ${GREEN}--verbose${NC}              Enable debug output
@@ -155,6 +157,7 @@ ${BOLD}OPTIONS${NC}
 ${BOLD}ENVIRONMENT${NC}
     ${CYAN}AGENTZERO_INSTALL_DIR${NC}    Override install directory
     ${CYAN}AGENTZERO_VERSION${NC}        Override version to install
+    ${CYAN}AGENTZERO_VARIANT${NC}        Build variant: default, minimal
     ${CYAN}GITHUB_TOKEN${NC}             GitHub API token (avoids rate limits in CI/Docker)
     ${CYAN}NO_COLOR${NC}                 Disable colored output (standard)
 
@@ -233,6 +236,15 @@ parse_args() {
         COMPLETIONS_SHELL="${1#*=}"
         shift
         ;;
+      --variant)
+        require_arg "$1" "${2:-}"
+        VARIANT="$2"
+        shift 2
+        ;;
+      --variant=*)
+        VARIANT="${1#*=}"
+        shift
+        ;;
       -f|--force)     FORCE=1;       shift ;;
       -q|--quiet)     QUIET=1;       shift ;;
       -V|--verbose)   VERBOSE=1;     shift ;;
@@ -274,6 +286,19 @@ parse_args() {
   fi
   if [[ -z "$INSTALL_DIR" ]] && [[ -n "${AGENTZERO_INSTALL_DIR:-}" ]]; then
     INSTALL_DIR="${AGENTZERO_INSTALL_DIR}"
+  fi
+
+  # Apply variant env var (flag takes precedence)
+  if [[ -z "$VARIANT" ]] && [[ -n "${AGENTZERO_VARIANT:-}" ]]; then
+    VARIANT="${AGENTZERO_VARIANT}"
+  fi
+
+  # Validate variant if explicitly set
+  if [[ -n "$VARIANT" ]]; then
+    case "$VARIANT" in
+      default|minimal) ;;
+      *) error "Unknown variant: ${VARIANT}. Supported: default, minimal" ;;
+    esac
   fi
 
   # Validate completions shell
@@ -503,14 +528,63 @@ detect_arch() {
   success "Architecture: ${BOLD}${ARCH}${NC}"
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Variant selection — interactive prompt when --variant is not set
+# ──────────────────────────────────────────────────────────────────────────────
+resolve_variant() {
+  if [[ -n "$VARIANT" ]]; then
+    debug "Using variant: ${VARIANT}"
+    success "Variant: ${BOLD}${VARIANT}${NC}"
+    return
+  fi
+
+  # Non-interactive (piped): default to "default"
+  if [[ ! -t 0 ]] || [[ "$QUIET" -eq 1 ]]; then
+    VARIANT="default"
+    debug "Non-interactive mode, defaulting to variant: ${VARIANT}"
+    success "Variant: ${BOLD}${VARIANT}${NC}"
+    return
+  fi
+
+  # Interactive TTY prompt
+  printf "\n" >&2
+  printf "  ${BOLD}Choose installation variant:${NC}\n" >&2
+  printf "    ${BOLD_GREEN}1)${NC} ${BOLD}default${NC}  — Full installation (~18MB) with TUI, WASM plugins, gateway\n" >&2
+  printf "    ${BOLD_CYAN}2)${NC} ${BOLD}minimal${NC}  — Lean runtime (~5MB) for servers, embedded, and CI\n" >&2
+  printf "\n" >&2
+  printf "  ${DIM}Selection [1]:${NC} " >&2
+
+  local answer
+  read -r answer
+
+  case "${answer:-1}" in
+    1|default)
+      VARIANT="default"
+      ;;
+    2|minimal)
+      VARIANT="minimal"
+      ;;
+    *)
+      warn "Invalid selection '${answer}', using default."
+      VARIANT="default"
+      ;;
+  esac
+
+  success "Variant: ${BOLD}${VARIANT}${NC}"
+}
+
 # Build the artifact name matching the release workflow convention
 build_artifact_name() {
   local version="$1"
   local ext=""
+  local suffix=""
   if [[ "$PLATFORM" == "windows" ]]; then
     ext=".exe"
   fi
-  echo "${BINARY_NAME}-v${version}-${PLATFORM}-${ARCH}${ext}"
+  if [[ "$VARIANT" == "minimal" ]]; then
+    suffix="-minimal"
+  fi
+  echo "${BINARY_NAME}-v${version}-${PLATFORM}-${ARCH}${suffix}${ext}"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -822,8 +896,13 @@ build_from_source() {
   local src_dir="${TMP_DIR}/agentzero-src"
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    info "${DIM}[dry-run]${NC} Would clone ${REPO} and build from source"
-    info "${DIM}[dry-run]${NC} cargo build -p ${BINARY_NAME} --release"
+    if [[ "$VARIANT" == "minimal" ]]; then
+      info "${DIM}[dry-run]${NC} Would clone ${REPO} and build from source (minimal)"
+      info "${DIM}[dry-run]${NC} cargo build -p ${BINARY_NAME} --profile release-min --no-default-features --features minimal"
+    else
+      info "${DIM}[dry-run]${NC} Would clone ${REPO} and build from source"
+      info "${DIM}[dry-run]${NC} cargo build -p ${BINARY_NAME} --release"
+    fi
     ARTIFACT_PATH="${TMP_DIR}/placeholder"
     return
   fi
@@ -838,12 +917,18 @@ build_from_source() {
     error "Failed to clone repository. Check that the version tag exists."
   fi
 
-  info "Building from source... ${DIM}(this may take a few minutes)${NC}"
-  if ! (cd "$src_dir" && cargo build -p "$BINARY_NAME" --release 2>&1); then
-    error "Build failed. Check the output above for errors."
+  info "Building from source (${VARIANT})... ${DIM}(this may take a few minutes)${NC}"
+  if [[ "$VARIANT" == "minimal" ]]; then
+    if ! (cd "$src_dir" && cargo build -p "$BINARY_NAME" --profile release-min --no-default-features --features minimal 2>&1); then
+      error "Build failed. Check the output above for errors."
+    fi
+    ARTIFACT_PATH="${src_dir}/target/release-min/${BINARY_NAME}"
+  else
+    if ! (cd "$src_dir" && cargo build -p "$BINARY_NAME" --release 2>&1); then
+      error "Build failed. Check the output above for errors."
+    fi
+    ARTIFACT_PATH="${src_dir}/target/release/${BINARY_NAME}"
   fi
-
-  ARTIFACT_PATH="${src_dir}/target/release/${BINARY_NAME}"
   if [[ "$PLATFORM" == "windows" ]]; then
     ARTIFACT_PATH="${ARTIFACT_PATH}.exe"
   fi
@@ -1037,22 +1122,25 @@ main() {
   step 3 "Resolving version"
   resolve_version
 
+  step 4 "Selecting variant"
+  resolve_variant
+
   check_existing_install
 
   if [[ "$FROM_SOURCE" -eq 1 ]]; then
-    step 4 "Building from source"
+    step 5 "Building from source"
     build_from_source
   else
-    step 4 "Downloading agentzero v${VERSION}"
+    step 5 "Downloading agentzero v${VERSION} (${VARIANT})"
     download_binary
 
-    step 5 "Verifying checksum"
+    step 6 "Verifying checksum"
     verify_checksum
   fi
 
-  local install_step=6
+  local install_step=7
   if [[ "$FROM_SOURCE" -eq 1 ]]; then
-    install_step=5
+    install_step=6
   fi
 
   step "$install_step" "Installing to ${INSTALL_DIR:-<auto>}"

@@ -20,10 +20,16 @@ jobs:
         run: cargo test --workspace
       - name: verify dependency policy
         run: scripts/verify-dependency-policy.sh
-      - name: release build
+      - name: release build (default)
         run: cargo build -p agentzero --release
-      - name: release size budget
+      - name: release size budget (default)
         run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 30000000
+      - name: release build (minimal)
+        run: cargo build -p agentzero --profile release-min --no-default-features --features minimal
+      - name: release size budget (minimal)
+        run: scripts/check-binary-size.sh --binary target/release-min/agentzero --max-bytes 6000000
+      - name: cold-start latency
+        run: scripts/bench-cli-startup.sh --iterations 20 --command "--help"
 
   security:
     runs-on: ubuntu-latest

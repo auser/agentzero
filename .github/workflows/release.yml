@@ -150,20 +150,54 @@ jobs:
           else
             cargo build -p agentzero --release --target ${{ matrix.rust_target }}
           fi
-      - name: Validate linux size budget
+      - name: Validate linux size budget (default)
         if: matrix.target_name == 'linux-x86_64'
         run: scripts/check-binary-size.sh --binary "${{ matrix.bin_path }}" --max-bytes 30000000
+      - name: Build minimal binary
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: >-
+            ${{ matrix.target_name == 'linux-aarch64' && 'aarch64-linux-gnu-gcc' || '' }}
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: >-
+            ${{ matrix.target_name == 'linux-armv7' && 'arm-linux-gnueabihf-gcc' || '' }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+          USE_ZIGBUILD: ${{ matrix.use_zigbuild }}
+        run: |
+          if [[ "$USE_ZIGBUILD" == "true" ]]; then
+            cargo zigbuild -p agentzero --profile release-min --target "$RUST_TARGET" --no-default-features --features minimal
+          else
+            cargo build -p agentzero --profile release-min --target "$RUST_TARGET" --no-default-features --features minimal
+          fi
+      - name: Validate linux size budget (minimal)
+        if: matrix.target_name == 'linux-x86_64'
+        env:
+          MINIMAL_BIN: target/${{ matrix.rust_target }}/release-min/agentzero${{ matrix.ext }}
+        run: scripts/check-binary-size.sh --binary "$MINIMAL_BIN" --max-bytes 6000000
       - name: Package artifact (unix)
         if: matrix.os != 'windows-latest'
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          TARGET_NAME: ${{ matrix.target_name }}
+          EXT: ${{ matrix.ext }}
+          BIN_PATH: ${{ matrix.bin_path }}
+          RUST_TARGET: ${{ matrix.rust_target }}
         run: |
           mkdir -p dist
-          cp "${{ matrix.bin_path }}" "dist/agentzero-v${{ steps.version.outputs.value }}-${{ matrix.target_name }}${{ matrix.ext }}"
+          cp "$BIN_PATH" "dist/agentzero-v${VERSION}-${TARGET_NAME}${EXT}"
+          cp "target/${RUST_TARGET}/release-min/agentzero${EXT}" "dist/agentzero-v${VERSION}-${TARGET_NAME}-minimal${EXT}"
       - name: Package artifact (windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          TARGET_NAME: ${{ matrix.target_name }}
+          EXT: ${{ matrix.ext }}
+          BIN_PATH: ${{ matrix.bin_path }}
+          RUST_TARGET: ${{ matrix.rust_target }}
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item "${{ matrix.bin_path }}" "dist/agentzero-v${{ steps.version.outputs.value }}-${{ matrix.target_name }}${{ matrix.ext }}"
+          Copy-Item "$env:BIN_PATH" "dist/agentzero-v$env:VERSION-$env:TARGET_NAME$env:EXT"
+          Copy-Item "target/$env:RUST_TARGET/release-min/agentzero$env:EXT" "dist/agentzero-v$env:VERSION-$env:TARGET_NAME-minimal$env:EXT"
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
