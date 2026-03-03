@@ -503,16 +503,6 @@ detect_arch() {
   success "Architecture: ${BOLD}${ARCH}${NC}"
 }
 
-# Prefer static musl binaries on Linux x86_64/aarch64 for broader compatibility
-# (works on glibc and musl systems alike, including Alpine and containers)
-detect_musl() {
-  if [[ "$PLATFORM" == "linux" ]] && [[ "$ARCH" == "x86_64" || "$ARCH" == "aarch64" ]]; then
-    ARCH="${ARCH}-musl"
-    debug "Preferring static musl binary for portability"
-    success "Variant: ${BOLD}static musl${NC}"
-  fi
-}
-
 # Build the artifact name matching the release workflow convention
 build_artifact_name() {
   local version="$1"
@@ -1033,7 +1023,6 @@ main() {
   step 1 "Detecting platform"
   detect_platform
   detect_arch
-  detect_musl
 
   step 2 "Checking dependencies"
   check_dependencies

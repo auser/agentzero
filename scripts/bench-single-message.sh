@@ -57,10 +57,6 @@ if ! [[ "$iterations" =~ ^[0-9]+$ ]] || [[ "$iterations" -le 0 ]]; then
   exit 2
 fi
 
-if [[ ! -x "$binary" ]]; then
-  cargo build -p agentzero --release >/dev/null
-fi
-
 if [[ -z "$override_cmd" ]]; then
   if [[ -z "${OPENAI_API_KEY:-}" ]]; then
     echo "OPENAI_API_KEY must be set for default single-message benchmark" >&2
@@ -69,6 +65,10 @@ if [[ -z "$override_cmd" ]]; then
   cmd_args="agent -m \"$message\""
 else
   cmd_args="$override_cmd"
+fi
+
+if [[ ! -x "$binary" ]]; then
+  cargo build -p agentzero --release >/dev/null
 fi
 
 sum_ms=0
