@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-cli",
  "agentzero-security",
@@ -50,7 +50,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-approval"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-auth"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -71,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-autonomy"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "regex",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-bench"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-channels"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-config",
  "agentzero-leak-guard",
@@ -114,7 +114,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-approval",
  "agentzero-auth",
@@ -174,7 +174,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-common"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "dirs",
@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-config"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-common",
  "agentzero-tools",
@@ -202,14 +202,14 @@ dependencies = [
 
 [[package]]
 name = "agentzero-coordination"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "agentzero-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-security",
  "anyhow",
@@ -224,14 +224,14 @@ dependencies = [
 
 [[package]]
 name = "agentzero-cost"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "agentzero-cron"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-crypto"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-common",
  "anyhow",
@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-daemon"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-delegation"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -276,7 +276,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-doctor"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-config",
  "agentzero-health",
@@ -288,7 +288,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-gateway"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-channels",
  "agentzero-security",
@@ -306,14 +306,14 @@ dependencies = [
 
 [[package]]
 name = "agentzero-goals"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "agentzero-hardware"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "serde",
@@ -322,14 +322,14 @@ dependencies = [
 
 [[package]]
 name = "agentzero-health"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "agentzero-heartbeat"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -338,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-hooks"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-identity"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-infra"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-core",
  "agentzero-delegation",
@@ -374,14 +374,14 @@ dependencies = [
 
 [[package]]
 name = "agentzero-integrations"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "agentzero-leak-guard"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "regex",
@@ -391,7 +391,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-local"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-common",
  "agentzero-health",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-memory"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-multimodal"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "serde",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-peripherals"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-plugins"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "serde",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-providers"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-rag"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-routing"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "regex",
@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-auth",
  "agentzero-common",
@@ -511,7 +511,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-security"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "hmac",
@@ -522,7 +522,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-service"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -532,7 +532,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-skills"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -541,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-storage"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-common",
  "agentzero-crypto",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-testkit"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-tools"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-autonomy",
  "agentzero-common",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-tunnel"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-update"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
