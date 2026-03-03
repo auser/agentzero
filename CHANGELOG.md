@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-03-03
+
+### Fixed
+- Windows build: compare `HANDLE` with `.is_null()` instead of `== 0` to fix `E0308` mismatched-types errors
+- Windows build: prefix unused `path` parameter in `enforce_private_permissions` with `_` to silence unused-variable warnings on non-Unix targets
+- Add Windows support to `agentzero-daemon` via platform-conditional compilation (`#[cfg(unix)]` / `#[cfg(windows)]`)
+- Resolve CI failures in checks, coverage, and security jobs
+- Update `deny.toml` for `cargo-deny` config schema change
+- Update path references from `public/` to `site/`
+- Resolve CI/CD failures, upgrade wasmtime, and consolidate workflows
+
 ## [0.2.1] - 2026-03-02
 
 ### Fixed
