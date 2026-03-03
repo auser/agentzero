@@ -48,7 +48,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.4"
+version = "0.3.4"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"
@@ -59,49 +59,49 @@ async-trait = "0.1"
 clap = { version = "4.5", features = ["derive"] }
 config = "0.14"
 dotenvy = "0.15"
-agentzero-approval = { path = "crates/agentzero-approval", version = "0.1.4" }
-agentzero-auth = { path = "crates/agentzero-auth", version = "0.1.4" }
-agentzero-bench = { path = "crates/agentzero-bench", version = "0.1.4" }
-agentzero-channels = { path = "crates/agentzero-channels", version = "0.1.4" }
-agentzero-cli = { path = "crates/agentzero-cli", version = "0.1.4" }
-agentzero-common = { path = "crates/agentzero-common", version = "0.1.4" }
-agentzero-config = { path = "crates/agentzero-config", version = "0.1.4" }
-agentzero-coordination = { path = "crates/agentzero-coordination", version = "0.1.4" }
-agentzero-crypto = { path = "crates/agentzero-crypto", version = "0.1.4" }
-agentzero-core = { path = "crates/agentzero-core", version = "0.1.4" }
-agentzero-cost = { path = "crates/agentzero-cost", version = "0.1.4" }
-agentzero-cron = { path = "crates/agentzero-cron", version = "0.1.4" }
-agentzero-daemon = { path = "crates/agentzero-daemon", version = "0.1.4" }
-agentzero-doctor = { path = "crates/agentzero-doctor", version = "0.1.4" }
-agentzero-gateway = { path = "crates/agentzero-gateway", version = "0.1.4" }
-agentzero-goals = { path = "crates/agentzero-goals", version = "0.1.4" }
-agentzero-health = { path = "crates/agentzero-health", version = "0.1.4" }
-agentzero-heartbeat = { path = "crates/agentzero-heartbeat", version = "0.1.4" }
-agentzero-hooks = { path = "crates/agentzero-hooks", version = "0.1.4" }
-agentzero-identity = { path = "crates/agentzero-identity", version = "0.1.4" }
-agentzero-integrations = { path = "crates/agentzero-integrations", version = "0.1.4" }
-agentzero-infra = { path = "crates/agentzero-infra", version = "0.1.4" }
-agentzero-memory = { path = "crates/agentzero-memory", version = "0.1.4" }
-agentzero-plugins = { path = "crates/agentzero-plugins", version = "0.1.4" }
-agentzero-skills = { path = "crates/agentzero-skills", version = "0.1.4" }
-agentzero-providers = { path = "crates/agentzero-providers", version = "0.1.4" }
-agentzero-runtime = { path = "crates/agentzero-runtime", version = "0.1.4" }
-agentzero-security = { path = "crates/agentzero-security", version = "0.1.4" }
-agentzero-service = { path = "crates/agentzero-service", version = "0.1.4" }
-agentzero-storage = { path = "crates/agentzero-storage", version = "0.1.4" }
-agentzero-rag = { path = "crates/agentzero-rag", version = "0.1.4" }
-agentzero-multimodal = { path = "crates/agentzero-multimodal", version = "0.1.4" }
-agentzero-hardware = { path = "crates/agentzero-hardware", version = "0.1.4" }
-agentzero-peripherals = { path = "crates/agentzero-peripherals", version = "0.1.4" }
-agentzero-testkit = { path = "crates/agentzero-testkit", version = "0.1.4" }
-agentzero-tools = { path = "crates/agentzero-tools", version = "0.1.4" }
-agentzero-tunnel = { path = "crates/agentzero-tunnel", version = "0.1.4" }
-agentzero-update = { path = "crates/agentzero-update", version = "0.1.4" }
-agentzero-autonomy = { path = "crates/agentzero-autonomy", version = "0.1.4" }
-agentzero-leak-guard = { path = "crates/agentzero-leak-guard", version = "0.1.4" }
-agentzero-delegation = { path = "crates/agentzero-delegation", version = "0.1.4" }
-agentzero-routing = { path = "crates/agentzero-routing", version = "0.1.4" }
-agentzero-local = { path = "crates/agentzero-local", version = "0.1.4" }
+agentzero-approval = { path = "crates/agentzero-approval", version = "0.3.4" }
+agentzero-auth = { path = "crates/agentzero-auth", version = "0.3.4" }
+agentzero-bench = { path = "crates/agentzero-bench", version = "0.3.4" }
+agentzero-channels = { path = "crates/agentzero-channels", version = "0.3.4" }
+agentzero-cli = { path = "crates/agentzero-cli", version = "0.3.4" }
+agentzero-common = { path = "crates/agentzero-common", version = "0.3.4" }
+agentzero-config = { path = "crates/agentzero-config", version = "0.3.4" }
+agentzero-coordination = { path = "crates/agentzero-coordination", version = "0.3.4" }
+agentzero-crypto = { path = "crates/agentzero-crypto", version = "0.3.4" }
+agentzero-core = { path = "crates/agentzero-core", version = "0.3.4" }
+agentzero-cost = { path = "crates/agentzero-cost", version = "0.3.4" }
+agentzero-cron = { path = "crates/agentzero-cron", version = "0.3.4" }
+agentzero-daemon = { path = "crates/agentzero-daemon", version = "0.3.4" }
+agentzero-doctor = { path = "crates/agentzero-doctor", version = "0.3.4" }
+agentzero-gateway = { path = "crates/agentzero-gateway", version = "0.3.4" }
+agentzero-goals = { path = "crates/agentzero-goals", version = "0.3.4" }
+agentzero-health = { path = "crates/agentzero-health", version = "0.3.4" }
+agentzero-heartbeat = { path = "crates/agentzero-heartbeat", version = "0.3.4" }
+agentzero-hooks = { path = "crates/agentzero-hooks", version = "0.3.4" }
+agentzero-identity = { path = "crates/agentzero-identity", version = "0.3.4" }
+agentzero-integrations = { path = "crates/agentzero-integrations", version = "0.3.4" }
+agentzero-infra = { path = "crates/agentzero-infra", version = "0.3.4" }
+agentzero-memory = { path = "crates/agentzero-memory", version = "0.3.4" }
+agentzero-plugins = { path = "crates/agentzero-plugins", version = "0.3.4" }
+agentzero-skills = { path = "crates/agentzero-skills", version = "0.3.4" }
+agentzero-providers = { path = "crates/agentzero-providers", version = "0.3.4" }
+agentzero-runtime = { path = "crates/agentzero-runtime", version = "0.3.4" }
+agentzero-security = { path = "crates/agentzero-security", version = "0.3.4" }
+agentzero-service = { path = "crates/agentzero-service", version = "0.3.4" }
+agentzero-storage = { path = "crates/agentzero-storage", version = "0.3.4" }
+agentzero-rag = { path = "crates/agentzero-rag", version = "0.3.4" }
+agentzero-multimodal = { path = "crates/agentzero-multimodal", version = "0.3.4" }
+agentzero-hardware = { path = "crates/agentzero-hardware", version = "0.3.4" }
+agentzero-peripherals = { path = "crates/agentzero-peripherals", version = "0.3.4" }
+agentzero-testkit = { path = "crates/agentzero-testkit", version = "0.3.4" }
+agentzero-tools = { path = "crates/agentzero-tools", version = "0.3.4" }
+agentzero-tunnel = { path = "crates/agentzero-tunnel", version = "0.3.4" }
+agentzero-update = { path = "crates/agentzero-update", version = "0.3.4" }
+agentzero-autonomy = { path = "crates/agentzero-autonomy", version = "0.3.4" }
+agentzero-leak-guard = { path = "crates/agentzero-leak-guard", version = "0.3.4" }
+agentzero-delegation = { path = "crates/agentzero-delegation", version = "0.3.4" }
+agentzero-routing = { path = "crates/agentzero-routing", version = "0.3.4" }
+agentzero-local = { path = "crates/agentzero-local", version = "0.3.4" }
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
