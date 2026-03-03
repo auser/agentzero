@@ -6,6 +6,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-03-03
+
+### Added
+- Expand release build matrix: linux-armv7, linux-x86_64-musl, linux-aarch64-musl targets
+- Installer auto-selects static musl binaries on Linux for better portability
+
+### Fixed
+- Fix stale v0.1.2 tag that pointed to a commit missing the changelog entry
+
 ## [0.1.2] - 2026-03-03
 
 ### Fixed

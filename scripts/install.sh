@@ -358,22 +358,31 @@ github_api_get() {
 
   if [[ "$DOWNLOAD_CMD" == "curl" ]]; then
     tmp="$(mktemp)"
-    local auth_header=()
-    [[ -n "$GITHUB_TOKEN" ]] && auth_header=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
-    http_code="$(curl -sL -w "%{http_code}" \
-      -H "Accept: application/vnd.github+json" \
-      -H "X-GitHub-Api-Version: 2022-11-28" \
-      "${auth_header[@]}" \
-      -o "$tmp" "$url" 2>/dev/null)" || http_code="000"
+    if [[ -n "$GITHUB_TOKEN" ]]; then
+      http_code="$(curl -sL -w "%{http_code}" \
+        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        -o "$tmp" "$url" 2>/dev/null)" || http_code="000"
+    else
+      http_code="$(curl -sL -w "%{http_code}" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        -o "$tmp" "$url" 2>/dev/null)" || http_code="000"
+    fi
     response="$(cat "$tmp")"
     rm -f "$tmp"
   else
-    local auth_header=()
-    [[ -n "$GITHUB_TOKEN" ]] && auth_header=(--header="Authorization: Bearer ${GITHUB_TOKEN}")
-    response="$(wget -qO- \
-      --header="Accept: application/vnd.github+json" \
-      "${auth_header[@]}" \
-      "$url" 2>/dev/null)" || response=""
+    if [[ -n "$GITHUB_TOKEN" ]]; then
+      response="$(wget -qO- \
+        --header="Authorization: Bearer ${GITHUB_TOKEN}" \
+        --header="Accept: application/vnd.github+json" \
+        "$url" 2>/dev/null)" || response=""
+    else
+      response="$(wget -qO- \
+        --header="Accept: application/vnd.github+json" \
+        "$url" 2>/dev/null)" || response=""
+    fi
     http_code="200"
   fi
 
