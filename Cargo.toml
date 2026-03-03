@@ -59,49 +59,49 @@ async-trait = "0.1"
 clap = { version = "4.5", features = ["derive"] }
 config = "0.14"
 dotenvy = "0.15"
-agentzero-approval = { path = "crates/agentzero-approval" }
-agentzero-auth = { path = "crates/agentzero-auth" }
-agentzero-bench = { path = "crates/agentzero-bench" }
-agentzero-channels = { path = "crates/agentzero-channels" }
-agentzero-cli = { path = "crates/agentzero-cli" }
-agentzero-common = { path = "crates/agentzero-common" }
-agentzero-config = { path = "crates/agentzero-config" }
-agentzero-coordination = { path = "crates/agentzero-coordination" }
-agentzero-crypto = { path = "crates/agentzero-crypto" }
-agentzero-core = { path = "crates/agentzero-core" }
-agentzero-cost = { path = "crates/agentzero-cost" }
-agentzero-cron = { path = "crates/agentzero-cron" }
-agentzero-daemon = { path = "crates/agentzero-daemon" }
-agentzero-doctor = { path = "crates/agentzero-doctor" }
-agentzero-gateway = { path = "crates/agentzero-gateway" }
-agentzero-goals = { path = "crates/agentzero-goals" }
-agentzero-health = { path = "crates/agentzero-health" }
-agentzero-heartbeat = { path = "crates/agentzero-heartbeat" }
-agentzero-hooks = { path = "crates/agentzero-hooks" }
-agentzero-identity = { path = "crates/agentzero-identity" }
-agentzero-integrations = { path = "crates/agentzero-integrations" }
-agentzero-infra = { path = "crates/agentzero-infra" }
-agentzero-memory = { path = "crates/agentzero-memory" }
-agentzero-plugins = { path = "crates/agentzero-plugins" }
-agentzero-skills = { path = "crates/agentzero-skills" }
-agentzero-providers = { path = "crates/agentzero-providers" }
-agentzero-runtime = { path = "crates/agentzero-runtime" }
-agentzero-security = { path = "crates/agentzero-security" }
-agentzero-service = { path = "crates/agentzero-service" }
-agentzero-storage = { path = "crates/agentzero-storage" }
-agentzero-rag = { path = "crates/agentzero-rag" }
-agentzero-multimodal = { path = "crates/agentzero-multimodal" }
-agentzero-hardware = { path = "crates/agentzero-hardware" }
-agentzero-peripherals = { path = "crates/agentzero-peripherals" }
-agentzero-testkit = { path = "crates/agentzero-testkit" }
-agentzero-tools = { path = "crates/agentzero-tools" }
-agentzero-tunnel = { path = "crates/agentzero-tunnel" }
-agentzero-update = { path = "crates/agentzero-update" }
-agentzero-autonomy = { path = "crates/agentzero-autonomy" }
-agentzero-leak-guard = { path = "crates/agentzero-leak-guard" }
-agentzero-delegation = { path = "crates/agentzero-delegation" }
-agentzero-routing = { path = "crates/agentzero-routing" }
-agentzero-local = { path = "crates/agentzero-local" }
+agentzero-approval = { path = "crates/agentzero-approval", version = "0.1.3" }
+agentzero-auth = { path = "crates/agentzero-auth", version = "0.1.3" }
+agentzero-bench = { path = "crates/agentzero-bench", version = "0.1.3" }
+agentzero-channels = { path = "crates/agentzero-channels", version = "0.1.3" }
+agentzero-cli = { path = "crates/agentzero-cli", version = "0.1.3" }
+agentzero-common = { path = "crates/agentzero-common", version = "0.1.3" }
+agentzero-config = { path = "crates/agentzero-config", version = "0.1.3" }
+agentzero-coordination = { path = "crates/agentzero-coordination", version = "0.1.3" }
+agentzero-crypto = { path = "crates/agentzero-crypto", version = "0.1.3" }
+agentzero-core = { path = "crates/agentzero-core", version = "0.1.3" }
+agentzero-cost = { path = "crates/agentzero-cost", version = "0.1.3" }
+agentzero-cron = { path = "crates/agentzero-cron", version = "0.1.3" }
+agentzero-daemon = { path = "crates/agentzero-daemon", version = "0.1.3" }
+agentzero-doctor = { path = "crates/agentzero-doctor", version = "0.1.3" }
+agentzero-gateway = { path = "crates/agentzero-gateway", version = "0.1.3" }
+agentzero-goals = { path = "crates/agentzero-goals", version = "0.1.3" }
+agentzero-health = { path = "crates/agentzero-health", version = "0.1.3" }
+agentzero-heartbeat = { path = "crates/agentzero-heartbeat", version = "0.1.3" }
+agentzero-hooks = { path = "crates/agentzero-hooks", version = "0.1.3" }
+agentzero-identity = { path = "crates/agentzero-identity", version = "0.1.3" }
+agentzero-integrations = { path = "crates/agentzero-integrations", version = "0.1.3" }
+agentzero-infra = { path = "crates/agentzero-infra", version = "0.1.3" }
+agentzero-memory = { path = "crates/agentzero-memory", version = "0.1.3" }
+agentzero-plugins = { path = "crates/agentzero-plugins", version = "0.1.3" }
+agentzero-skills = { path = "crates/agentzero-skills", version = "0.1.3" }
+agentzero-providers = { path = "crates/agentzero-providers", version = "0.1.3" }
+agentzero-runtime = { path = "crates/agentzero-runtime", version = "0.1.3" }
+agentzero-security = { path = "crates/agentzero-security", version = "0.1.3" }
+agentzero-service = { path = "crates/agentzero-service", version = "0.1.3" }
+agentzero-storage = { path = "crates/agentzero-storage", version = "0.1.3" }
+agentzero-rag = { path = "crates/agentzero-rag", version = "0.1.3" }
+agentzero-multimodal = { path = "crates/agentzero-multimodal", version = "0.1.3" }
+agentzero-hardware = { path = "crates/agentzero-hardware", version = "0.1.3" }
+agentzero-peripherals = { path = "crates/agentzero-peripherals", version = "0.1.3" }
+agentzero-testkit = { path = "crates/agentzero-testkit", version = "0.1.3" }
+agentzero-tools = { path = "crates/agentzero-tools", version = "0.1.3" }
+agentzero-tunnel = { path = "crates/agentzero-tunnel", version = "0.1.3" }
+agentzero-update = { path = "crates/agentzero-update", version = "0.1.3" }
+agentzero-autonomy = { path = "crates/agentzero-autonomy", version = "0.1.3" }
+agentzero-leak-guard = { path = "crates/agentzero-leak-guard", version = "0.1.3" }
+agentzero-delegation = { path = "crates/agentzero-delegation", version = "0.1.3" }
+agentzero-routing = { path = "crates/agentzero-routing", version = "0.1.3" }
+agentzero-local = { path = "crates/agentzero-local", version = "0.1.3" }
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rusqlite = { version = "0.31", features = ["bundled"] }

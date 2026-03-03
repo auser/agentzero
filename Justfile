@@ -65,6 +65,8 @@ release VERSION:
     echo "==> Releasing v{{VERSION}}"
     # 1. Bump workspace version in root Cargo.toml
     sed -i '' 's/^version = ".*"/version = "{{VERSION}}"/' Cargo.toml
+    # Bump inline version on internal workspace dep entries (path = "crates/…", version = "…")
+    perl -i -pe 's|(agentzero-[a-z-]+ = \{ path = "crates/[^"]+", version = )"[^"]+"|${1}"{{VERSION}}"|g' Cargo.toml
     cargo check --workspace --quiet
     echo "    Cargo.toml [workspace.package] version set to {{VERSION}}"
     # 2. Commit the version bump (if anything changed)
