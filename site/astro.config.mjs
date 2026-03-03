@@ -33,6 +33,16 @@ export default defineConfig({
           ],
         },
         {
+          label: "Guides",
+          items: [
+            { label: "Provider Setup", slug: "guides/providers" },
+            { label: "Gateway Deployment", slug: "guides/deployment" },
+            { label: "Testing", slug: "guides/testing" },
+            { label: "Android", slug: "guides/android" },
+            { label: "Raspberry Pi", slug: "guides/raspberry-pi" },
+          ],
+        },
+        {
           label: "Configuration",
           items: [
             { label: "Config Reference", slug: "config/reference" },
