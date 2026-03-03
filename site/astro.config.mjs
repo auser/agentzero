@@ -38,6 +38,7 @@ export default defineConfig({
             { label: "Provider Setup", slug: "guides/providers" },
             { label: "Gateway Deployment", slug: "guides/deployment" },
             { label: "Testing", slug: "guides/testing" },
+            { label: "FFI Bindings", slug: "guides/ffi-bindings" },
             { label: "Android", slug: "guides/android" },
             { label: "Raspberry Pi", slug: "guides/raspberry-pi" },
           ],

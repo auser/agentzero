@@ -2,22 +2,21 @@
 
 ## Context
 
-AgentZero (via the ZeroClaw externals) already has an Android bridge crate at
-`externals/zeroclaw/clients/android-bridge/` using UniFFI v0.27 procedural macros.
-The same UniFFI annotations that generate Kotlin bindings also generate Swift bindings
+AgentZero has an FFI crate at `crates/agentzero-ffi/` using UniFFI v0.27 procedural
+macros. The same annotations that generate Kotlin bindings also generate Swift bindings
 — no `.udl` files are needed. This plan covers the full roadmap for iOS support
-using Swift, from shared bridge refactoring through CI/CD and App Store readiness.
+using Swift, from iOS target compilation through CI/CD and App Store readiness.
 
-The Android bridge currently defines these FFI-exported types via proc macros:
+The FFI crate already defines these UniFFI-exported types:
 - `AgentStatus` (`#[uniffi::Enum]`)
-- `ZeroClawConfig` (`#[uniffi::Record]`)
+- `AgentZeroConfig` (`#[uniffi::Record]`)
 - `ChatMessage` (`#[uniffi::Record]`)
-- `SendResult` (`#[uniffi::Record]`)
-- `ZeroClawController` (`#[uniffi::Object]` with `#[uniffi::export]` methods)
-- `ZeroClawError` (`#[uniffi::Error]`)
+- `AgentResponse` (`#[uniffi::Record]`)
+- `AgentZeroController` (`#[uniffi::Object]` with `#[uniffi::export]` methods)
+- `AgentZeroError` (`#[uniffi::Error]`)
 
-All method implementations are currently mock/stub. The `zeroclaw` crate dependency
-is commented out in the bridge's `Cargo.toml`.
+The crate produces `cdylib`, `staticlib`, and `lib` targets and includes a
+`uniffi-bindgen.rs` binary for generating language bindings.
 
 **Status**: PLANNED (2026-03-03). No implementation started.
 
@@ -29,7 +28,7 @@ is commented out in the bridge's `Cargo.toml`.
 
 ### 1.1 Create Shared Bridge Crate
 
-Create `externals/zeroclaw/clients/bridge/` with:
+Create `crates/agentzero-ffi/` with:
 
 ```
 bridge/
@@ -42,16 +41,16 @@ bridge/
 **`Cargo.toml`:**
 ```toml
 [package]
-name = "zeroclaw-bridge"
+name = "agentzero-ffi"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]
-name = "zeroclaw_bridge"
+name = "agentzero_ffi"
 
 [dependencies]
-zeroclaw = { path = "../.." }
+agentzero = { path = "../.." }
 uniffi = { version = "0.27" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 anyhow = "1"
@@ -67,22 +66,22 @@ path = "uniffi-bindgen.rs"
 
 Key differences from `android-bridge`:
 - `crate-type` includes both `cdylib` (Android .so) and `staticlib` (iOS .a)
-- Library name is `zeroclaw_bridge` (platform-neutral, not `zeroclaw_android`)
-- The `zeroclaw` dependency is **uncommented** and wired
+- Library name is `agentzero_ffi` (platform-neutral, not `agentzero_android`)
+- The `agentzero` dependency is **uncommented** and wired
 
 ### 1.2 Move Types from Android Bridge
 
 Move all UniFFI-annotated types and the `uniffi::setup_scaffolding!()` call from
 `android-bridge/src/lib.rs` into `bridge/src/lib.rs`. This includes:
-- `AgentStatus`, `ZeroClawConfig`, `ChatMessage`, `SendResult`
-- `ZeroClawController` with all `#[uniffi::export]` methods
-- `ZeroClawError`
+- `AgentStatus`, `AgentZeroConfig`, `ChatMessage`, `SendResult`
+- `AgentZeroController` with all `#[uniffi::export]` methods
+- `AgentZeroError`
 - Helper functions (`uuid_v4`, `current_timestamp_ms`, `runtime()`)
 
-### 1.3 Wire Real ZeroClaw Dependency
+### 1.3 Wire Real AgentZero Dependency
 
-Replace mock implementations in `ZeroClawController`:
-- `start()` → actually start the gateway via zeroclaw runtime
+Replace mock implementations in `AgentZeroController`:
+- `start()` → actually start the gateway via agentzero runtime
 - `stop()` → actually stop the gateway
 - `send_message()` → forward to the agent and return real responses
 
@@ -96,7 +95,7 @@ Convert `android-bridge/` to a thin wrapper that re-exports from the shared crat
 ```toml
 # android-bridge/Cargo.toml
 [dependencies]
-zeroclaw-bridge = { path = "../bridge" }
+agentzero-ffi = { path = "../bridge" }
 ```
 
 This ensures existing Android builds continue to work during the transition.
@@ -122,11 +121,11 @@ This ensures existing Android builds continue to work during the transition.
 
 ```bash
 # Device build
-cargo build -p zeroclaw-bridge --release --target aarch64-apple-ios
+cargo build -p agentzero-ffi --release --target aarch64-apple-ios
 
 # Simulator builds
-cargo build -p zeroclaw-bridge --release --target aarch64-apple-ios-sim
-cargo build -p zeroclaw-bridge --release --target x86_64-apple-ios
+cargo build -p agentzero-ffi --release --target aarch64-apple-ios-sim
+cargo build -p agentzero-ffi --release --target x86_64-apple-ios
 ```
 
 ### 2.3 SDK Configuration
@@ -144,7 +143,7 @@ export SDKROOT=$(xcrun --sdk iphonesimulator --show-sdk-path)
 
 ### 2.4 Cargo Config
 
-Add to `externals/zeroclaw/.cargo/config.toml`:
+Add to `crates/agentzero-ffi/.cargo/config.toml`:
 
 ```toml
 [target.aarch64-apple-ios]
@@ -173,27 +172,27 @@ Add to `externals/zeroclaw/.cargo/config.toml`:
 UniFFI proc macros generate Swift code via the `uniffi-bindgen` binary:
 
 ```bash
-cargo run -p zeroclaw-bridge --bin uniffi-bindgen generate \
-  --library target/aarch64-apple-ios/release/libzeroclaw_bridge.a \
+cargo run -p agentzero-ffi --bin uniffi-bindgen generate \
+  --library target/aarch64-apple-ios/release/libagentzero_ffi.a \
   --language swift \
   --out-dir generated/swift
 ```
 
 This produces:
-- `zeroclaw_bridge.swift` — Swift types, protocols, and class wrappers
-- `zeroclaw_bridgeFFI.h` — C header for the FFI layer
-- `zeroclaw_bridgeFFI.modulemap` — Clang module map
+- `agentzero_ffi.swift` — Swift types, protocols, and class wrappers
+- `agentzero_ffiFFI.h` — C header for the FFI layer
+- `agentzero_ffiFFI.modulemap` — Clang module map
 
 ### 3.2 Generated Type Mapping
 
 | Rust Type | UniFFI Attribute | Swift Type |
 |-----------|-----------------|------------|
 | `AgentStatus` | `#[uniffi::Enum]` | `enum AgentStatus` |
-| `ZeroClawConfig` | `#[uniffi::Record]` | `struct ZeroClawConfig` |
+| `AgentZeroConfig` | `#[uniffi::Record]` | `struct AgentZeroConfig` |
 | `ChatMessage` | `#[uniffi::Record]` | `struct ChatMessage` |
 | `SendResult` | `#[uniffi::Record]` | `struct SendResult` |
-| `ZeroClawController` | `#[uniffi::Object]` | `class ZeroClawController` |
-| `ZeroClawError` | `#[uniffi::Error]` | `enum ZeroClawError: Error` |
+| `AgentZeroController` | `#[uniffi::Object]` | `class AgentZeroController` |
+| `AgentZeroError` | `#[uniffi::Error]` | `enum AgentZeroError: Error` |
 
 ### 3.3 No `.udl` Files Required
 
@@ -207,14 +206,14 @@ to generate bindings. No interface definition files needed.
 
 ### 4.1 Build Script
 
-Create `externals/zeroclaw/clients/ios/build-xcframework.sh`:
+Create `crates/agentzero-ffi/ios/build-xcframework.sh`:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-CRATE="zeroclaw-bridge"
-LIB="libzeroclaw_bridge"
+CRATE="agentzero-ffi"
+LIB="libagentzero_ffi"
 
 # Build for all iOS targets
 cargo build -p $CRATE --release --target aarch64-apple-ios
@@ -240,25 +239,25 @@ xcodebuild -create-xcframework \
   -headers generated/swift/ \
   -library target/universal-ios-sim/release/${LIB}.a \
   -headers generated/swift/ \
-  -output ZeroClawBridge.xcframework
+  -output AgentZero.xcframework
 
-echo "XCFramework created: ZeroClawBridge.xcframework"
+echo "XCFramework created: AgentZero.xcframework"
 ```
 
 ### 4.2 XCFramework Layout
 
 ```
-ZeroClawBridge.xcframework/
+AgentZero.xcframework/
 ├── ios-arm64/
-│   ├── libzeroclaw_bridge.a
+│   ├── libagentzero_ffi.a
 │   └── Headers/
-│       ├── zeroclaw_bridgeFFI.h
-│       └── zeroclaw_bridgeFFI.modulemap
+│       ├── agentzero_ffiFFI.h
+│       └── agentzero_ffiFFI.modulemap
 ├── ios-arm64_x86_64-simulator/
-│   ├── libzeroclaw_bridge.a
+│   ├── libagentzero_ffi.a
 │   └── Headers/
-│       ├── zeroclaw_bridgeFFI.h
-│       └── zeroclaw_bridgeFFI.modulemap
+│       ├── agentzero_ffiFFI.h
+│       └── agentzero_ffiFFI.modulemap
 └── Info.plist
 ```
 
@@ -268,30 +267,30 @@ ZeroClawBridge.xcframework/
 
 ### 5.1 Package.swift
 
-Create `externals/zeroclaw/clients/ios/Package.swift`:
+Create `crates/agentzero-ffi/ios/Package.swift`:
 
 ```swift
 // swift-tools-version:5.9
 import PackageDescription
 
 let package = Package(
-    name: "ZeroClawBridge",
+    name: "AgentZero",
     platforms: [.iOS(.v16)],
     products: [
         .library(
-            name: "ZeroClawBridge",
-            targets: ["ZeroClawBridge", "ZeroClawBridgeFFI"]
+            name: "AgentZero",
+            targets: ["AgentZero", "AgentZeroBindings"]
         ),
     ],
     targets: [
         .target(
-            name: "ZeroClawBridge",
-            dependencies: ["ZeroClawBridgeFFI"],
-            path: "Sources/ZeroClawBridge"
+            name: "AgentZero",
+            dependencies: ["AgentZeroBindings"],
+            path: "Sources/AgentZero"
         ),
         .binaryTarget(
-            name: "ZeroClawBridgeFFI",
-            path: "ZeroClawBridge.xcframework"
+            name: "AgentZeroBindings",
+            path: "AgentZero.xcframework"
         ),
     ]
 )
@@ -300,12 +299,12 @@ let package = Package(
 ### 5.2 Source Layout
 
 ```
-externals/zeroclaw/clients/ios/
+crates/agentzero-ffi/ios/
 ├── Package.swift
 ├── Sources/
-│   └── ZeroClawBridge/
-│       └── zeroclaw_bridge.swift      # Generated by uniffi-bindgen
-├── ZeroClawBridge.xcframework/        # Built artifact
+│   └── AgentZero/
+│       └── agentzero_ffi.swift      # Generated by uniffi-bindgen
+├── AgentZero.xcframework/        # Built artifact
 ├── build-xcframework.sh
 └── README.md
 ```
@@ -316,20 +315,20 @@ externals/zeroclaw/clients/ios/
 
 ### 6.1 App Structure
 
-Create `externals/zeroclaw/clients/ios-app/` as a SwiftUI project:
+Create `crates/agentzero-ffi/ios-app/` as a SwiftUI project:
 
 ```
 ios-app/
-├── ZeroClaw.xcodeproj/
-└── ZeroClaw/
-    ├── ZeroClawApp.swift
+├── AgentZero.xcodeproj/
+└── AgentZero/
+    ├── AgentZeroApp.swift
     ├── ContentView.swift
     ├── Views/
     │   ├── ChatView.swift
     │   ├── SettingsView.swift
     │   └── StatusView.swift
     ├── Services/
-    │   ├── AgentService.swift         # Wraps ZeroClawController
+    │   ├── AgentService.swift         # Wraps AgentZeroController
     │   └── NotificationService.swift
     ├── Models/
     │   └── AppState.swift
@@ -341,17 +340,17 @@ ios-app/
 ### 6.2 Minimum SwiftUI Integration
 
 ```swift
-import ZeroClawBridge
+import AgentZero
 
 @MainActor
 class AgentService: ObservableObject {
     @Published var status: AgentStatus = .stopped
     @Published var messages: [ChatMessage] = []
 
-    private let controller: ZeroClawController
+    private let controller: AgentZeroController
 
     init(dataDir: String) {
-        self.controller = ZeroClawController.withDefaults(dataDir: dataDir)
+        self.controller = AgentZeroController.withDefaults(dataDir: dataDir)
     }
 
     func start() throws {
@@ -393,13 +392,13 @@ name: iOS Build
 on:
   push:
     paths:
-      - 'externals/zeroclaw/clients/bridge/**'
-      - 'externals/zeroclaw/clients/ios/**'
+      - 'crates/agentzero-ffi/**'
+      - 'crates/agentzero-ffi/ios/**'
       - '.github/workflows/ios-build.yml'
   pull_request:
     paths:
-      - 'externals/zeroclaw/clients/bridge/**'
-      - 'externals/zeroclaw/clients/ios/**'
+      - 'crates/agentzero-ffi/**'
+      - 'crates/agentzero-ffi/ios/**'
 
 jobs:
   build-ios:
@@ -411,28 +410,28 @@ jobs:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
       - name: Build bridge for iOS
         run: |
-          cargo build -p zeroclaw-bridge --release --target aarch64-apple-ios
-          cargo build -p zeroclaw-bridge --release --target aarch64-apple-ios-sim
-          cargo build -p zeroclaw-bridge --release --target x86_64-apple-ios
+          cargo build -p agentzero-ffi --release --target aarch64-apple-ios
+          cargo build -p agentzero-ffi --release --target aarch64-apple-ios-sim
+          cargo build -p agentzero-ffi --release --target x86_64-apple-ios
       - name: Generate Swift bindings
         run: |
-          cargo run -p zeroclaw-bridge --bin uniffi-bindgen generate \
-            --library target/aarch64-apple-ios/release/libzeroclaw_bridge.a \
+          cargo run -p agentzero-ffi --bin uniffi-bindgen generate \
+            --library target/aarch64-apple-ios/release/libagentzero_ffi.a \
             --language swift --out-dir generated/swift
       - name: Build XCFramework
-        run: bash externals/zeroclaw/clients/ios/build-xcframework.sh
+        run: bash crates/agentzero-ffi/ios/build-xcframework.sh
       - name: Build Swift package
         run: |
-          cd externals/zeroclaw/clients/ios
+          cd crates/agentzero-ffi/ios
           swift build
 ```
 
 ### 7.2 Release Integration
 
-- Attach `ZeroClawBridge.xcframework.zip` to GitHub releases alongside existing binaries
+- Attach `AgentZero.xcframework.zip` to GitHub releases alongside existing binaries
 - macOS runners cost ~2x Linux runners — run iOS builds only on:
   - Tagged releases
-  - Changes to `externals/zeroclaw/clients/bridge/**` or `ios/**`
+  - Changes to `crates/agentzero-ffi/**` or `ios/**`
 - Consider a separate release tag for SPM versioning
 
 ### 7.3 Signing
@@ -459,16 +458,16 @@ jobs:
 
 ```swift
 import XCTest
-@testable import ZeroClawBridge
+@testable import AgentZero
 
 final class BridgeTests: XCTestCase {
     func testControllerCreation() {
-        let controller = ZeroClawController.withDefaults(dataDir: "/tmp/test")
+        let controller = AgentZeroController.withDefaults(dataDir: "/tmp/test")
         XCTAssertEqual(controller.getStatus(), .stopped)
     }
 
     func testStartStop() throws {
-        let controller = ZeroClawController.withDefaults(dataDir: "/tmp/test")
+        let controller = AgentZeroController.withDefaults(dataDir: "/tmp/test")
         try controller.start()
         XCTAssertEqual(controller.getStatus(), .running)
         try controller.stop()
@@ -476,7 +475,7 @@ final class BridgeTests: XCTestCase {
     }
 
     func testSendMessage() {
-        let controller = ZeroClawController.withDefaults(dataDir: "/tmp/test")
+        let controller = AgentZeroController.withDefaults(dataDir: "/tmp/test")
         let result = controller.sendMessage(content: "Hello")
         XCTAssertTrue(result.success)
         XCTAssertEqual(controller.getMessages().count, 2)
@@ -525,20 +524,20 @@ final class BridgeTests: XCTestCase {
 
 | File | Description |
 |------|-------------|
-| `externals/zeroclaw/clients/bridge/Cargo.toml` | Shared bridge crate manifest |
-| `externals/zeroclaw/clients/bridge/src/lib.rs` | Platform-neutral UniFFI types and controller |
-| `externals/zeroclaw/clients/bridge/uniffi-bindgen.rs` | Binding generator binary |
-| `externals/zeroclaw/clients/ios/Package.swift` | Swift Package Manager manifest |
-| `externals/zeroclaw/clients/ios/build-xcframework.sh` | XCFramework build script |
-| `externals/zeroclaw/clients/ios/README.md` | iOS integration documentation |
-| `externals/zeroclaw/clients/ios-app/` | SwiftUI client app (entire directory) |
+| `crates/agentzero-ffi/Cargo.toml` | Shared bridge crate manifest |
+| `crates/agentzero-ffi/src/lib.rs` | Platform-neutral UniFFI types and controller |
+| `crates/agentzero-ffi/uniffi-bindgen.rs` | Binding generator binary |
+| `crates/agentzero-ffi/ios/Package.swift` | Swift Package Manager manifest |
+| `crates/agentzero-ffi/ios/build-xcframework.sh` | XCFramework build script |
+| `crates/agentzero-ffi/ios/README.md` | iOS integration documentation |
+| `crates/agentzero-ffi/ios-app/` | SwiftUI client app (entire directory) |
 | `.github/workflows/ios-build.yml` | CI workflow for iOS builds |
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `externals/zeroclaw/clients/android-bridge/Cargo.toml` | Depend on shared bridge crate |
-| `externals/zeroclaw/clients/android-bridge/src/lib.rs` | Re-export from shared bridge |
-| `externals/zeroclaw/Cargo.toml` | Add `bridge` crate to workspace members |
-| `externals/zeroclaw/.cargo/config.toml` | Add iOS target entries |
+| `crates/agentzero-ffi/android/Cargo.toml` | Depend on shared bridge crate |
+| `crates/agentzero-ffi/android/src/lib.rs` | Re-export from shared bridge |
+| `crates/agentzero-ffi/Cargo.toml` | Add iOS target support |
+| `crates/agentzero-ffi/.cargo/config.toml` | Add iOS target entries |

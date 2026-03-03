@@ -56,6 +56,41 @@ fmt-check:
 ci: fmt-check lint test
 
 
+# ── FFI ──────────────────────────────────────────
+
+# Generate all FFI bindings (Swift, Kotlin, Python)
+ffi: ffi-swift ffi-kotlin ffi-python
+    @echo "All FFI bindings generated in crates/agentzero-ffi/bindings/"
+
+# Generate Swift bindings
+ffi-swift:
+    cargo build -p agentzero-ffi --release
+    cargo run -p agentzero-ffi --features uniffi-cli --bin uniffi-bindgen generate \
+        --library target/release/libagentzero_ffi.dylib \
+        --language swift \
+        --out-dir crates/agentzero-ffi/bindings/swift
+
+# Generate Kotlin bindings
+ffi-kotlin:
+    cargo build -p agentzero-ffi --release
+    cargo run -p agentzero-ffi --features uniffi-cli --bin uniffi-bindgen generate \
+        --library target/release/libagentzero_ffi.dylib \
+        --language kotlin \
+        --out-dir crates/agentzero-ffi/bindings/kotlin
+
+# Generate Python bindings
+ffi-python:
+    cargo build -p agentzero-ffi --release
+    cargo run -p agentzero-ffi --features uniffi-cli --bin uniffi-bindgen generate \
+        --library target/release/libagentzero_ffi.dylib \
+        --language python \
+        --out-dir crates/agentzero-ffi/bindings/python
+
+# Build Node.js native addon (TypeScript)
+ffi-node:
+    cd crates/agentzero-ffi && cargo build --release --no-default-features --features node
+
+
 # ── Release ───────────────────────────────────────
 
 # Cut a release: just release 0.3.0
