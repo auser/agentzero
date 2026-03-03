@@ -290,7 +290,111 @@ agentzero service install --service-init openrc
 
 ---
 
-## 7. Explore More Commands
+## 7. Run a Full Agent Workflow
+
+The agent automatically calls tools in a loop until it completes your task. Each turn it can use `shell`, `read_file`, `glob_search`, `content_search`, and more — chaining them as needed.
+
+### Example: multi-step task
+
+```bash
+agentzero agent -m "Find all Rust source files containing TODO comments and show each one with its line number"
+```
+
+Internally the agent:
+
+1. Calls `glob_search` → finds `**/*.rs` files
+2. Calls `content_search` → searches for `TODO` across results
+3. Calls `read_file` → reads flagged files for context
+4. Returns a formatted answer
+
+Max tool iterations are controlled by `agent.max_tool_iterations` in your config (default: 20).
+
+### Control verbosity
+
+```bash
+agentzero -vvv agent -m "your task"   # debug: see every tool call
+agentzero -vvvv agent -m "your task"  # trace: see full request/response
+```
+
+---
+
+## 8. Manage Skills
+
+Skills are pre-built tool bundles that extend what the agent can do.
+
+```bash
+agentzero skill list              # See installed skills
+agentzero skill install <name>    # Install a skill
+agentzero skill test <name>       # Run smoke test
+agentzero skill remove <name>     # Uninstall
+```
+
+---
+
+## 9. Add a New Tool
+
+Tools are Rust structs that implement the `Tool` trait from `agentzero-core`.
+
+### 1. Implement the trait
+
+Create `crates/agentzero-infra/src/tools/my_tool.rs`:
+
+```rust
+use agentzero_core::{Tool, ToolContext, ToolResult};
+use async_trait::async_trait;
+
+pub struct MyTool;
+
+#[async_trait]
+impl Tool for MyTool {
+    fn name(&self) -> &'static str { "my_tool" }
+
+    async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult::success(format!("Processed: {input}")))
+    }
+}
+```
+
+### 2. Register it
+
+In `crates/agentzero-infra/src/tools/mod.rs`, declare the module and add to `default_tools()`:
+
+```rust
+pub mod my_tool;
+
+pub fn default_tools() -> Vec<Box<dyn Tool>> {
+    vec![
+        // ... existing tools ...
+        Box::new(my_tool::MyTool),
+    ]
+}
+```
+
+### 3. Write a test
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn test_basic() {
+        let ctx = ToolContext::test_default();
+        let result = MyTool.execute("hello", &ctx).await.unwrap();
+        assert!(result.is_success());
+    }
+}
+```
+
+### 4. Verify
+
+```bash
+cargo test -p agentzero-infra my_tool
+cargo clippy -p agentzero-infra
+```
+
+---
+
+## 10. Explore More Commands
 
 ```bash
 # Interactive terminal dashboard
@@ -310,6 +414,19 @@ agentzero completions --shell bash >> ~/.bashrc
 
 # Check for updates
 agentzero update check
+```
+
+### Developer quality gate
+
+If you're building from source and making changes:
+
+```bash
+just ci           # fmt-check + clippy + nextest (full gate)
+just fmt          # auto-format code
+just lint         # clippy with warnings as errors
+just test         # run all tests with cargo nextest
+just test-verbose # tests with full output
+just bench        # run benchmarks
 ```
 
 ---
@@ -336,6 +453,20 @@ agentzero doctor models
 # View recent trace events
 agentzero doctor traces --limit 10
 ```
+
+---
+
+## Environment Variables Reference
+
+| Variable | Purpose | Required |
+|---|---|---|
+| `OPENAI_API_KEY` | API key for all cloud providers (OpenAI, OpenRouter, Anthropic, etc.) | Yes (or auth store) |
+| `AGENTZERO_DATA_DIR` | Override the `~/.agentzero/` data directory | No |
+| `AGENTZERO_CONFIG` | Override the config file path | No |
+| `AGENTZERO_ENV` | Select an env-specific `.env.{env}` overlay file | No |
+| `BRAVE_API_KEY` | Enable Brave web search | No |
+| `JINA_API_KEY` | Enable Jina web fetch | No |
+| `AGENTZERO_MCP_SERVERS` | JSON map of MCP server configs | No |
 
 ---
 

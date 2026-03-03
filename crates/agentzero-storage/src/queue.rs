@@ -160,12 +160,12 @@ fn sanitize_id(id: &str) -> String {
         .collect()
 }
 
-fn enforce_private_permissions(path: &Path) -> anyhow::Result<()> {
+fn enforce_private_permissions(_path: &Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("failed to chmod {}", path.display()))?;
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to chmod {}", _path.display()))?;
     }
     Ok(())
 }

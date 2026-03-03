@@ -124,12 +124,12 @@ impl EncryptedJsonStore {
             .with_file_name(format!(".{file_name}.tmp.{stamp}"))
     }
 
-    fn enforce_private_permissions(&self, path: &Path) -> anyhow::Result<()> {
+    fn enforce_private_permissions(&self, _path: &Path) -> anyhow::Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-                .with_context(|| format!("failed to chmod {}", path.display()))?;
+            fs::set_permissions(_path, fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("failed to chmod {}", _path.display()))?;
         }
         Ok(())
     }

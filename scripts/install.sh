@@ -31,6 +31,7 @@ NO_COLOR=0
 FROM_SOURCE=0
 UNINSTALL=0
 COMPLETIONS_SHELL=""
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Color system — honors NO_COLOR env, --no-color flag, and non-TTY stderr
@@ -148,11 +149,13 @@ ${BOLD}OPTIONS${NC}
         ${GREEN}--completions${NC} ${UNDERLINE}SHELL${NC}    Install shell completions (bash, zsh, fish)
         ${GREEN}--from-source${NC}          Build from source instead of downloading binary
         ${GREEN}--uninstall${NC}            Remove agentzero and its data
+        ${GREEN}--token${NC} ${UNDERLINE}TOKEN${NC}          GitHub API token (avoids rate limits in CI/Docker)
     ${GREEN}-h${NC}, ${GREEN}--help${NC}                 Show this help message
 
 ${BOLD}ENVIRONMENT${NC}
     ${CYAN}AGENTZERO_INSTALL_DIR${NC}    Override install directory
     ${CYAN}AGENTZERO_VERSION${NC}        Override version to install
+    ${CYAN}GITHUB_TOKEN${NC}             GitHub API token (avoids rate limits in CI/Docker)
     ${CYAN}NO_COLOR${NC}                 Disable colored output (standard)
 
 ${BOLD}EXAMPLES${NC}
@@ -238,6 +241,8 @@ parse_args() {
       --no-verify)    NO_VERIFY=1;   shift ;;
       --from-source)  FROM_SOURCE=1; shift ;;
       --uninstall)    UNINSTALL=1;   shift ;;
+      --token|--github-token)
+        GITHUB_TOKEN="$2"; shift 2 ;;
       # Combined short flags: -fqV, -fnV, etc.
       -[fqVn]*)
         local flags="${1#-}"
@@ -344,6 +349,57 @@ download_stdout() {
   else
     wget -qO- "$url"
   fi
+}
+
+# Fetch a GitHub API URL with optional token auth; provides actionable errors on 403/404.
+github_api_get() {
+  local url="$1"
+  local tmp http_code response
+
+  if [[ "$DOWNLOAD_CMD" == "curl" ]]; then
+    tmp="$(mktemp)"
+    local auth_header=()
+    [[ -n "$GITHUB_TOKEN" ]] && auth_header=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+    http_code="$(curl -sL -w "%{http_code}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "${auth_header[@]}" \
+      -o "$tmp" "$url" 2>/dev/null)" || http_code="000"
+    response="$(cat "$tmp")"
+    rm -f "$tmp"
+  else
+    local auth_header=()
+    [[ -n "$GITHUB_TOKEN" ]] && auth_header=(--header="Authorization: Bearer ${GITHUB_TOKEN}")
+    response="$(wget -qO- \
+      --header="Accept: application/vnd.github+json" \
+      "${auth_header[@]}" \
+      "$url" 2>/dev/null)" || response=""
+    http_code="200"
+  fi
+
+  case "$http_code" in
+    403)
+      error "GitHub API rate limit exceeded (HTTP 403). Set GITHUB_TOKEN env var or pass --token <token> to authenticate and raise the limit to 5,000 req/hour."
+      ;;
+    404)
+      error "No releases found on GitHub (HTTP 404). The project may not have published a release yet. Use --version to specify a version manually."
+      ;;
+    000|"")
+      error "Failed to reach GitHub API (no response). Check your network connection or specify a version with --version."
+      ;;
+    2*)
+      : # success range
+      ;;
+    *)
+      error "GitHub API returned HTTP ${http_code}. Use --version to bypass API resolution."
+      ;;
+  esac
+
+  if [[ -z "$response" ]]; then
+    error "GitHub API returned an empty response. Use --version to bypass API resolution."
+  fi
+
+  echo "$response"
 }
 
 detect_sha_cmd() {
@@ -524,10 +580,7 @@ resolve_version() {
 
   local api_url="${GITHUB_API}/latest"
   local response
-
-  if ! response="$(download_stdout "$api_url" 2>/dev/null)"; then
-    error "Failed to fetch latest release from GitHub API. Check your network connection or specify a version with --version."
-  fi
+  response="$(github_api_get "$api_url")"
 
   # Parse "tag_name": "vX.Y.Z" without jq
   VERSION="$(echo "$response" | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+[^"]*' | head -1)"

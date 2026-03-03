@@ -273,10 +273,10 @@ pub fn is_process_alive(pid: u32) -> bool {
 pub fn is_process_alive(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
-    // SAFETY: OpenProcess returns 0 (NULL) if the process doesn't exist or
+    // SAFETY: OpenProcess returns NULL if the process doesn't exist or
     // if we lack permission. Either way the process is not accessible.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if handle == 0 {
+    if handle.is_null() {
         return false;
     }
     unsafe { CloseHandle(handle) };
@@ -301,7 +301,7 @@ fn terminate_process(pid: u32) -> anyhow::Result<()> {
     use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
     // SAFETY: TerminateProcess forcibly ends the target process.
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
-    if handle == 0 {
+    if handle.is_null() {
         let err = std::io::Error::last_os_error();
         bail!("failed to open process {pid} for termination: {err}");
     }
