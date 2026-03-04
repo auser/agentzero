@@ -93,6 +93,7 @@ pub struct ToolSecurityPolicy {
     pub enable_browser_open: bool,
     pub enable_composio: bool,
     pub enable_pushover: bool,
+    pub enable_wasm_plugins: bool,
 }
 
 impl ToolSecurityPolicy {
@@ -149,6 +150,7 @@ impl ToolSecurityPolicy {
             enable_browser_open: false,
             enable_composio: false,
             enable_pushover: false,
+            enable_wasm_plugins: false,
         }
     }
 }

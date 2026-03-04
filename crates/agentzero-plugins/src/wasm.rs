@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 
+#[cfg(feature = "wasm-runtime")]
+pub use runtime_impl::ModuleCache;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WasmIsolationPolicy {
     pub max_execution_ms: u64,
@@ -801,6 +804,91 @@ mod runtime_impl {
         }
         Ok(())
     }
+
+    // -----------------------------------------------------------------------
+    // Module cache: AOT-compiled modules stored alongside the .wasm file.
+    // -----------------------------------------------------------------------
+
+    /// Cached AOT module storage. The cache file is stored at
+    /// `{wasm_dir}/.cache/plugin.cwasm` with a `source.sha256` sidecar
+    /// for invalidation.
+    pub struct ModuleCache;
+
+    impl ModuleCache {
+        /// Load a module from cache or compile fresh. On successful
+        /// compilation, the AOT artifact is written to the cache directory
+        /// for faster future loads.
+        ///
+        /// Cache location: `{wasm_dir}/.cache/plugin.cwasm`
+        /// Invalidation:   `{wasm_dir}/.cache/source.sha256`
+        ///
+        /// # Safety
+        /// Uses `Module::deserialize_file()` when the SHA-256 matches.
+        /// This is safe because:
+        /// - wasmtime validates the serialization format on load
+        /// - SHA-256 mismatch triggers recompilation
+        /// - wasmtime version mismatch triggers recompilation (automatic)
+        pub fn load_or_compile(
+            engine: &Engine,
+            wasm_path: &Path,
+            expected_sha256: &str,
+        ) -> anyhow::Result<Module> {
+            let cache_dir = wasm_path
+                .parent()
+                .ok_or_else(|| anyhow!("wasm_path has no parent directory"))?
+                .join(".cache");
+
+            let cwasm_path = cache_dir.join("plugin.cwasm");
+            let sha_path = cache_dir.join("source.sha256");
+
+            // Try loading from cache if the SHA256 matches
+            if cwasm_path.exists() && sha_path.exists() {
+                if let Ok(cached_sha) = std::fs::read_to_string(&sha_path) {
+                    if cached_sha.trim() == expected_sha256 && !expected_sha256.is_empty() {
+                        // Safety: SHA256 verified, wasmtime checks format internally
+                        match unsafe { Module::deserialize_file(engine, &cwasm_path) } {
+                            Ok(module) => return Ok(module),
+                            Err(_e) => {
+                                // Cache is stale (e.g. wasmtime version mismatch),
+                                // fall through to recompilation.
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Compile from source
+            let module = Module::from_file(engine, wasm_path)
+                .map_err(|e| anyhow!("failed to compile module at {}: {e}", wasm_path.display()))?;
+
+            // Persist AOT artifact (best-effort — cache miss is not fatal)
+            if !expected_sha256.is_empty() {
+                if let Err(e) = Self::write_cache(&module, &cache_dir, expected_sha256) {
+                    eprintln!("warning: failed to write module cache: {e}");
+                }
+            }
+
+            Ok(module)
+        }
+
+        fn write_cache(module: &Module, cache_dir: &Path, sha256: &str) -> anyhow::Result<()> {
+            std::fs::create_dir_all(cache_dir)
+                .with_context(|| format!("failed to create cache dir {}", cache_dir.display()))?;
+
+            let cwasm_path = cache_dir.join("plugin.cwasm");
+            let sha_path = cache_dir.join("source.sha256");
+
+            let serialized = module
+                .serialize()
+                .map_err(|e| anyhow!("failed to serialize module: {e}"))?;
+            std::fs::write(&cwasm_path, serialized)
+                .with_context(|| format!("failed to write {}", cwasm_path.display()))?;
+            std::fs::write(&sha_path, sha256)
+                .with_context(|| format!("failed to write {}", sha_path.display()))?;
+
+            Ok(())
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1511,5 +1599,98 @@ mod tests {
         let (ptr3, len3) = unpack_ptr_len(packed3);
         assert_eq!(ptr3, u32::MAX);
         assert_eq!(len3, u32::MAX);
+    }
+
+    // =======================================================================
+    // ModuleCache tests
+    // =======================================================================
+
+    #[test]
+    fn module_cache_compiles_and_caches() {
+        use super::ModuleCache;
+        use sha2::{Digest, Sha256};
+
+        let dir = std::env::temp_dir().join(format!("cache-test-{}", unique_suffix()));
+        fs::create_dir_all(&dir).expect("create dir");
+        let wasm_path = dir.join("plugin.wasm");
+        let bytes = wat::parse_str(v2_echo_plugin_wat()).expect("wat should compile");
+        fs::write(&wasm_path, &bytes).expect("write wasm");
+
+        let sha = format!("{:x}", Sha256::new_with_prefix(&bytes).finalize());
+
+        let mut config = wasmtime::Config::new();
+        config.epoch_interruption(true);
+        let engine = wasmtime::Engine::new(&config).expect("engine");
+
+        // First load — compile from source
+        let _module =
+            ModuleCache::load_or_compile(&engine, &wasm_path, &sha).expect("first compile");
+
+        let cache_dir = dir.join(".cache");
+        assert!(cache_dir.join("plugin.cwasm").exists());
+        assert!(cache_dir.join("source.sha256").exists());
+
+        // Second load — should use cached AOT module
+        let _module2 =
+            ModuleCache::load_or_compile(&engine, &wasm_path, &sha).expect("cached load");
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn module_cache_invalidates_on_sha_mismatch() {
+        use super::ModuleCache;
+        use sha2::{Digest, Sha256};
+
+        let dir = std::env::temp_dir().join(format!("cache-inval-{}", unique_suffix()));
+        fs::create_dir_all(&dir).expect("create dir");
+        let wasm_path = dir.join("plugin.wasm");
+        let bytes = wat::parse_str(v2_echo_plugin_wat()).expect("wat should compile");
+        fs::write(&wasm_path, &bytes).expect("write wasm");
+
+        let sha = format!("{:x}", Sha256::new_with_prefix(&bytes).finalize());
+
+        let mut config = wasmtime::Config::new();
+        config.epoch_interruption(true);
+        let engine = wasmtime::Engine::new(&config).expect("engine");
+
+        // Populate cache
+        ModuleCache::load_or_compile(&engine, &wasm_path, &sha).expect("first compile");
+
+        // Different SHA256 — should recompile, not use stale cache
+        let _module = ModuleCache::load_or_compile(&engine, &wasm_path, "different_sha256")
+            .expect("recompile on sha mismatch");
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn module_cache_handles_corrupt_cwasm() {
+        use super::ModuleCache;
+        use sha2::{Digest, Sha256};
+
+        let dir = std::env::temp_dir().join(format!("cache-corrupt-{}", unique_suffix()));
+        fs::create_dir_all(&dir).expect("create dir");
+        let wasm_path = dir.join("plugin.wasm");
+        let bytes = wat::parse_str(v2_echo_plugin_wat()).expect("wat should compile");
+        fs::write(&wasm_path, &bytes).expect("write wasm");
+
+        let sha = format!("{:x}", Sha256::new_with_prefix(&bytes).finalize());
+
+        // Write corrupt cache
+        let cache_dir = dir.join(".cache");
+        fs::create_dir_all(&cache_dir).expect("create cache dir");
+        fs::write(cache_dir.join("plugin.cwasm"), b"corrupt data").expect("write corrupt");
+        fs::write(cache_dir.join("source.sha256"), &sha).expect("write sha");
+
+        let mut config = wasmtime::Config::new();
+        config.epoch_interruption(true);
+        let engine = wasmtime::Engine::new(&config).expect("engine");
+
+        // Should fall back to recompilation
+        let _module = ModuleCache::load_or_compile(&engine, &wasm_path, &sha)
+            .expect("corrupt cache should fall back to recompilation");
+
+        fs::remove_dir_all(dir).ok();
     }
 }

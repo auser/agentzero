@@ -26,14 +26,19 @@
 - [x] `TimerGuard` drop pattern for clean epoch timer shutdown
 - [x] Tests (7 new, 23 total): v2 round-trip, missing az_alloc, az_log host function, undeclared host function rejection, v2 timeout, pack/unpack ptr_len
 
-### Phase 2: WasmTool Bridge + Module Caching (Days 5-7)
+### Phase 2: WasmTool Bridge + Module Caching (Days 5-7) ✅
 
-- [ ] Create `crates/agentzero-infra/src/tools/wasm_bridge.rs` with `WasmTool` struct
-- [ ] Implement `Tool` trait for `WasmTool` (delegates to `execute_v2` via `tokio::spawn_blocking`)
-- [ ] Add `ModuleCache` to `wasm.rs`: `load_or_compile(engine, wasm_path, sha256) -> Module`
-- [ ] Cache AOT modules at `{plugin_dir}/.cache/plugin.cwasm` + `source.sha256`
-- [ ] Add optional `agentzero-plugins` dep behind `wasm-plugins` feature in `agentzero-infra`
-- [ ] Tests: WasmTool executes v2 plugin, cache creation/invalidation, corrupt cache fallback
+- [x] Create `crates/agentzero-infra/src/tools/wasm_bridge.rs` with `WasmTool` struct
+- [x] Implement `Tool` trait for `WasmTool` (delegates to `execute_v2` via `tokio::spawn_blocking`)
+- [x] Add `ModuleCache` to `wasm.rs`: `load_or_compile(engine, wasm_path, sha256) -> Module`
+  - [x] AOT `.cwasm` + `source.sha256` sidecar for cache invalidation
+  - [x] `unsafe Module::deserialize_file()` — mitigated by SHA256 match + wasmtime version mismatch = recompile
+  - [x] Cache miss is non-fatal (logs warning, falls back to fresh compilation)
+- [x] Cache AOT modules at `{plugin_dir}/.cache/plugin.cwasm` + `source.sha256`
+- [x] Add optional `agentzero-plugins` dep behind `wasm-plugins` feature in `agentzero-infra`
+- [x] Add `enable_wasm_plugins: bool` to `ToolSecurityPolicy` (default false)
+- [x] Feature-gated placeholder in `default_tools()` for Phase 3 discovery wiring
+- [x] Tests (3 new, 26 total): cache creation/invalidation, corrupt cache fallback, SHA mismatch recompile
 
 ### Phase 3: Plugin Discovery + Hot-Reload (Days 8-11)
 

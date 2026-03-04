@@ -63,6 +63,7 @@ pub fn load_tool_security_policy(
         enable_browser_open: config.browser.enabled,
         enable_composio: false,
         enable_pushover: false,
+        enable_wasm_plugins: false,
     })
 }
 

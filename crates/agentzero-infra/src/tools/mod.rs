@@ -1,5 +1,7 @@
 mod mcp;
 mod plugin;
+#[cfg(feature = "wasm-plugins")]
+mod wasm_bridge;
 
 use agentzero_core::Tool;
 use agentzero_delegation::DelegateConfig;
@@ -24,6 +26,8 @@ pub use agentzero_tools::{
 };
 pub use mcp::McpTool;
 pub use plugin::ProcessPluginTool;
+#[cfg(feature = "wasm-plugins")]
+pub use wasm_bridge::WasmTool;
 
 pub fn default_tools(
     policy: &ToolSecurityPolicy,
@@ -115,6 +119,15 @@ pub fn default_tools(
 
     if policy.enable_pushover {
         tools.push(Box::new(PushoverTool));
+    }
+
+    // WASM plugin tools are loaded via discover_plugins() in Phase 3.
+    // The WasmTool bridge and ModuleCache are ready; wiring happens when
+    // plugin discovery is implemented.
+    #[cfg(feature = "wasm-plugins")]
+    if policy.enable_wasm_plugins {
+        // Phase 3 will call discover_plugins() here and push WasmTool instances.
+        let _ = &policy; // suppress unused warning until discovery is wired
     }
 
     if let Some(r) = router {

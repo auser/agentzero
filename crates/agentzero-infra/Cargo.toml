@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+wasm-plugins = ["dep:agentzero-plugins"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -13,6 +17,7 @@ agentzero-delegation = { workspace = true }
 agentzero-routing = { workspace = true }
 agentzero-tools = { workspace = true }
 agentzero-memory = { workspace = true }
+agentzero-plugins = { workspace = true, features = ["wasm-runtime"], optional = true }
 agentzero-providers = { workspace = true }
 agentzero-security = { workspace = true }
 serde.workspace = true
