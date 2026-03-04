@@ -12,7 +12,7 @@ categories = ["command-line-utilities", "development-tools"]
 autobins = false
 
 [features]
-default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive"]
+default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "tls-rustls"]
 minimal = ["memory-sqlite"]
 memory-sqlite = ["agentzero-cli/memory-sqlite"]
 interactive = ["agentzero-cli/interactive"]
@@ -24,6 +24,9 @@ plugins = ["agentzero-cli/plugins"]
 plugin-dev = ["agentzero-cli/plugin-dev"]
 gateway = ["agentzero-cli/gateway"]
 tui = ["agentzero-cli/tui"]
+wasm-jit = ["agentzero-cli/wasm-jit"]
+tls-rustls = ["agentzero-cli/tls-rustls"]
+tls-native = ["agentzero-cli/tls-native"]
 
 [dependencies]
 anyhow.workspace = true

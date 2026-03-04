@@ -86,6 +86,92 @@
 
 ---
 
+## Sprint 20.6: Plugin Security Hardening
+
+**Goal:** Fix critical security vulnerabilities and robustness issues in the plugin system before expanding feature surface in Sprint 21.
+
+**Branch:** `feat/plugins`
+
+### Phase 1: Path Traversal Fix in Tar Extraction — [x] DONE
+
+- [x] Reject tar entries containing `..` or starting with `/`
+- [x] Reject symlink entries in plugin packages
+- [x] Add success-path tests (valid package installs correctly — existing)
+- [x] Add negative-path tests (traversal paths, absolute paths, symlinks rejected)
+
+### Phase 2: Semver-Based Version Comparison — [x] DONE
+
+- [x] Add `semver` crate dependency to `agentzero-plugins`
+- [x] Use `semver::Version::parse()` in `discover_plugins()` and `list_installed_plugins()`
+- [x] Fallback to string comparison for non-semver versions
+- [x] Add tests: `"0.2.0"` vs `"0.10.0"` → `0.10.0` wins; `"9.0.0"` vs `"10.0.0"` → `10.0.0` wins
+
+### Phase 3: Watcher Debouncing — [x] DONE
+
+- [x] Add debounce window (200ms) to `PluginWatcher`
+- [x] Deduplicate events by path within debounce window
+- [x] Add test: rapid writes produce single reload event
+
+### Phase 4: File Locking for Plugin Operations — [x] DONE
+
+- [x] Add `fs2` dependency for cross-platform file locking
+- [x] Lock plugin install root during install/remove operations
+- [x] Add tests: lock file created during install and remove
+
+### Phase 5: AGENTS.md Compliance — [x] DONE
+
+- [x] Refactor `generate_registry_entry` to use `RegistryEntryParams` struct (Rule 10: >3-4 params)
+- [x] Create `docs/security/THREAT_MODEL.md` with plugin system threat model (Rule 7)
+- [x] **Rule 9 exception (documented):** `PluginState` uses direct `std::fs` JSON persistence instead of `agentzero-storage`. Plugin metadata (enabled/disabled, version, install source) is non-sensitive and does not warrant encryption-at-rest. Adding `agentzero-storage` as a dependency would tightly couple the plugin crate to the storage backend.
+
+---
+
+## Sprint 20.7: wasmi Runtime Migration + Binary Slimming
+
+**Goal:** Replace wasmtime with wasmi as the default WASM runtime for plugin execution. Enables WASM plugins on constrained devices (ESP32, Raspberry Pi). Keep wasmtime as optional `wasm-jit` feature. Add plugin warming, TLS feature gating, and build variant tooling.
+
+**Branch:** `refactor/crate-consolidation`
+
+### Phase 1: Cargo.toml Feature Restructuring — [x] DONE
+
+- [x] Add wasmi/wasmi_wasi workspace deps
+- [x] Restructure agentzero-plugins features (`wasm-runtime` → wasmi, `wasm-jit` → wasmtime)
+- [x] Add `wasm-jit` feature propagation through infra → cli → binary
+- [x] Add `tls-rustls` / `tls-native` features propagated through binary → cli → channels
+- [x] Remove hardcoded `rustls-tls` from reqwest/tokio-tungstenite workspace defaults
+
+### Phase 2: wasmi Backend Implementation — [x] DONE
+
+- [x] Implement wasmi `runtime_impl` in `wasm.rs` (fuel metering, StoreLimits, WASI)
+- [x] Implement wasmi `ModuleCache` (no-op passthrough — wasmi has no AOT)
+- [x] Register `az_log` and `az_env_get` host functions for wasmi
+- [x] v1 and v2 execute paths, import validation
+
+### Phase 3: Re-gate wasmtime Backend — [x] DONE
+
+- [x] Move existing wasmtime `runtime_impl` behind `#[cfg(feature = "wasm-jit")]`
+
+### Phase 4: Test Updates — [x] DONE
+
+- [x] Split `ModuleCache` tests into cfg-gated modules (wasmi vs wasmtime)
+- [x] All 95+ plugin tests pass with wasmi backend
+- [x] Existing integration tests (SDK, plugin integration) pass unchanged
+
+### Phase 5: Plugin Warming — [x] DONE
+
+- [x] Add `create_engine()`, `compile_module()`, `execute_v2_precompiled()` to wasmi backend
+- [x] Add same precompiled methods to wasmtime (`wasm-jit`) backend
+- [x] Update `wasm_bridge.rs` `WasmTool` to pre-compile engine+module at init
+- [x] Expose `WasmEngine`/`WasmModule` type aliases for downstream crates
+
+### Phase 6: Build Variant Tooling — [x] DONE
+
+- [x] Add `just build`, `build-minimal`, `build-server`, `build-jit`, `build-native-tls`, `build-sizes` commands
+- [x] Update `install.sh` with `server` variant (plugins + gateway, no TUI)
+- [x] Interactive variant picker: default / server / minimal
+
+---
+
 ## Sprint 21: Structured Tool Use (Next)
 
 **Goal:** Wire tool schemas into provider API calls so LLMs use native tool-use/function-calling APIs instead of text-based `tool:name input` parsing.

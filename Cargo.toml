@@ -50,7 +50,7 @@ agentzero-tools = { path = "crates/agentzero-tools", version = "0.1.4" }
 agentzero-ffi = { path = "crates/agentzero-ffi", version = "0.1.4" }
 agentzero-plugin-sdk = { path = "crates/agentzero-plugin-sdk", version = "0.1.4" }
 futures-util = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -60,12 +60,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 glob = "0.3"
 regex = "1"
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
 toml = "0.8"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+wasmi = "1"
+wasmi_wasi = "1"
 
 [profile.release]
 codegen-units = 1

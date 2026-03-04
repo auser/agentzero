@@ -6,8 +6,6 @@ I want to focus on shrinking the runtime as much as possible.
 
 ---
 
-Won't we always need wsm-plugins as a feature since the whole system works with wasm plugins?
+I want to shrink the binary for constrained environments as much as possible. Can we include that in this scope?
 
----
-
-Can we merge core and common? Could we merge memory and storage? Does that make sense? Does it make sense for us to keep all these crates or flatten everything into a single crate? Would that make sense? Could we still have a minimal size of <5mb and have a beautiful interface for working with it that can be bigger? 
+We still need security and encryption at all layers, so if we can't get to <5mb, that's okay -- encryption and security are some of the most important features

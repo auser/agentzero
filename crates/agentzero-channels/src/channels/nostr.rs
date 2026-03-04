@@ -62,7 +62,7 @@ mod impl_ {
                 });
                 let relay_msg =
                     serde_json::json!(["EVENT", event]).to_string();
-                write.send(WsMessage::Text(relay_msg.into())).await?;
+                write.send(WsMessage::Text(relay_msg)).await?;
             }
             write.close().await?;
             Ok(())
@@ -99,7 +99,7 @@ mod impl_ {
                     }
                 ]);
                 if write
-                    .send(WsMessage::Text(sub.to_string().into()))
+                    .send(WsMessage::Text(sub.to_string()))
                     .await
                     .is_err()
                 {

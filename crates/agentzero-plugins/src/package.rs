@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -8,6 +9,25 @@ use std::path::{Path, PathBuf};
 
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 const CURRENT_RUNTIME_API_VERSION: u32 = 2;
+const LOCK_FILE_NAME: &str = ".agentzero-plugins.lock";
+
+/// Acquire an exclusive file lock on the install root directory.
+/// Returns a guard that releases the lock when dropped.
+fn lock_install_root(install_root: &Path) -> anyhow::Result<fs::File> {
+    fs::create_dir_all(install_root)
+        .with_context(|| format!("failed to create install root {}", install_root.display()))?;
+    let lock_path = install_root.join(LOCK_FILE_NAME);
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&lock_path)
+        .with_context(|| format!("failed to open lock file {}", lock_path.display()))?;
+    lock_file
+        .lock_exclusive()
+        .with_context(|| format!("failed to acquire lock on {}", lock_path.display()))?;
+    Ok(lock_file)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginManifest {
@@ -166,6 +186,9 @@ pub fn install_packaged_plugin(
     let package_path = package_path.as_ref();
     let install_root = install_root.as_ref();
 
+    // Acquire an exclusive lock so concurrent installs don't corrupt state.
+    let _lock = lock_install_root(install_root)?;
+
     let archive_file = fs::File::open(package_path)
         .with_context(|| format!("failed to open package {}", package_path.display()))?;
     let mut archive = tar::Archive::new(archive_file);
@@ -176,11 +199,26 @@ pub fn install_packaged_plugin(
         .context("failed to read package entries")?
     {
         let mut entry = entry.context("failed to parse package entry")?;
+
+        // Reject symlinks — they can be used to escape the install directory.
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            anyhow::bail!("plugin package contains a symlink entry (rejected for security)");
+        }
+
         let entry_path = entry
             .path()
             .context("failed to read package entry path")?
             .to_string_lossy()
             .to_string();
+
+        // Reject path traversal: absolute paths or parent-directory components.
+        if entry_path.starts_with('/') || entry_path.contains("..") {
+            anyhow::bail!(
+                "path traversal in plugin package: `{entry_path}` (rejected for security)"
+            );
+        }
+
         let mut bytes = Vec::new();
         entry
             .read_to_end(&mut bytes)
@@ -268,7 +306,17 @@ pub fn list_installed_plugins(
         }
     }
 
-    records.sort_by(|a, b| a.id.cmp(&b.id).then(a.version.cmp(&b.version)));
+    records.sort_by(|a, b| {
+        a.id.cmp(&b.id).then_with(|| {
+            match (
+                semver::Version::parse(&a.version),
+                semver::Version::parse(&b.version),
+            ) {
+                (Ok(va), Ok(vb)) => va.cmp(&vb),
+                _ => a.version.cmp(&b.version),
+            }
+        })
+    });
     Ok(records)
 }
 
@@ -281,6 +329,10 @@ pub fn remove_installed_plugin(
     if plugin_id.trim().is_empty() {
         return Err(anyhow!("plugin id cannot be empty"));
     }
+
+    // Acquire an exclusive lock so concurrent removes don't corrupt state.
+    let _lock = lock_install_root(install_root)?;
+
     let plugin_root = install_root.join(plugin_id);
     if !plugin_root.exists() {
         return Ok(0);
@@ -428,7 +480,9 @@ fn scan_plugin_dir(dir: &Path, dev_mode: bool) -> Vec<DiscoveredPlugin> {
                 }
                 if let Some(plugin) = try_load_plugin(&version_entry.path(), dev_mode) {
                     match &best {
-                        Some(existing) if existing.manifest.version >= plugin.manifest.version => {}
+                        Some(existing)
+                            if version_ge(&existing.manifest.version, &plugin.manifest.version) => {
+                        }
                         _ => best = Some(plugin),
                     }
                 }
@@ -484,6 +538,15 @@ fn try_load_plugin(dir: &Path, dev_mode: bool) -> Option<DiscoveredPlugin> {
         wasm_path,
         dev_mode,
     })
+}
+
+/// Compare two version strings using semver when possible, falling back to
+/// lexicographic comparison for non-semver strings.
+fn version_ge(a: &str, b: &str) -> bool {
+    match (semver::Version::parse(a), semver::Version::parse(b)) {
+        (Ok(va), Ok(vb)) => va >= vb,
+        _ => a >= b,
+    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -810,29 +873,35 @@ pub fn check_outdated(state: &PluginState, index: &RegistryIndex) -> Vec<(String
     outdated
 }
 
+/// Parameters for generating a registry index entry.
+///
+/// Use this instead of a long argument list per Rule 10 (builder pattern for >3-4 params).
+#[derive(Debug, Clone)]
+pub struct RegistryEntryParams<'a> {
+    pub manifest: &'a PluginManifest,
+    pub description: &'a str,
+    pub category: &'a str,
+    pub author: &'a str,
+    pub repository: &'a str,
+    pub download_url: &'a str,
+    pub wasm_sha256: &'a str,
+}
+
 /// Generate a registry index entry for a plugin, suitable for `plugin publish`.
-pub fn generate_registry_entry(
-    manifest: &PluginManifest,
-    description: &str,
-    category: &str,
-    author: &str,
-    repository: &str,
-    download_url: &str,
-    wasm_sha256: &str,
-) -> RegistryEntry {
+pub fn generate_registry_entry(params: &RegistryEntryParams<'_>) -> RegistryEntry {
     RegistryEntry {
-        id: manifest.id.clone(),
-        description: description.to_string(),
-        category: category.to_string(),
-        author: author.to_string(),
-        repository: repository.to_string(),
-        latest: manifest.version.clone(),
+        id: params.manifest.id.clone(),
+        description: params.description.to_string(),
+        category: params.category.to_string(),
+        author: params.author.to_string(),
+        repository: params.repository.to_string(),
+        latest: params.manifest.version.clone(),
         versions: vec![RegistryVersionEntry {
-            version: manifest.version.clone(),
-            download_url: download_url.to_string(),
-            sha256: wasm_sha256.to_string(),
-            min_runtime_api: manifest.min_runtime_api,
-            max_runtime_api: manifest.max_runtime_api,
+            version: params.manifest.version.clone(),
+            download_url: params.download_url.to_string(),
+            sha256: params.wasm_sha256.to_string(),
+            min_runtime_api: params.manifest.min_runtime_api,
+            max_runtime_api: params.manifest.max_runtime_api,
         }],
     }
 }
@@ -1258,8 +1327,8 @@ mod tests {
     // ── Registry tests ───────────────────────────────────────────────────
 
     use super::{
-        check_outdated, generate_registry_entry, load_registry_index, RegistryEntry, RegistryIndex,
-        RegistryVersionEntry,
+        check_outdated, generate_registry_entry, load_registry_index, RegistryEntry,
+        RegistryEntryParams, RegistryIndex, RegistryVersionEntry,
     };
 
     fn sample_registry_index() -> RegistryIndex {
@@ -1448,15 +1517,15 @@ mod tests {
     #[test]
     fn generate_registry_entry_round_trip() {
         let manifest = sample_manifest();
-        let entry = generate_registry_entry(
-            &manifest,
-            "A sample plugin",
-            "general",
-            "test-author",
-            "https://github.com/test/repo",
-            "https://example.com/sample-1.0.0.tar",
-            &"f".repeat(64),
-        );
+        let entry = generate_registry_entry(&RegistryEntryParams {
+            manifest: &manifest,
+            description: "A sample plugin",
+            category: "general",
+            author: "test-author",
+            repository: "https://github.com/test/repo",
+            download_url: "https://example.com/sample-1.0.0.tar",
+            wasm_sha256: &"f".repeat(64),
+        });
         assert_eq!(entry.id, "sample-plugin");
         assert_eq!(entry.latest, "1.0.0");
         assert_eq!(entry.versions.len(), 1);
@@ -1464,5 +1533,249 @@ mod tests {
             entry.versions[0].download_url,
             "https://example.com/sample-1.0.0.tar"
         );
+    }
+
+    // ── Path traversal security tests ─────────────────────────────────
+
+    /// Build a tar archive with `manifest.json` and an extra entry at an
+    /// arbitrary path. Uses raw header manipulation to bypass the tar
+    /// crate's safety checks (which reject `..` and absolute paths).
+    fn build_tar_with_malicious_entry(entry_name: &str) -> Vec<u8> {
+        let wasm_bytes =
+            wat::parse_str(r#"(module (func (export "run") (result i32) i32.const 42))"#)
+                .expect("wat should compile");
+        let sha = super::sha256_hex(&wasm_bytes);
+        let mut manifest = sample_manifest();
+        manifest.wasm_sha256 = sha;
+        let manifest_bytes =
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize");
+
+        let file_path = std::env::temp_dir().join(format!(
+            "az-tar-test-{}-{}",
+            std::process::id(),
+            entry_name.replace(['/', '.'], "_")
+        ));
+        {
+            let file = fs::File::create(&file_path).expect("create tar");
+            let mut builder = tar::Builder::new(file);
+
+            let mut manifest_header = tar::Header::new_gnu();
+            manifest_header.set_size(manifest_bytes.len() as u64);
+            manifest_header.set_mode(0o644);
+            manifest_header.set_cksum();
+            builder
+                .append_data(
+                    &mut manifest_header,
+                    "manifest.json",
+                    Cursor::new(&manifest_bytes),
+                )
+                .expect("add manifest");
+
+            // Write the malicious entry by setting path bytes directly in
+            // the header, bypassing the tar crate's path validation.
+            let mut header = tar::Header::new_gnu();
+            header.set_size(wasm_bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            // Set path bytes directly via the raw header.
+            {
+                let path_bytes = entry_name.as_bytes();
+                let header_bytes = header.as_mut_bytes();
+                // Name field is bytes 0..100 in a tar header.
+                let len = path_bytes.len().min(100);
+                header_bytes[..len].copy_from_slice(&path_bytes[..len]);
+                // Zero-fill the rest.
+                for b in &mut header_bytes[len..100] {
+                    *b = 0;
+                }
+            }
+            header.set_cksum();
+            builder
+                .append(&header, Cursor::new(&wasm_bytes))
+                .expect("add malicious entry");
+
+            builder.finish().expect("finish");
+        }
+        let bytes = fs::read(&file_path).expect("read tar");
+        fs::remove_file(&file_path).ok();
+        bytes
+    }
+
+    #[test]
+    fn install_rejects_path_traversal_with_dotdot() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let package_path = tmp.path().join("evil.tar");
+        let install_root = tmp.path().join("installed");
+
+        let tar_bytes = build_tar_with_malicious_entry("../../etc/passwd");
+        fs::write(&package_path, tar_bytes).expect("write tar");
+
+        let err = install_packaged_plugin(&package_path, &install_root)
+            .expect_err("path traversal should be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("path traversal"),
+            "error should mention path traversal: {msg}"
+        );
+    }
+
+    #[test]
+    fn install_rejects_absolute_path_entry() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let package_path = tmp.path().join("evil-abs.tar");
+        let install_root = tmp.path().join("installed");
+
+        let tar_bytes = build_tar_with_malicious_entry("/etc/passwd");
+        fs::write(&package_path, tar_bytes).expect("write tar");
+
+        let err = install_packaged_plugin(&package_path, &install_root)
+            .expect_err("absolute path should be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("path traversal"),
+            "error should mention path traversal: {msg}"
+        );
+    }
+
+    #[test]
+    fn install_rejects_symlink_entry() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let package_path = tmp.path().join("evil-symlink.tar");
+        let install_root = tmp.path().join("installed");
+
+        let wasm_bytes =
+            wat::parse_str(r#"(module (func (export "run") (result i32) i32.const 42))"#)
+                .expect("wat should compile");
+        let sha = super::sha256_hex(&wasm_bytes);
+        let mut manifest = sample_manifest();
+        manifest.wasm_sha256 = sha;
+        let manifest_bytes =
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize");
+
+        let file = fs::File::create(&package_path).expect("create tar");
+        let mut builder = tar::Builder::new(file);
+
+        let mut manifest_header = tar::Header::new_gnu();
+        manifest_header.set_size(manifest_bytes.len() as u64);
+        manifest_header.set_mode(0o644);
+        manifest_header.set_cksum();
+        builder
+            .append_data(
+                &mut manifest_header,
+                "manifest.json",
+                Cursor::new(&manifest_bytes),
+            )
+            .expect("add manifest");
+
+        // Add a symlink entry
+        let mut symlink_header = tar::Header::new_gnu();
+        symlink_header.set_entry_type(tar::EntryType::Symlink);
+        symlink_header.set_size(0);
+        symlink_header.set_mode(0o777);
+        symlink_header.set_cksum();
+        builder
+            .append_link(&mut symlink_header, "plugin.wasm", "/etc/passwd")
+            .expect("add symlink");
+
+        builder.finish().expect("finish");
+
+        let err = install_packaged_plugin(&package_path, &install_root)
+            .expect_err("symlink entry should be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("symlink"),
+            "error should mention symlink: {msg}"
+        );
+    }
+
+    // ── Semver version comparison tests ───────────────────────────────
+
+    use super::version_ge;
+
+    #[test]
+    fn version_ge_semver_correct_ordering() {
+        // These would fail with lexicographic comparison
+        assert!(version_ge("10.0.0", "9.0.0"), "10.0.0 >= 9.0.0");
+        assert!(version_ge("0.10.0", "0.2.0"), "0.10.0 >= 0.2.0");
+        assert!(version_ge("1.0.0", "1.0.0"), "1.0.0 >= 1.0.0");
+        assert!(!version_ge("0.2.0", "0.10.0"), "0.2.0 < 0.10.0");
+        assert!(!version_ge("9.0.0", "10.0.0"), "9.0.0 < 10.0.0");
+    }
+
+    #[test]
+    fn version_ge_falls_back_to_string_for_non_semver() {
+        // Non-semver strings fall back to lexicographic comparison
+        assert!(version_ge("beta", "alpha"));
+        assert!(!version_ge("alpha", "beta"));
+    }
+
+    #[test]
+    fn discover_plugins_picks_semver_latest_not_lexicographic() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let global = tmp.path().join("global");
+        // Version "0.10.0" should beat "0.2.0" with semver, but would lose lexicographically
+        write_test_plugin(
+            &global.join("semver-test").join("0.2.0"),
+            "semver-test",
+            "0.2.0",
+        );
+        write_test_plugin(
+            &global.join("semver-test").join("0.10.0"),
+            "semver-test",
+            "0.10.0",
+        );
+
+        let found = discover_plugins(Some(&global), None, None);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].manifest.version, "0.10.0",
+            "should pick 0.10.0 over 0.2.0 with semver comparison"
+        );
+    }
+
+    // ── File locking tests ────────────────────────────────────────────
+
+    #[test]
+    fn install_creates_lock_file() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let wasm_path = tmp.path().join("plugin.wasm");
+        let package_path = tmp.path().join("sample-plugin.tar");
+        let install_root = tmp.path().join("installed");
+
+        let wasm_bytes =
+            wat::parse_str(r#"(module (func (export "run") (result i32) i32.const 7))"#)
+                .expect("wat should compile");
+        fs::write(&wasm_path, wasm_bytes).expect("wasm file should be written");
+
+        package_plugin(&wasm_path, sample_manifest(), &package_path)
+            .expect("packaging should succeed");
+        install_packaged_plugin(&package_path, &install_root).expect("install should succeed");
+
+        // Lock file should have been created (and released after install)
+        let lock_path = install_root.join(super::LOCK_FILE_NAME);
+        assert!(lock_path.exists(), "lock file should exist after install");
+    }
+
+    #[test]
+    fn remove_creates_lock_file() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let wasm_path = tmp.path().join("plugin.wasm");
+        let package_path = tmp.path().join("sample-plugin.tar");
+        let install_root = tmp.path().join("installed");
+
+        let wasm_bytes =
+            wat::parse_str(r#"(module (func (export "run") (result i32) i32.const 7))"#)
+                .expect("wat should compile");
+        fs::write(&wasm_path, wasm_bytes).expect("wasm file should be written");
+
+        package_plugin(&wasm_path, sample_manifest(), &package_path)
+            .expect("packaging should succeed");
+        install_packaged_plugin(&package_path, &install_root).expect("install should succeed");
+
+        remove_installed_plugin(&install_root, "sample-plugin", Some("1.0.0"))
+            .expect("remove should succeed");
+
+        let lock_path = install_root.join(super::LOCK_FILE_NAME);
+        assert!(lock_path.exists(), "lock file should exist after remove");
     }
 }

@@ -91,6 +91,43 @@ ffi-node:
     cd crates/agentzero-ffi && cargo build --release --no-default-features --features node
 
 
+# ── Build Variants ────────────────────────────
+
+# Build full release (all features, ~19MB)
+build:
+    cargo build --release
+
+# Build minimal binary (sqlite only, ~5MB)
+build-minimal:
+    cargo build -p agentzero --profile release-min --no-default-features --features minimal
+
+# Build server binary (plugins + gateway, no TUI, ~7MB)
+build-server:
+    cargo build -p agentzero --profile release-min --no-default-features --features memory-sqlite,plugins,gateway,tls-rustls
+
+# Build with wasmtime JIT (full + JIT WASM, ~20MB)
+build-jit:
+    cargo build --release --features wasm-jit
+
+# Build with native TLS instead of rustls
+build-native-tls:
+    cargo build -p agentzero --profile release-min --no-default-features --features memory-sqlite,plugins,tls-native
+
+# Show binary sizes for all variants
+build-sizes:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Building all variants..."
+    echo ""
+    cargo build --release -q
+    echo "  full (release):     $(du -h target/release/agentzero | cut -f1)"
+    cargo build -p agentzero --profile release-min --no-default-features --features minimal -q
+    echo "  minimal:            $(du -h target/release-min/agentzero | cut -f1)"
+    cargo build -p agentzero --profile release-min --no-default-features --features memory-sqlite,plugins,gateway,tls-rustls -q
+    echo "  server:             $(du -h target/release-min/agentzero | cut -f1)"
+    cargo build -p agentzero --profile release-min --no-default-features --features memory-sqlite,plugins,tls-native -q
+    echo "  plugins+native-tls: $(du -h target/release-min/agentzero | cut -f1)"
+
 # ── Release ───────────────────────────────────────
 
 # Cut a release: just release 0.3.0

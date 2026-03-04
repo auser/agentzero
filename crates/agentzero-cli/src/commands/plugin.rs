@@ -3,7 +3,7 @@ use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_plugins::package::{
     check_outdated, generate_registry_entry, install_from_url, install_packaged_plugin,
     list_installed_plugins, load_registry_index, package_plugin, remove_installed_plugin,
-    PluginManifest, PluginState,
+    PluginManifest, PluginState, RegistryEntryParams,
 };
 use agentzero_plugins::wasm::{
     WasmExecutionRequest, WasmIsolationPolicy, WasmPluginContainer, WasmPluginRuntime,
@@ -435,15 +435,15 @@ impl AgentZeroCommand for PluginCommand {
                 out,
             } => {
                 let manifest = load_manifest(&manifest)?;
-                let entry = generate_registry_entry(
-                    &manifest,
-                    &description,
-                    &category,
-                    &author,
-                    &repository,
-                    &download_url,
-                    &sha256,
-                );
+                let entry = generate_registry_entry(&RegistryEntryParams {
+                    manifest: &manifest,
+                    description: &description,
+                    category: &category,
+                    author: &author,
+                    repository: &repository,
+                    download_url: &download_url,
+                    wasm_sha256: &sha256,
+                });
                 let json = serde_json::to_string_pretty(&entry)?;
 
                 if let Some(out_path) = out {

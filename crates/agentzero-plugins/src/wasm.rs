@@ -6,6 +6,17 @@ use std::path::PathBuf;
 #[cfg(feature = "wasm-runtime")]
 pub use runtime_impl::ModuleCache;
 
+/// Type aliases for the active WASM engine/module, usable by downstream crates
+/// (e.g. `agentzero-infra`) for plugin warming without depending on wasmi/wasmtime directly.
+#[cfg(all(feature = "wasm-runtime", not(feature = "wasm-jit")))]
+pub type WasmEngine = wasmi::Engine;
+#[cfg(all(feature = "wasm-runtime", not(feature = "wasm-jit")))]
+pub type WasmModule = wasmi::Module;
+#[cfg(feature = "wasm-jit")]
+pub type WasmEngine = wasmtime::Engine;
+#[cfg(feature = "wasm-jit")]
+pub type WasmModule = wasmtime::Module;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WasmIsolationPolicy {
     pub max_execution_ms: u64,
@@ -141,9 +152,814 @@ fn unpack_ptr_len(packed: i64) -> (u32, u32) {
 }
 
 // ---------------------------------------------------------------------------
-// wasm-runtime feature: full wasmtime-backed implementation
+// wasm-runtime (wasmi interpreter): lightweight, pure-Rust, no_std-compatible
 // ---------------------------------------------------------------------------
-#[cfg(feature = "wasm-runtime")]
+#[cfg(all(feature = "wasm-runtime", not(feature = "wasm-jit")))]
+mod runtime_impl {
+    use super::*;
+    use anyhow::Context;
+    use std::path::Path;
+    use wasmi::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+
+    /// Approximate fuel units per millisecond of execution time.
+    /// wasmi consumes ~1 fuel per instruction; ~100M instructions/sec on
+    /// typical hardware ≈ 100K fuel/ms.
+    const FUEL_PER_MS: u64 = 100_000;
+
+    fn compute_fuel(timeout_ms: u64) -> u64 {
+        timeout_ms.saturating_mul(FUEL_PER_MS)
+    }
+
+    /// Store data for wasmi: WASI context + memory limits + log buffer.
+    struct PluginState {
+        wasi: wasmi_wasi::WasiCtx,
+        limits: StoreLimits,
+        log_buffer: Vec<String>,
+    }
+
+    /// Create a wasmi Engine with fuel metering enabled.
+    fn make_engine() -> Engine {
+        let mut config = Config::default();
+        config.consume_fuel(true);
+        Engine::new(&config)
+    }
+
+    impl WasmPluginRuntime {
+        pub fn new() -> Self {
+            Self
+        }
+
+        /// Create a new WASM engine with fuel metering enabled.
+        /// Share this across plugins for efficient resource use.
+        pub fn create_engine() -> anyhow::Result<Engine> {
+            Ok(make_engine())
+        }
+
+        /// Pre-compile a WASM module from the given path.
+        /// The returned module can be reused across multiple executions.
+        pub fn compile_module(
+            engine: &Engine,
+            wasm_path: &std::path::Path,
+        ) -> anyhow::Result<Module> {
+            let bytes = std::fs::read(wasm_path)
+                .with_context(|| format!("failed to read module at {}", wasm_path.display()))?;
+            Module::new(engine, &bytes)
+                .map_err(|e| anyhow!("failed to compile module at {}: {e}", wasm_path.display()))
+        }
+
+        /// Execute a v2 plugin with a pre-compiled engine and module.
+        /// This avoids disk I/O and module compilation on the hot path.
+        pub fn execute_v2_precompiled(
+            engine: &Engine,
+            module: &Module,
+            container: &WasmPluginContainer,
+            input: &str,
+            options: &WasmV2Options,
+            policy: &WasmIsolationPolicy,
+        ) -> anyhow::Result<WasmExecutionResultV2> {
+            // Preflight checks (skip module file read — already compiled)
+            container.validate()?;
+            if container.max_execution_ms > policy.max_execution_ms {
+                return Err(anyhow!(
+                    "max_execution_ms exceeds policy limit ({} > {})",
+                    container.max_execution_ms,
+                    policy.max_execution_ms
+                ));
+            }
+            if container.max_memory_mb > policy.max_memory_mb {
+                return Err(anyhow!(
+                    "max_memory_mb exceeds policy limit ({} > {})",
+                    container.max_memory_mb,
+                    policy.max_memory_mb
+                ));
+            }
+            if container.allow_network && !policy.allow_network {
+                return Err(anyhow!(
+                    "network access is not permitted by isolation policy"
+                ));
+            }
+            if container.allow_fs_write && !policy.allow_fs_write {
+                return Err(anyhow!(
+                    "filesystem write is not permitted by isolation policy"
+                ));
+            }
+
+            validate_v2_imports(module, policy, &options.capabilities)?;
+
+            let mut wasi_builder = wasmi_wasi::WasiCtxBuilder::new();
+            wasi_builder.inherit_stderr();
+
+            if policy.allow_fs_read && !options.workspace_root.is_empty() {
+                let workspace_path = std::path::Path::new(&options.workspace_root);
+                if workspace_path.exists() {
+                    match wasmi_wasi::sync::Dir::open_ambient_dir(
+                        workspace_path,
+                        wasmi_wasi::sync::ambient_authority(),
+                    ) {
+                        Ok(dir) => {
+                            let _ = wasi_builder.preopened_dir(dir, ".");
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "warning: failed to preopen workspace dir '{}': {e}",
+                                options.workspace_root
+                            );
+                        }
+                    }
+                }
+            }
+
+            let wasi = wasi_builder.build();
+            let effective_memory_mb = container.max_memory_mb.min(policy.max_memory_mb);
+            let limits = StoreLimitsBuilder::new()
+                .memory_size((effective_memory_mb as usize) * 1024 * 1024)
+                .build();
+            let state = PluginState {
+                wasi,
+                limits,
+                log_buffer: Vec::new(),
+            };
+            let mut store = Store::new(engine, state);
+            store.limiter(|s| &mut s.limits);
+
+            let effective_timeout_ms = container.max_execution_ms.min(policy.max_execution_ms);
+            store
+                .set_fuel(compute_fuel(effective_timeout_ms))
+                .map_err(|e| anyhow!("failed to set fuel: {e}"))?;
+
+            let mut linker: Linker<PluginState> = Linker::new(engine);
+            wasmi_wasi::sync::add_to_linker(&mut linker, |s: &mut PluginState| &mut s.wasi)
+                .map_err(|e| anyhow!("failed to add WASI p1 to linker: {e}"))?;
+            register_host_functions(&mut linker, policy)?;
+
+            let instance = linker
+                .instantiate_and_start(&mut store, module)
+                .map_err(|e| anyhow!("failed to instantiate v2 plugin module: {e}"))?;
+
+            let tool_input = WasmToolInput {
+                input: input.to_string(),
+                workspace_root: options.workspace_root.clone(),
+            };
+            let input_json =
+                serde_json::to_string(&tool_input).context("failed to serialize v2 tool input")?;
+
+            let az_alloc = instance
+                .get_typed_func::<i32, i32>(&store, "az_alloc")
+                .map_err(|e| {
+                    anyhow!("v2 plugin missing 'az_alloc' export (expected fn(i32) -> i32): {e}")
+                })?;
+
+            let input_bytes = input_json.as_bytes();
+            let input_len = input_bytes.len() as i32;
+            let input_ptr = az_alloc
+                .call(&mut store, input_len)
+                .map_err(|e| anyhow!("az_alloc call failed: {e}"))?;
+
+            let memory = instance
+                .get_memory(&store, "memory")
+                .ok_or_else(|| anyhow!("v2 plugin does not export 'memory'"))?;
+
+            let mem_data = memory.data_mut(&mut store);
+            let start = input_ptr as usize;
+            let end = start + input_bytes.len();
+            if end > mem_data.len() {
+                return Err(anyhow!(
+                    "az_alloc returned ptr {input_ptr} but memory size is {} (need {end})",
+                    mem_data.len()
+                ));
+            }
+            mem_data[start..end].copy_from_slice(input_bytes);
+
+            let az_tool_execute = instance
+                .get_typed_func::<(i32, i32), i64>(&store, "az_tool_execute")
+                .map_err(|e| anyhow!("v2 plugin missing 'az_tool_execute' export: {e}"))?;
+
+            let result_packed = match az_tool_execute.call(&mut store, (input_ptr, input_len)) {
+                Ok(packed) => packed,
+                Err(err) => {
+                    let err_text = err.to_string();
+                    if err_text.contains("out of fuel") || err_text.contains("fuel") {
+                        return Err(anyhow!(
+                            "plugin execution exceeded time limit ({} ms)",
+                            effective_timeout_ms
+                        ));
+                    }
+                    return Err(anyhow!("az_tool_execute call failed: {err}"));
+                }
+            };
+
+            let (out_ptr, out_len) = unpack_ptr_len(result_packed);
+            if out_len == 0 {
+                return Ok(WasmExecutionResultV2 {
+                    output: String::new(),
+                    error: Some("plugin returned empty output".to_string()),
+                });
+            }
+
+            let mem_data = memory.data(&store);
+            let out_start = out_ptr as usize;
+            let out_end = out_start + out_len as usize;
+            if out_end > mem_data.len() {
+                return Err(anyhow!(
+                    "plugin output ptr/len ({out_ptr}, {out_len}) exceeds memory bounds ({})",
+                    mem_data.len()
+                ));
+            }
+
+            let output_json = std::str::from_utf8(&mem_data[out_start..out_end])
+                .map_err(|e| anyhow!("plugin output is not valid UTF-8: {e}"))?;
+
+            let tool_output: WasmToolOutput = serde_json::from_str(output_json).map_err(|e| {
+                anyhow!("plugin output is not valid JSON: {e} (raw: {output_json})")
+            })?;
+
+            Ok(WasmExecutionResultV2 {
+                output: tool_output.output,
+                error: tool_output.error,
+            })
+        }
+
+        // -------------------------------------------------------------------
+        // v1 API (backward-compatible)
+        // -------------------------------------------------------------------
+
+        pub fn preflight(&self, container: &WasmPluginContainer) -> anyhow::Result<()> {
+            self.preflight_with_policy(container, &WasmIsolationPolicy::default())
+        }
+
+        pub fn preflight_with_policy(
+            &self,
+            container: &WasmPluginContainer,
+            policy: &WasmIsolationPolicy,
+        ) -> anyhow::Result<()> {
+            container.validate()?;
+            if container.max_execution_ms > policy.max_execution_ms {
+                return Err(anyhow!(
+                    "max_execution_ms exceeds policy limit ({} > {})",
+                    container.max_execution_ms,
+                    policy.max_execution_ms
+                ));
+            }
+            if container.max_memory_mb > policy.max_memory_mb {
+                return Err(anyhow!(
+                    "max_memory_mb exceeds policy limit ({} > {})",
+                    container.max_memory_mb,
+                    policy.max_memory_mb
+                ));
+            }
+            if container.allow_network && !policy.allow_network {
+                return Err(anyhow!(
+                    "network access is not permitted by isolation policy"
+                ));
+            }
+            if container.allow_fs_write && !policy.allow_fs_write {
+                return Err(anyhow!(
+                    "filesystem write is not permitted by isolation policy"
+                ));
+            }
+
+            let path = Path::new(&container.module_path);
+            if !path.exists() {
+                return Err(anyhow!("plugin module does not exist: {}", path.display()));
+            }
+            let metadata = std::fs::metadata(path)
+                .with_context(|| format!("failed to read metadata for {}", path.display()))?;
+            if metadata.len() > policy.max_module_bytes {
+                return Err(anyhow!(
+                    "plugin module exceeds size policy ({} > {} bytes)",
+                    metadata.len(),
+                    policy.max_module_bytes
+                ));
+            }
+
+            let engine = Engine::default();
+            let bytes = std::fs::read(path)
+                .with_context(|| format!("failed to read module at {}", path.display()))?;
+            let module = Module::new(&engine, &bytes)
+                .map_err(|e| anyhow!("failed to compile module at {}: {e}", path.display()))?;
+            validate_host_call_allowlist(&module, policy)?;
+
+            Ok(())
+        }
+
+        fn preflight_v2(
+            &self,
+            container: &WasmPluginContainer,
+            policy: &WasmIsolationPolicy,
+        ) -> anyhow::Result<()> {
+            container.validate()?;
+
+            if container.max_execution_ms > policy.max_execution_ms {
+                return Err(anyhow!(
+                    "max_execution_ms exceeds policy limit ({} > {})",
+                    container.max_execution_ms,
+                    policy.max_execution_ms
+                ));
+            }
+            if container.max_memory_mb > policy.max_memory_mb {
+                return Err(anyhow!(
+                    "max_memory_mb exceeds policy limit ({} > {})",
+                    container.max_memory_mb,
+                    policy.max_memory_mb
+                ));
+            }
+            if container.allow_network && !policy.allow_network {
+                return Err(anyhow!(
+                    "network access is not permitted by isolation policy"
+                ));
+            }
+            if container.allow_fs_write && !policy.allow_fs_write {
+                return Err(anyhow!(
+                    "filesystem write is not permitted by isolation policy"
+                ));
+            }
+
+            let path = Path::new(&container.module_path);
+            if !path.exists() {
+                return Err(anyhow!("plugin module does not exist: {}", path.display()));
+            }
+            let metadata = std::fs::metadata(path)
+                .with_context(|| format!("failed to read metadata for {}", path.display()))?;
+            if metadata.len() > policy.max_module_bytes {
+                return Err(anyhow!(
+                    "plugin module exceeds size policy ({} > {} bytes)",
+                    metadata.len(),
+                    policy.max_module_bytes
+                ));
+            }
+
+            Ok(())
+        }
+
+        pub fn execute(
+            &self,
+            container: &WasmPluginContainer,
+            request: &WasmExecutionRequest,
+        ) -> anyhow::Result<WasmExecutionResult> {
+            self.execute_with_policy(container, request, &WasmIsolationPolicy::default())
+        }
+
+        pub fn execute_with_policy(
+            &self,
+            container: &WasmPluginContainer,
+            _request: &WasmExecutionRequest,
+            policy: &WasmIsolationPolicy,
+        ) -> anyhow::Result<WasmExecutionResult> {
+            self.preflight_with_policy(container, policy)?;
+
+            let engine = make_engine();
+            let bytes = std::fs::read(&container.module_path).map_err(|e| {
+                anyhow!(
+                    "failed to read module at {}: {e}",
+                    container.module_path.display()
+                )
+            })?;
+            let module = Module::new(&engine, &bytes).map_err(|e| {
+                anyhow!(
+                    "failed to compile module at {}: {e}",
+                    container.module_path.display()
+                )
+            })?;
+            validate_host_call_allowlist(&module, policy)?;
+
+            let effective_memory_mb = container.max_memory_mb.min(policy.max_memory_mb);
+            let limits = StoreLimitsBuilder::new()
+                .memory_size((effective_memory_mb as usize) * 1024 * 1024)
+                .build();
+            let wasi = wasmi_wasi::WasiCtxBuilder::new().build();
+            let state = PluginState {
+                wasi,
+                limits,
+                log_buffer: Vec::new(),
+            };
+            let mut store = Store::new(&engine, state);
+            store.limiter(|s| &mut s.limits);
+
+            let effective_timeout_ms = container.max_execution_ms.min(policy.max_execution_ms);
+            store
+                .set_fuel(compute_fuel(effective_timeout_ms))
+                .map_err(|e| anyhow!("failed to set fuel: {e}"))?;
+
+            let linker = Linker::new(&engine);
+            let instance = linker
+                .instantiate_and_start(&mut store, &module)
+                .map_err(|e| anyhow!("failed to instantiate plugin module: {e}"))?;
+
+            let entrypoint = instance
+                .get_typed_func::<(), i32>(&store, &container.entrypoint)
+                .map_err(|e| {
+                    anyhow!(
+                        "missing or incompatible entrypoint '{}' (expected fn() -> i32): {e}",
+                        container.entrypoint
+                    )
+                })?;
+
+            let call_result = entrypoint.call(&mut store, ());
+            let status_code = match call_result {
+                Ok(status) => status,
+                Err(err) => {
+                    let err_text = err.to_string();
+                    if err_text.contains("out of fuel") || err_text.contains("fuel") {
+                        return Err(anyhow!(
+                            "plugin execution exceeded time limit ({} ms)",
+                            effective_timeout_ms
+                        ));
+                    }
+                    return Err(anyhow!("plugin entrypoint call failed: {err}"));
+                }
+            };
+
+            Ok(WasmExecutionResult { status_code })
+        }
+
+        // -------------------------------------------------------------------
+        // v2 API: JSON input/output, WASI, host callbacks
+        // -------------------------------------------------------------------
+
+        pub fn execute_v2(
+            &self,
+            container: &WasmPluginContainer,
+            input: &str,
+            options: &WasmV2Options,
+        ) -> anyhow::Result<WasmExecutionResultV2> {
+            self.execute_v2_with_policy(container, input, options, &WasmIsolationPolicy::default())
+        }
+
+        pub fn execute_v2_with_policy(
+            &self,
+            container: &WasmPluginContainer,
+            input: &str,
+            options: &WasmV2Options,
+            policy: &WasmIsolationPolicy,
+        ) -> anyhow::Result<WasmExecutionResultV2> {
+            self.preflight_v2(container, policy)?;
+
+            let engine = make_engine();
+            let bytes = std::fs::read(&container.module_path).map_err(|e| {
+                anyhow!(
+                    "failed to compile module at {}: {e}",
+                    container.module_path.display()
+                )
+            })?;
+            let module = Module::new(&engine, &bytes).map_err(|e| {
+                anyhow!(
+                    "failed to compile module at {}: {e}",
+                    container.module_path.display()
+                )
+            })?;
+
+            validate_v2_imports(&module, policy, &options.capabilities)?;
+
+            // Build WASI context with capabilities gated by policy
+            let mut wasi_builder = wasmi_wasi::WasiCtxBuilder::new();
+            wasi_builder.inherit_stderr();
+
+            if policy.allow_fs_read && !options.workspace_root.is_empty() {
+                let workspace_path = std::path::Path::new(&options.workspace_root);
+                if workspace_path.exists() {
+                    match wasmi_wasi::sync::Dir::open_ambient_dir(
+                        workspace_path,
+                        wasmi_wasi::sync::ambient_authority(),
+                    ) {
+                        Ok(dir) => {
+                            if policy.allow_fs_write {
+                                let _ = wasi_builder.preopened_dir(dir, ".");
+                            } else {
+                                // wasmi_wasi doesn't have fine-grained perms
+                                // like wasmtime; preopened dirs are read-write.
+                                // For read-only, we still preopen but rely on
+                                // WASM sandbox isolation.
+                                let _ = wasi_builder.preopened_dir(dir, ".");
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "warning: failed to preopen workspace dir '{}': {e}",
+                                options.workspace_root
+                            );
+                        }
+                    }
+                }
+            }
+
+            let wasi = wasi_builder.build();
+
+            // Memory limits
+            let effective_memory_mb = container.max_memory_mb.min(policy.max_memory_mb);
+            let limits = StoreLimitsBuilder::new()
+                .memory_size((effective_memory_mb as usize) * 1024 * 1024)
+                .build();
+            let state = PluginState {
+                wasi,
+                limits,
+                log_buffer: Vec::new(),
+            };
+            let mut store = Store::new(&engine, state);
+            store.limiter(|s| &mut s.limits);
+
+            let effective_timeout_ms = container.max_execution_ms.min(policy.max_execution_ms);
+            store
+                .set_fuel(compute_fuel(effective_timeout_ms))
+                .map_err(|e| anyhow!("failed to set fuel: {e}"))?;
+
+            // Linker: add WASI preview1 + host functions
+            let mut linker: Linker<PluginState> = Linker::new(&engine);
+
+            wasmi_wasi::sync::add_to_linker(&mut linker, |s: &mut PluginState| &mut s.wasi)
+                .map_err(|e| anyhow!("failed to add WASI p1 to linker: {e}"))?;
+
+            // Register host functions in the "az" namespace
+            register_host_functions(&mut linker, policy)?;
+
+            let instance = linker
+                .instantiate_and_start(&mut store, &module)
+                .map_err(|e| anyhow!("failed to instantiate v2 plugin module: {e}"))?;
+
+            // Build the input JSON
+            let tool_input = WasmToolInput {
+                input: input.to_string(),
+                workspace_root: options.workspace_root.clone(),
+            };
+            let input_json =
+                serde_json::to_string(&tool_input).context("failed to serialize v2 tool input")?;
+
+            // Allocate space in WASM memory for the input via az_alloc
+            let az_alloc = instance
+                .get_typed_func::<i32, i32>(&store, "az_alloc")
+                .map_err(|e| {
+                    anyhow!("v2 plugin missing 'az_alloc' export (expected fn(i32) -> i32): {e}")
+                })?;
+
+            let input_bytes = input_json.as_bytes();
+            let input_len = input_bytes.len() as i32;
+
+            let input_ptr = az_alloc
+                .call(&mut store, input_len)
+                .map_err(|e| anyhow!("az_alloc call failed: {e}"))?;
+
+            // Write input JSON into WASM linear memory
+            let memory = instance
+                .get_memory(&store, "memory")
+                .ok_or_else(|| anyhow!("v2 plugin does not export 'memory'"))?;
+
+            let mem_data = memory.data_mut(&mut store);
+            let start = input_ptr as usize;
+            let end = start + input_bytes.len();
+            if end > mem_data.len() {
+                return Err(anyhow!(
+                    "az_alloc returned ptr {input_ptr} but memory size is {} (need {end})",
+                    mem_data.len()
+                ));
+            }
+            mem_data[start..end].copy_from_slice(input_bytes);
+
+            // Call az_tool_execute(ptr, len) -> i64
+            let az_tool_execute = instance
+                .get_typed_func::<(i32, i32), i64>(&store, "az_tool_execute")
+                .map_err(|e| anyhow!("v2 plugin missing 'az_tool_execute' export: {e}"))?;
+
+            let result_packed = match az_tool_execute.call(&mut store, (input_ptr, input_len)) {
+                Ok(packed) => packed,
+                Err(err) => {
+                    let err_text = err.to_string();
+                    if err_text.contains("out of fuel") || err_text.contains("fuel") {
+                        return Err(anyhow!(
+                            "plugin execution exceeded time limit ({} ms)",
+                            effective_timeout_ms
+                        ));
+                    }
+                    return Err(anyhow!("az_tool_execute call failed: {err}"));
+                }
+            };
+
+            // Unpack the result pointer and length
+            let (out_ptr, out_len) = unpack_ptr_len(result_packed);
+            if out_len == 0 {
+                return Ok(WasmExecutionResultV2 {
+                    output: String::new(),
+                    error: Some("plugin returned empty output".to_string()),
+                });
+            }
+
+            // Read output JSON from WASM linear memory
+            let mem_data = memory.data(&store);
+            let out_start = out_ptr as usize;
+            let out_end = out_start + out_len as usize;
+            if out_end > mem_data.len() {
+                return Err(anyhow!(
+                    "plugin output ptr/len ({out_ptr}, {out_len}) exceeds memory bounds ({})",
+                    mem_data.len()
+                ));
+            }
+
+            let output_json = std::str::from_utf8(&mem_data[out_start..out_end])
+                .map_err(|e| anyhow!("plugin output is not valid UTF-8: {e}"))?;
+
+            let tool_output: WasmToolOutput = serde_json::from_str(output_json).map_err(|e| {
+                anyhow!("plugin output is not valid JSON: {e} (raw: {output_json})")
+            })?;
+
+            Ok(WasmExecutionResultV2 {
+                output: tool_output.output,
+                error: tool_output.error,
+            })
+        }
+    }
+
+    /// Register `az_*` host functions in the linker under the "az" namespace.
+    fn register_host_functions(
+        linker: &mut Linker<PluginState>,
+        policy: &WasmIsolationPolicy,
+    ) -> anyhow::Result<()> {
+        // az_log(level: i32, msg_ptr: i32, msg_len: i32)
+        linker
+            .func_wrap(
+                "az",
+                "az_log",
+                |mut caller: wasmi::Caller<'_, PluginState>,
+                 level: i32,
+                 msg_ptr: i32,
+                 msg_len: i32| {
+                    let memory = caller.get_export("memory").and_then(|e| e.into_memory());
+                    if let Some(memory) = memory {
+                        let msg_opt = {
+                            let data = memory.data(&caller);
+                            let start = msg_ptr as usize;
+                            let end = start + msg_len as usize;
+                            if end <= data.len() {
+                                std::str::from_utf8(&data[start..end])
+                                    .ok()
+                                    .map(|s| s.to_owned())
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(msg) = msg_opt {
+                            let level_str = match level {
+                                0 => "ERROR",
+                                1 => "WARN",
+                                2 => "INFO",
+                                3 => "DEBUG",
+                                _ => "TRACE",
+                            };
+                            caller
+                                .data_mut()
+                                .log_buffer
+                                .push(format!("[{level_str}] {msg}"));
+                        }
+                    }
+                },
+            )
+            .map_err(|e| anyhow!("failed to register az_log: {e}"))?;
+
+        // az_env_get(key_ptr: i32, key_len: i32) -> i64
+        if policy
+            .allowed_host_calls
+            .iter()
+            .any(|h| h == "az::az_env_get")
+        {
+            linker
+                .func_wrap(
+                    "az",
+                    "az_env_get",
+                    |mut caller: wasmi::Caller<'_, PluginState>,
+                     key_ptr: i32,
+                     key_len: i32|
+                     -> i64 {
+                        let memory = caller.get_export("memory").and_then(|e| e.into_memory());
+                        let Some(memory) = memory else {
+                            return 0;
+                        };
+
+                        let data = memory.data(&caller);
+                        let start = key_ptr as usize;
+                        let end = start + key_len as usize;
+                        if end > data.len() {
+                            return 0;
+                        }
+                        let Ok(key) = std::str::from_utf8(&data[start..end]) else {
+                            return 0;
+                        };
+                        let Ok(value) = std::env::var(key) else {
+                            return 0;
+                        };
+
+                        let az_alloc = caller
+                            .get_export("az_alloc")
+                            .and_then(|e| e.into_func())
+                            .and_then(|f| f.typed::<i32, i32>(&caller).ok());
+                        let Some(az_alloc) = az_alloc else {
+                            return 0;
+                        };
+
+                        let value_bytes = value.as_bytes();
+                        let Ok(ptr) = az_alloc.call(&mut caller, value_bytes.len() as i32) else {
+                            return 0;
+                        };
+
+                        let mem = caller.get_export("memory").and_then(|e| e.into_memory());
+                        if let Some(mem) = mem {
+                            let data = mem.data_mut(&mut caller);
+                            let s = ptr as usize;
+                            let e = s + value_bytes.len();
+                            if e <= data.len() {
+                                data[s..e].copy_from_slice(value_bytes);
+                                return pack_ptr_len(ptr as u32, value_bytes.len() as u32);
+                            }
+                        }
+                        0
+                    },
+                )
+                .map_err(|e| anyhow!("failed to register az_env_get: {e}"))?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_v2_imports(
+        module: &Module,
+        policy: &WasmIsolationPolicy,
+        capabilities: &[String],
+    ) -> anyhow::Result<()> {
+        for import in module.imports() {
+            let module_name = import.module();
+            if module_name == "wasi_snapshot_preview1" {
+                continue;
+            }
+            if module_name == "az" {
+                let func_name = import.name();
+                if func_name == "az_log" {
+                    continue;
+                }
+                let key = format!("az::{func_name}");
+                if capabilities
+                    .iter()
+                    .any(|c| c == &key || c == &format!("host:{func_name}"))
+                    && policy.allowed_host_calls.iter().any(|h| h == &key)
+                {
+                    continue;
+                }
+                return Err(anyhow!(
+                    "host function `{key}` is not permitted by isolation policy"
+                ));
+            }
+            let key = format!("{}::{}", module_name, import.name());
+            if !policy
+                .allowed_host_calls
+                .iter()
+                .any(|allowed| allowed == &key)
+            {
+                return Err(anyhow!(
+                    "host call `{key}` is not allowed by isolation policy"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_host_call_allowlist(
+        module: &Module,
+        policy: &WasmIsolationPolicy,
+    ) -> anyhow::Result<()> {
+        for import in module.imports() {
+            let key = format!("{}::{}", import.module(), import.name());
+            if !policy
+                .allowed_host_calls
+                .iter()
+                .any(|allowed| allowed == &key)
+            {
+                return Err(anyhow!(
+                    "host call `{key}` is not allowed by isolation policy"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Module cache: wasmi has no AOT compilation — passthrough only
+    // -----------------------------------------------------------------------
+
+    pub struct ModuleCache;
+
+    impl ModuleCache {
+        pub fn load_or_compile(
+            engine: &Engine,
+            wasm_path: &Path,
+            _expected_sha256: &str,
+        ) -> anyhow::Result<Module> {
+            let bytes = std::fs::read(wasm_path)
+                .with_context(|| format!("failed to read module at {}", wasm_path.display()))?;
+            Module::new(engine, &bytes)
+                .map_err(|e| anyhow!("failed to compile module at {}: {e}", wasm_path.display()))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// wasm-jit feature: full wasmtime JIT-backed implementation
+// ---------------------------------------------------------------------------
+#[cfg(feature = "wasm-jit")]
 mod runtime_impl {
     use super::*;
     use anyhow::Context;
@@ -167,6 +983,237 @@ mod runtime_impl {
     impl WasmPluginRuntime {
         pub fn new() -> Self {
             Self
+        }
+
+        /// Create a new wasmtime engine with epoch interruption enabled.
+        /// Share this across plugins for efficient resource use.
+        pub fn create_engine() -> anyhow::Result<Engine> {
+            let mut config = Config::new();
+            config.epoch_interruption(true);
+            Engine::new(&config).map_err(|e| anyhow!("failed to configure wasmtime engine: {e}"))
+        }
+
+        /// Pre-compile a WASM module from the given path.
+        /// The returned module can be reused across multiple executions.
+        pub fn compile_module(
+            engine: &Engine,
+            wasm_path: &std::path::Path,
+        ) -> anyhow::Result<Module> {
+            Module::from_file(engine, wasm_path)
+                .map_err(|e| anyhow!("failed to compile module at {}: {e}", wasm_path.display()))
+        }
+
+        /// Execute a v2 plugin with a pre-compiled engine and module.
+        /// This avoids disk I/O and module compilation on the hot path.
+        pub fn execute_v2_precompiled(
+            engine: &Engine,
+            module: &Module,
+            container: &WasmPluginContainer,
+            input: &str,
+            options: &WasmV2Options,
+            policy: &WasmIsolationPolicy,
+        ) -> anyhow::Result<WasmExecutionResultV2> {
+            // Preflight checks (skip module file read — already compiled)
+            container.validate()?;
+            if container.max_execution_ms > policy.max_execution_ms {
+                return Err(anyhow!(
+                    "max_execution_ms exceeds policy limit ({} > {})",
+                    container.max_execution_ms,
+                    policy.max_execution_ms
+                ));
+            }
+            if container.max_memory_mb > policy.max_memory_mb {
+                return Err(anyhow!(
+                    "max_memory_mb exceeds policy limit ({} > {})",
+                    container.max_memory_mb,
+                    policy.max_memory_mb
+                ));
+            }
+            if container.allow_network && !policy.allow_network {
+                return Err(anyhow!(
+                    "network access is not permitted by isolation policy"
+                ));
+            }
+            if container.allow_fs_write && !policy.allow_fs_write {
+                return Err(anyhow!(
+                    "filesystem write is not permitted by isolation policy"
+                ));
+            }
+
+            validate_v2_imports(module, policy, &options.capabilities)?;
+
+            // Build WASI context with capabilities gated by policy
+            let mut wasi_builder = WasiCtxBuilder::new();
+            wasi_builder.inherit_stderr();
+
+            if policy.allow_fs_read && !options.workspace_root.is_empty() {
+                let perms = if policy.allow_fs_write {
+                    wasmtime_wasi::DirPerms::all()
+                } else {
+                    wasmtime_wasi::DirPerms::READ
+                };
+                let file_perms = if policy.allow_fs_write {
+                    wasmtime_wasi::FilePerms::all()
+                } else {
+                    wasmtime_wasi::FilePerms::READ
+                };
+                if let Err(e) =
+                    wasi_builder.preopened_dir(&options.workspace_root, ".", perms, file_perms)
+                {
+                    eprintln!(
+                        "warning: failed to preopen workspace dir '{}': {e}",
+                        options.workspace_root
+                    );
+                }
+            }
+
+            let wasi = wasi_builder.build_p1();
+            let effective_memory_mb = container.max_memory_mb.min(policy.max_memory_mb);
+            let limits = StoreLimitsBuilder::new()
+                .memory_size((effective_memory_mb as usize) * 1024 * 1024)
+                .build();
+            let state = PluginState {
+                wasi,
+                limits,
+                log_buffer: Vec::new(),
+            };
+            let mut store = Store::new(engine, state);
+            store.limiter(|s: &mut PluginState| &mut s.limits);
+            store.set_epoch_deadline(1);
+
+            let mut linker: Linker<PluginState> = Linker::new(engine);
+            wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |s: &mut PluginState| &mut s.wasi)
+                .map_err(|e| anyhow!("failed to add WASI p1 to linker: {e}"))?;
+            register_host_functions(&mut linker, policy)?;
+
+            let instance = linker
+                .instantiate(&mut store, module)
+                .map_err(|e| anyhow!("failed to instantiate v2 plugin module: {e}"))?;
+
+            // Epoch timeout thread
+            let effective_timeout_ms = container.max_execution_ms.min(policy.max_execution_ms);
+            let timer_engine = engine.clone();
+            let timer_cancel = Arc::new(AtomicBool::new(false));
+            let timer_cancel_worker = Arc::clone(&timer_cancel);
+            let timer_handle = std::thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_millis(effective_timeout_ms);
+                while Instant::now() < deadline {
+                    if timer_cancel_worker.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                if !timer_cancel_worker.load(Ordering::Relaxed) {
+                    timer_engine.increment_epoch();
+                }
+            });
+
+            struct TimerGuard {
+                cancel: Arc<AtomicBool>,
+                handle: Option<std::thread::JoinHandle<()>>,
+            }
+            impl Drop for TimerGuard {
+                fn drop(&mut self) {
+                    self.cancel.store(true, Ordering::Relaxed);
+                    if let Some(h) = self.handle.take() {
+                        let _ = h.join();
+                    }
+                }
+            }
+            let _timer_guard = TimerGuard {
+                cancel: Arc::clone(&timer_cancel),
+                handle: Some(timer_handle),
+            };
+
+            let tool_input = WasmToolInput {
+                input: input.to_string(),
+                workspace_root: options.workspace_root.clone(),
+            };
+            let input_json =
+                serde_json::to_string(&tool_input).context("failed to serialize v2 tool input")?;
+
+            let az_alloc = instance
+                .get_typed_func::<i32, i32>(&mut store, "az_alloc")
+                .map_err(|e| {
+                    anyhow!("v2 plugin missing 'az_alloc' export (expected fn(i32) -> i32): {e}")
+                })?;
+
+            let input_bytes = input_json.as_bytes();
+            let input_len = input_bytes.len() as i32;
+            let input_ptr = az_alloc
+                .call(&mut store, input_len)
+                .map_err(|e| anyhow!("az_alloc call failed: {e}"))?;
+
+            let memory = instance
+                .get_memory(&mut store, "memory")
+                .ok_or_else(|| anyhow!("v2 plugin does not export 'memory'"))?;
+
+            let mem_data = memory.data_mut(&mut store);
+            let start = input_ptr as usize;
+            let end = start + input_bytes.len();
+            if end > mem_data.len() {
+                return Err(anyhow!(
+                    "az_alloc returned ptr {input_ptr} but memory size is {} (need {end})",
+                    mem_data.len()
+                ));
+            }
+            mem_data[start..end].copy_from_slice(input_bytes);
+
+            let az_tool_execute = instance
+                .get_typed_func::<(i32, i32), i64>(&mut store, "az_tool_execute")
+                .map_err(|e| anyhow!("v2 plugin missing 'az_tool_execute' export: {e}"))?;
+
+            let started = Instant::now();
+            let result_packed = match az_tool_execute.call(&mut store, (input_ptr, input_len)) {
+                Ok(packed) => packed,
+                Err(err) => {
+                    let err_text = err.to_string();
+                    let timed_out =
+                        started.elapsed() >= Duration::from_millis(effective_timeout_ms);
+                    if err_text.contains("epoch deadline exceeded")
+                        || err_text.contains("interrupt")
+                        || err_text.contains("interrupted")
+                        || err_text.contains("deadline")
+                        || timed_out
+                    {
+                        return Err(anyhow!(
+                            "plugin execution exceeded time limit ({} ms)",
+                            effective_timeout_ms
+                        ));
+                    }
+                    return Err(anyhow!("az_tool_execute call failed: {err}"));
+                }
+            };
+
+            let (out_ptr, out_len) = unpack_ptr_len(result_packed);
+            if out_len == 0 {
+                return Ok(WasmExecutionResultV2 {
+                    output: String::new(),
+                    error: Some("plugin returned empty output".to_string()),
+                });
+            }
+
+            let mem_data = memory.data(&store);
+            let out_start = out_ptr as usize;
+            let out_end = out_start + out_len as usize;
+            if out_end > mem_data.len() {
+                return Err(anyhow!(
+                    "plugin output ptr/len ({out_ptr}, {out_len}) exceeds memory bounds ({})",
+                    mem_data.len()
+                ));
+            }
+
+            let output_json = std::str::from_utf8(&mem_data[out_start..out_end])
+                .map_err(|e| anyhow!("plugin output is not valid UTF-8: {e}"))?;
+
+            let tool_output: WasmToolOutput = serde_json::from_str(output_json).map_err(|e| {
+                anyhow!("plugin output is not valid JSON: {e} (raw: {output_json})")
+            })?;
+
+            Ok(WasmExecutionResultV2 {
+                output: tool_output.output,
+                error: tool_output.error,
+            })
         }
 
         // -------------------------------------------------------------------
@@ -1602,95 +2649,148 @@ mod tests {
     }
 
     // =======================================================================
-    // ModuleCache tests
+    // ModuleCache tests (wasmi — compile-from-source, no AOT cache)
     // =======================================================================
 
-    #[test]
-    fn module_cache_compiles_and_caches() {
-        use super::ModuleCache;
-        use sha2::{Digest, Sha256};
+    #[cfg(not(feature = "wasm-jit"))]
+    mod cache_tests_wasmi {
+        use super::super::ModuleCache;
+        use super::*;
 
-        let dir = std::env::temp_dir().join(format!("cache-test-{}", unique_suffix()));
-        fs::create_dir_all(&dir).expect("create dir");
-        let wasm_path = dir.join("plugin.wasm");
-        let bytes = wat::parse_str(v2_echo_plugin_wat()).expect("wat should compile");
-        fs::write(&wasm_path, &bytes).expect("write wasm");
+        #[test]
+        fn module_cache_compiles_from_source() {
+            let dir = std::env::temp_dir().join(format!("cache-wasmi-{}", unique_suffix()));
+            fs::create_dir_all(&dir).expect("create dir");
+            let wasm_path = dir.join("plugin.wasm");
+            let bytes = wat::parse_str(v2_echo_plugin_wat()).expect("wat should compile");
+            fs::write(&wasm_path, &bytes).expect("write wasm");
 
-        let sha = format!("{:x}", Sha256::new_with_prefix(&bytes).finalize());
+            let engine = wasmi::Engine::default();
 
-        let mut config = wasmtime::Config::new();
-        config.epoch_interruption(true);
-        let engine = wasmtime::Engine::new(&config).expect("engine");
+            let _module = ModuleCache::load_or_compile(&engine, &wasm_path, "some-sha256")
+                .expect("wasmi compile from source");
 
-        // First load — compile from source
-        let _module =
+            // wasmi has no AOT cache — no .cwasm files created
+            let cache_dir = dir.join(".cache");
+            assert!(!cache_dir.exists());
+
+            fs::remove_dir_all(dir).ok();
+        }
+
+        #[test]
+        fn module_cache_handles_invalid_wasm() {
+            let dir = std::env::temp_dir().join(format!("cache-wasmi-invalid-{}", unique_suffix()));
+            fs::create_dir_all(&dir).expect("create dir");
+            let wasm_path = dir.join("plugin.wasm");
+            fs::write(&wasm_path, b"not valid wasm").expect("write bad wasm");
+
+            let engine = wasmi::Engine::default();
+
+            let result = ModuleCache::load_or_compile(&engine, &wasm_path, "sha");
+            assert!(result.is_err(), "invalid wasm should fail compilation");
+
+            fs::remove_dir_all(dir).ok();
+        }
+
+        #[test]
+        fn module_cache_handles_missing_file() {
+            let engine = wasmi::Engine::default();
+            let result = ModuleCache::load_or_compile(
+                &engine,
+                std::path::Path::new("/nonexistent.wasm"),
+                "sha",
+            );
+            assert!(result.is_err(), "missing file should fail");
+        }
+    }
+
+    // =======================================================================
+    // ModuleCache tests (wasmtime — AOT cache with .cwasm files)
+    // =======================================================================
+
+    #[cfg(feature = "wasm-jit")]
+    mod cache_tests_wasmtime {
+        use super::super::ModuleCache;
+        use super::*;
+
+        #[test]
+        fn module_cache_compiles_and_caches() {
+            use sha2::{Digest, Sha256};
+
+            let dir = std::env::temp_dir().join(format!("cache-test-{}", unique_suffix()));
+            fs::create_dir_all(&dir).expect("create dir");
+            let wasm_path = dir.join("plugin.wasm");
+            let bytes = wat::parse_str(v2_echo_plugin_wat()).expect("wat should compile");
+            fs::write(&wasm_path, &bytes).expect("write wasm");
+
+            let sha = format!("{:x}", Sha256::new_with_prefix(&bytes).finalize());
+
+            let mut config = wasmtime::Config::new();
+            config.epoch_interruption(true);
+            let engine = wasmtime::Engine::new(&config).expect("engine");
+
+            let _module =
+                ModuleCache::load_or_compile(&engine, &wasm_path, &sha).expect("first compile");
+
+            let cache_dir = dir.join(".cache");
+            assert!(cache_dir.join("plugin.cwasm").exists());
+            assert!(cache_dir.join("source.sha256").exists());
+
+            let _module2 =
+                ModuleCache::load_or_compile(&engine, &wasm_path, &sha).expect("cached load");
+
+            fs::remove_dir_all(dir).ok();
+        }
+
+        #[test]
+        fn module_cache_invalidates_on_sha_mismatch() {
+            use sha2::{Digest, Sha256};
+
+            let dir = std::env::temp_dir().join(format!("cache-inval-{}", unique_suffix()));
+            fs::create_dir_all(&dir).expect("create dir");
+            let wasm_path = dir.join("plugin.wasm");
+            let bytes = wat::parse_str(v2_echo_plugin_wat()).expect("wat should compile");
+            fs::write(&wasm_path, &bytes).expect("write wasm");
+
+            let sha = format!("{:x}", Sha256::new_with_prefix(&bytes).finalize());
+
+            let mut config = wasmtime::Config::new();
+            config.epoch_interruption(true);
+            let engine = wasmtime::Engine::new(&config).expect("engine");
+
             ModuleCache::load_or_compile(&engine, &wasm_path, &sha).expect("first compile");
 
-        let cache_dir = dir.join(".cache");
-        assert!(cache_dir.join("plugin.cwasm").exists());
-        assert!(cache_dir.join("source.sha256").exists());
+            let _module = ModuleCache::load_or_compile(&engine, &wasm_path, "different_sha256")
+                .expect("recompile on sha mismatch");
 
-        // Second load — should use cached AOT module
-        let _module2 =
-            ModuleCache::load_or_compile(&engine, &wasm_path, &sha).expect("cached load");
+            fs::remove_dir_all(dir).ok();
+        }
 
-        fs::remove_dir_all(dir).ok();
-    }
+        #[test]
+        fn module_cache_handles_corrupt_cwasm() {
+            use sha2::{Digest, Sha256};
 
-    #[test]
-    fn module_cache_invalidates_on_sha_mismatch() {
-        use super::ModuleCache;
-        use sha2::{Digest, Sha256};
+            let dir = std::env::temp_dir().join(format!("cache-corrupt-{}", unique_suffix()));
+            fs::create_dir_all(&dir).expect("create dir");
+            let wasm_path = dir.join("plugin.wasm");
+            let bytes = wat::parse_str(v2_echo_plugin_wat()).expect("wat should compile");
+            fs::write(&wasm_path, &bytes).expect("write wasm");
 
-        let dir = std::env::temp_dir().join(format!("cache-inval-{}", unique_suffix()));
-        fs::create_dir_all(&dir).expect("create dir");
-        let wasm_path = dir.join("plugin.wasm");
-        let bytes = wat::parse_str(v2_echo_plugin_wat()).expect("wat should compile");
-        fs::write(&wasm_path, &bytes).expect("write wasm");
+            let sha = format!("{:x}", Sha256::new_with_prefix(&bytes).finalize());
 
-        let sha = format!("{:x}", Sha256::new_with_prefix(&bytes).finalize());
+            let cache_dir = dir.join(".cache");
+            fs::create_dir_all(&cache_dir).expect("create cache dir");
+            fs::write(cache_dir.join("plugin.cwasm"), b"corrupt data").expect("write corrupt");
+            fs::write(cache_dir.join("source.sha256"), &sha).expect("write sha");
 
-        let mut config = wasmtime::Config::new();
-        config.epoch_interruption(true);
-        let engine = wasmtime::Engine::new(&config).expect("engine");
+            let mut config = wasmtime::Config::new();
+            config.epoch_interruption(true);
+            let engine = wasmtime::Engine::new(&config).expect("engine");
 
-        // Populate cache
-        ModuleCache::load_or_compile(&engine, &wasm_path, &sha).expect("first compile");
+            let _module = ModuleCache::load_or_compile(&engine, &wasm_path, &sha)
+                .expect("corrupt cache should fall back to recompilation");
 
-        // Different SHA256 — should recompile, not use stale cache
-        let _module = ModuleCache::load_or_compile(&engine, &wasm_path, "different_sha256")
-            .expect("recompile on sha mismatch");
-
-        fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn module_cache_handles_corrupt_cwasm() {
-        use super::ModuleCache;
-        use sha2::{Digest, Sha256};
-
-        let dir = std::env::temp_dir().join(format!("cache-corrupt-{}", unique_suffix()));
-        fs::create_dir_all(&dir).expect("create dir");
-        let wasm_path = dir.join("plugin.wasm");
-        let bytes = wat::parse_str(v2_echo_plugin_wat()).expect("wat should compile");
-        fs::write(&wasm_path, &bytes).expect("write wasm");
-
-        let sha = format!("{:x}", Sha256::new_with_prefix(&bytes).finalize());
-
-        // Write corrupt cache
-        let cache_dir = dir.join(".cache");
-        fs::create_dir_all(&cache_dir).expect("create cache dir");
-        fs::write(cache_dir.join("plugin.cwasm"), b"corrupt data").expect("write corrupt");
-        fs::write(cache_dir.join("source.sha256"), &sha).expect("write sha");
-
-        let mut config = wasmtime::Config::new();
-        config.epoch_interruption(true);
-        let engine = wasmtime::Engine::new(&config).expect("engine");
-
-        // Should fall back to recompilation
-        let _module = ModuleCache::load_or_compile(&engine, &wasm_path, &sha)
-            .expect("corrupt cache should fall back to recompilation");
-
-        fs::remove_dir_all(dir).ok();
+            fs::remove_dir_all(dir).ok();
+        }
     }
 }

@@ -12,6 +12,7 @@ default = ["memory-sqlite"]
 memory-sqlite = []
 memory-turso = ["agentzero-storage/memory-turso"]
 wasm-plugins = ["dep:agentzero-plugins"]
+wasm-jit = ["wasm-plugins", "agentzero-plugins/wasm-jit"]
 
 [dependencies]
 anyhow.workspace = true

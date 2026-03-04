@@ -53,6 +53,8 @@ channel-mqtt = []
 channel-transcription = []
 channel-whatsapp-web = []
 channel-nostr = ["tokio-tungstenite", "futures-util"]
+tls-rustls = ["reqwest?/rustls-tls", "tokio-tungstenite?/rustls-tls-native-roots"]
+tls-native = ["reqwest?/native-tls", "tokio-tungstenite?/native-tls"]
 channels-standard = [
     "channel-cli",
     "channel-telegram",
