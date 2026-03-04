@@ -1,0 +1,13 @@
+[package]
+name = "pushover-plugin"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+agentzero-plugin-sdk = { path = "../../../crates/agentzero-plugin-sdk" }
+serde_json = "1"

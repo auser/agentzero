@@ -101,13 +101,25 @@
   - [x] ABI pointer tests gated to `target_pointer_width = "32"` (native 64-bit truncates packed pointers)
   - [x] Integration: sample plugin built to `wasm32-wasip1` → loaded by WasmPluginRuntime → executed via `execute_v2_with_policy` → output verified (greeting, workspace root, error handling)
 
-### Phase 5: Extract Official Plugin Packs (Days 16-19)
+### Phase 5: Extract Official Plugin Packs (Days 16-19) ✅
 
-- [ ] Extract `agentzero-plugin-hardware` (3 tools: board_info, memory_map, memory_read)
-- [ ] Extract `agentzero-plugin-integrations` (2 tools: composio, pushover)
-- [ ] Extract `agentzero-plugin-cron` (7 tools: cron_add/list/remove/update/pause/resume, schedule)
-- [ ] Each pack: uses `declare_tool!`, has manifest, includes integration tests
-- [ ] Verify plugins load and execute correctly via WasmTool bridge
+- [x] Extract `agentzero-plugin-hardware` (3 tools: board_info, memory_map, memory_read)
+  - [x] `hardware-board-info` — lists/queries simulated boards (sim-stm32, sim-rpi)
+  - [x] `hardware-memory-map` — returns memory regions per board
+  - [x] `hardware-memory-read` — simulated hex dump with address parsing
+  - [x] All 3 build to ~200KB WASM binaries
+  - [x] 10 integration tests (list, query, unknown board, stm32/rpi maps, hex read, default length, invalid address)
+- [x] Extract `agentzero-plugin-integrations` (2 tools: composio, pushover)
+  - [x] `composio` — validates action/API key, prepares HTTP request (dry-run until `az_http_request` host function)
+  - [x] `pushover` — validates message/token/user/priority, prepares form POST (dry-run)
+  - [x] 7 integration tests (valid requests, missing fields, invalid priority, missing credentials)
+- [x] Extract `agentzero-plugin-cron` (7 tools via 2 plugins: cron_manager + schedule)
+  - [x] `cron-manager` — 6 CRUD operations (add/list/remove/update/pause/resume) with WASI filesystem state persistence
+  - [x] `schedule` — natural language parsing (every N minutes, daily at Xam, weekly on day, etc.) + delegation to cron_manager
+  - [x] 11 integration tests (add+list, remove, update, pause/resume, duplicate ID, NL parsing, cron passthrough, delegation)
+- [x] Each pack: uses `declare_tool!`, has manifest.json, .cargo/config.toml, .gitignore
+- [x] All plugins load and execute correctly via WasmPluginRuntime `execute_v2_with_policy()`
+- [x] Total: 7 WASM plugins, 28 integration tests (+ 34 unit tests = 62 total in plugins crate)
 
 ### Phase 6: CLI Enhancements + State Management (Days 20-22)
 

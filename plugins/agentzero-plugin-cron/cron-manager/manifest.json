@@ -1,0 +1,12 @@
+{
+  "id": "cron-manager",
+  "version": "0.1.0",
+  "entrypoint": "az_tool_execute",
+  "wasm_file": "plugin.wasm",
+  "wasm_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "capabilities": ["wasi:filesystem/read-write"],
+  "hooks": [],
+  "min_runtime_api": 2,
+  "max_runtime_api": 2,
+  "allowed_host_calls": ["az_log"]
+}
