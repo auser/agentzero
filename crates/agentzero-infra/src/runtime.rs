@@ -13,6 +13,7 @@ use agentzero_providers::{find_models_for_provider, find_provider, model_capabil
 use agentzero_storage::memory::SqliteMemoryStore;
 #[cfg(feature = "memory-turso")]
 use agentzero_storage::memory::{TursoMemoryStore, TursoSettings};
+use agentzero_storage::StorageKey;
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
@@ -387,9 +388,14 @@ fn apply_provider_defaults(config: &mut agentzero_config::AgentZeroConfig, provi
 async fn build_memory_store(config_path: &Path) -> anyhow::Result<Box<dyn MemoryStore>> {
     let config = load(config_path)?;
     match config.memory.backend.as_str() {
-        "sqlite" => Ok(Box::new(SqliteMemoryStore::open(
-            &config.memory.sqlite_path,
-        )?)),
+        "sqlite" => {
+            let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+            let key = StorageKey::from_config_dir(config_dir)?;
+            Ok(Box::new(SqliteMemoryStore::open(
+                &config.memory.sqlite_path,
+                Some(&key),
+            )?))
+        }
         "turso" => {
             #[cfg(feature = "memory-turso")]
             {

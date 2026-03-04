@@ -1,8 +1,9 @@
 use crate::security::redaction::redact_text;
 use crate::types::{
-    AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, HookEvent, HookFailureMode,
-    HookRiskTier, HookSink, MemoryEntry, MemoryStore, MetricsSink, Provider, ResearchTrigger, Tool,
-    ToolContext, UserMessage,
+    AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ConversationMessage,
+    HookEvent, HookFailureMode, HookRiskTier, HookSink, MemoryEntry, MemoryStore, MetricsSink,
+    Provider, ResearchTrigger, StopReason, Tool, ToolContext, ToolDefinition, ToolResultMessage,
+    UserMessage,
 };
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -67,6 +68,102 @@ fn parse_tool_calls(prompt: &str) -> Vec<(&str, &str)> {
         .collect()
 }
 
+/// If the JSON schema declares exactly one required string property, return its name.
+fn single_required_string_field(schema: &serde_json::Value) -> Option<String> {
+    let required = schema.get("required")?.as_array()?;
+    if required.len() != 1 {
+        return None;
+    }
+    let field_name = required[0].as_str()?;
+    let properties = schema.get("properties")?.as_object()?;
+    let field_schema = properties.get(field_name)?;
+    if field_schema.get("type")?.as_str()? == "string" {
+        Some(field_name.to_string())
+    } else {
+        None
+    }
+}
+
+/// Convert structured tool input (`Value`) to the `&str` format `Tool::execute()` expects.
+///
+/// - If the value is a bare JSON string, unwrap it.
+/// - If the tool schema has a single required string field, extract that field.
+/// - Otherwise, serialize to JSON string (for tools that parse JSON via `from_str`).
+fn prepare_tool_input(tool: &dyn Tool, raw_input: &serde_json::Value) -> String {
+    if let Some(s) = raw_input.as_str() {
+        return s.to_string();
+    }
+
+    if let Some(schema) = tool.input_schema() {
+        if let Some(field) = single_required_string_field(&schema) {
+            if let Some(val) = raw_input.get(&field).and_then(|v| v.as_str()) {
+                return val.to_string();
+            }
+        }
+    }
+
+    serde_json::to_string(raw_input).unwrap_or_default()
+}
+
+/// Truncate conversation messages to fit within a character budget.
+/// Preserves the first message (user request) and drops from the middle,
+/// keeping the most recent messages that fit.
+fn truncate_messages(messages: &mut Vec<ConversationMessage>, max_chars: usize) {
+    let total_chars: usize = messages.iter().map(|m| m.char_count()).sum();
+    if total_chars <= max_chars || messages.len() <= 2 {
+        return;
+    }
+
+    let first_cost = messages[0].char_count();
+    let mut budget = max_chars.saturating_sub(first_cost);
+
+    // Walk backward, accumulating messages that fit.
+    let mut keep_from_end = 0;
+    for msg in messages.iter().rev() {
+        let cost = msg.char_count();
+        if cost > budget {
+            break;
+        }
+        budget -= cost;
+        keep_from_end += 1;
+    }
+
+    if keep_from_end == 0 {
+        let last = messages.pop().unwrap();
+        messages.truncate(1);
+        messages.push(last);
+        return;
+    }
+
+    let split_point = messages.len() - keep_from_end;
+    if split_point <= 1 {
+        return;
+    }
+
+    messages.drain(1..split_point);
+}
+
+/// Convert recent memory entries to chronological `ConversationMessage` list.
+/// `memory.recent()` returns newest-first; this reverses to chronological order.
+fn memory_to_messages(entries: &[MemoryEntry]) -> Vec<ConversationMessage> {
+    entries
+        .iter()
+        .rev()
+        .map(|entry| {
+            if entry.role == "assistant" {
+                ConversationMessage::Assistant {
+                    content: Some(entry.content.clone()),
+                    tool_calls: vec![],
+                }
+            } else {
+                ConversationMessage::User {
+                    content: entry.content.clone(),
+                }
+            }
+        })
+        .collect()
+}
+
 pub struct Agent {
     config: AgentConfig,
     provider: Box<dyn Provider>,
@@ -108,6 +205,19 @@ impl Agent {
     pub fn with_metrics(mut self, metrics: Box<dyn MetricsSink>) -> Self {
         self.metrics = Some(metrics);
         self
+    }
+
+    /// Build tool definitions for all registered tools that have an input schema.
+    fn build_tool_definitions(&self) -> Vec<ToolDefinition> {
+        self.tools
+            .iter()
+            .filter_map(|tool| ToolDefinition::from_tool(&**tool))
+            .collect()
+    }
+
+    /// Check if any registered tools have schemas (can participate in structured tool use).
+    fn has_tool_definitions(&self) -> bool {
+        self.tools.iter().any(|t| t.input_schema().is_some())
     }
 
     async fn audit(&self, stage: &str, detail: serde_json::Value) {
@@ -567,6 +677,437 @@ impl Agent {
         Ok(findings.join("\n"))
     }
 
+    /// Structured tool use loop: LLM decides which tools to call, agent executes
+    /// them, feeds results back, and the LLM sees the results to decide next steps.
+    async fn respond_with_tools(
+        &self,
+        request_id: &str,
+        user_text: &str,
+        research_context: &str,
+        ctx: &ToolContext,
+    ) -> Result<AssistantMessage, AgentError> {
+        self.audit(
+            "structured_tool_use_start",
+            json!({
+                "request_id": request_id,
+                "max_tool_iterations": self.config.max_tool_iterations,
+            }),
+        )
+        .await;
+
+        let tool_definitions = self.build_tool_definitions();
+
+        // Load recent memory and convert to conversation messages.
+        let recent_memory = self
+            .memory
+            .recent(self.config.memory_window_size)
+            .await
+            .map_err(|source| AgentError::Memory { source })?;
+        self.audit(
+            "memory_recent_loaded",
+            json!({"request_id": request_id, "items": recent_memory.len()}),
+        )
+        .await;
+
+        let mut messages: Vec<ConversationMessage> = memory_to_messages(&recent_memory);
+
+        if !research_context.is_empty() {
+            messages.push(ConversationMessage::User {
+                content: format!("Research findings:\n{research_context}"),
+            });
+        }
+
+        messages.push(ConversationMessage::User {
+            content: user_text.to_string(),
+        });
+
+        let mut tool_history: Vec<(String, String, String)> = Vec::new();
+        let mut failure_streak: usize = 0;
+
+        for iteration in 0..self.config.max_tool_iterations {
+            truncate_messages(&mut messages, self.config.max_prompt_chars);
+
+            self.hook(
+                "before_provider_call",
+                json!({
+                    "request_id": request_id,
+                    "iteration": iteration,
+                    "message_count": messages.len(),
+                    "tool_count": tool_definitions.len(),
+                }),
+            )
+            .await?;
+            self.audit(
+                "provider_call_start",
+                json!({
+                    "request_id": request_id,
+                    "iteration": iteration,
+                    "message_count": messages.len(),
+                }),
+            )
+            .await;
+
+            let provider_started = Instant::now();
+            let chat_result = match self
+                .provider
+                .complete_with_tools(&messages, &tool_definitions, &self.config.reasoning)
+                .await
+            {
+                Ok(result) => result,
+                Err(source) => {
+                    self.observe_histogram(
+                        "provider_latency_ms",
+                        provider_started.elapsed().as_secs_f64() * 1000.0,
+                    );
+                    self.increment_counter("provider_errors_total");
+                    return Err(AgentError::Provider { source });
+                }
+            };
+            self.observe_histogram(
+                "provider_latency_ms",
+                provider_started.elapsed().as_secs_f64() * 1000.0,
+            );
+            info!(
+                request_id = %request_id,
+                iteration = iteration,
+                stop_reason = ?chat_result.stop_reason,
+                tool_calls = chat_result.tool_calls.len(),
+                "structured provider call finished"
+            );
+            self.hook(
+                "after_provider_call",
+                json!({
+                    "request_id": request_id,
+                    "iteration": iteration,
+                    "response_len": chat_result.output_text.len(),
+                    "tool_calls": chat_result.tool_calls.len(),
+                    "status": "ok",
+                }),
+            )
+            .await?;
+
+            // No tool calls or EndTurn → return final response.
+            if chat_result.tool_calls.is_empty()
+                || chat_result.stop_reason == Some(StopReason::EndTurn)
+            {
+                let response_text = chat_result.output_text;
+                self.write_to_memory("assistant", &response_text, request_id)
+                    .await?;
+                self.audit("respond_success", json!({"request_id": request_id}))
+                    .await;
+                self.hook(
+                    "before_response_emit",
+                    json!({"request_id": request_id, "response_len": response_text.len()}),
+                )
+                .await?;
+                let response = AssistantMessage {
+                    text: response_text,
+                };
+                self.hook(
+                    "after_response_emit",
+                    json!({"request_id": request_id, "response_len": response.text.len()}),
+                )
+                .await?;
+                return Ok(response);
+            }
+
+            // Record assistant message with tool calls in conversation history.
+            messages.push(ConversationMessage::Assistant {
+                content: if chat_result.output_text.is_empty() {
+                    None
+                } else {
+                    Some(chat_result.output_text.clone())
+                },
+                tool_calls: chat_result.tool_calls.clone(),
+            });
+
+            // Execute tool calls.
+            let tool_calls = &chat_result.tool_calls;
+            let has_gated = tool_calls
+                .iter()
+                .any(|tc| self.config.gated_tools.contains(&tc.name));
+            let use_parallel = self.config.parallel_tools && tool_calls.len() > 1 && !has_gated;
+
+            let mut tool_results: Vec<ToolResultMessage> = Vec::new();
+
+            if use_parallel {
+                let futs: Vec<_> = tool_calls
+                    .iter()
+                    .map(|tc| {
+                        let tool = self.tools.iter().find(|t| t.name() == tc.name);
+                        async move {
+                            match tool {
+                                Some(tool) => {
+                                    let input_str = prepare_tool_input(&**tool, &tc.input);
+                                    match tool.execute(&input_str, ctx).await {
+                                        Ok(result) => (
+                                            tc.name.clone(),
+                                            input_str,
+                                            ToolResultMessage {
+                                                tool_use_id: tc.id.clone(),
+                                                content: result.output,
+                                                is_error: false,
+                                            },
+                                        ),
+                                        Err(e) => (
+                                            tc.name.clone(),
+                                            input_str,
+                                            ToolResultMessage {
+                                                tool_use_id: tc.id.clone(),
+                                                content: format!("Error: {e}"),
+                                                is_error: true,
+                                            },
+                                        ),
+                                    }
+                                }
+                                None => (
+                                    tc.name.clone(),
+                                    String::new(),
+                                    ToolResultMessage {
+                                        tool_use_id: tc.id.clone(),
+                                        content: format!("Tool '{}' not found", tc.name),
+                                        is_error: true,
+                                    },
+                                ),
+                            }
+                        }
+                    })
+                    .collect();
+                let results = futures_util::future::join_all(futs).await;
+                for (name, input_str, result_msg) in results {
+                    if result_msg.is_error {
+                        failure_streak += 1;
+                    } else {
+                        failure_streak = 0;
+                        tool_history.push((name, input_str, result_msg.content.clone()));
+                    }
+                    tool_results.push(result_msg);
+                }
+            } else {
+                // Sequential execution.
+                for tc in tool_calls {
+                    let result_msg = match self.tools.iter().find(|t| t.name() == tc.name) {
+                        Some(tool) => {
+                            let input_str = prepare_tool_input(&**tool, &tc.input);
+                            self.audit(
+                                "tool_requested",
+                                json!({
+                                    "request_id": request_id,
+                                    "iteration": iteration,
+                                    "tool_name": tc.name,
+                                    "tool_input_len": input_str.len(),
+                                }),
+                            )
+                            .await;
+
+                            match self
+                                .execute_tool(
+                                    &**tool, &tc.name, &input_str, ctx, request_id, iteration,
+                                )
+                                .await
+                            {
+                                Ok(result) => {
+                                    failure_streak = 0;
+                                    tool_history.push((
+                                        tc.name.clone(),
+                                        input_str,
+                                        result.output.clone(),
+                                    ));
+                                    ToolResultMessage {
+                                        tool_use_id: tc.id.clone(),
+                                        content: result.output,
+                                        is_error: false,
+                                    }
+                                }
+                                Err(e) => {
+                                    failure_streak += 1;
+                                    ToolResultMessage {
+                                        tool_use_id: tc.id.clone(),
+                                        content: format!("Error: {e}"),
+                                        is_error: true,
+                                    }
+                                }
+                            }
+                        }
+                        None => {
+                            self.audit(
+                                "tool_not_found",
+                                json!({
+                                    "request_id": request_id,
+                                    "iteration": iteration,
+                                    "tool_name": tc.name,
+                                }),
+                            )
+                            .await;
+                            failure_streak += 1;
+                            ToolResultMessage {
+                                tool_use_id: tc.id.clone(),
+                                content: format!(
+                                    "Tool '{}' not found. Available tools: {}",
+                                    tc.name,
+                                    tool_definitions
+                                        .iter()
+                                        .map(|d| d.name.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ),
+                                is_error: true,
+                            }
+                        }
+                    };
+                    tool_results.push(result_msg);
+                }
+            }
+
+            // Append tool results to conversation.
+            for result in &tool_results {
+                messages.push(ConversationMessage::ToolResult(result.clone()));
+            }
+
+            // Loop detection: no-progress.
+            if self.config.loop_detection_no_progress_threshold > 0 {
+                let threshold = self.config.loop_detection_no_progress_threshold;
+                if tool_history.len() >= threshold {
+                    let recent = &tool_history[tool_history.len() - threshold..];
+                    let all_same = recent.iter().all(|entry| {
+                        entry.0 == recent[0].0 && entry.1 == recent[0].1 && entry.2 == recent[0].2
+                    });
+                    if all_same {
+                        warn!(
+                            tool_name = recent[0].0,
+                            threshold, "structured loop detection: no-progress threshold reached"
+                        );
+                        self.audit(
+                            "loop_detection_no_progress",
+                            json!({
+                                "request_id": request_id,
+                                "tool_name": recent[0].0,
+                                "threshold": threshold,
+                            }),
+                        )
+                        .await;
+                        messages.push(ConversationMessage::User {
+                            content: format!(
+                                "SYSTEM NOTICE: Loop detected — the tool `{}` was called \
+                                 {} times with identical arguments and output. You are stuck \
+                                 in a loop. Stop calling this tool and try a different approach, \
+                                 or provide your best answer with the information you already have.",
+                                recent[0].0, threshold
+                            ),
+                        });
+                    }
+                }
+            }
+
+            // Loop detection: ping-pong.
+            if self.config.loop_detection_ping_pong_cycles > 0 {
+                let cycles = self.config.loop_detection_ping_pong_cycles;
+                let needed = cycles * 2;
+                if tool_history.len() >= needed {
+                    let recent = &tool_history[tool_history.len() - needed..];
+                    let is_ping_pong = (0..needed).all(|i| recent[i].0 == recent[i % 2].0)
+                        && recent[0].0 != recent[1].0;
+                    if is_ping_pong {
+                        warn!(
+                            tool_a = recent[0].0,
+                            tool_b = recent[1].0,
+                            cycles,
+                            "structured loop detection: ping-pong pattern detected"
+                        );
+                        self.audit(
+                            "loop_detection_ping_pong",
+                            json!({
+                                "request_id": request_id,
+                                "tool_a": recent[0].0,
+                                "tool_b": recent[1].0,
+                                "cycles": cycles,
+                            }),
+                        )
+                        .await;
+                        messages.push(ConversationMessage::User {
+                            content: format!(
+                                "SYSTEM NOTICE: Loop detected — tools `{}` and `{}` have been \
+                                 alternating for {} cycles in a ping-pong pattern. Stop this \
+                                 alternation and try a different approach, or provide your best \
+                                 answer with the information you already have.",
+                                recent[0].0, recent[1].0, cycles
+                            ),
+                        });
+                    }
+                }
+            }
+
+            // Failure streak detection.
+            if self.config.loop_detection_failure_streak > 0
+                && failure_streak >= self.config.loop_detection_failure_streak
+            {
+                warn!(
+                    failure_streak,
+                    "structured loop detection: consecutive failure streak"
+                );
+                self.audit(
+                    "loop_detection_failure_streak",
+                    json!({
+                        "request_id": request_id,
+                        "streak": failure_streak,
+                    }),
+                )
+                .await;
+                messages.push(ConversationMessage::User {
+                    content: format!(
+                        "SYSTEM NOTICE: {} consecutive tool calls have failed. \
+                         Stop calling tools and provide your best answer with \
+                         the information you already have.",
+                        failure_streak
+                    ),
+                });
+            }
+        }
+
+        // Max iterations reached — one final call without tools.
+        self.audit(
+            "structured_tool_use_max_iterations",
+            json!({
+                "request_id": request_id,
+                "max_tool_iterations": self.config.max_tool_iterations,
+            }),
+        )
+        .await;
+
+        messages.push(ConversationMessage::User {
+            content: "You have reached the maximum number of tool call iterations. \
+                      Please provide your best answer now without calling any more tools."
+                .to_string(),
+        });
+        truncate_messages(&mut messages, self.config.max_prompt_chars);
+
+        let final_result = self
+            .provider
+            .complete_with_tools(&messages, &[], &self.config.reasoning)
+            .await
+            .map_err(|source| AgentError::Provider { source })?;
+
+        let response_text = final_result.output_text;
+        self.write_to_memory("assistant", &response_text, request_id)
+            .await?;
+        self.audit("respond_success", json!({"request_id": request_id}))
+            .await;
+        self.hook(
+            "before_response_emit",
+            json!({"request_id": request_id, "response_len": response_text.len()}),
+        )
+        .await?;
+        let response = AssistantMessage {
+            text: response_text,
+        };
+        self.hook(
+            "after_response_emit",
+            json!({"request_id": request_id, "response_len": response.text.len()}),
+        )
+        .await?;
+        Ok(response)
+    }
+
     pub async fn respond(
         &self,
         user: UserMessage,
@@ -635,6 +1176,13 @@ impl Agent {
         } else {
             String::new()
         };
+
+        // Use structured tool dispatch when the model supports it and tools have schemas.
+        if self.config.model_supports_tool_use && self.has_tool_definitions() {
+            return self
+                .respond_with_tools(request_id, &user.text, &research_context, ctx)
+                .await;
+        }
 
         let mut prompt = user.text;
         let mut tool_history: Vec<(String, String, String)> = Vec::new();
@@ -895,6 +1443,7 @@ mod tests {
                 .push(prompt.to_string());
             Ok(ChatResult {
                 output_text: self.response_text.clone(),
+                ..Default::default()
             })
         }
     }
@@ -959,6 +1508,7 @@ mod tests {
             sleep(Duration::from_millis(500)).await;
             Ok(ChatResult {
                 output_text: "late".to_string(),
+                ..Default::default()
             })
         }
     }
@@ -994,6 +1544,7 @@ mod tests {
             };
             Ok(ChatResult {
                 output_text: response,
+                ..Default::default()
             })
         }
     }
@@ -2395,6 +2946,7 @@ mod tests {
                 .push(ReasoningConfig::default());
             Ok(ChatResult {
                 output_text: self.response_text.clone(),
+                ..Default::default()
             })
         }
 
@@ -2409,6 +2961,7 @@ mod tests {
                 .push(reasoning.clone());
             Ok(ChatResult {
                 output_text: self.response_text.clone(),
+                ..Default::default()
             })
         }
     }
@@ -2489,5 +3042,738 @@ mod tests {
             "disabled reasoning should still be passed to provider"
         );
         assert_eq!(configs[0].level, None);
+    }
+
+    // --- Structured tool use test infrastructure ---
+
+    struct StructuredProvider {
+        responses: Vec<ChatResult>,
+        call_count: AtomicUsize,
+        received_messages: Arc<Mutex<Vec<Vec<ConversationMessage>>>>,
+    }
+
+    impl StructuredProvider {
+        fn new(responses: Vec<ChatResult>) -> Self {
+            Self {
+                responses,
+                call_count: AtomicUsize::new(0),
+                received_messages: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for StructuredProvider {
+        async fn complete(&self, _prompt: &str) -> anyhow::Result<ChatResult> {
+            let idx = self.call_count.fetch_add(1, Ordering::Relaxed);
+            Ok(self.responses.get(idx).cloned().unwrap_or_default())
+        }
+
+        async fn complete_with_tools(
+            &self,
+            messages: &[ConversationMessage],
+            _tools: &[ToolDefinition],
+            _reasoning: &ReasoningConfig,
+        ) -> anyhow::Result<ChatResult> {
+            self.received_messages
+                .lock()
+                .expect("lock")
+                .push(messages.to_vec());
+            let idx = self.call_count.fetch_add(1, Ordering::Relaxed);
+            Ok(self.responses.get(idx).cloned().unwrap_or_default())
+        }
+    }
+
+    struct StructuredEchoTool;
+
+    #[async_trait]
+    impl Tool for StructuredEchoTool {
+        fn name(&self) -> &'static str {
+            "echo"
+        }
+        fn description(&self) -> &'static str {
+            "Echoes input back"
+        }
+        fn input_schema(&self) -> Option<serde_json::Value> {
+            Some(json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string", "description": "Text to echo" }
+                },
+                "required": ["text"]
+            }))
+        }
+        async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                output: format!("echoed:{input}"),
+            })
+        }
+    }
+
+    struct StructuredFailingTool;
+
+    #[async_trait]
+    impl Tool for StructuredFailingTool {
+        fn name(&self) -> &'static str {
+            "boom"
+        }
+        fn description(&self) -> &'static str {
+            "Always fails"
+        }
+        fn input_schema(&self) -> Option<serde_json::Value> {
+            Some(json!({
+                "type": "object",
+                "properties": {},
+            }))
+        }
+        async fn execute(&self, _input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+            Err(anyhow::anyhow!("tool exploded"))
+        }
+    }
+
+    struct StructuredUpperTool;
+
+    #[async_trait]
+    impl Tool for StructuredUpperTool {
+        fn name(&self) -> &'static str {
+            "upper"
+        }
+        fn description(&self) -> &'static str {
+            "Uppercases input"
+        }
+        fn input_schema(&self) -> Option<serde_json::Value> {
+            Some(json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string", "description": "Text to uppercase" }
+                },
+                "required": ["text"]
+            }))
+        }
+        async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                output: input.to_uppercase(),
+            })
+        }
+    }
+
+    use crate::types::ToolUseRequest;
+
+    // --- Structured tool use tests ---
+
+    #[tokio::test]
+    async fn structured_basic_tool_call_then_end_turn() {
+        let provider = StructuredProvider::new(vec![
+            ChatResult {
+                output_text: "Let me echo that.".to_string(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    input: json!({"text": "hello"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: "The echo returned: hello".to_string(),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+        let received = provider.received_messages.clone();
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "echo hello".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "The echo returned: hello");
+
+        // Verify the second call included tool results.
+        let msgs = received.lock().expect("lock");
+        assert_eq!(msgs.len(), 2, "provider should be called twice");
+        // Second call should have: [User, Assistant(tool_calls), ToolResult]
+        assert!(
+            msgs[1].len() >= 3,
+            "second call should have user + assistant + tool result"
+        );
+    }
+
+    #[tokio::test]
+    async fn structured_no_tool_calls_returns_immediately() {
+        let provider = StructuredProvider::new(vec![ChatResult {
+            output_text: "Hello! No tools needed.".to_string(),
+            tool_calls: vec![],
+            stop_reason: Some(StopReason::EndTurn),
+        }]);
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "hi".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "Hello! No tools needed.");
+    }
+
+    #[tokio::test]
+    async fn structured_tool_not_found_sends_error_result() {
+        let provider = StructuredProvider::new(vec![
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "nonexistent".to_string(),
+                    input: json!({}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: "I see the tool was not found.".to_string(),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+        let received = provider.received_messages.clone();
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "use nonexistent".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed, not abort");
+
+        assert_eq!(response.text, "I see the tool was not found.");
+
+        // Verify the error ToolResult was sent to provider.
+        let msgs = received.lock().expect("lock");
+        let last_call = &msgs[1];
+        let has_error_result = last_call.iter().any(|m| {
+            matches!(m, ConversationMessage::ToolResult(r) if r.is_error && r.content.contains("not found"))
+        });
+        assert!(has_error_result, "should include error ToolResult");
+    }
+
+    #[tokio::test]
+    async fn structured_tool_error_does_not_abort() {
+        let provider = StructuredProvider::new(vec![
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "boom".to_string(),
+                    input: json!({}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: "I handled the error gracefully.".to_string(),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredFailingTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "boom".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed, error becomes ToolResultMessage");
+
+        assert_eq!(response.text, "I handled the error gracefully.");
+    }
+
+    #[tokio::test]
+    async fn structured_multi_iteration_tool_calls() {
+        let provider = StructuredProvider::new(vec![
+            // First: call echo
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    input: json!({"text": "first"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            // Second: call echo again
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_2".to_string(),
+                    name: "echo".to_string(),
+                    input: json!({"text": "second"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            // Third: final answer
+            ChatResult {
+                output_text: "Done with two tool calls.".to_string(),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+        let received = provider.received_messages.clone();
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "echo twice".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "Done with two tool calls.");
+        let msgs = received.lock().expect("lock");
+        assert_eq!(msgs.len(), 3, "three provider calls");
+    }
+
+    #[tokio::test]
+    async fn structured_max_iterations_forces_final_answer() {
+        // Provider always asks for tools — should hit max iterations.
+        // With max_tool_iterations = 3, the loop runs 3 times, then
+        // one final call is made outside the loop = 4 provider calls total.
+        let responses = vec![
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_0".to_string(),
+                    name: "echo".to_string(),
+                    input: json!({"text": "loop"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    input: json!({"text": "loop"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_2".to_string(),
+                    name: "echo".to_string(),
+                    input: json!({"text": "loop"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            // 4th call: forced final answer (after max iterations).
+            ChatResult {
+                output_text: "Forced final answer.".to_string(),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ];
+
+        let agent = Agent::new(
+            AgentConfig {
+                max_tool_iterations: 3,
+                loop_detection_no_progress_threshold: 0, // disable to test max iter
+                ..AgentConfig::default()
+            },
+            Box::new(StructuredProvider::new(responses)),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "loop forever".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed with forced answer");
+
+        assert_eq!(response.text, "Forced final answer.");
+    }
+
+    #[tokio::test]
+    async fn structured_fallback_to_text_when_disabled() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "text path used".to_string(),
+        };
+
+        let agent = Agent::new(
+            AgentConfig {
+                model_supports_tool_use: false,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "hello".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "text path used");
+    }
+
+    #[tokio::test]
+    async fn structured_fallback_when_no_tool_schemas() {
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = TestProvider {
+            received_prompts: prompts.clone(),
+            response_text: "text path used".to_string(),
+        };
+
+        // EchoTool has no input_schema, so no tool definitions → text path.
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "hello".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "text path used");
+    }
+
+    #[tokio::test]
+    async fn structured_parallel_tool_calls() {
+        let provider = StructuredProvider::new(vec![
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![
+                    ToolUseRequest {
+                        id: "call_1".to_string(),
+                        name: "echo".to_string(),
+                        input: json!({"text": "a"}),
+                    },
+                    ToolUseRequest {
+                        id: "call_2".to_string(),
+                        name: "upper".to_string(),
+                        input: json!({"text": "b"}),
+                    },
+                ],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: "Both tools ran.".to_string(),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+        let received = provider.received_messages.clone();
+
+        let agent = Agent::new(
+            AgentConfig {
+                parallel_tools: true,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool), Box::new(StructuredUpperTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "do both".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "Both tools ran.");
+
+        // Both tool results should be in the second call.
+        let msgs = received.lock().expect("lock");
+        let tool_results: Vec<_> = msgs[1]
+            .iter()
+            .filter(|m| matches!(m, ConversationMessage::ToolResult(_)))
+            .collect();
+        assert_eq!(tool_results.len(), 2, "should have two tool results");
+    }
+
+    #[tokio::test]
+    async fn structured_memory_integration() {
+        let memory = TestMemory::default();
+        // Pre-populate memory with a prior conversation.
+        memory
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: "old question".to_string(),
+            })
+            .await
+            .unwrap();
+        memory
+            .append(MemoryEntry {
+                role: "assistant".to_string(),
+                content: "old answer".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let provider = StructuredProvider::new(vec![ChatResult {
+            output_text: "I see your history.".to_string(),
+            tool_calls: vec![],
+            stop_reason: Some(StopReason::EndTurn),
+        }]);
+        let received = provider.received_messages.clone();
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(memory),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        agent
+            .respond(
+                UserMessage {
+                    text: "new question".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        let msgs = received.lock().expect("lock");
+        // Should have: [User("old question"), Assistant("old answer"), User("new question")]
+        // Plus the user message we write to memory before respond_with_tools runs.
+        assert!(msgs[0].len() >= 3, "should include memory messages");
+        // First message should be the oldest memory entry.
+        assert!(matches!(
+            &msgs[0][0],
+            ConversationMessage::User { content } if content == "old question"
+        ));
+    }
+
+    #[tokio::test]
+    async fn prepare_tool_input_extracts_single_string_field() {
+        let tool = StructuredEchoTool;
+        let input = json!({"text": "hello world"});
+        let result = prepare_tool_input(&tool, &input);
+        assert_eq!(result, "hello world");
+    }
+
+    #[tokio::test]
+    async fn prepare_tool_input_serializes_multi_field_json() {
+        // A tool with multiple required fields should serialize to JSON.
+        struct MultiFieldTool;
+        #[async_trait]
+        impl Tool for MultiFieldTool {
+            fn name(&self) -> &'static str {
+                "multi"
+            }
+            fn input_schema(&self) -> Option<serde_json::Value> {
+                Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "content": { "type": "string" }
+                    },
+                    "required": ["path", "content"]
+                }))
+            }
+            async fn execute(
+                &self,
+                _input: &str,
+                _ctx: &ToolContext,
+            ) -> anyhow::Result<ToolResult> {
+                unreachable!()
+            }
+        }
+
+        let tool = MultiFieldTool;
+        let input = json!({"path": "a.txt", "content": "hello"});
+        let result = prepare_tool_input(&tool, &input);
+        // Should be valid JSON.
+        let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid JSON");
+        assert_eq!(parsed["path"], "a.txt");
+        assert_eq!(parsed["content"], "hello");
+    }
+
+    #[tokio::test]
+    async fn prepare_tool_input_unwraps_bare_string() {
+        let tool = StructuredEchoTool;
+        let input = json!("plain text");
+        let result = prepare_tool_input(&tool, &input);
+        assert_eq!(result, "plain text");
+    }
+
+    #[test]
+    fn truncate_messages_preserves_small_conversation() {
+        let mut msgs = vec![
+            ConversationMessage::User {
+                content: "hello".to_string(),
+            },
+            ConversationMessage::Assistant {
+                content: Some("world".to_string()),
+                tool_calls: vec![],
+            },
+        ];
+        truncate_messages(&mut msgs, 1000);
+        assert_eq!(msgs.len(), 2, "should not truncate small conversation");
+    }
+
+    #[test]
+    fn truncate_messages_drops_middle() {
+        let mut msgs = vec![
+            ConversationMessage::User {
+                content: "A".repeat(100),
+            },
+            ConversationMessage::Assistant {
+                content: Some("B".repeat(100)),
+                tool_calls: vec![],
+            },
+            ConversationMessage::User {
+                content: "C".repeat(100),
+            },
+            ConversationMessage::Assistant {
+                content: Some("D".repeat(100)),
+                tool_calls: vec![],
+            },
+        ];
+        // Budget of 250 chars: first (100) + last (100) = 200 fits,
+        // but first + last two = 300 doesn't fit.
+        truncate_messages(&mut msgs, 250);
+        assert!(msgs.len() < 4, "should have dropped some messages");
+        // First message preserved.
+        assert!(matches!(
+            &msgs[0],
+            ConversationMessage::User { content } if content.starts_with("AAA")
+        ));
+    }
+
+    #[test]
+    fn memory_to_messages_reverses_order() {
+        let entries = vec![
+            MemoryEntry {
+                role: "assistant".to_string(),
+                content: "newest".to_string(),
+            },
+            MemoryEntry {
+                role: "user".to_string(),
+                content: "oldest".to_string(),
+            },
+        ];
+        let msgs = memory_to_messages(&entries);
+        assert_eq!(msgs.len(), 2);
+        assert!(matches!(
+            &msgs[0],
+            ConversationMessage::User { content } if content == "oldest"
+        ));
+        assert!(matches!(
+            &msgs[1],
+            ConversationMessage::Assistant { content: Some(c), .. } if c == "newest"
+        ));
+    }
+
+    #[test]
+    fn single_required_string_field_detects_single() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" }
+            },
+            "required": ["path"]
+        });
+        assert_eq!(
+            single_required_string_field(&schema),
+            Some("path".to_string())
+        );
+    }
+
+    #[test]
+    fn single_required_string_field_none_for_multiple() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" },
+                "mode": { "type": "string" }
+            },
+            "required": ["path", "mode"]
+        });
+        assert_eq!(single_required_string_field(&schema), None);
+    }
+
+    #[test]
+    fn single_required_string_field_none_for_non_string() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "count": { "type": "integer" }
+            },
+            "required": ["count"]
+        });
+        assert_eq!(single_required_string_field(&schema), None);
     }
 }

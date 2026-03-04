@@ -35,6 +35,7 @@ impl Provider for BenchProvider {
     async fn complete(&self, _prompt: &str) -> anyhow::Result<ChatResult> {
         Ok(ChatResult {
             output_text: self.response_text.clone(),
+            ..Default::default()
         })
     }
 }

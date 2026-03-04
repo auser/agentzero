@@ -281,6 +281,37 @@ pub enum Commands {
         #[command(subcommand)]
         command: TemplateCommands,
     },
+    /// Inspect registered tool definitions and schemas.
+    Tools {
+        #[command(subcommand)]
+        command: ToolsCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ToolsCommands {
+    /// List all registered tools with their descriptions.
+    List {
+        /// Show only tools that have JSON schemas.
+        #[arg(long)]
+        with_schema: bool,
+        /// Emit JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show detailed information about a specific tool.
+    Info {
+        /// Tool name (e.g. "read_file", "shell").
+        name: String,
+    },
+    /// Print the JSON schema for a specific tool.
+    Schema {
+        /// Tool name.
+        name: String,
+        /// Pretty-print the schema.
+        #[arg(long)]
+        pretty: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

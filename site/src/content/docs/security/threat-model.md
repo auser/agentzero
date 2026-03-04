@@ -87,3 +87,32 @@ Baseline version: `2026-02-27`
 - filesystem write disabled by default
 - bounded execution time and memory
 - Plugin preflight must reject capability or limit violations before execution.
+
+## Plugin System Threats (Sprint 20.6)
+
+The plugin system (`agentzero-plugins` crate) introduces additional attack surface. The detailed threat model is maintained in `docs/security/THREAT_MODEL.md` and covers:
+
+### Plugin Package Installation
+- **Path traversal via tar extraction** — Mitigated: entries containing `..`, absolute paths, or symlinks are rejected.
+- **Symlink entries** — Mitigated: all symlink and hard-link entry types rejected before content read.
+- **SHA-256 integrity** — Mitigated: WASM binary digest verified against manifest on install.
+- **Concurrent install/remove corruption** — Mitigated: exclusive file lock during operations.
+
+### Plugin Discovery and Loading
+- **Version comparison ordering** — Mitigated: `semver::Version` parsing with string fallback.
+- **Tier override priority** — Accepted risk: development plugins can override global (by design).
+
+### WASM Runtime Execution
+- **Sandbox escape** — Mitigated: Wasmtime/wasmi with restricted WASI capabilities.
+- **Resource exhaustion** — Mitigated: fuel metering and memory limits via `WasmIsolationPolicy`.
+- **Host function abuse** — Mitigated: `allowed_host_calls` manifest allowlist enforced at runtime.
+
+### Conversation Memory Encryption (Sprint 20.6 Phase 6)
+- **SQLite plaintext conversation history** — Mitigated: database encrypted at rest using SQLCipher (AES-256-CBC). Encryption key is the shared `StorageKey` (32 bytes) stored at `~/.agentzero/.agentzero-data.key` (mode 0600) or via `AGENTZERO_DATA_KEY` env var.
+- **Plaintext-to-encrypted migration** — Mitigated: auto-migration on first encrypted open via `sqlcipher_export`, atomic file swap.
+
+### Plugin State Persistence
+- **State file tampering** — Accepted risk: plugin metadata is non-sensitive (enabled/disabled, version). File permissions protect against external tampering.
+
+### Hot-Reload Watcher (Development)
+- **Rapid event flooding** — Mitigated: 200ms debounce window, only `.wasm` events processed.

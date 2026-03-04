@@ -5,7 +5,10 @@ use crate::transport::{
     map_status_error, parse_retry_after, read_response_body, should_retry_status,
     should_retry_transport, CircuitBreaker, TransportConfig, TransportError, TransportResponse,
 };
-use agentzero_core::{ChatResult, Provider, ReasoningConfig, StreamChunk};
+use agentzero_core::{
+    ChatResult, ConversationMessage, Provider, ReasoningConfig, StopReason, StreamChunk,
+    ToolCallDelta, ToolDefinition, ToolUseRequest,
+};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -160,6 +163,15 @@ struct MessagesRequest {
     thinking: Option<ThinkingConfig>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<AnthropicToolDef>>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicToolDef {
+    name: String,
+    description: String,
+    input_schema: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -243,11 +255,8 @@ enum ContentBlock {
     },
     #[serde(rename = "tool_use")]
     ToolUse {
-        #[allow(dead_code)]
         id: String,
-        #[allow(dead_code)]
         name: String,
-        #[allow(dead_code)]
         input: serde_json::Value,
     },
     #[serde(other)]
@@ -264,6 +273,109 @@ fn extract_text(response: &MessagesResponse) -> String {
         })
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn extract_tool_calls(response: &MessagesResponse) -> Vec<ToolUseRequest> {
+    response
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolUse { id, name, input } => Some(ToolUseRequest {
+                id: id.clone(),
+                name: name.clone(),
+                input: input.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn map_stop_reason(reason: Option<&str>) -> Option<StopReason> {
+    match reason {
+        Some("end_turn") => Some(StopReason::EndTurn),
+        Some("tool_use") => Some(StopReason::ToolUse),
+        Some("max_tokens") => Some(StopReason::MaxTokens),
+        Some("stop_sequence") => Some(StopReason::StopSequence),
+        Some(other) => Some(StopReason::Other(other.to_string())),
+        None => None,
+    }
+}
+
+fn parse_tool_response(body: &str) -> anyhow::Result<ChatResult> {
+    let response: MessagesResponse =
+        serde_json::from_str(body).context("failed to parse Anthropic response JSON")?;
+
+    if let Some(ref usage) = response.usage {
+        trace!(
+            input_tokens = usage.input_tokens,
+            output_tokens = usage.output_tokens,
+            stop_reason = response.stop_reason.as_deref().unwrap_or("none"),
+            "Anthropic tool response metadata"
+        );
+    }
+
+    let text = extract_text(&response);
+    let tool_calls = extract_tool_calls(&response);
+    let stop_reason = map_stop_reason(response.stop_reason.as_deref());
+
+    Ok(ChatResult {
+        output_text: text,
+        tool_calls,
+        stop_reason,
+    })
+}
+
+fn to_anthropic_tool(def: &ToolDefinition) -> AnthropicToolDef {
+    AnthropicToolDef {
+        name: def.name.clone(),
+        description: def.description.clone(),
+        input_schema: def.input_schema.clone(),
+    }
+}
+
+fn to_anthropic_messages(messages: &[ConversationMessage]) -> Vec<Message> {
+    messages
+        .iter()
+        .map(|msg| match msg {
+            ConversationMessage::User { content } => Message {
+                role: "user".to_string(),
+                content: MessageContent::Text(content.clone()),
+            },
+            ConversationMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                let mut blocks: Vec<InputContentBlock> = Vec::new();
+                if let Some(text) = content {
+                    if !text.is_empty() {
+                        blocks.push(InputContentBlock::Text { text: text.clone() });
+                    }
+                }
+                for tc in tool_calls {
+                    blocks.push(InputContentBlock::ToolUse {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        input: tc.input.clone(),
+                    });
+                }
+                Message {
+                    role: "assistant".to_string(),
+                    content: if blocks.is_empty() {
+                        MessageContent::Text(String::new())
+                    } else {
+                        MessageContent::Blocks(blocks)
+                    },
+                }
+            }
+            ConversationMessage::ToolResult(result) => Message {
+                role: "user".to_string(),
+                content: MessageContent::Blocks(vec![InputContentBlock::ToolResult {
+                    tool_use_id: result.tool_use_id.clone(),
+                    content: result.content.clone(),
+                }]),
+            },
+        })
+        .collect()
 }
 
 fn parse_output_text(body: &str) -> anyhow::Result<String> {
@@ -346,6 +458,7 @@ impl Provider for AnthropicProvider {
             system,
             thinking,
             stream: false,
+            tools: None,
         };
 
         log_request("anthropic", &url, &self.model);
@@ -382,7 +495,10 @@ impl Provider for AnthropicProvider {
                     self.circuit_breaker.record_success();
                     let output_text = parse_output_text(&response.body)
                         .with_context(|| "failed to parse Anthropic response".to_string())?;
-                    return Ok(ChatResult { output_text });
+                    return Ok(ChatResult {
+                        output_text,
+                        ..Default::default()
+                    });
                 }
                 Err(error) => {
                     self.circuit_breaker.record_failure().await;
@@ -420,6 +536,7 @@ impl Provider for AnthropicProvider {
             system,
             thinking: None,
             stream: true,
+            tools: None,
         };
 
         log_request("anthropic", &url, &self.model);
@@ -467,7 +584,11 @@ impl Provider for AnthropicProvider {
 
                 if let Some(delta) = parse_sse_text_delta(&event_block) {
                     accumulated.push_str(&delta);
-                    let _ = sender.send(StreamChunk { delta, done: false });
+                    let _ = sender.send(StreamChunk {
+                        delta,
+                        done: false,
+                        tool_call_delta: None,
+                    });
                 }
             }
         }
@@ -478,32 +599,429 @@ impl Provider for AnthropicProvider {
         let _ = sender.send(StreamChunk {
             delta: String::new(),
             done: true,
+            tool_call_delta: None,
         });
 
         Ok(ChatResult {
             output_text: accumulated,
+            ..Default::default()
+        })
+    }
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolDefinition],
+        reasoning: &ReasoningConfig,
+    ) -> anyhow::Result<ChatResult> {
+        self.circuit_breaker.check().await?;
+
+        let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
+
+        let thinking = match reasoning.enabled {
+            Some(true) => {
+                let budget = reasoning
+                    .level
+                    .as_deref()
+                    .and_then(|l| l.parse::<u32>().ok())
+                    .unwrap_or(10000);
+                Some(ThinkingConfig {
+                    kind: "enabled".to_string(),
+                    budget_tokens: budget,
+                })
+            }
+            _ => None,
+        };
+
+        let max_tokens = if thinking.is_some() {
+            thinking
+                .as_ref()
+                .map(|t| t.budget_tokens.saturating_add(DEFAULT_MAX_TOKENS))
+                .unwrap_or(DEFAULT_MAX_TOKENS)
+        } else {
+            DEFAULT_MAX_TOKENS
+        };
+
+        let anthropic_tools: Vec<AnthropicToolDef> = tools.iter().map(to_anthropic_tool).collect();
+
+        let payload = MessagesRequest {
+            model: self.model.clone(),
+            max_tokens,
+            messages: to_anthropic_messages(messages),
+            system: None,
+            thinking,
+            stream: false,
+            tools: if anthropic_tools.is_empty() {
+                None
+            } else {
+                Some(anthropic_tools)
+            },
+        };
+
+        log_request("anthropic", &url, &self.model);
+        let start = Instant::now();
+        let max_retries = self.config.max_retries;
+
+        let mut last_error: Option<anyhow::Error> = None;
+        for attempt in 0..max_retries {
+            match self.transport.send(&url, &self.api_key, &payload).await {
+                Ok(response) => {
+                    log_response(
+                        "anthropic",
+                        response.status,
+                        response.body.len(),
+                        start.elapsed(),
+                    );
+                    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
+                    if !status.is_success() {
+                        self.circuit_breaker.record_failure().await;
+                        let mapped = map_status_error(status, &response.body);
+                        if attempt + 1 < max_retries && should_retry_status(status) {
+                            log_retry("anthropic", attempt, &format!("status {}", response.status));
+                            sleep(
+                                parse_retry_after(&response.headers)
+                                    .unwrap_or_else(|| jittered_backoff(attempt)),
+                            )
+                            .await;
+                            last_error = Some(mapped);
+                            continue;
+                        }
+                        return Err(mapped);
+                    }
+
+                    self.circuit_breaker.record_success();
+                    return parse_tool_response(&response.body)
+                        .with_context(|| "failed to parse Anthropic tool response");
+                }
+                Err(error) => {
+                    self.circuit_breaker.record_failure().await;
+                    let mapped = anyhow!("provider request failed: {}", error.message);
+                    if attempt + 1 < max_retries && should_retry_transport(error.kind) {
+                        log_retry("anthropic", attempt, &error.message);
+                        sleep(jittered_backoff(attempt)).await;
+                        last_error = Some(mapped);
+                        continue;
+                    }
+                    return Err(mapped);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
+    }
+
+    async fn complete_streaming_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolDefinition],
+        reasoning: &ReasoningConfig,
+        sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+    ) -> anyhow::Result<ChatResult> {
+        self.circuit_breaker.check().await?;
+
+        let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
+
+        let thinking = match reasoning.enabled {
+            Some(true) => {
+                let budget = reasoning
+                    .level
+                    .as_deref()
+                    .and_then(|l| l.parse::<u32>().ok())
+                    .unwrap_or(10000);
+                Some(ThinkingConfig {
+                    kind: "enabled".to_string(),
+                    budget_tokens: budget,
+                })
+            }
+            _ => None,
+        };
+
+        let max_tokens = if thinking.is_some() {
+            thinking
+                .as_ref()
+                .map(|t| t.budget_tokens.saturating_add(DEFAULT_MAX_TOKENS))
+                .unwrap_or(DEFAULT_MAX_TOKENS)
+        } else {
+            DEFAULT_MAX_TOKENS
+        };
+
+        let anthropic_tools: Vec<AnthropicToolDef> = tools.iter().map(to_anthropic_tool).collect();
+
+        let payload = MessagesRequest {
+            model: self.model.clone(),
+            max_tokens,
+            messages: to_anthropic_messages(messages),
+            system: None,
+            thinking,
+            stream: true,
+            tools: if anthropic_tools.is_empty() {
+                None
+            } else {
+                Some(anthropic_tools)
+            },
+        };
+
+        log_request("anthropic", &url, &self.model);
+        let start = Instant::now();
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(self.config.timeout_ms))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        let response = match client
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("content-type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                self.circuit_breaker.record_failure().await;
+                return Err(anyhow!("streaming request failed: {e}"));
+            }
+        };
+
+        if !response.status().is_success() {
+            self.circuit_breaker.record_failure().await;
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(map_status_error(status, &body));
+        }
+
+        let mut byte_stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut accumulated_text = String::new();
+
+        // Track in-flight tool calls by index.
+        struct ToolCallAccum {
+            id: String,
+            name: String,
+            arguments_json: String,
+        }
+        let mut tool_accumulators: Vec<(usize, ToolCallAccum)> = Vec::new();
+        let mut final_stop_reason: Option<String> = None;
+
+        while let Some(chunk_result) = byte_stream.next().await {
+            let bytes = chunk_result.context("error reading SSE chunk")?;
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+            while let Some(event_end) = buffer.find("\n\n") {
+                let event_block = buffer[..event_end].to_string();
+                buffer = buffer[event_end + 2..].to_string();
+
+                match parse_sse_event(&event_block) {
+                    SseEvent::TextDelta(text) => {
+                        accumulated_text.push_str(&text);
+                        let _ = sender.send(StreamChunk {
+                            delta: text,
+                            done: false,
+                            tool_call_delta: None,
+                        });
+                    }
+                    SseEvent::ToolUseStart { index, id, name } => {
+                        let _ = sender.send(StreamChunk {
+                            delta: String::new(),
+                            done: false,
+                            tool_call_delta: Some(ToolCallDelta {
+                                index,
+                                id: Some(id.clone()),
+                                name: Some(name.clone()),
+                                arguments_delta: String::new(),
+                            }),
+                        });
+                        tool_accumulators.push((
+                            index,
+                            ToolCallAccum {
+                                id,
+                                name,
+                                arguments_json: String::new(),
+                            },
+                        ));
+                    }
+                    SseEvent::ToolUseInputDelta { index, delta } => {
+                        if let Some((_, accum)) =
+                            tool_accumulators.iter_mut().find(|(i, _)| *i == index)
+                        {
+                            accum.arguments_json.push_str(&delta);
+                        }
+                        let _ = sender.send(StreamChunk {
+                            delta: String::new(),
+                            done: false,
+                            tool_call_delta: Some(ToolCallDelta {
+                                index,
+                                id: None,
+                                name: None,
+                                arguments_delta: delta,
+                            }),
+                        });
+                    }
+                    SseEvent::ContentBlockStop { .. } => {}
+                    SseEvent::MessageDelta { stop_reason } => {
+                        final_stop_reason = stop_reason;
+                    }
+                    SseEvent::Other => {}
+                }
+            }
+        }
+
+        self.circuit_breaker.record_success();
+        log_response("anthropic", 200, accumulated_text.len(), start.elapsed());
+
+        // Build final tool calls from accumulators.
+        let tool_calls: Vec<ToolUseRequest> = tool_accumulators
+            .into_iter()
+            .map(|(_, accum)| {
+                let input = serde_json::from_str(&accum.arguments_json)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                ToolUseRequest {
+                    id: accum.id,
+                    name: accum.name,
+                    input,
+                }
+            })
+            .collect();
+
+        let stop_reason = map_stop_reason(final_stop_reason.as_deref());
+
+        let _ = sender.send(StreamChunk {
+            delta: String::new(),
+            done: true,
+            tool_call_delta: None,
+        });
+
+        Ok(ChatResult {
+            output_text: accumulated_text,
+            tool_calls,
+            stop_reason,
         })
     }
 }
 
-/// Parse a text delta from an Anthropic SSE event block.
-/// Anthropic SSE format: `event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}`
-fn parse_sse_text_delta(event_block: &str) -> Option<String> {
+/// Parsed SSE event from Anthropic streaming API.
+#[derive(Debug, PartialEq)]
+enum SseEvent {
+    /// Text delta from a `content_block_delta` with `text_delta` type.
+    TextDelta(String),
+    /// Start of a tool_use content block.
+    ToolUseStart {
+        index: usize,
+        id: String,
+        name: String,
+    },
+    /// Incremental JSON fragment for a tool_use input.
+    ToolUseInputDelta { index: usize, delta: String },
+    /// End of a content block.
+    ContentBlockStop { index: usize },
+    /// Final message delta with stop_reason.
+    MessageDelta { stop_reason: Option<String> },
+    /// Event we don't need to act on.
+    Other,
+}
+
+/// Parse an Anthropic SSE event block into a structured `SseEvent`.
+fn parse_sse_event(event_block: &str) -> SseEvent {
+    let mut event_type = None;
     let mut data_line = None;
     for line in event_block.lines() {
-        if let Some(rest) = line.strip_prefix("data: ") {
+        if let Some(rest) = line.strip_prefix("event: ") {
+            event_type = Some(rest.trim());
+        } else if let Some(rest) = line.strip_prefix("data: ") {
             data_line = Some(rest);
         }
     }
-    let data = data_line?;
-    let value: serde_json::Value = serde_json::from_str(data).ok()?;
-    if value.get("type")?.as_str()? == "content_block_delta" {
-        let delta = value.get("delta")?;
-        if delta.get("type")?.as_str()? == "text_delta" {
-            return delta.get("text")?.as_str().map(|s| s.to_string());
+
+    let data = match data_line {
+        Some(d) => d,
+        None => return SseEvent::Other,
+    };
+
+    let value: serde_json::Value = match serde_json::from_str(data) {
+        Ok(v) => v,
+        Err(_) => return SseEvent::Other,
+    };
+
+    match event_type {
+        Some("content_block_start") => {
+            let index = value.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if let Some(block) = value.get("content_block") {
+                if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                    let id = block
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let name = block
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    return SseEvent::ToolUseStart { index, id, name };
+                }
+            }
+            SseEvent::Other
+        }
+        Some("content_block_delta") => {
+            let index = value.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if let Some(delta) = value.get("delta") {
+                match delta.get("type").and_then(|v| v.as_str()) {
+                    Some("text_delta") => {
+                        if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                            return SseEvent::TextDelta(text.to_string());
+                        }
+                    }
+                    Some("input_json_delta") => {
+                        if let Some(partial) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                            return SseEvent::ToolUseInputDelta {
+                                index,
+                                delta: partial.to_string(),
+                            };
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            SseEvent::Other
+        }
+        Some("content_block_stop") => {
+            let index = value.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            SseEvent::ContentBlockStop { index }
+        }
+        Some("message_delta") => {
+            let stop_reason = value
+                .get("delta")
+                .and_then(|d| d.get("stop_reason"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            SseEvent::MessageDelta { stop_reason }
+        }
+        _ => {
+            // Fallback: try the old content_block_delta parse for events without event: prefix
+            if let Some(event_type_field) = value.get("type").and_then(|v| v.as_str()) {
+                if event_type_field == "content_block_delta" {
+                    if let Some(delta) = value.get("delta") {
+                        if delta.get("type").and_then(|v| v.as_str()) == Some("text_delta") {
+                            if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                                return SseEvent::TextDelta(text.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            SseEvent::Other
         }
     }
-    None
+}
+
+/// Parse a text delta from an Anthropic SSE event block (legacy wrapper).
+fn parse_sse_text_delta(event_block: &str) -> Option<String> {
+    match parse_sse_event(event_block) {
+        SseEvent::TextDelta(text) => Some(text),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1005,6 +1523,7 @@ mod tests {
             system: None,
             thinking: None,
             stream: true,
+            tools: None,
         };
         let json = serde_json::to_value(&req).expect("should serialize");
         assert_eq!(json["stream"], true);
@@ -1019,8 +1538,332 @@ mod tests {
             system: None,
             thinking: None,
             stream: false,
+            tools: None,
         };
         let json = serde_json::to_value(&req).expect("should serialize");
         assert!(json.get("stream").is_none());
+    }
+
+    // --- Tool use conversion & parsing ---
+
+    #[test]
+    fn to_anthropic_tool_produces_correct_shape() {
+        let def = ToolDefinition {
+            name: "read_file".to_string(),
+            description: "Read file contents".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }),
+        };
+        let tool = to_anthropic_tool(&def);
+        let json = serde_json::to_value(&tool).expect("should serialize");
+        assert_eq!(json["name"], "read_file");
+        assert_eq!(json["description"], "Read file contents");
+        assert_eq!(json["input_schema"]["type"], "object");
+    }
+
+    #[test]
+    fn to_anthropic_messages_maps_all_variants() {
+        use agentzero_core::{ConversationMessage, ToolResultMessage, ToolUseRequest};
+
+        let messages = vec![
+            ConversationMessage::User {
+                content: "Use the tool.".to_string(),
+            },
+            ConversationMessage::Assistant {
+                content: Some("Sure, calling read_file.".to_string()),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "read_file".to_string(),
+                    input: serde_json::json!({"path": "/tmp/test"}),
+                }],
+            },
+            ConversationMessage::ToolResult(ToolResultMessage {
+                tool_use_id: "call_1".to_string(),
+                content: "file contents".to_string(),
+                is_error: false,
+            }),
+        ];
+
+        let result = to_anthropic_messages(&messages);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].role, "user");
+        assert_eq!(result[1].role, "assistant");
+        assert_eq!(result[2].role, "user"); // tool results sent as user messages in Anthropic
+    }
+
+    #[test]
+    fn parse_tool_response_text_only() {
+        let body = r#"{
+            "content": [{"type": "text", "text": "Hello world"}],
+            "stop_reason": "end_turn"
+        }"#;
+        let result = parse_tool_response(body).expect("should parse");
+        assert_eq!(result.output_text, "Hello world");
+        assert!(result.tool_calls.is_empty());
+        assert_eq!(result.stop_reason, Some(StopReason::EndTurn));
+    }
+
+    #[test]
+    fn parse_tool_response_with_tool_use() {
+        let body = r#"{
+            "content": [
+                {"type": "text", "text": "Let me search."},
+                {"type": "tool_use", "id": "tu_1", "name": "web_search", "input": {"query": "rust"}}
+            ],
+            "stop_reason": "tool_use"
+        }"#;
+        let result = parse_tool_response(body).expect("should parse");
+        assert_eq!(result.output_text, "Let me search.");
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "tu_1");
+        assert_eq!(result.tool_calls[0].name, "web_search");
+        assert_eq!(result.tool_calls[0].input["query"], "rust");
+        assert_eq!(result.stop_reason, Some(StopReason::ToolUse));
+    }
+
+    #[test]
+    fn parse_tool_response_only_tool_use_no_text() {
+        let body = r#"{
+            "content": [
+                {"type": "tool_use", "id": "tu_1", "name": "shell", "input": {"command": "ls"}}
+            ],
+            "stop_reason": "tool_use"
+        }"#;
+        let result = parse_tool_response(body).expect("should parse");
+        assert!(result.output_text.is_empty());
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.stop_reason, Some(StopReason::ToolUse));
+    }
+
+    #[test]
+    fn parse_tool_response_max_tokens() {
+        let body = r#"{
+            "content": [{"type": "text", "text": "partial..."}],
+            "stop_reason": "max_tokens"
+        }"#;
+        let result = parse_tool_response(body).expect("should parse");
+        assert_eq!(result.stop_reason, Some(StopReason::MaxTokens));
+    }
+
+    #[test]
+    fn map_stop_reason_handles_all_variants() {
+        assert_eq!(map_stop_reason(Some("end_turn")), Some(StopReason::EndTurn));
+        assert_eq!(map_stop_reason(Some("tool_use")), Some(StopReason::ToolUse));
+        assert_eq!(
+            map_stop_reason(Some("max_tokens")),
+            Some(StopReason::MaxTokens)
+        );
+        assert_eq!(
+            map_stop_reason(Some("stop_sequence")),
+            Some(StopReason::StopSequence)
+        );
+        assert_eq!(
+            map_stop_reason(Some("custom")),
+            Some(StopReason::Other("custom".to_string()))
+        );
+        assert_eq!(map_stop_reason(None), None);
+    }
+
+    #[test]
+    fn request_includes_tools_when_present() {
+        let tools = vec![AnthropicToolDef {
+            name: "test".to_string(),
+            description: "A test tool".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let req = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 1024,
+            messages: vec![],
+            system: None,
+            thinking: None,
+            stream: false,
+            tools: Some(tools),
+        };
+        let json = serde_json::to_value(&req).expect("should serialize");
+        let tools_arr = json["tools"].as_array().expect("tools should be array");
+        assert_eq!(tools_arr.len(), 1);
+        assert_eq!(tools_arr[0]["name"], "test");
+    }
+
+    #[test]
+    fn request_omits_tools_when_none() {
+        let req = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 1024,
+            messages: vec![],
+            system: None,
+            thinking: None,
+            stream: false,
+            tools: None,
+        };
+        let json = serde_json::to_value(&req).expect("should serialize");
+        assert!(json.get("tools").is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_with_tools_returns_tool_calls() {
+        let body = r#"{
+            "content": [
+                {"type": "text", "text": "Searching..."},
+                {"type": "tool_use", "id": "tu_1", "name": "web_search", "input": {"q": "rust"}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 100, "output_tokens": 50}
+        }"#;
+        let transport = Arc::new(ScriptedTransport::new(vec![ok_response(body)]));
+        let provider = AnthropicProvider::with_transport(
+            "https://example.invalid".to_string(),
+            "sk-test".to_string(),
+            "claude-sonnet-4-20250514".to_string(),
+            transport.clone(),
+        );
+
+        let messages = vec![ConversationMessage::User {
+            content: "Search for rust".to_string(),
+        }];
+        let tools = vec![ToolDefinition {
+            name: "web_search".to_string(),
+            description: "Search the web".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+
+        let result = provider
+            .complete_with_tools(&messages, &tools, &ReasoningConfig::default())
+            .await
+            .expect("should succeed");
+
+        assert_eq!(result.output_text, "Searching...");
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "web_search");
+        assert_eq!(result.stop_reason, Some(StopReason::ToolUse));
+    }
+
+    #[tokio::test]
+    async fn complete_with_tools_no_tool_calls() {
+        let body = r#"{
+            "content": [{"type": "text", "text": "No tools needed."}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5}
+        }"#;
+        let transport = Arc::new(ScriptedTransport::new(vec![ok_response(body)]));
+        let provider = AnthropicProvider::with_transport(
+            "https://example.invalid".to_string(),
+            "sk-test".to_string(),
+            "claude-sonnet-4-20250514".to_string(),
+            transport.clone(),
+        );
+
+        let messages = vec![ConversationMessage::User {
+            content: "Just chat".to_string(),
+        }];
+
+        let result = provider
+            .complete_with_tools(&messages, &[], &ReasoningConfig::default())
+            .await
+            .expect("should succeed");
+
+        assert_eq!(result.output_text, "No tools needed.");
+        assert!(result.tool_calls.is_empty());
+        assert_eq!(result.stop_reason, Some(StopReason::EndTurn));
+    }
+
+    // -----------------------------------------------------------------------
+    // SSE event parser tests (streaming tool use)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_sse_event_text_delta() {
+        let block = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}";
+        assert_eq!(
+            parse_sse_event(block),
+            SseEvent::TextDelta("Hello".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_sse_event_tool_use_start() {
+        let block = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01\",\"name\":\"read_file\"}}";
+        assert_eq!(
+            parse_sse_event(block),
+            SseEvent::ToolUseStart {
+                index: 1,
+                id: "toolu_01".to_string(),
+                name: "read_file".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_sse_event_input_json_delta() {
+        let block = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"\"}}";
+        assert_eq!(
+            parse_sse_event(block),
+            SseEvent::ToolUseInputDelta {
+                index: 1,
+                delta: "{\"path\":\"".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_sse_event_content_block_stop() {
+        let block =
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}";
+        assert_eq!(
+            parse_sse_event(block),
+            SseEvent::ContentBlockStop { index: 1 }
+        );
+    }
+
+    #[test]
+    fn parse_sse_event_message_delta_stop_reason() {
+        let block = "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":50}}";
+        assert_eq!(
+            parse_sse_event(block),
+            SseEvent::MessageDelta {
+                stop_reason: Some("tool_use".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_sse_event_message_delta_end_turn() {
+        let block = "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}";
+        assert_eq!(
+            parse_sse_event(block),
+            SseEvent::MessageDelta {
+                stop_reason: Some("end_turn".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_sse_event_unknown_returns_other() {
+        let block = "event: ping\ndata: {}";
+        assert_eq!(parse_sse_event(block), SseEvent::Other);
+    }
+
+    #[test]
+    fn parse_sse_event_no_data_returns_other() {
+        let block = "event: message_start";
+        assert_eq!(parse_sse_event(block), SseEvent::Other);
+    }
+
+    #[test]
+    fn parse_sse_text_delta_backward_compat() {
+        // The legacy wrapper should still work for text deltas without event: prefix
+        let block =
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"world\"}}";
+        assert_eq!(parse_sse_text_delta(block), Some("world".to_string()));
+    }
+
+    #[test]
+    fn parse_sse_text_delta_returns_none_for_tool_use() {
+        let block = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"shell\"}}";
+        assert_eq!(parse_sse_text_delta(block), None);
     }
 }

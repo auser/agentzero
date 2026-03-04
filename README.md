@@ -8,37 +8,24 @@ AgentZero is a lightweight, Rust-first agent runtime and CLI inspired by OpenCla
 - Keep the runtime minimal and understandable.
 - Prioritize safety: scoped tools, allowlists, auditability, and documented threat model.
 
-## Workspace layout
+## Workspace layout (16 crates)
 
 - `bin/agentzero`: thin binary entrypoint (`bins/cli.rs`) that calls `agentzero_cli::run()`
-- `crates/agentzero-cli`: CLI command parsing, dispatch, UX, and command implementations
-- `crates/agentzero-core`: core agent traits, orchestration, and shared domain types
+- `crates/agentzero-core`: core agent traits, orchestration, shared domain types, security policy, routing, delegation
 - `crates/agentzero-config`: typed config model, loader, and policy validation
-- `crates/agentzero-infra`: infrastructure adapters and tool wiring (currently transitional)
-- `crates/agentzero-memory`: unified memory backend crate (SQLite default + Turso/libsql via feature)
+- `crates/agentzero-storage`: encrypted persistence (XChaCha20Poly1305 JSON stores, SQLCipher memory, queues, key management)
 - `crates/agentzero-providers`: provider catalog and OpenAI-compatible provider implementation
-- `crates/agentzero-tools`: filesystem/shell tool implementations
+- `crates/agentzero-auth`: authentication profile management
+- `crates/agentzero-tools`: all tool implementations (filesystem, shell, web, media, cron, autonomy, hardware, skills)
+- `crates/agentzero-infra`: infrastructure adapters, runtime orchestration, and tool wiring
+- `crates/agentzero-channels`: channel backends (Nostr, iMessage) and leak-guard
+- `crates/agentzero-plugins`: plugin lifecycle, WASM runtime (wasmi default, wasmtime via `wasm-jit`)
+- `crates/agentzero-plugin-sdk`: WASM plugin SDK for third-party plugin authors
 - `crates/agentzero-gateway`: HTTP gateway service
-- `crates/agentzero-daemon`: daemon runtime state + lifecycle
-- `crates/agentzero-service`: service lifecycle state and operations
-- `crates/agentzero-health`: shared health/freshness assessment utilities
-- `crates/agentzero-heartbeat`: encrypted heartbeat persistence for runtime components
-- `crates/agentzero-doctor`: diagnostics collection/report model for doctor command
-- `crates/agentzero-cron`: scheduled task state and lifecycle operations
-- `crates/agentzero-hooks`: hook state and control operations
-- `crates/agentzero-cost`: cost tracking domain primitives
-- `crates/agentzero-coordination`: runtime coordination domain primitives
-- `crates/agentzero-goals`: goals domain primitives
-- `crates/agentzero-plugins`: plugin lifecycle + WASM runtime scaffolding
-- `crates/agentzero-skills`: skills lifecycle with embedded skillforge + SOP functionality
-- `crates/agentzero-rag`: local retrieval index + ingest/query primitives
-- `crates/agentzero-multimodal`: shared media-kind inference primitives
-- `crates/agentzero-hardware`: hardware discovery/introspection primitives
-- `crates/agentzero-peripherals`: peripheral registry lifecycle primitives
-- `crates/agentzero-security`: shared security policy + redaction utilities
-- `crates/agentzero-update`: migration + self-update flows and state model
+- `crates/agentzero-ffi`: C FFI bindings
+- `crates/agentzero-cli`: CLI command parsing, dispatch, UX, and all command implementations
+- `crates/agentzero-testkit`: shared test utilities
 - `crates/agentzero-bench`: criterion benchmark suite
-- `crates/agentzero-common`: common helpers/types
 
 ## Plugin packaging and install integrity
 
@@ -177,7 +164,7 @@ Config is resolved from typed defaults, file, dotenv/environment layers, and com
 
 ### SQLite (default)
 
-No extra feature flag required.
+No extra feature flag required. Conversation history is encrypted at rest using SQLCipher (AES-256-CBC). The encryption key is automatically generated and stored at `~/.agentzero/.agentzero-data.key`, or can be provided via the `AGENTZERO_DATA_KEY` environment variable. Existing plaintext databases are automatically migrated to encrypted format on first use.
 
 ### Turso (optional)
 
@@ -196,9 +183,11 @@ At runtime, set:
 ## Security posture
 
 - Tool access is scoped and allowlist-driven.
-- Redaction utilities are centralized in `agentzero-security`.
+- All persisted state uses encrypted storage (XChaCha20Poly1305 for JSON stores, SQLCipher for SQLite).
+- WASM plugins run in a sandboxed runtime with fuel metering, memory limits, and host-call allowlists.
 - Security requirements and threat model are tracked in:
-  - `docs/security/THREAT_MODEL.md`
+  - `docs/security/THREAT_MODEL.md` (detailed, per-threat entries with status and tests)
+  - `site/src/content/docs/security/threat-model.md` (user-facing documentation site)
   - `docs/security/DEPENDENCY_POLICY.md`
 
 ## Quality gates

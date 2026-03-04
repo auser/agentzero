@@ -32,6 +32,7 @@ pub mod service;
 pub mod skill;
 pub mod status;
 pub mod template;
+pub mod tools;
 pub mod tunnel;
 pub mod update;
 pub mod ux;

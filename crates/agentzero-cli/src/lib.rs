@@ -146,6 +146,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Peripheral { .. } => "peripheral",
         Commands::ProvidersQuota { .. } => "providers-quota",
         Commands::Template { .. } => "template",
+        Commands::Tools { .. } => "tools",
     }
 }
 

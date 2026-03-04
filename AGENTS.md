@@ -67,7 +67,7 @@ Project-level operating rules for all contributors and coding agents working in 
 ### 7) Security is P0 and blocks feature work
 - Security tasks in `Sprint 0` are highest priority and must be completed before non-critical expansion.
 - Any new feature that increases attack surface requires:
-- threat model update (`docs/security/THREAT_MODEL.md`)
+- threat model update in **both** `docs/security/THREAT_MODEL.md` and `site/src/content/docs/security/threat-model.md`
 - security tests (success + abuse/negative paths)
 - explicit policy checks (fail-closed behavior)
 - No merge for security-sensitive functionality without tests and policy enforcement.

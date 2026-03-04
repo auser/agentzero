@@ -3,6 +3,7 @@ use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_config::load as load_config;
 use agentzero_core::MemoryStore;
 use agentzero_storage::memory::SqliteMemoryStore;
+use agentzero_storage::StorageKey;
 use async_trait::async_trait;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -249,7 +250,16 @@ fn sqlite_conn_for_cli(ctx: &CommandContext) -> anyhow::Result<Connection> {
         fs::create_dir_all(parent)?;
     }
 
-    let conn = Connection::open(sqlite_path)?;
+    let conn = Connection::open(&sqlite_path)?;
+
+    let config_dir = ctx
+        .config_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let key = StorageKey::from_config_dir(config_dir)?;
+    let hex_key: String = key.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+    conn.execute_batch(&format!("PRAGMA key = \"x'{hex_key}'\""))?;
+
     ensure_memory_schema(&conn)?;
     Ok(conn)
 }
@@ -284,9 +294,15 @@ pub async fn build_memory_store(ctx: &CommandContext) -> anyhow::Result<Box<dyn 
     let backend = config.memory.backend;
 
     match backend.as_str() {
-        "sqlite" => Ok(Box::new(SqliteMemoryStore::open(
-            config.memory.sqlite_path,
-        )?)),
+        "sqlite" => {
+            let config_dir = ctx
+                .config_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let sqlite_path = resolve_sqlite_path(&ctx.config_path, &config.memory.sqlite_path);
+            let key = StorageKey::from_config_dir(config_dir)?;
+            Ok(Box::new(SqliteMemoryStore::open(sqlite_path, Some(&key))?))
+        }
         "turso" => build_turso_store().await,
         other => Err(anyhow::anyhow!(
             "unsupported AGENTZERO_MEMORY_BACKEND `{other}`; expected `sqlite` or `turso`"

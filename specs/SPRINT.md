@@ -124,6 +124,16 @@
 - [x] Create `docs/security/THREAT_MODEL.md` with plugin system threat model (Rule 7)
 - [x] **Rule 9 exception (documented):** `PluginState` uses direct `std::fs` JSON persistence instead of `agentzero-storage`. Plugin metadata (enabled/disabled, version, install source) is non-sensitive and does not warrant encryption-at-rest. Adding `agentzero-storage` as a dependency would tightly couple the plugin crate to the storage backend.
 
+### Phase 6: SQLite Conversation Memory Encryption — [x] DONE
+
+- [x] Switch `rusqlite` from `bundled` to `bundled-sqlcipher` (workspace Cargo.toml)
+- [x] Add `key: Option<&StorageKey>` parameter to `SqliteMemoryStore::open()` with `PRAGMA key`
+- [x] Auto-migrate existing plaintext databases via `sqlcipher_export` on first encrypted open
+- [x] Update runtime call site (`agentzero-infra/src/runtime.rs`) to pass `StorageKey`
+- [x] Update CLI call sites (`agentzero-cli/src/commands/memory.rs`) to pass `StorageKey`
+- [x] Tests: encrypted roundtrip, wrong key rejection, plaintext migration preserves data
+- [x] Update `THREAT_MODEL.md` with SQLite encryption entries (sections 5.1, 5.2)
+
 ---
 
 ## Sprint 20.7: wasmi Runtime Migration + Binary Slimming
@@ -172,42 +182,110 @@
 
 ---
 
-## Sprint 21: Structured Tool Use (Next)
+## Sprint 21: Structured Tool Use
 
 **Goal:** Wire tool schemas into provider API calls so LLMs use native tool-use/function-calling APIs instead of text-based `tool:name input` parsing.
 
 **Predecessor:** Sprint 20 (Plugin Architecture) added `description()` and `input_schema()` to all 50+ tools.
 
-### Phase 1: Provider Tool Definitions
+**Branch:** `refactor/crate-consolidation`
 
-- [ ] Add `ToolDefinition`, `ToolUseRequest`, `ToolResultMessage` to `core/src/types.rs`
-- [ ] Extend `Provider` trait with `complete_with_tools()` default method
-- [ ] Implement for `AnthropicProvider` (handle `stop_reason: "tool_use"`)
-- [ ] Implement for `OpenAiCompatibleProvider` (handle `finish_reason: "tool_calls"`)
+### Phase 1: Provider Tool Definitions — [x] DONE
 
-### Phase 2: Agent Loop — Structured Tool Dispatch
+- [x] Add `ToolDefinition`, `ToolUseRequest`, `ToolResultMessage`, `ConversationMessage`, `StopReason` to `core/src/types.rs`
+- [x] Extend `ChatResult` with `tool_calls` and `stop_reason` fields, derive `Default`
+- [x] Extend `Provider` trait with `complete_with_tools()` default method
+- [x] Implement for `AnthropicProvider` (handle `stop_reason: "tool_use"`)
+- [x] Implement for `OpenAiCompatibleProvider` (handle `finish_reason: "tool_calls"`)
+- [x] Update all `ChatResult` construction sites (10 locations across 5 crates)
+- [x] Update `core/src/lib.rs` re-exports
+- [x] Add comprehensive tests (core types + both providers)
 
-- [ ] Add `build_tool_definitions()` to Agent
-- [ ] Add `respond_with_tools()` path gated by `config.model_supports_tool_use`
-- [ ] Keep text-based `parse_tool_calls()` as fallback
-- [ ] Input validation against tool schemas
-- [ ] Parallel tool call support via native provider response
+### Phase 2: Agent Loop — Structured Tool Dispatch — [x] DONE
 
-### Phase 3: Conversation Message History
+- [x] Add `build_tool_definitions()` and `has_tool_definitions()` to Agent
+- [x] Add `respond_with_tools()` path gated by `config.model_supports_tool_use`
+- [x] Keep text-based `parse_tool_calls()` as fallback (no tools with schemas → text path)
+- [x] Add `prepare_tool_input()` — single-field extraction for plain-string tools, JSON serialization for complex tools
+- [x] Parallel tool call support via `config.parallel_tools` + gated tool fallback
+- [x] Loop detection: no-progress, ping-pong, failure streak (all reused from text path)
+- [x] Tool errors → `ToolResultMessage { is_error: true }` (LLM sees error and adapts, no abort)
+- [x] Add `ToolDefinition::from_tool()` helper
+- [x] Add 19 new tests (structured provider, echo/failing/upper tools, all paths covered)
 
-- [ ] Replace `prompt: String` accumulation with `messages: Vec<ConversationMessage>`
-- [ ] Memory integration for structured messages
-- [ ] Truncation preserves most recent tool interactions
+### Phase 3: Conversation Message History — [x] DONE
 
-### Phase 4: Streaming Tool Use
+- [x] Replace `prompt: String` accumulation with `messages: Vec<ConversationMessage>` in structured path
+- [x] Memory integration: `memory_to_messages()` converts recent memory to initial conversation context
+- [x] Add `ConversationMessage::char_count()` for truncation budgeting
+- [x] `truncate_messages()` preserves first user message + most recent messages, drops from middle
 
-- [ ] Anthropic SSE: `content_block_start/delta/stop` for tool_use blocks
-- [ ] OpenAI SSE: `tool_calls` field accumulation
-- [ ] Mixed text + tool_use streaming
+### Phase 4: Streaming Tool Use — [x] DONE
 
-### Phase 5: Schema Validation + Auto-Documentation
+- [x] `ToolCallDelta` struct + extended `StreamChunk` with `tool_call_delta` field
+- [x] `complete_streaming_with_tools()` added to Provider trait with default impl
+- [x] Anthropic SSE: `parse_sse_event()` → `SseEvent` enum (TextDelta, ToolUseStart, ToolUseInputDelta, ContentBlockStop, MessageDelta)
+- [x] Anthropic `complete_streaming_with_tools()` with tool call accumulation
+- [x] OpenAI SSE: `parse_openai_sse_event()` → `OpenAiSseEvent` enum (ContentDelta, ToolCallDelta, Finished, Done)
+- [x] OpenAI `complete_streaming_with_tools()` with tool call accumulation
+- [x] Backward-compatible `parse_sse_text_delta()` / `parse_openai_sse_delta()` wrappers
+- [x] 22 new SSE parser tests (10 Anthropic, 12 OpenAI)
 
-- [ ] Lightweight JSON Schema validator in `core/src/validation.rs`
-- [ ] `agentzero tools list/info/schema` CLI commands
+### Phase 5: Schema Validation + Auto-Documentation — [x] DONE
+
+- [x] Lightweight JSON Schema validator in `core/src/validation.rs` (type, required, properties, items, enum)
+- [x] 19 validation tests
+- [x] `agentzero tools list/info/schema` CLI commands
+- [x] `ToolsCommands` subcommand enum with `--with-schema`, `--json`, `--pretty` flags
+- [x] 2 CLI tool integration tests
+
+---
+
+## Sprint 22: Hardening, Coverage & Polish
+
+**Goal:** Fix correctness gaps from Sprint 21 (validation not wired, tools not registered), harden error handling, fill test coverage gaps, and polish config validation and documentation.
+
+**Branch:** `feat/plugins`
+
+### Phase 1: Wire Schema Validation into Tool Dispatch — [ ]
+
+- [ ] Re-export `validate_json` from `agentzero-core` top-level
+- [ ] Call `validate_json` in tool dispatch before `execute()` when a schema is present
+- [ ] Return `ToolResultMessage { is_error: true }` on validation failure
+- [ ] Tests: schema-violating input → error result
+
+### Phase 2: Register Missing Tools — [ ]
+
+- [ ] Add `enable_web_fetch`, `enable_url_validation`, `enable_agents_ipc` flags to `ToolSecurityPolicy`
+- [ ] Wire flags in `load_tool_security_policy()` from config
+- [ ] Register `WebFetchTool`, `UrlValidationTool`, `AgentsIpcTool` in `default_tools()`
+
+### Phase 3: Fix Tool Descriptions & Document CLI — [ ]
+
+- [ ] Fix `WasmTool::description()` — leak description string at init (same as `name`)
+- [ ] Fix `FfiTool::description()` — same pattern
+- [ ] Document `agentzero tools list/info/schema` in `site/src/content/docs/reference/commands.md`
+
+### Phase 4: Security & Config Hardening — [ ]
+
+- [ ] Fix dead config knobs: `context_aware_parsing`, `enable_composio`, `enable_pushover`, `require_first_visit_approval`
+- [ ] Replace 5 `eprintln!` in `wasm.rs` with `tracing::warn!`
+- [ ] Fix `model_supports_tool_use` default to `false` in `runtime.rs`
+- [ ] Replace unsafe `unwrap()` calls in `commands.rs`, `agent.rs`, `shell.rs`
+
+### Phase 5: Test Coverage — [ ]
+
+- [ ] Add tests for `wasm_bridge.rs` (`WasmTool::from_manifest()`, error paths)
+- [ ] Add tests for `runtime::parse_hook_mode()` (all branches + error)
+- [ ] Add gateway TCP-level integration test
+- [ ] Add full-loop agent integration test with a real tool
+
+### Phase 6: Polish — [ ]
+
+- [ ] Add config validation for `gateway.port`, `gateway.host`, `autonomy.level`, `observability.backend`, `channels_config.stream_mode`, `WasmSecurityConfig` enum strings, `circuit_breaker_threshold > 0`
+- [ ] Add `//!` module-level doc comments to 8 `lib.rs` files
+- [ ] Fix AGENTS.md Rule 12 doc path references (`tools-plugins.md` → `tools.md`, `gateway-api.md` → `gateway.md`)
+- [ ] Replace `fs2` with `fd-lock` in `agentzero-plugins`
+- [ ] Replace daemon `std::thread::sleep` with `tokio::time::sleep`
 
 Previous sprint archived to `specs/sprints/20-plugin-architecture.md`.

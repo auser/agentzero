@@ -48,6 +48,7 @@ impl Provider for StaticProvider {
     async fn complete(&self, _prompt: &str) -> anyhow::Result<ChatResult> {
         Ok(ChatResult {
             output_text: self.output_text.clone(),
+            ..Default::default()
         })
     }
 }

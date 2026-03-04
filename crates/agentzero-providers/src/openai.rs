@@ -3,7 +3,10 @@ use crate::transport::{
     parse_retry_after, should_retry_status, should_retry_transport, TransportError,
     TransportErrorKind, TransportResponse, MAX_ATTEMPTS,
 };
-use agentzero_core::{ChatResult, Provider, ReasoningConfig, StreamChunk};
+use agentzero_core::{
+    ChatResult, ConversationMessage, Provider, ReasoningConfig, StopReason, StreamChunk,
+    ToolCallDelta, ToolDefinition, ToolUseRequest,
+};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -130,12 +133,56 @@ struct ChatRequest {
     reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<OpenAiToolDef>>,
 }
 
 #[derive(Debug, Serialize)]
 struct Message {
     role: String,
-    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+impl Message {
+    fn user(content: String) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: Some(content),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiToolDef {
+    #[serde(rename = "type")]
+    kind: String,
+    function: OpenAiFunction,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiFunction {
+    name: String,
+    description: String,
+    parameters: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiToolCall {
+    id: String,
+    function: OpenAiFunctionCall,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiFunctionCall {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,11 +193,15 @@ struct ChatResponse {
 #[derive(Debug, Deserialize)]
 struct Choice {
     message: ResponseMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ResponseMessage {
     content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<OpenAiToolCall>>,
 }
 
 fn output_text_from_response(response: ChatResponse) -> String {
@@ -234,12 +285,10 @@ impl Provider for OpenAiCompatibleProvider {
         };
         let payload = ChatRequest {
             model: self.model.clone(),
-            messages: vec![Message {
-                role: "user".to_string(),
-                content: prompt.to_string(),
-            }],
+            messages: vec![Message::user(prompt.to_string())],
             reasoning_effort,
             stream: false,
+            tools: None,
         };
 
         log_request("openai-compat", &url, &self.model);
@@ -281,7 +330,10 @@ impl Provider for OpenAiCompatibleProvider {
 
                     let output_text = parse_output_text(&response.body)
                         .with_context(|| "failed to parse provider response".to_string())?;
-                    return Ok(ChatResult { output_text });
+                    return Ok(ChatResult {
+                        output_text,
+                        ..Default::default()
+                    });
                 }
                 Err(error) => {
                     let mapped = anyhow!("provider request failed: {}", error.message);
@@ -310,12 +362,10 @@ impl Provider for OpenAiCompatibleProvider {
         );
         let payload = ChatRequest {
             model: self.model.clone(),
-            messages: vec![Message {
-                role: "user".to_string(),
-                content: prompt.to_string(),
-            }],
+            messages: vec![Message::user(prompt.to_string())],
             reasoning_effort: None,
             stream: true,
+            tools: None,
         };
 
         log_request("openai-compat", &url, &self.model);
@@ -352,7 +402,11 @@ impl Provider for OpenAiCompatibleProvider {
 
                 if let Some(delta) = parse_openai_sse_delta(&event_block) {
                     accumulated.push_str(&delta);
-                    let _ = sender.send(StreamChunk { delta, done: false });
+                    let _ = sender.send(StreamChunk {
+                        delta,
+                        done: false,
+                        tool_call_delta: None,
+                    });
                 }
             }
         }
@@ -362,36 +416,453 @@ impl Provider for OpenAiCompatibleProvider {
         let _ = sender.send(StreamChunk {
             delta: String::new(),
             done: true,
+            tool_call_delta: None,
         });
 
         Ok(ChatResult {
             output_text: accumulated,
+            ..Default::default()
+        })
+    }
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolDefinition],
+        reasoning: &ReasoningConfig,
+    ) -> anyhow::Result<ChatResult> {
+        let url = format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        );
+        let reasoning_effort = match reasoning.enabled {
+            Some(false) => None,
+            _ => reasoning.level.clone(),
+        };
+
+        let openai_tools: Vec<OpenAiToolDef> = tools.iter().map(to_openai_tool).collect();
+
+        let payload = ChatRequest {
+            model: self.model.clone(),
+            messages: to_openai_messages(messages),
+            reasoning_effort,
+            stream: false,
+            tools: if openai_tools.is_empty() {
+                None
+            } else {
+                Some(openai_tools)
+            },
+        };
+
+        log_request("openai-compat", &url, &self.model);
+        let start = Instant::now();
+
+        let mut last_error: Option<anyhow::Error> = None;
+        for attempt in 0..MAX_ATTEMPTS {
+            match self
+                .transport
+                .send_chat(&url, &self.api_key, &payload)
+                .await
+            {
+                Ok(response) => {
+                    log_response(
+                        "openai-compat",
+                        response.status,
+                        response.body.len(),
+                        start.elapsed(),
+                    );
+                    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
+                    if !status.is_success() {
+                        let mapped = map_status_error(status, &response.body);
+                        if attempt + 1 < MAX_ATTEMPTS && should_retry_status(status) {
+                            log_retry(
+                                "openai-compat",
+                                attempt,
+                                &format!("status {}", response.status),
+                            );
+                            sleep(
+                                parse_retry_after(&response.headers)
+                                    .unwrap_or_else(|| jittered_backoff(attempt)),
+                            )
+                            .await;
+                            last_error = Some(mapped);
+                            continue;
+                        }
+                        return Err(mapped);
+                    }
+
+                    return parse_tool_chat_response(&response.body)
+                        .with_context(|| "failed to parse provider tool response");
+                }
+                Err(error) => {
+                    let mapped = anyhow!("provider request failed: {}", error.message);
+                    if attempt + 1 < MAX_ATTEMPTS && should_retry_transport(error.kind) {
+                        log_retry("openai-compat", attempt, &error.message);
+                        sleep(jittered_backoff(attempt)).await;
+                        last_error = Some(mapped);
+                        continue;
+                    }
+                    return Err(mapped);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
+    }
+
+    async fn complete_streaming_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolDefinition],
+        reasoning: &ReasoningConfig,
+        sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+    ) -> anyhow::Result<ChatResult> {
+        let url = format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        );
+        let reasoning_effort = match reasoning.enabled {
+            Some(false) => None,
+            _ => reasoning.level.clone(),
+        };
+        let openai_tools: Vec<OpenAiToolDef> = tools.iter().map(to_openai_tool).collect();
+
+        let payload = ChatRequest {
+            model: self.model.clone(),
+            messages: to_openai_messages(messages),
+            reasoning_effort,
+            stream: true,
+            tools: if openai_tools.is_empty() {
+                None
+            } else {
+                Some(openai_tools)
+            },
+        };
+
+        log_request("openai-compat", &url, &self.model);
+        let start = Instant::now();
+
+        let client = reqwest::Client::new();
+        let mut request = client.post(&url).json(&payload);
+        if !self.api_key.is_empty() {
+            request = request.bearer_auth(&self.api_key);
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| anyhow!("streaming request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(map_status_error(status, &body));
+        }
+
+        let mut byte_stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut accumulated_text = String::new();
+
+        // Track in-flight tool calls by index.
+        struct ToolCallAccum {
+            id: String,
+            name: String,
+            arguments_json: String,
+        }
+        let mut tool_accumulators: Vec<(usize, ToolCallAccum)> = Vec::new();
+        let mut final_finish_reason: Option<String> = None;
+
+        while let Some(chunk_result) = byte_stream.next().await {
+            let bytes = chunk_result.context("error reading SSE chunk")?;
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+            while let Some(event_end) = buffer.find("\n\n") {
+                let event_block = buffer[..event_end].to_string();
+                buffer = buffer[event_end + 2..].to_string();
+
+                match parse_openai_sse_event(&event_block) {
+                    OpenAiSseEvent::ContentDelta(text) => {
+                        accumulated_text.push_str(&text);
+                        let _ = sender.send(StreamChunk {
+                            delta: text,
+                            done: false,
+                            tool_call_delta: None,
+                        });
+                    }
+                    OpenAiSseEvent::ToolCallDelta {
+                        index,
+                        id,
+                        name,
+                        arguments,
+                    } => {
+                        // Find or create accumulator for this index.
+                        if !tool_accumulators.iter().any(|(i, _)| *i == index) {
+                            tool_accumulators.push((
+                                index,
+                                ToolCallAccum {
+                                    id: id.clone().unwrap_or_default(),
+                                    name: name.clone().unwrap_or_default(),
+                                    arguments_json: String::new(),
+                                },
+                            ));
+                        }
+                        if let Some((_, accum)) =
+                            tool_accumulators.iter_mut().find(|(i, _)| *i == index)
+                        {
+                            accum.arguments_json.push_str(&arguments);
+                        }
+                        let _ = sender.send(StreamChunk {
+                            delta: String::new(),
+                            done: false,
+                            tool_call_delta: Some(ToolCallDelta {
+                                index,
+                                id,
+                                name,
+                                arguments_delta: arguments,
+                            }),
+                        });
+                    }
+                    OpenAiSseEvent::Finished { finish_reason } => {
+                        final_finish_reason = finish_reason;
+                    }
+                    OpenAiSseEvent::Done | OpenAiSseEvent::Other => {}
+                }
+            }
+        }
+
+        log_response(
+            "openai-compat",
+            200,
+            accumulated_text.len(),
+            start.elapsed(),
+        );
+
+        // Build final tool calls from accumulators.
+        let tool_calls: Vec<ToolUseRequest> = tool_accumulators
+            .into_iter()
+            .map(|(_, accum)| {
+                let input = serde_json::from_str(&accum.arguments_json)
+                    .unwrap_or(Value::Object(serde_json::Map::new()));
+                ToolUseRequest {
+                    id: accum.id,
+                    name: accum.name,
+                    input,
+                }
+            })
+            .collect();
+
+        let stop_reason = map_openai_stop_reason(final_finish_reason.as_deref());
+
+        let _ = sender.send(StreamChunk {
+            delta: String::new(),
+            done: true,
+            tool_call_delta: None,
+        });
+
+        Ok(ChatResult {
+            output_text: accumulated_text,
+            tool_calls,
+            stop_reason,
         })
     }
 }
 
-/// Parse a content delta from an OpenAI-compatible SSE event block.
-/// Format: `data: {"choices":[{"delta":{"content":"..."}}]}` or `data: [DONE]`
-fn parse_openai_sse_delta(event_block: &str) -> Option<String> {
+fn to_openai_tool(def: &ToolDefinition) -> OpenAiToolDef {
+    OpenAiToolDef {
+        kind: "function".to_string(),
+        function: OpenAiFunction {
+            name: def.name.clone(),
+            description: def.description.clone(),
+            parameters: def.input_schema.clone(),
+        },
+    }
+}
+
+fn to_openai_messages(messages: &[ConversationMessage]) -> Vec<Message> {
+    messages
+        .iter()
+        .map(|msg| match msg {
+            ConversationMessage::User { content } => Message::user(content.clone()),
+            ConversationMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                let tc = if tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(
+                        tool_calls
+                            .iter()
+                            .map(|tc| {
+                                serde_json::json!({
+                                    "id": tc.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.name,
+                                        "arguments": tc.input.to_string(),
+                                    }
+                                })
+                            })
+                            .collect(),
+                    )
+                };
+                Message {
+                    role: "assistant".to_string(),
+                    content: content.clone(),
+                    tool_calls: tc,
+                    tool_call_id: None,
+                }
+            }
+            ConversationMessage::ToolResult(result) => Message {
+                role: "tool".to_string(),
+                content: Some(result.content.clone()),
+                tool_calls: None,
+                tool_call_id: Some(result.tool_use_id.clone()),
+            },
+        })
+        .collect()
+}
+
+fn map_openai_stop_reason(reason: Option<&str>) -> Option<StopReason> {
+    match reason {
+        Some("stop") => Some(StopReason::EndTurn),
+        Some("tool_calls") => Some(StopReason::ToolUse),
+        Some("length") => Some(StopReason::MaxTokens),
+        Some(other) => Some(StopReason::Other(other.to_string())),
+        None => None,
+    }
+}
+
+fn parse_tool_chat_response(body: &str) -> anyhow::Result<ChatResult> {
+    let response: ChatResponse =
+        serde_json::from_str(body).context("failed to parse OpenAI response JSON")?;
+
+    let choice = response.choices.first();
+    let output_text = choice
+        .and_then(|c| c.message.content.clone())
+        .unwrap_or_default();
+    let stop_reason = map_openai_stop_reason(choice.and_then(|c| c.finish_reason.as_deref()));
+
+    let tool_calls = choice
+        .and_then(|c| c.message.tool_calls.as_ref())
+        .map(|tcs| {
+            tcs.iter()
+                .map(|tc| {
+                    let input = serde_json::from_str(&tc.function.arguments)
+                        .unwrap_or(Value::String(tc.function.arguments.clone()));
+                    ToolUseRequest {
+                        id: tc.id.clone(),
+                        name: tc.function.name.clone(),
+                        input,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(ChatResult {
+        output_text,
+        tool_calls,
+        stop_reason,
+    })
+}
+
+/// Parsed SSE event from OpenAI-compatible streaming API.
+#[derive(Debug, PartialEq)]
+enum OpenAiSseEvent {
+    /// Text content delta.
+    ContentDelta(String),
+    /// Tool call delta (incremental id/name/arguments).
+    ToolCallDelta {
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        arguments: String,
+    },
+    /// Stream finished with a finish_reason.
+    Finished { finish_reason: Option<String> },
+    /// End-of-stream marker `[DONE]`.
+    Done,
+    /// Event we don't need to act on.
+    Other,
+}
+
+/// Parse an OpenAI-compatible SSE event block into a structured `OpenAiSseEvent`.
+fn parse_openai_sse_event(event_block: &str) -> OpenAiSseEvent {
     for line in event_block.lines() {
         if let Some(data) = line.strip_prefix("data: ") {
             if data.trim() == "[DONE]" {
-                return None;
+                return OpenAiSseEvent::Done;
             }
-            let value: serde_json::Value = serde_json::from_str(data).ok()?;
-            let delta = value
-                .get("choices")?
-                .as_array()?
-                .first()?
-                .get("delta")?
-                .get("content")?
-                .as_str()?;
-            if !delta.is_empty() {
-                return Some(delta.to_string());
+            let value: Value = match serde_json::from_str(data) {
+                Ok(v) => v,
+                Err(_) => return OpenAiSseEvent::Other,
+            };
+            let choice = match value
+                .get("choices")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+            {
+                Some(c) => c,
+                None => return OpenAiSseEvent::Other,
+            };
+
+            // Check finish_reason
+            let finish_reason = choice
+                .get("finish_reason")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            // Check for tool_calls delta
+            if let Some(delta) = choice.get("delta") {
+                if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                    // Return the first tool call delta (multiple may arrive but typically one per chunk)
+                    if let Some(tc) = tool_calls.first() {
+                        let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                        let id = tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let name = tc
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let arguments = tc
+                            .get("function")
+                            .and_then(|f| f.get("arguments"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        return OpenAiSseEvent::ToolCallDelta {
+                            index,
+                            id,
+                            name,
+                            arguments,
+                        };
+                    }
+                }
+
+                // Check for content delta
+                if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
+                    if !content.is_empty() {
+                        return OpenAiSseEvent::ContentDelta(content.to_string());
+                    }
+                }
+            }
+
+            // If finish_reason is set, return Finished
+            if finish_reason.is_some() {
+                return OpenAiSseEvent::Finished { finish_reason };
             }
         }
     }
-    None
+    OpenAiSseEvent::Other
+}
+
+/// Parse a content delta from an OpenAI-compatible SSE event block (legacy wrapper).
+fn parse_openai_sse_delta(event_block: &str) -> Option<String> {
+    match parse_openai_sse_event(event_block) {
+        OpenAiSseEvent::ContentDelta(text) => Some(text),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -836,6 +1307,7 @@ mod tests {
             messages: vec![],
             reasoning_effort: None,
             stream: true,
+            tools: None,
         };
         let json = serde_json::to_value(&req).expect("should serialize");
         assert_eq!(json["stream"], true);
@@ -848,8 +1320,351 @@ mod tests {
             messages: vec![],
             reasoning_effort: None,
             stream: false,
+            tools: None,
         };
         let json = serde_json::to_value(&req).expect("should serialize");
         assert!(json.get("stream").is_none());
+    }
+
+    // --- Tool use conversion & parsing ---
+
+    #[test]
+    fn to_openai_tool_produces_function_shape() {
+        let def = ToolDefinition {
+            name: "read_file".to_string(),
+            description: "Read a file".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } }
+            }),
+        };
+        let tool = to_openai_tool(&def);
+        let json = serde_json::to_value(&tool).expect("should serialize");
+        assert_eq!(json["type"], "function");
+        assert_eq!(json["function"]["name"], "read_file");
+        assert_eq!(json["function"]["description"], "Read a file");
+        assert_eq!(json["function"]["parameters"]["type"], "object");
+    }
+
+    #[test]
+    fn to_openai_messages_maps_all_variants() {
+        use agentzero_core::{ConversationMessage, ToolResultMessage, ToolUseRequest};
+
+        let messages = vec![
+            ConversationMessage::User {
+                content: "Use the tool.".to_string(),
+            },
+            ConversationMessage::Assistant {
+                content: Some("Calling tool.".to_string()),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "read_file".to_string(),
+                    input: serde_json::json!({"path": "/tmp/test"}),
+                }],
+            },
+            ConversationMessage::ToolResult(ToolResultMessage {
+                tool_use_id: "call_1".to_string(),
+                content: "file contents".to_string(),
+                is_error: false,
+            }),
+        ];
+
+        let result = to_openai_messages(&messages);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].role, "user");
+        assert_eq!(result[0].content.as_deref(), Some("Use the tool."));
+        assert_eq!(result[1].role, "assistant");
+        assert!(result[1].tool_calls.is_some());
+        assert_eq!(result[2].role, "tool");
+        assert_eq!(result[2].tool_call_id.as_deref(), Some("call_1"));
+    }
+
+    #[test]
+    fn map_openai_stop_reason_handles_variants() {
+        assert_eq!(
+            map_openai_stop_reason(Some("stop")),
+            Some(StopReason::EndTurn)
+        );
+        assert_eq!(
+            map_openai_stop_reason(Some("tool_calls")),
+            Some(StopReason::ToolUse)
+        );
+        assert_eq!(
+            map_openai_stop_reason(Some("length")),
+            Some(StopReason::MaxTokens)
+        );
+        assert_eq!(
+            map_openai_stop_reason(Some("custom")),
+            Some(StopReason::Other("custom".to_string()))
+        );
+        assert_eq!(map_openai_stop_reason(None), None);
+    }
+
+    #[test]
+    fn parse_tool_chat_response_text_only() {
+        let body = r#"{"choices":[{"message":{"content":"Hello"},"finish_reason":"stop"}]}"#;
+        let result = parse_tool_chat_response(body).expect("should parse");
+        assert_eq!(result.output_text, "Hello");
+        assert!(result.tool_calls.is_empty());
+        assert_eq!(result.stop_reason, Some(StopReason::EndTurn));
+    }
+
+    #[test]
+    fn parse_tool_chat_response_with_tool_calls() {
+        let body = r#"{"choices":[{
+            "message":{
+                "content":null,
+                "tool_calls":[{
+                    "id":"call_1",
+                    "type":"function",
+                    "function":{"name":"read_file","arguments":"{\"path\":\"/tmp/test\"}"}
+                }]
+            },
+            "finish_reason":"tool_calls"
+        }]}"#;
+        let result = parse_tool_chat_response(body).expect("should parse");
+        assert!(result.output_text.is_empty());
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "call_1");
+        assert_eq!(result.tool_calls[0].name, "read_file");
+        assert_eq!(result.tool_calls[0].input["path"], "/tmp/test");
+        assert_eq!(result.stop_reason, Some(StopReason::ToolUse));
+    }
+
+    #[test]
+    fn parse_tool_chat_response_invalid_json_arguments() {
+        let body = r#"{"choices":[{
+            "message":{
+                "content":null,
+                "tool_calls":[{
+                    "id":"call_1",
+                    "type":"function",
+                    "function":{"name":"test","arguments":"not valid json"}
+                }]
+            },
+            "finish_reason":"tool_calls"
+        }]}"#;
+        let result = parse_tool_chat_response(body).expect("should parse");
+        assert_eq!(result.tool_calls.len(), 1);
+        // Falls back to wrapping in a string Value
+        assert_eq!(
+            result.tool_calls[0].input,
+            Value::String("not valid json".to_string())
+        );
+    }
+
+    #[test]
+    fn request_includes_tools_when_present() {
+        let tools = vec![OpenAiToolDef {
+            kind: "function".to_string(),
+            function: OpenAiFunction {
+                name: "test".to_string(),
+                description: "A test".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            },
+        }];
+        let req = ChatRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![],
+            reasoning_effort: None,
+            stream: false,
+            tools: Some(tools),
+        };
+        let json = serde_json::to_value(&req).expect("should serialize");
+        let tools_arr = json["tools"].as_array().expect("tools should be array");
+        assert_eq!(tools_arr.len(), 1);
+        assert_eq!(tools_arr[0]["type"], "function");
+    }
+
+    #[test]
+    fn request_omits_tools_when_none() {
+        let req = ChatRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![],
+            reasoning_effort: None,
+            stream: false,
+            tools: None,
+        };
+        let json = serde_json::to_value(&req).expect("should serialize");
+        assert!(json.get("tools").is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_with_tools_returns_tool_calls() {
+        let body = r#"{"choices":[{
+            "message":{
+                "content":"I'll search for that.",
+                "tool_calls":[{
+                    "id":"call_abc",
+                    "type":"function",
+                    "function":{"name":"web_search","arguments":"{\"q\":\"rust\"}"}
+                }]
+            },
+            "finish_reason":"tool_calls"
+        }]}"#;
+        let transport = Arc::new(ScriptedTransport::new(vec![ok_response(body)]));
+        let provider = OpenAiCompatibleProvider::with_transport(
+            "https://example.invalid".to_string(),
+            "key".to_string(),
+            "model".to_string(),
+            transport.clone(),
+        );
+
+        let messages = vec![ConversationMessage::User {
+            content: "Search for rust".to_string(),
+        }];
+        let tools = vec![ToolDefinition {
+            name: "web_search".to_string(),
+            description: "Search the web".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+
+        let result = provider
+            .complete_with_tools(&messages, &tools, &ReasoningConfig::default())
+            .await
+            .expect("should succeed");
+
+        assert_eq!(result.output_text, "I'll search for that.");
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "web_search");
+        assert_eq!(result.stop_reason, Some(StopReason::ToolUse));
+    }
+
+    #[tokio::test]
+    async fn complete_with_tools_no_tool_calls() {
+        let transport = Arc::new(ScriptedTransport::new(vec![ok_response(
+            r#"{"choices":[{"message":{"content":"Just chat."},"finish_reason":"stop"}]}"#,
+        )]));
+        let provider = OpenAiCompatibleProvider::with_transport(
+            "https://example.invalid".to_string(),
+            "key".to_string(),
+            "model".to_string(),
+            transport.clone(),
+        );
+
+        let messages = vec![ConversationMessage::User {
+            content: "Hello".to_string(),
+        }];
+
+        let result = provider
+            .complete_with_tools(&messages, &[], &ReasoningConfig::default())
+            .await
+            .expect("should succeed");
+
+        assert_eq!(result.output_text, "Just chat.");
+        assert!(result.tool_calls.is_empty());
+        assert_eq!(result.stop_reason, Some(StopReason::EndTurn));
+    }
+
+    // -----------------------------------------------------------------------
+    // SSE event parser tests (streaming tool use)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_openai_sse_event_content_delta() {
+        let block =
+            r#"data: {"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#;
+        assert_eq!(
+            parse_openai_sse_event(block),
+            OpenAiSseEvent::ContentDelta("Hello".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_openai_sse_event_tool_call_start() {
+        let block = r#"data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"read_file","arguments":""}}]},"finish_reason":null}]}"#;
+        assert_eq!(
+            parse_openai_sse_event(block),
+            OpenAiSseEvent::ToolCallDelta {
+                index: 0,
+                id: Some("call_abc".to_string()),
+                name: Some("read_file".to_string()),
+                arguments: String::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_openai_sse_event_tool_call_arguments() {
+        let block = r#"data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":\""}}]},"finish_reason":null}]}"#;
+        assert_eq!(
+            parse_openai_sse_event(block),
+            OpenAiSseEvent::ToolCallDelta {
+                index: 0,
+                id: None,
+                name: None,
+                arguments: "{\"path\":\"".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_openai_sse_event_finished_tool_calls() {
+        let block = r#"data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#;
+        assert_eq!(
+            parse_openai_sse_event(block),
+            OpenAiSseEvent::Finished {
+                finish_reason: Some("tool_calls".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_openai_sse_event_finished_stop() {
+        let block = r#"data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
+        assert_eq!(
+            parse_openai_sse_event(block),
+            OpenAiSseEvent::Finished {
+                finish_reason: Some("stop".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_openai_sse_event_done_marker() {
+        let block = "data: [DONE]";
+        assert_eq!(parse_openai_sse_event(block), OpenAiSseEvent::Done);
+    }
+
+    #[test]
+    fn parse_openai_sse_event_empty_content_returns_other() {
+        let block =
+            r#"data: {"choices":[{"index":0,"delta":{"content":""},"finish_reason":null}]}"#;
+        // Empty content should not be a ContentDelta — should be Other or Finished
+        // (empty content + null finish_reason = Other)
+        let result = parse_openai_sse_event(block);
+        assert!(
+            matches!(result, OpenAiSseEvent::Other),
+            "empty content delta should return Other, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn parse_openai_sse_event_multiple_tool_calls_first_returned() {
+        // When multiple tool_calls arrive in one chunk, we parse the first
+        let block = r#"data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"a"}},{"index":1,"id":"call_xyz","type":"function","function":{"name":"shell","arguments":""}}]},"finish_reason":null}]}"#;
+        assert_eq!(
+            parse_openai_sse_event(block),
+            OpenAiSseEvent::ToolCallDelta {
+                index: 0,
+                id: None,
+                name: None,
+                arguments: "a".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_openai_sse_delta_backward_compat() {
+        let block =
+            r#"data: {"choices":[{"index":0,"delta":{"content":"world"},"finish_reason":null}]}"#;
+        assert_eq!(parse_openai_sse_delta(block), Some("world".to_string()));
+    }
+
+    #[test]
+    fn parse_openai_sse_delta_returns_none_for_tool_calls() {
+        let block = r#"data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"shell","arguments":""}}]},"finish_reason":null}]}"#;
+        assert_eq!(parse_openai_sse_delta(block), None);
     }
 }

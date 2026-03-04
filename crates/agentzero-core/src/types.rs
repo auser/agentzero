@@ -135,9 +135,26 @@ pub struct AssistantMessage {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChatResult {
     pub output_text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolUseRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<StopReason>,
+}
+
+/// Incremental tool call data emitted during streaming tool use.
+#[derive(Debug, Clone)]
+pub struct ToolCallDelta {
+    /// Index of the tool call in the response (for multi-call streaming).
+    pub index: usize,
+    /// Tool call ID (sent on first chunk for this index).
+    pub id: Option<String>,
+    /// Tool name (sent on first chunk for this index).
+    pub name: Option<String>,
+    /// Incremental JSON arguments string.
+    pub arguments_delta: String,
 }
 
 /// A single chunk emitted during streaming completion.
@@ -147,6 +164,8 @@ pub struct StreamChunk {
     pub delta: String,
     /// True when the stream is complete (final chunk).
     pub done: bool,
+    /// Incremental tool call data (for streaming tool use).
+    pub tool_call_delta: Option<ToolCallDelta>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +190,92 @@ impl ToolContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub output: String,
+}
+
+/// A tool definition sent to the LLM for native tool use.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+impl ToolDefinition {
+    /// Build from a Tool trait object, returning `None` if the tool has no schema.
+    pub fn from_tool(tool: &dyn Tool) -> Option<Self> {
+        let schema = tool.input_schema()?;
+        Some(Self {
+            name: tool.name().to_string(),
+            description: tool.description().to_string(),
+            input_schema: schema,
+        })
+    }
+}
+
+/// The LLM's request to invoke a tool (from a tool_use response).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolUseRequest {
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
+}
+
+/// A tool result message sent back to the LLM after execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResultMessage {
+    pub tool_use_id: String,
+    pub content: String,
+    #[serde(default)]
+    pub is_error: bool,
+}
+
+/// A message in a multi-turn conversation (for structured tool use).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "role")]
+pub enum ConversationMessage {
+    #[serde(rename = "user")]
+    User { content: String },
+    #[serde(rename = "assistant")]
+    Assistant {
+        content: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<ToolUseRequest>,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult(ToolResultMessage),
+}
+
+impl ConversationMessage {
+    /// Estimate the character count of this message for truncation budgeting.
+    pub fn char_count(&self) -> usize {
+        match self {
+            Self::User { content } => content.len(),
+            Self::Assistant {
+                content,
+                tool_calls,
+            } => {
+                content.as_ref().map_or(0, |c| c.len())
+                    + tool_calls
+                        .iter()
+                        .map(|tc| {
+                            tc.name.len()
+                                + serde_json::to_string(&tc.input).unwrap_or_default().len()
+                        })
+                        .sum::<usize>()
+            }
+            Self::ToolResult(r) => r.content.len(),
+        }
+    }
+}
+
+/// Why the LLM stopped generating.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StopReason {
+    EndTurn,
+    ToolUse,
+    MaxTokens,
+    StopSequence,
+    Other(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,6 +345,44 @@ pub trait Provider: Send + Sync {
         let _ = sender.send(StreamChunk {
             delta: result.output_text.clone(),
             done: true,
+            tool_call_delta: None,
+        });
+        Ok(result)
+    }
+    /// Complete with structured tool definitions. The provider sends tool schemas
+    /// to the LLM and returns any tool_use requests in `ChatResult::tool_calls`.
+    /// Default falls back to `complete_with_reasoning()`, ignoring tools.
+    async fn complete_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        _tools: &[ToolDefinition],
+        reasoning: &ReasoningConfig,
+    ) -> anyhow::Result<ChatResult> {
+        let prompt = messages
+            .iter()
+            .filter_map(|m| match m {
+                ConversationMessage::User { content } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.complete_with_reasoning(&prompt, reasoning).await
+    }
+    /// Stream completion with structured tool definitions. Sends incremental
+    /// text deltas and tool call deltas through `sender`. Default falls back
+    /// to non-streaming `complete_with_tools()`.
+    async fn complete_streaming_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolDefinition],
+        reasoning: &ReasoningConfig,
+        sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+    ) -> anyhow::Result<ChatResult> {
+        let result = self.complete_with_tools(messages, tools, reasoning).await?;
+        let _ = sender.send(StreamChunk {
+            delta: result.output_text.clone(),
+            done: true,
+            tool_call_delta: None,
         });
         Ok(result)
     }
@@ -290,4 +433,168 @@ pub trait HookSink: Send + Sync {
 pub trait MetricsSink: Send + Sync {
     fn increment_counter(&self, name: &'static str, value: u64);
     fn observe_histogram(&self, _name: &'static str, _value: f64) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_definition_round_trip() {
+        let def = ToolDefinition {
+            name: "read_file".to_string(),
+            description: "Read a file from disk".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" }
+                },
+                "required": ["path"]
+            }),
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        let parsed: ToolDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "read_file");
+        assert_eq!(parsed.description, "Read a file from disk");
+    }
+
+    #[test]
+    fn tool_use_request_round_trip() {
+        let req = ToolUseRequest {
+            id: "call_123".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": "/tmp/foo.txt"}),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: ToolUseRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "call_123");
+        assert_eq!(parsed.name, "read_file");
+        assert_eq!(parsed.input["path"], "/tmp/foo.txt");
+    }
+
+    #[test]
+    fn tool_result_message_round_trip() {
+        let msg = ToolResultMessage {
+            tool_use_id: "call_123".to_string(),
+            content: "file contents here".to_string(),
+            is_error: false,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ToolResultMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.tool_use_id, "call_123");
+        assert!(!parsed.is_error);
+    }
+
+    #[test]
+    fn conversation_message_user_serde() {
+        let msg = ConversationMessage::User {
+            content: "hello".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"role\":\"user\""));
+        let parsed: ConversationMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ConversationMessage::User { content } => assert_eq!(content, "hello"),
+            _ => panic!("expected User variant"),
+        }
+    }
+
+    #[test]
+    fn conversation_message_assistant_with_tool_calls() {
+        let msg = ConversationMessage::Assistant {
+            content: Some("I'll read that file.".to_string()),
+            tool_calls: vec![ToolUseRequest {
+                id: "call_1".to_string(),
+                name: "read_file".to_string(),
+                input: serde_json::json!({"path": "/tmp/test"}),
+            }],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"role\":\"assistant\""));
+        assert!(json.contains("\"tool_calls\""));
+        let parsed: ConversationMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ConversationMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                assert_eq!(content.unwrap(), "I'll read that file.");
+                assert_eq!(tool_calls.len(), 1);
+                assert_eq!(tool_calls[0].name, "read_file");
+            }
+            _ => panic!("expected Assistant variant"),
+        }
+    }
+
+    #[test]
+    fn conversation_message_assistant_no_tool_calls_omits_field() {
+        let msg = ConversationMessage::Assistant {
+            content: Some("Just text.".to_string()),
+            tool_calls: vec![],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(!json.contains("tool_calls"));
+    }
+
+    #[test]
+    fn stop_reason_serde_variants() {
+        let cases = vec![
+            (StopReason::EndTurn, "\"EndTurn\""),
+            (StopReason::ToolUse, "\"ToolUse\""),
+            (StopReason::MaxTokens, "\"MaxTokens\""),
+            (StopReason::StopSequence, "\"StopSequence\""),
+        ];
+        for (variant, expected_json) in cases {
+            let json = serde_json::to_string(&variant).unwrap();
+            assert_eq!(json, expected_json);
+            let parsed: StopReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, variant);
+        }
+    }
+
+    #[test]
+    fn stop_reason_other_variant() {
+        let reason = StopReason::Other("custom".to_string());
+        let json = serde_json::to_string(&reason).unwrap();
+        let parsed: StopReason = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, StopReason::Other("custom".to_string()));
+    }
+
+    #[test]
+    fn chat_result_default_has_empty_tool_calls_and_no_stop_reason() {
+        let result = ChatResult::default();
+        assert!(result.output_text.is_empty());
+        assert!(result.tool_calls.is_empty());
+        assert!(result.stop_reason.is_none());
+    }
+
+    #[test]
+    fn chat_result_serde_omits_empty_fields() {
+        let result = ChatResult {
+            output_text: "hello".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(!json.contains("tool_calls"));
+        assert!(!json.contains("stop_reason"));
+    }
+
+    #[test]
+    fn chat_result_serde_includes_tool_calls_when_present() {
+        let result = ChatResult {
+            output_text: String::new(),
+            tool_calls: vec![ToolUseRequest {
+                id: "id1".to_string(),
+                name: "test".to_string(),
+                input: serde_json::json!({}),
+            }],
+            stop_reason: Some(StopReason::ToolUse),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("tool_calls"));
+        assert!(json.contains("stop_reason"));
+        let parsed: ChatResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.stop_reason, Some(StopReason::ToolUse));
+    }
 }
