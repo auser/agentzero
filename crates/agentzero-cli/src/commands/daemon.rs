@@ -1,6 +1,6 @@
 use crate::cli::DaemonCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_daemon::DaemonManager;
+use crate::daemon::DaemonManager;
 use async_trait::async_trait;
 use std::fs::OpenOptions;
 use std::process::{Command, Stdio};
@@ -69,20 +69,20 @@ async fn run_foreground(
 ) -> anyhow::Result<()> {
     let pid = std::process::id();
     manager.mark_started(host.clone(), port, pid)?;
-    agentzero_daemon::write_pid_file(&ctx.data_dir, pid)?;
-    agentzero_daemon::rotate_log_if_needed(
+    crate::daemon::write_pid_file(&ctx.data_dir, pid)?;
+    crate::daemon::rotate_log_if_needed(
         &ctx.data_dir,
-        &agentzero_daemon::LogRotationConfig::default(),
+        &crate::daemon::LogRotationConfig::default(),
     )?;
     println!("daemon running in foreground (pid {pid}) on {host}:{port}");
 
     // Auto-discover local AI providers at startup.
-    let discovery = agentzero_local::discover_local_services(agentzero_local::DiscoveryOptions {
+    let discovery = crate::local::discover_local_services(crate::local::DiscoveryOptions {
         timeout_ms: 2000,
         providers: Vec::new(),
     })
     .await;
-    let summary = agentzero_local::format_discovery_summary(&discovery);
+    let summary = crate::local::format_discovery_summary(&discovery);
     println!("{summary}");
 
     let token_store_path = ctx.data_dir.join("gateway-paired-tokens.json");
@@ -97,7 +97,7 @@ async fn run_foreground(
     )
     .await;
 
-    agentzero_daemon::remove_pid_file(&ctx.data_dir);
+    crate::daemon::remove_pid_file(&ctx.data_dir);
     if let Err(err) = manager.mark_stopped() {
         eprintln!("warning: failed to update daemon state after shutdown: {err}");
     }
@@ -176,7 +176,7 @@ fn spawn_background(
     // Don't call mark_started here — the child's run_foreground() owns the state.
     // We just do a brief liveness check to catch immediate crashes.
     std::thread::sleep(std::time::Duration::from_secs(1));
-    if !agentzero_daemon::is_process_alive(pid) {
+    if !crate::daemon::is_process_alive(pid) {
         let hint = tail_log(&log_path, 10);
         let mut msg = format!("daemon (pid {pid}) exited immediately after starting");
         if !hint.is_empty() {
@@ -202,7 +202,7 @@ fn tail_log(path: &std::path::Path, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use agentzero_daemon::DaemonManager;
+    use crate::daemon::DaemonManager;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};

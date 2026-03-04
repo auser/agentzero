@@ -1,8 +1,8 @@
 use crate::cli::LocalCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
+use crate::local::{check_health, discover_local_services, DiscoveryOptions, ServiceStatus};
 use agentzero_config::load;
 use agentzero_core::common::local_providers::{is_local_provider, local_provider_meta};
-use agentzero_local::{check_health, discover_local_services, DiscoveryOptions, ServiceStatus};
 use async_trait::async_trait;
 
 pub struct LocalCommand;
@@ -33,7 +33,7 @@ async fn run_discover(timeout_ms: u64, retries: u32, json: bool) -> anyhow::Resu
     };
 
     let results = if retries > 0 {
-        agentzero_local::discover_with_retry(opts, retries, 500).await
+        crate::local::discover_with_retry(opts, retries, 500).await
     } else {
         discover_local_services(opts).await
     };

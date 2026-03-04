@@ -291,7 +291,7 @@ fn supports_live_model_fetch(provider: &str) -> bool {
 async fn fetch_live_models_for_provider(provider: &str) -> anyhow::Result<Vec<String>> {
     if is_local_provider(provider) {
         if let Some(meta) = local_provider_meta(provider) {
-            match agentzero_local::list_models(provider, meta.default_base_url, 5000).await {
+            match crate::local::list_models(provider, meta.default_base_url, 5000).await {
                 Ok(models) => {
                     return Ok(models.into_iter().map(|m| m.id).collect());
                 }
@@ -454,7 +454,7 @@ async fn run_models_pull(
     println!("Pulling '{}' from {}...", model, provider_name);
     println!();
 
-    agentzero_local::pull_model(&base_url, model, 600_000, |progress| {
+    crate::local::pull_model(&base_url, model, 600_000, |progress| {
         if let Some(pct) = progress.percent() {
             print!("\r  {} {:.0}%", progress.status, pct);
         } else {

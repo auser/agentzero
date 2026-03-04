@@ -1,6 +1,6 @@
 use crate::cli::IntegrationsCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_integrations::IntegrationDescriptor;
+use crate::integrations::IntegrationDescriptor;
 use async_trait::async_trait;
 
 pub struct IntegrationsCommand;

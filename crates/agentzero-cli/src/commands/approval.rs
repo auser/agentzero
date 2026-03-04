@@ -1,8 +1,8 @@
-use crate::cli::{ApprovalCommands, ApprovalDecisionMode, ApprovalRisk};
-use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_approval::{
+use crate::approval::{
     ApprovalDecision, ApprovalEngine, ApprovalError, ApprovalRequest, AuditEntry, RiskLevel,
 };
+use crate::cli::{ApprovalCommands, ApprovalDecisionMode, ApprovalRisk};
+use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_storage::EncryptedJsonStore;
 use async_trait::async_trait;
 use serde::Serialize;

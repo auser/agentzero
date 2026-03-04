@@ -1,3 +1,5 @@
+use crate::audit::FileAuditSink;
+use crate::tools::default_tools;
 use agentzero_auth::AuthManager;
 use agentzero_config::{load, load_audit_policy, load_env_var, load_tool_security_policy};
 use agentzero_core::common::local_providers::{is_local_provider, local_provider_meta};
@@ -7,8 +9,6 @@ use agentzero_core::{
     Agent, AgentConfig, AuditEvent, AuditSink, HookEvent, HookFailureMode, HookSink, MemoryStore,
     Provider, RuntimeMetrics, Tool, ToolContext, UserMessage,
 };
-use agentzero_infra::audit::FileAuditSink;
-use agentzero_infra::tools::default_tools;
 use agentzero_providers::{find_models_for_provider, find_provider, model_capabilities};
 use agentzero_storage::memory::SqliteMemoryStore;
 #[cfg(feature = "memory-turso")]

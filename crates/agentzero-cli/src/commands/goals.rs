@@ -1,6 +1,6 @@
 use crate::cli::GoalCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_goals::Goal;
+use crate::goals::Goal;
 use agentzero_storage::EncryptedJsonStore;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
@@ -195,7 +195,7 @@ mod tests {
         let store = agentzero_storage::EncryptedJsonStore::in_config_dir(&dir, "goals.json")
             .expect("store should open");
         let goals = store
-            .load_or_default::<std::collections::BTreeMap<String, agentzero_goals::Goal>>()
+            .load_or_default::<std::collections::BTreeMap<String, crate::goals::Goal>>()
             .expect("load should succeed");
         let goal = goals.get("g1").expect("goal should exist");
         assert_eq!(goal.title, "Updated title");

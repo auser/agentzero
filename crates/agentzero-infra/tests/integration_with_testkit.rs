@@ -1,5 +1,5 @@
 use agentzero_core::{AgentConfig, Tool};
-use agentzero_runtime::{run_agent_with_runtime, RuntimeExecution};
+use agentzero_infra::runtime::{run_agent_with_runtime, RuntimeExecution};
 use agentzero_testkit::{EchoTool, FailingProvider, StaticProvider, TestMemoryStore};
 use std::path::PathBuf;
 

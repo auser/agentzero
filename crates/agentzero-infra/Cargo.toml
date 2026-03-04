@@ -8,12 +8,16 @@ description.workspace = true
 repository.workspace = true
 
 [features]
-default = []
+default = ["memory-sqlite"]
+memory-sqlite = []
+memory-turso = ["agentzero-storage/memory-turso"]
 wasm-plugins = ["dep:agentzero-plugins"]
 
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+agentzero-auth = { workspace = true }
+agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
 agentzero-tools = { workspace = true }
 agentzero-storage = { workspace = true }
@@ -23,3 +27,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+agentzero-testkit = { workspace = true }
+temp-env = "0.3"

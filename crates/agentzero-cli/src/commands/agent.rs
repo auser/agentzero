@@ -1,5 +1,5 @@
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_runtime::{run_agent_once, RunAgentRequest};
+use agentzero_infra::runtime::{run_agent_once, RunAgentRequest};
 use async_trait::async_trait;
 
 pub struct AgentOptions {

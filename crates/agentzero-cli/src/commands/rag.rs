@@ -79,9 +79,9 @@ async fn ingest(
     ctx: &CommandContext,
     id: String,
     text: String,
-) -> anyhow::Result<agentzero_rag::RagIngestResult> {
+) -> anyhow::Result<crate::rag::RagIngestResult> {
     let index_path = ctx.data_dir.join("rag").join("index.jsonl");
-    agentzero_rag::ingest_document(&index_path, agentzero_rag::RagDocument { id, text })
+    crate::rag::ingest_document(&index_path, crate::rag::RagDocument { id, text })
 }
 
 #[cfg(not(feature = "rag"))]
@@ -101,9 +101,9 @@ async fn query_index(
     ctx: &CommandContext,
     query: &str,
     limit: usize,
-) -> anyhow::Result<Vec<agentzero_rag::RagQueryMatch>> {
+) -> anyhow::Result<Vec<crate::rag::RagQueryMatch>> {
     let index_path = ctx.data_dir.join("rag").join("index.jsonl");
-    agentzero_rag::query_documents(&index_path, query, limit)
+    crate::rag::query_documents(&index_path, query, limit)
 }
 
 #[cfg(not(feature = "rag"))]
@@ -141,7 +141,7 @@ fn infer_media_kind(file: Option<&str>) -> String {
 
     #[cfg(feature = "rag")]
     {
-        match agentzero_multimodal::infer_media_kind(file) {
+        match crate::multimodal::infer_media_kind(file) {
             Ok(kind) => format!("{kind:?}").to_ascii_lowercase(),
             Err(_) => "unknown".to_string(),
         }

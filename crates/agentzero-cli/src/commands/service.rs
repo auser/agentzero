@@ -1,6 +1,6 @@
 use crate::cli::ServiceCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_service::ServiceManager;
+use crate::service::ServiceManager;
 use async_trait::async_trait;
 
 pub struct ServiceCommand;

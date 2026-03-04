@@ -20,7 +20,7 @@ node = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
 
 [dependencies]
 agentzero-core = { workspace = true }
-agentzero-runtime = { workspace = true }
+agentzero-infra = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }

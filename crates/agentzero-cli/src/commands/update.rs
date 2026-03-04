@@ -1,7 +1,7 @@
 use crate::cli::{MigrateCommands, UpdateCommands};
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_update::migration::{import_from_source, inspect_source};
-use agentzero_update::updater::{
+use crate::update::migration::{import_from_source, inspect_source};
+use crate::update::updater::{
     check_for_updates, download_and_install, fetch_latest_version, load_state, restore_backup,
     rollback_update,
 };

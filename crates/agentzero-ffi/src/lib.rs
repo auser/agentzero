@@ -420,7 +420,7 @@ impl AgentZeroController {
             })
             .unwrap_or_default();
 
-        let req = agentzero_runtime::RunAgentRequest {
+        let req = agentzero_infra::runtime::RunAgentRequest {
             workspace_root: config.workspace_root.into(),
             config_path: config.config_path.into(),
             message: message.clone(),
@@ -430,7 +430,7 @@ impl AgentZeroController {
             extra_tools,
         };
 
-        let result = runtime().block_on(agentzero_runtime::run_agent_once(req));
+        let result = runtime().block_on(agentzero_infra::runtime::run_agent_once(req));
 
         // Back to idle
         if let Ok(mut s) = self.status.lock() {

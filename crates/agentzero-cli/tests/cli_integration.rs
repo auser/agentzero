@@ -2427,7 +2427,8 @@ fn onboard_interactive_args_parse_success_path() {
 #[test]
 fn daemon_manager_start_stop_lifecycle_success_path() {
     let dir = temp_dir("daemon-lifecycle");
-    let manager = agentzero_daemon::DaemonManager::new(&dir).expect("manager should be created");
+    let manager =
+        agentzero_cli::daemon::DaemonManager::new(&dir).expect("manager should be created");
     let my_pid = std::process::id();
 
     // Start
@@ -2438,8 +2439,8 @@ fn daemon_manager_start_stop_lifecycle_success_path() {
     assert_eq!(started.pid, Some(my_pid));
 
     // PID file
-    agentzero_daemon::write_pid_file(&dir, my_pid).expect("pid file write should succeed");
-    assert_eq!(agentzero_daemon::read_pid_file(&dir), Some(my_pid));
+    agentzero_cli::daemon::write_pid_file(&dir, my_pid).expect("pid file write should succeed");
+    assert_eq!(agentzero_cli::daemon::read_pid_file(&dir), Some(my_pid));
 
     // Status
     let status = manager.status().expect("status should succeed");
@@ -2451,8 +2452,8 @@ fn daemon_manager_start_stop_lifecycle_success_path() {
     assert!(!stopped.running);
 
     // Cleanup PID file
-    agentzero_daemon::remove_pid_file(&dir);
-    assert!(agentzero_daemon::read_pid_file(&dir).is_none());
+    agentzero_cli::daemon::remove_pid_file(&dir);
+    assert!(agentzero_cli::daemon::read_pid_file(&dir).is_none());
 
     cleanup(dir);
 }
@@ -2460,17 +2461,17 @@ fn daemon_manager_start_stop_lifecycle_success_path() {
 #[test]
 fn daemon_log_rotation_integration_success_path() {
     let dir = temp_dir("daemon-logrot");
-    let log_path = agentzero_daemon::log_file_path(&dir);
+    let log_path = agentzero_cli::daemon::log_file_path(&dir);
 
     // Write a large log file
     fs::write(&log_path, "x".repeat(500)).expect("log write should succeed");
 
-    let config = agentzero_daemon::LogRotationConfig {
+    let config = agentzero_cli::daemon::LogRotationConfig {
         max_bytes: 100,
         max_files: 3,
     };
     let rotated =
-        agentzero_daemon::rotate_log_if_needed(&dir, &config).expect("rotate should succeed");
+        agentzero_cli::daemon::rotate_log_if_needed(&dir, &config).expect("rotate should succeed");
     assert!(rotated);
     assert!(!log_path.exists(), "original should be rotated away");
     assert!(

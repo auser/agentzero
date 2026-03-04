@@ -3,6 +3,31 @@ mod cli;
 mod command_core;
 mod commands;
 
+// Merged micro-crates (Phase 6)
+pub mod approval;
+pub mod coordination;
+pub mod cost;
+pub mod daemon;
+pub mod doctor;
+pub mod goals;
+pub mod health;
+pub mod heartbeat;
+pub mod hooks;
+pub mod identity;
+pub mod integrations;
+pub mod local;
+pub mod service;
+pub mod tunnel;
+pub mod update;
+
+#[cfg(feature = "rag")]
+pub mod multimodal;
+#[cfg(feature = "rag")]
+pub mod rag;
+
+#[cfg(feature = "hardware")]
+pub mod peripherals;
+
 use agentzero_core::common::init_tracing;
 use clap::Parser;
 use cli::Cli;

@@ -20,7 +20,7 @@ impl AgentZeroCommand for PeripheralCommand {
         #[cfg(feature = "hardware")]
         {
             let registry_path = ctx.data_dir.join("peripherals").join("registry.json");
-            let mut registry = agentzero_peripherals::PeripheralRegistry::load(&registry_path)?;
+            let mut registry = crate::peripherals::PeripheralRegistry::load(&registry_path)?;
 
             match opts {
                 PeripheralCommands::List { json } => {
@@ -42,7 +42,7 @@ impl AgentZeroCommand for PeripheralCommand {
                     json,
                 } => match (id, kind, connection) {
                     (Some(id), Some(kind), Some(connection)) => {
-                        registry.add(agentzero_peripherals::Peripheral {
+                        registry.add(crate::peripherals::Peripheral {
                             id: id.clone(),
                             kind,
                             connection,

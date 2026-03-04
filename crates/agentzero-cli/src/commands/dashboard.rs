@@ -97,7 +97,7 @@ async fn build_snapshot(ctx: &CommandContext) -> anyhow::Result<DashboardSnapsho
 
     // Daemon status (best-effort).
     let (daemon_running, daemon_pid, daemon_uptime_secs, daemon_host, daemon_port) =
-        match agentzero_daemon::DaemonManager::new(&ctx.data_dir) {
+        match crate::daemon::DaemonManager::new(&ctx.data_dir) {
             Ok(manager) => match manager.status() {
                 Ok(status) => (
                     status.running,

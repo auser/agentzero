@@ -1,6 +1,6 @@
 use crate::cli::TunnelCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_tunnel::{parse_tunnel_protocol, TunnelStore};
+use crate::tunnel::{parse_tunnel_protocol, TunnelStore};
 use async_trait::async_trait;
 
 pub struct TunnelCommand;

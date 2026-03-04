@@ -1,6 +1,6 @@
 use crate::cli::{IdentityCommands, IdentityKind};
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_identity::{ActorIdentity, ActorKind};
+use crate::identity::{ActorIdentity, ActorKind};
 use agentzero_storage::EncryptedJsonStore;
 use async_trait::async_trait;
 use serde::Serialize;
@@ -248,7 +248,7 @@ mod tests {
         let store = agentzero_storage::EncryptedJsonStore::in_config_dir(&dir, "identities.json")
             .expect("store should open");
         let identities = store
-            .load_or_default::<std::collections::BTreeMap<String, agentzero_identity::ActorIdentity>>()
+            .load_or_default::<std::collections::BTreeMap<String, crate::identity::ActorIdentity>>()
             .expect("load should succeed");
         let agent = identities.get("agent-1").expect("agent should exist");
         assert_eq!(agent.display_name, "Worker Agent");

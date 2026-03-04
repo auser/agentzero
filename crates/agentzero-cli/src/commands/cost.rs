@@ -1,6 +1,6 @@
 use crate::cli::CostCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_cost::CostSummary;
+use crate::cost::CostSummary;
 use agentzero_storage::EncryptedJsonStore;
 use async_trait::async_trait;
 
@@ -150,7 +150,7 @@ mod tests {
         let store = agentzero_storage::EncryptedJsonStore::in_config_dir(&dir, "cost-summary.json")
             .expect("store should open");
         let summary = store
-            .load_or_default::<agentzero_cost::CostSummary>()
+            .load_or_default::<crate::cost::CostSummary>()
             .expect("load should succeed");
         assert_eq!(summary.total_tokens, 300);
         assert!((summary.total_usd - 0.03).abs() < f64::EPSILON);

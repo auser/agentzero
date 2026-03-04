@@ -6,6 +6,10 @@ pub mod routing;
 pub mod security;
 pub mod types;
 
+/// Re-export `tracing` so downstream crates can use `agentzero_core::tracing`
+/// instead of adding a separate `tracing` dependency.
+pub use tracing;
+
 pub use agent::Agent;
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{

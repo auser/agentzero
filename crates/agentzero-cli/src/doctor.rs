@@ -1,6 +1,6 @@
+use crate::health::{assess_freshness, HealthSeverity};
+use crate::heartbeat::HeartbeatStore;
 use agentzero_config::{load, load_env_var};
-use agentzero_health::{assess_freshness, HealthSeverity};
-use agentzero_heartbeat::HeartbeatStore;
 use agentzero_providers::find_provider;
 use anyhow::Context;
 use serde::Serialize;
@@ -413,7 +413,7 @@ fn truncate_line(value: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{collect_report, DoctorContext, Severity};
-    use agentzero_heartbeat::HeartbeatStore;
+    use crate::heartbeat::HeartbeatStore;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};

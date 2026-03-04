@@ -1,6 +1,6 @@
 use crate::cli::HookCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_hooks::HookStore;
+use crate::hooks::HookStore;
 use async_trait::async_trait;
 
 pub struct HooksCommand;

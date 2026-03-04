@@ -1,6 +1,6 @@
 use crate::cli::CoordinationCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_coordination::CoordinationStatus;
+use crate::coordination::CoordinationStatus;
 use agentzero_storage::EncryptedJsonStore;
 use async_trait::async_trait;
 
@@ -138,7 +138,7 @@ mod tests {
             agentzero_storage::EncryptedJsonStore::in_config_dir(&dir, "coordination-status.json")
                 .expect("store should open");
         let status = store
-            .load_or_default::<agentzero_coordination::CoordinationStatus>()
+            .load_or_default::<crate::coordination::CoordinationStatus>()
             .expect("load should succeed");
         assert_eq!(status.active_workers, 3);
         assert_eq!(status.queued_tasks, 7);
