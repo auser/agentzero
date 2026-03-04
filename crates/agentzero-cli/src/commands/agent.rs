@@ -27,6 +27,7 @@ impl AgentZeroCommand for AgentCommand {
             provider_override: opts.provider,
             model_override: opts.model,
             profile_override: opts.profile,
+            extra_tools: vec![],
         })
         .await?;
 

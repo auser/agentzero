@@ -19,7 +19,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::info;
 
-#[derive(Debug, Clone)]
 pub struct RunAgentRequest {
     pub workspace_root: PathBuf,
     pub config_path: PathBuf,
@@ -30,6 +29,9 @@ pub struct RunAgentRequest {
     pub model_override: Option<String>,
     /// Use a specific auth profile by name (from `auth list`).
     pub profile_override: Option<String>,
+    /// Additional tools injected by the caller (e.g. FFI-registered tools).
+    /// These are appended to the tools built from the security policy.
+    pub extra_tools: Vec<Box<dyn Tool>>,
 }
 
 #[derive(Debug, Clone)]
@@ -112,7 +114,9 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
     );
     let memory = build_memory_store(&req.config_path).await?;
     let tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
-    let tools: Vec<Box<dyn Tool>> = default_tools(&tool_policy, router, delegate_agents)?;
+    let mut tools: Vec<Box<dyn Tool>> = default_tools(&tool_policy, router, delegate_agents)?;
+    // Append any extra tools (e.g. FFI-registered tools).
+    tools.extend(req.extra_tools);
     let audit_policy = load_audit_policy(&req.workspace_root, &req.config_path)?;
     let audit_path = audit_policy.path.clone();
     let execution = RuntimeExecution {

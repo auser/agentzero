@@ -13,6 +13,8 @@ uniffi::setup_scaffolding!();
 #[allow(dead_code)]
 mod node_bindings;
 
+use agentzero_core::{Tool, ToolContext, ToolResult};
+use async_trait::async_trait;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
@@ -95,6 +97,89 @@ impl std::fmt::Display for AgentZeroError {
 
 impl std::error::Error for AgentZeroError {}
 
+// ── Tool callback interface ───────────────────────────────────────────────
+
+/// Trait for foreign-language tool implementations.
+///
+/// Implement this trait in Swift, Kotlin, Python, or any other UniFFI-supported
+/// language to register custom tools that run alongside native and WASM tools.
+///
+/// # Safety
+///
+/// FFI tools run in the host process (not sandboxed like WASM plugins).
+/// They have full access to the process memory. This is by design — FFI
+/// users are embedding the runtime in their own application and trust
+/// their own code.
+#[cfg_attr(feature = "uniffi", uniffi::export(callback_interface))]
+pub trait ToolCallback: Send + Sync {
+    /// Execute the tool with the given JSON input and workspace root.
+    /// Returns a JSON string on success or an error message on failure.
+    fn execute(&self, input: String, workspace_root: String) -> Result<String, String>;
+
+    /// Optional: return a human-readable description of the tool.
+    fn description(&self) -> String {
+        String::new()
+    }
+}
+
+/// A tool backed by a foreign callback (Swift, Kotlin, Python, etc.).
+///
+/// Wraps a `ToolCallback` implementor and bridges it to the `Tool` trait
+/// used by the agent loop. Each `FfiTool` occupies one slot in the
+/// agent's tool list, identical to native and WASM tools.
+pub struct FfiTool {
+    /// Leaked string for the `&'static str` requirement of `Tool::name()`.
+    name: &'static str,
+    callback: Arc<dyn ToolCallback>,
+}
+
+impl FfiTool {
+    /// Create an `FfiTool` from a name and callback.
+    pub fn new(name: String, callback: Arc<dyn ToolCallback>) -> Self {
+        let leaked: &'static str = Box::leak(name.into_boxed_str());
+        Self {
+            name: leaked,
+            callback,
+        }
+    }
+}
+
+impl std::fmt::Debug for FfiTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FfiTool").field("name", &self.name).finish()
+    }
+}
+
+#[async_trait]
+impl Tool for FfiTool {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn description(&self) -> &'static str {
+        // Can't call callback.description() here since it returns String,
+        // not &'static str. Use a fixed description instead.
+        "FFI plugin tool (registered via foreign language binding)"
+    }
+
+    async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+        let callback = self.callback.clone();
+        let input_owned = input.to_string();
+        let workspace = ctx.workspace_root.clone();
+
+        // Run the callback on a blocking thread since foreign callbacks
+        // may perform I/O or other blocking operations.
+        let result = tokio::task::spawn_blocking(move || callback.execute(input_owned, workspace))
+            .await
+            .map_err(|e| anyhow::anyhow!("FFI tool task panicked: {e}"))?;
+
+        match result {
+            Ok(output) => Ok(ToolResult { output }),
+            Err(err) => Err(anyhow::anyhow!("FFI tool error: {err}")),
+        }
+    }
+}
+
 // ── Controller ─────────────────────────────────────────────────────────────
 
 /// Main AgentZero controller exposed to foreign languages.
@@ -103,6 +188,8 @@ pub struct AgentZeroController {
     config: Mutex<AgentZeroConfig>,
     status: Mutex<AgentStatus>,
     history: Mutex<Vec<ChatMessage>>,
+    /// FFI-registered tools. These are cloned into each `RunAgentRequest`.
+    registered_tools: Mutex<Vec<Arc<FfiTool>>>,
 }
 
 // UniFFI-exported public API.
@@ -177,6 +264,27 @@ impl AgentZeroController {
     pub fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
     }
+
+    /// Register a custom tool implemented in a foreign language.
+    ///
+    /// The tool will be available in the agent's tool list alongside native
+    /// and WASM tools. The callback's `execute` method will be invoked when
+    /// the agent uses this tool.
+    pub fn register_tool(
+        &self,
+        name: String,
+        callback: Box<dyn ToolCallback>,
+    ) -> Result<(), AgentZeroError> {
+        self.register_tool_impl(name, Arc::from(callback))
+    }
+
+    /// List the names of all registered FFI tools.
+    pub fn registered_tool_names(&self) -> Vec<String> {
+        self.registered_tools
+            .lock()
+            .map(|tools| tools.iter().map(|t| t.name.to_string()).collect())
+            .unwrap_or_default()
+    }
 }
 
 // Non-UniFFI public API — identical signatures, no proc-macro annotations.
@@ -242,6 +350,21 @@ impl AgentZeroController {
     pub fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
     }
+
+    pub fn register_tool(
+        &self,
+        name: String,
+        callback: Box<dyn ToolCallback>,
+    ) -> Result<(), AgentZeroError> {
+        self.register_tool_impl(name, Arc::from(callback))
+    }
+
+    pub fn registered_tool_names(&self) -> Vec<String> {
+        self.registered_tools
+            .lock()
+            .map(|tools| tools.iter().map(|t| t.name.to_string()).collect())
+            .unwrap_or_default()
+    }
 }
 
 // Private implementation shared by both API variants.
@@ -255,6 +378,7 @@ impl AgentZeroController {
             config: Mutex::new(config),
             status: Mutex::new(AgentStatus::Idle),
             history: Mutex::new(Vec::new()),
+            registered_tools: Mutex::new(Vec::new()),
         })
     }
 
@@ -282,6 +406,20 @@ impl AgentZeroController {
             });
         }
 
+        // Collect registered FFI tools as Box<dyn Tool> for the request.
+        let extra_tools: Vec<Box<dyn Tool>> = self
+            .registered_tools
+            .lock()
+            .map(|tools| {
+                tools
+                    .iter()
+                    .map(|t| -> Box<dyn Tool> {
+                        Box::new(FfiTool::new(t.name.to_string(), t.callback.clone()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let req = agentzero_runtime::RunAgentRequest {
             workspace_root: config.workspace_root.into(),
             config_path: config.config_path.into(),
@@ -289,6 +427,7 @@ impl AgentZeroController {
             provider_override: config.provider.clone(),
             model_override: config.model.clone(),
             profile_override: config.profile.clone(),
+            extra_tools,
         };
 
         let result = runtime().block_on(agentzero_runtime::run_agent_once(req));
@@ -324,6 +463,29 @@ impl AgentZeroController {
                 Err(classify_error(e))
             }
         }
+    }
+
+    fn register_tool_impl(
+        &self,
+        name: String,
+        callback: Arc<dyn ToolCallback>,
+    ) -> Result<(), AgentZeroError> {
+        let mut tools = self
+            .registered_tools
+            .lock()
+            .map_err(|_| AgentZeroError::RuntimeError {
+                message: "failed to acquire registered_tools lock".to_string(),
+            })?;
+
+        // Reject duplicate names
+        if tools.iter().any(|t| t.name == name.as_str()) {
+            return Err(AgentZeroError::RuntimeError {
+                message: format!("tool '{}' is already registered", name),
+            });
+        }
+
+        tools.push(Arc::new(FfiTool::new(name, callback)));
+        Ok(())
     }
 }
 
@@ -488,5 +650,102 @@ mod tests {
             classify_error(e),
             AgentZeroError::RuntimeError { .. }
         ));
+    }
+
+    // ── FFI Tool Registration tests ──────────────────────────────────────
+
+    struct EchoCallback;
+
+    impl ToolCallback for EchoCallback {
+        fn execute(&self, input: String, _workspace_root: String) -> Result<String, String> {
+            Ok(format!("echo: {input}"))
+        }
+    }
+
+    struct FailCallback;
+
+    impl ToolCallback for FailCallback {
+        fn execute(&self, _input: String, _workspace_root: String) -> Result<String, String> {
+            Err("intentional failure".to_string())
+        }
+    }
+
+    #[test]
+    fn register_tool_success() {
+        let controller = AgentZeroController::new(test_config());
+        controller
+            .register_tool("echo_tool".to_string(), Box::new(EchoCallback))
+            .expect("registration should succeed");
+
+        let names = controller.registered_tool_names();
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0], "echo_tool");
+    }
+
+    #[test]
+    fn register_multiple_tools() {
+        let controller = AgentZeroController::new(test_config());
+        controller
+            .register_tool("tool_a".to_string(), Box::new(EchoCallback))
+            .unwrap();
+        controller
+            .register_tool("tool_b".to_string(), Box::new(EchoCallback))
+            .unwrap();
+
+        let names = controller.registered_tool_names();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"tool_a".to_string()));
+        assert!(names.contains(&"tool_b".to_string()));
+    }
+
+    #[test]
+    fn register_duplicate_name_fails() {
+        let controller = AgentZeroController::new(test_config());
+        controller
+            .register_tool("dup".to_string(), Box::new(EchoCallback))
+            .unwrap();
+
+        let err = controller
+            .register_tool("dup".to_string(), Box::new(EchoCallback))
+            .expect_err("duplicate should fail");
+        assert!(
+            matches!(err, AgentZeroError::RuntimeError { ref message } if message.contains("already registered")),
+            "expected already registered error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn ffi_tool_implements_tool_trait() {
+        let tool = FfiTool::new("test_tool".to_string(), Arc::new(EchoCallback));
+        assert_eq!(tool.name(), "test_tool");
+        assert!(!tool.description().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ffi_tool_execute_success() {
+        let tool = FfiTool::new("echo".to_string(), Arc::new(EchoCallback));
+        let ctx = ToolContext::new("/tmp/test".to_string());
+        let result = tool.execute("hello world", &ctx).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().output, "echo: hello world");
+    }
+
+    #[tokio::test]
+    async fn ffi_tool_execute_error_propagation() {
+        let tool = FfiTool::new("fail".to_string(), Arc::new(FailCallback));
+        let ctx = ToolContext::new("/tmp/test".to_string());
+        let result = tool.execute("anything", &ctx).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("intentional failure"),
+            "error should contain callback message: {err}"
+        );
+    }
+
+    #[test]
+    fn registered_tools_starts_empty() {
+        let controller = AgentZeroController::new(test_config());
+        assert!(controller.registered_tool_names().is_empty());
     }
 }

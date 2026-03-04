@@ -145,13 +145,24 @@
 - [x] Tests: 7 state management tests (load missing, save/load roundtrip, enable/disable toggle, default enabled, enable missing fails, remove entry, filter_by_state)
 - Total: 72 tests in plugins crate (41 unit + 31 integration)
 
-### Phase 7: FFI Plugin Bridge (Days 23-25)
+### Phase 7: FFI Plugin Bridge (Days 23-25) ✅
 
-- [ ] Add `ToolCallback` trait to `crates/agentzero-ffi/src/lib.rs` via `#[uniffi::export(callback_interface)]`
-- [ ] Add `register_tool()` method to `AgentZeroController`
-- [ ] Create `crates/agentzero-infra/src/tools/ffi_bridge.rs` with `FfiTool` struct
-- [ ] Implement `Tool` trait for `FfiTool` (delegates to callback)
-- [ ] Tests: register + execute FFI tool, error propagation, tool appears in tool list
+- [x] Add `ToolCallback` trait to `crates/agentzero-ffi/src/lib.rs` via `#[uniffi::export(callback_interface)]`
+  - Foreign-language-implementable trait with `execute(input, workspace_root) -> Result<String, String>`
+  - Optional `description()` method
+- [x] Add `register_tool()` method to `AgentZeroController`
+  - Both UniFFI and non-UniFFI impl blocks
+  - Duplicate name detection
+  - `registered_tool_names()` for listing
+- [x] Create `FfiTool` struct in `agentzero-ffi` (avoids circular deps with infra)
+  - Implements `Tool` trait via `#[async_trait]`
+  - Delegates to `ToolCallback` via `tokio::spawn_blocking`
+  - Leaked name string for `&'static str` requirement
+- [x] Add `extra_tools: Vec<Box<dyn Tool>>` to `RunAgentRequest`
+  - FFI-registered tools passed through to agent loop
+  - CLI uses `extra_tools: vec![]` (no change)
+- [x] Tests: 7 new FFI tests (register success, multiple tools, duplicate name, tool trait impl, execute success, error propagation, starts empty)
+- Total: 19 tests in FFI crate (12 existing + 7 new)
 
 ### Phase 8: Git-Based Registry (Days 26-30)
 
