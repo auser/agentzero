@@ -70,17 +70,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentzero-autonomy"
-version = "0.1.4"
-dependencies = [
- "anyhow",
- "regex",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
 name = "agentzero-bench"
 version = "0.1.4"
 dependencies = [
@@ -97,7 +86,6 @@ version = "0.1.4"
 dependencies = [
  "agentzero-config",
  "agentzero-core",
- "agentzero-leak-guard",
  "agentzero-storage",
  "anyhow",
  "async-trait",
@@ -123,18 +111,15 @@ dependencies = [
  "agentzero-coordination",
  "agentzero-core",
  "agentzero-cost",
- "agentzero-cron",
  "agentzero-daemon",
  "agentzero-doctor",
  "agentzero-gateway",
  "agentzero-goals",
- "agentzero-hardware",
  "agentzero-hooks",
  "agentzero-identity",
  "agentzero-infra",
  "agentzero-integrations",
  "agentzero-local",
- "agentzero-memory",
  "agentzero-multimodal",
  "agentzero-peripherals",
  "agentzero-plugins",
@@ -142,8 +127,8 @@ dependencies = [
  "agentzero-rag",
  "agentzero-runtime",
  "agentzero-service",
- "agentzero-skills",
  "agentzero-storage",
+ "agentzero-tools",
  "agentzero-tunnel",
  "agentzero-update",
  "anyhow",
@@ -223,28 +208,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentzero-cron"
-version = "0.1.4"
-dependencies = [
- "agentzero-storage",
- "anyhow",
- "serde",
-]
-
-[[package]]
-name = "agentzero-crypto"
-version = "0.1.4"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "chacha20poly1305",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "agentzero-daemon"
 version = "0.1.4"
 dependencies = [
@@ -311,15 +274,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentzero-hardware"
-version = "0.1.4"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "agentzero-health"
 version = "0.1.4"
 dependencies = [
@@ -358,9 +312,9 @@ name = "agentzero-infra"
 version = "0.1.4"
 dependencies = [
  "agentzero-core",
- "agentzero-memory",
  "agentzero-plugins",
  "agentzero-providers",
+ "agentzero-storage",
  "agentzero-tools",
  "anyhow",
  "async-trait",
@@ -378,16 +332,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentzero-leak-guard"
-version = "0.1.4"
-dependencies = [
- "anyhow",
- "regex",
- "serde",
- "tracing",
-]
-
-[[package]]
 name = "agentzero-local"
 version = "0.1.4"
 dependencies = [
@@ -398,18 +342,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "agentzero-memory"
-version = "0.1.4"
-dependencies = [
- "agentzero-core",
- "anyhow",
- "async-trait",
- "libsql",
- "rusqlite",
  "tokio",
 ]
 
@@ -493,8 +425,8 @@ dependencies = [
  "agentzero-config",
  "agentzero-core",
  "agentzero-infra",
- "agentzero-memory",
  "agentzero-providers",
+ "agentzero-storage",
  "agentzero-testkit",
  "anyhow",
  "async-trait",
@@ -515,23 +447,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentzero-skills"
-version = "0.1.4"
-dependencies = [
- "agentzero-storage",
- "anyhow",
- "serde",
-]
-
-[[package]]
 name = "agentzero-storage"
 version = "0.1.4"
 dependencies = [
  "agentzero-core",
- "agentzero-crypto",
  "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "libsql",
+ "rand 0.8.5",
+ "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
+ "tokio",
 ]
 
 [[package]]
@@ -548,12 +478,8 @@ dependencies = [
 name = "agentzero-tools"
 version = "0.1.4"
 dependencies = [
- "agentzero-autonomy",
  "agentzero-core",
- "agentzero-cron",
- "agentzero-hardware",
  "agentzero-providers",
- "agentzero-skills",
  "agentzero-storage",
  "anyhow",
  "async-trait",
@@ -564,6 +490,7 @@ dependencies = [
  "serde_json",
  "temp-env",
  "tokio",
+ "tracing",
  "url",
  "zip",
 ]

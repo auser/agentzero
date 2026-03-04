@@ -12,7 +12,6 @@ anyhow.workspace = true
 async-trait.workspace = true
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
-agentzero-leak-guard = { workspace = true }
 agentzero-storage = { workspace = true }
 regex.workspace = true
 serde.workspace = true

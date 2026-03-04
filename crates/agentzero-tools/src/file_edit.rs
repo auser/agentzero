@@ -113,11 +113,11 @@ impl Tool for FileEditTool {
         let dest = self.resolve_path(&request.path, &ctx.workspace_root)?;
 
         // B7: Hard-link guard.
-        agentzero_autonomy::AutonomyPolicy::check_hard_links(&dest.to_string_lossy())?;
+        crate::autonomy::AutonomyPolicy::check_hard_links(&dest.to_string_lossy())?;
 
         // B7: Sensitive file detection.
         if !ctx.allow_sensitive_file_writes
-            && agentzero_autonomy::is_sensitive_path(&dest.to_string_lossy())
+            && crate::autonomy::is_sensitive_path(&dest.to_string_lossy())
         {
             return Err(anyhow!(
                 "refusing to edit sensitive file: {}",

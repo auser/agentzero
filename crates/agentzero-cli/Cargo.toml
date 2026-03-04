@@ -10,9 +10,9 @@ repository.workspace = true
 [features]
 default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive"]
 memory-sqlite = ["agentzero-runtime/memory-sqlite"]
-memory-turso = ["agentzero-memory/memory-turso", "agentzero-runtime/memory-turso"]
+memory-turso = ["agentzero-storage/memory-turso", "agentzero-runtime/memory-turso"]
 rag = ["dep:agentzero-rag", "dep:agentzero-multimodal"]
-hardware = ["dep:agentzero-hardware", "dep:agentzero-peripherals"]
+hardware = ["dep:agentzero-peripherals"]
 channels-standard = ["agentzero-channels/channels-standard"]
 plugins = ["dep:agentzero-plugins", "agentzero-plugins?/wasm-runtime", "agentzero-infra/wasm-plugins"]
 plugin-dev = ["plugins", "agentzero-plugins?/plugin-dev"]
@@ -32,7 +32,6 @@ agentzero-config = { workspace = true }
 agentzero-coordination = { workspace = true }
 agentzero-core = { workspace = true }
 agentzero-cost = { workspace = true }
-agentzero-cron = { workspace = true }
 agentzero-daemon = { workspace = true }
 agentzero-doctor = { workspace = true }
 agentzero-gateway = { workspace = true, optional = true }
@@ -40,18 +39,16 @@ agentzero-hooks = { workspace = true }
 agentzero-identity = { workspace = true }
 agentzero-infra = { workspace = true }
 agentzero-integrations = { workspace = true }
-agentzero-memory = { workspace = true }
 agentzero-goals = { workspace = true }
 agentzero-plugins = { workspace = true, optional = true }
-agentzero-skills = { workspace = true }
 agentzero-storage = { workspace = true }
 agentzero-tunnel = { workspace = true }
 agentzero-update = { workspace = true }
 agentzero-providers = { workspace = true }
 agentzero-rag = { workspace = true, optional = true }
 agentzero-multimodal = { workspace = true, optional = true }
-agentzero-hardware = { workspace = true, optional = true }
 agentzero-peripherals = { workspace = true, optional = true }
+agentzero-tools = { workspace = true }
 agentzero-local = { workspace = true }
 agentzero-runtime = { workspace = true, features = [] }
 agentzero-service = { workspace = true }

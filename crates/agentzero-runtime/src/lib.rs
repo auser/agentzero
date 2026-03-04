@@ -9,10 +9,10 @@ use agentzero_core::{
 };
 use agentzero_infra::audit::FileAuditSink;
 use agentzero_infra::tools::default_tools;
-use agentzero_memory::SqliteMemoryStore;
-#[cfg(feature = "memory-turso")]
-use agentzero_memory::{TursoMemoryStore, TursoSettings};
 use agentzero_providers::{find_models_for_provider, find_provider, model_capabilities};
+use agentzero_storage::memory::SqliteMemoryStore;
+#[cfg(feature = "memory-turso")]
+use agentzero_storage::memory::{TursoMemoryStore, TursoSettings};
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;

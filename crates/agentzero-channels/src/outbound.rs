@@ -3,8 +3,8 @@
 //! Currently applies the leak guard to scan and redact/block credential leaks
 //! in outbound channel messages.
 
+use crate::leak_guard::LeakGuardPolicy;
 use crate::SendMessage;
-use agentzero_leak_guard::LeakGuardPolicy;
 
 /// Result of processing an outbound message through the security pipeline.
 #[derive(Debug, Clone)]
@@ -42,7 +42,7 @@ pub fn process_outbound(msg: SendMessage, guard: &LeakGuardPolicy) -> OutboundRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentzero_leak_guard::{LeakAction, LeakGuardPolicy};
+    use crate::leak_guard::{LeakAction, LeakGuardPolicy};
 
     fn msg(content: &str) -> SendMessage {
         SendMessage::new(content, "user-1")

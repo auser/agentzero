@@ -5,6 +5,7 @@ pub mod drafts;
 pub mod group_reply;
 pub mod image_markers;
 pub mod interruption;
+pub mod leak_guard;
 pub mod outbound;
 pub mod pipeline;
 

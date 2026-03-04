@@ -2,7 +2,7 @@ use crate::cli::MemoryCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_config::load as load_config;
 use agentzero_core::MemoryStore;
-use agentzero_memory::SqliteMemoryStore;
+use agentzero_storage::memory::SqliteMemoryStore;
 use async_trait::async_trait;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -296,8 +296,8 @@ pub async fn build_memory_store(ctx: &CommandContext) -> anyhow::Result<Box<dyn 
 
 #[cfg(feature = "memory-turso")]
 async fn build_turso_store() -> anyhow::Result<Box<dyn MemoryStore>> {
-    let settings = agentzero_memory::TursoSettings::from_env()?;
-    let store = agentzero_memory::TursoMemoryStore::connect(settings).await?;
+    let settings = agentzero_storage::memory::TursoSettings::from_env()?;
+    let store = agentzero_storage::memory::TursoMemoryStore::connect(settings).await?;
     Ok(Box::new(store))
 }
 

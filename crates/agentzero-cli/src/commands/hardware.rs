@@ -21,7 +21,7 @@ impl AgentZeroCommand for HardwareCommand {
         {
             match opts {
                 HardwareCommands::Discover => {
-                    let boards = agentzero_hardware::discover_boards();
+                    let boards = agentzero_tools::hardware::discover_boards();
                     println!("Discovered hardware boards ({}):", boards.len());
                     for board in boards {
                         println!(
@@ -40,7 +40,7 @@ impl AgentZeroCommand for HardwareCommand {
                     println!("  memory_kb: {}", board.memory_kb);
                 }
                 HardwareCommands::Introspect => {
-                    let boards = agentzero_hardware::discover_boards();
+                    let boards = agentzero_tools::hardware::discover_boards();
                     println!("Hardware introspection");
                     println!("  known_boards: {}", boards.len());
                     for board in boards {
@@ -54,7 +54,7 @@ impl AgentZeroCommand for HardwareCommand {
 }
 
 #[cfg(feature = "hardware")]
-fn resolve_board_from_chip(chip: &str) -> anyhow::Result<agentzero_hardware::HardwareBoard> {
+fn resolve_board_from_chip(chip: &str) -> anyhow::Result<agentzero_tools::hardware::HardwareBoard> {
     let normalized = chip.trim().to_ascii_lowercase();
     let board_id = if normalized.starts_with("stm32") {
         "sim-stm32"
@@ -64,7 +64,7 @@ fn resolve_board_from_chip(chip: &str) -> anyhow::Result<agentzero_hardware::Har
         anyhow::bail!("unknown chip: {chip}");
     };
 
-    agentzero_hardware::board_info(board_id)
+    agentzero_tools::hardware::board_info(board_id)
 }
 
 #[cfg(test)]

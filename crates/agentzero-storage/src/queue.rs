@@ -1,4 +1,4 @@
-use agentzero_crypto::{decrypt_json, encrypt_json, StorageKey};
+use crate::crypto::{decrypt_json, encrypt_json, StorageKey};
 use anyhow::Context;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};

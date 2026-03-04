@@ -1,4 +1,4 @@
-use agentzero_crypto::{decrypt_json, encrypt_json, StorageKey};
+use crate::crypto::{decrypt_json, encrypt_json, StorageKey};
 use anyhow::Context;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -138,7 +138,7 @@ impl EncryptedJsonStore {
 #[cfg(test)]
 mod tests {
     use super::EncryptedJsonStore;
-    use agentzero_crypto::StorageKey;
+    use crate::crypto::StorageKey;
     use serde::{Deserialize, Serialize};
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};

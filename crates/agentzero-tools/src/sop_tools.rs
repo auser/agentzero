@@ -1,5 +1,5 @@
+use crate::skills::sop::{self, SopPlan};
 use agentzero_core::{Tool, ToolContext, ToolResult};
-use agentzero_skills::sop::{self, SopPlan};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

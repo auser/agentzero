@@ -7,9 +7,23 @@ license.workspace = true
 description.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+memory-turso = ["dep:libsql", "dep:tokio"]
+
 [dependencies]
 anyhow.workspace = true
 agentzero-core = { workspace = true }
-agentzero-crypto = { workspace = true }
+async-trait.workspace = true
+base64 = "0.22"
+chacha20poly1305 = "0.10"
+rand = "0.8"
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+libsql = { version = "0.9.29", default-features = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio.workspace = true

@@ -142,11 +142,11 @@ impl Tool for ReadFileTool {
         let safe_path = self.resolve_safe(input, &ctx.workspace_root)?;
 
         // B7: Hard-link guard — refuse files with multiple hard links.
-        agentzero_autonomy::AutonomyPolicy::check_hard_links(&safe_path.to_string_lossy())?;
+        crate::autonomy::AutonomyPolicy::check_hard_links(&safe_path.to_string_lossy())?;
 
         // B7: Sensitive file detection — block unless explicitly allowed.
         if !ctx.allow_sensitive_file_reads
-            && agentzero_autonomy::is_sensitive_path(&safe_path.to_string_lossy())
+            && crate::autonomy::is_sensitive_path(&safe_path.to_string_lossy())
         {
             return Err(anyhow!(
                 "refusing to read sensitive file: {}",

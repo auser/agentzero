@@ -1,6 +1,6 @@
 use crate::cli::CronCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_cron::CronStore;
+use agentzero_tools::cron_store::CronStore;
 use async_trait::async_trait;
 
 pub struct CronCommand;

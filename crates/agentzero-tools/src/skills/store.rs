@@ -1,4 +1,4 @@
-use crate::skillforge::validate_skill_name;
+use super::skillforge::validate_skill_name;
 use agentzero_storage::EncryptedJsonStore;
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};

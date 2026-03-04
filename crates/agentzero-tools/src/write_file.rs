@@ -132,11 +132,11 @@ impl Tool for WriteFileTool {
         let destination = self.resolve_destination(&request.path, &ctx.workspace_root)?;
 
         // B7: Hard-link guard — refuse overwriting multiply-linked files.
-        agentzero_autonomy::AutonomyPolicy::check_hard_links(&destination.to_string_lossy())?;
+        crate::autonomy::AutonomyPolicy::check_hard_links(&destination.to_string_lossy())?;
 
         // B7: Sensitive file detection — block unless explicitly allowed.
         if !ctx.allow_sensitive_file_writes
-            && agentzero_autonomy::is_sensitive_path(&destination.to_string_lossy())
+            && crate::autonomy::is_sensitive_path(&destination.to_string_lossy())
         {
             return Err(anyhow!(
                 "refusing to write sensitive file: {}",

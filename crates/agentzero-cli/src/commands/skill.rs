@@ -1,6 +1,6 @@
 use crate::cli::SkillCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_skills::SkillStore;
+use agentzero_tools::skills::SkillStore;
 use async_trait::async_trait;
 
 pub struct SkillCommand;

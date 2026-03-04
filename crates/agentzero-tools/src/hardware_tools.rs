@@ -39,7 +39,7 @@ impl Tool for HardwareBoardInfoTool {
                 if id.trim().is_empty() {
                     return Err(anyhow!("board id must not be empty"));
                 }
-                let board = agentzero_hardware::board_info(&id)?;
+                let board = crate::hardware::board_info(&id)?;
                 let output = json!({
                     "id": board.id,
                     "display_name": board.display_name,
@@ -50,7 +50,7 @@ impl Tool for HardwareBoardInfoTool {
                 Ok(ToolResult { output })
             }
             None => {
-                let boards = agentzero_hardware::discover_boards();
+                let boards = crate::hardware::discover_boards();
                 let entries: Vec<serde_json::Value> = boards
                     .iter()
                     .map(|b| {
@@ -103,7 +103,7 @@ impl Tool for HardwareMemoryMapTool {
         }
 
         // Validate the board exists
-        agentzero_hardware::board_info(&req.board)?;
+        crate::hardware::board_info(&req.board)?;
 
         let map = memory_map_for(&req.board);
         Ok(ToolResult {
@@ -181,7 +181,7 @@ impl Tool for HardwareMemoryReadTool {
         }
 
         // Validate board exists
-        agentzero_hardware::board_info(&req.board)?;
+        crate::hardware::board_info(&req.board)?;
 
         // Parse hex address
         let addr_str = req
