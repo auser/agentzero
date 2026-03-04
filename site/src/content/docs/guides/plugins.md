@@ -208,6 +208,8 @@ On startup, the agent scans all three directories, loads valid manifests, and re
 
 ### Directory Structure
 
+**Versioned layout** (installed plugins):
+
 ```
 plugins/my-tool/0.1.0/
 ├── manifest.json
@@ -215,6 +217,33 @@ plugins/my-tool/0.1.0/
 └── .cache/
     ├── plugin.cwasm     # AOT-compiled (auto-generated)
     └── source.sha256    # Cache invalidation hash
+```
+
+**Flat layout** (development convenience):
+
+```
+plugins/my-tool/
+├── manifest.json
+└── plugin.wasm
+```
+
+Both layouts are auto-detected. The flat layout is useful during development — no version subdirectory needed. When multiple versions exist in a versioned layout, the latest version (lexicographic) is loaded.
+
+---
+
+## Configuration
+
+Enable WASM plugins and optionally override the default directories in `agentzero.toml`:
+
+```toml
+[security.plugin]
+enabled = false             # Legacy process plugin (unchanged)
+wasm_enabled = true         # Enable WASM plugin discovery
+
+# Optional directory overrides (defaults shown):
+# global_plugin_dir = "~/.local/share/agentzero/plugins"
+# project_plugin_dir = ".agentzero/plugins"
+# dev_plugin_dir = "plugins"
 ```
 
 ---

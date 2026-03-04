@@ -496,7 +496,19 @@ pub struct McpConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct PluginConfig {
+    /// Enable the process-based plugin tool (legacy).
     pub enabled: bool,
+    /// Enable WASM plugin discovery and loading.
+    pub wasm_enabled: bool,
+    /// Override for the global plugin install directory.
+    /// Defaults to `{data_dir}/plugins/`.
+    pub global_plugin_dir: Option<String>,
+    /// Override for the project-level plugin directory.
+    /// Defaults to `{workspace}/.agentzero/plugins/`.
+    pub project_plugin_dir: Option<String>,
+    /// Override for the development plugin directory (CWD hot-reload).
+    /// Defaults to `{cwd}/plugins/`.
+    pub dev_plugin_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

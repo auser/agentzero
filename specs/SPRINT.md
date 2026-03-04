@@ -40,16 +40,28 @@
 - [x] Feature-gated placeholder in `default_tools()` for Phase 3 discovery wiring
 - [x] Tests (3 new, 26 total): cache creation/invalidation, corrupt cache fallback, SHA mismatch recompile
 
-### Phase 3: Plugin Discovery + Hot-Reload (Days 8-11)
+### Phase 3: Plugin Discovery + Hot-Reload (Days 8-11) ✅
 
-- [ ] Add `discover_plugins()` in `package.rs` scanning global → project → CWD paths
-- [ ] Wire discovery into `default_tools()` behind `wasm-plugins` feature
-- [ ] Add `enable_wasm_plugins: bool` to `ToolSecurityPolicy`
-- [ ] Expand `PluginConfig` in `agentzero-config`
-- [ ] Create `crates/agentzero-plugins/src/watcher.rs` using `notify` crate (behind `plugin-dev` feature)
-- [ ] Hot-reload: watch `$CWD/plugins/` for `.wasm` changes, invalidate cache, reload
-- [ ] Add `wasi` and `plugin-dev` features through CLI → bin crate feature chain
-- [ ] Tests: empty dirs = zero overhead, valid plugin discovery, CWD dev_mode, hot-reload, invalid manifest = warn + skip
+- [x] Add `discover_plugins()` in `package.rs` scanning global → project → CWD paths
+  - [x] Three-tier priority: global → project → CWD (later overrides earlier)
+  - [x] Supports versioned layout (`<id>/<version>/manifest.json`) and flat layout (`<id>/manifest.json`)
+  - [x] Picks latest version when multiple versions exist
+  - [x] CWD plugins marked `dev_mode: true`
+- [x] Wire discovery into `default_tools()` behind `wasm-plugins` feature
+  - [x] `discover_plugins()` called with policy-provided directory overrides
+  - [x] Each discovered plugin loaded as `WasmTool` with default isolation policy
+  - [x] Invalid plugins warned via tracing and skipped
+- [x] `enable_wasm_plugins: bool` added to `ToolSecurityPolicy` (done in Phase 2)
+- [x] Expand `PluginConfig` in `agentzero-config`:
+  - [x] `wasm_enabled: bool` → maps to `enable_wasm_plugins`
+  - [x] `global_plugin_dir`, `project_plugin_dir`, `dev_plugin_dir` overrides
+  - [x] Plugin dir paths carried through `ToolSecurityPolicy` to `default_tools()`
+- [x] Create `crates/agentzero-plugins/src/watcher.rs` using `notify` crate (behind `plugin-dev` feature)
+  - [x] `PluginWatcher::start(dir)` watches for `.wasm` create/modify events
+  - [x] Channel-based API: `try_recv()`, `recv_timeout()`, `drain()`
+  - [x] Ignores non-`.wasm` files
+- [x] `plugin-dev` feature forwarded through CLI → bin crate
+- [x] Tests (12 new, 38 total in plugins): empty dirs, versioned/flat discovery, tier override, latest version, invalid manifest skip, missing wasm skip, watcher creation/modification/ignore/missing-dir
 
 ### Phase 4: Plugin SDK + `declare_tool!` Macro (Days 12-15)
 

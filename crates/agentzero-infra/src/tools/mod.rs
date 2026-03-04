@@ -121,13 +121,29 @@ pub fn default_tools(
         tools.push(Box::new(PushoverTool));
     }
 
-    // WASM plugin tools are loaded via discover_plugins() in Phase 3.
-    // The WasmTool bridge and ModuleCache are ready; wiring happens when
-    // plugin discovery is implemented.
     #[cfg(feature = "wasm-plugins")]
     if policy.enable_wasm_plugins {
-        // Phase 3 will call discover_plugins() here and push WasmTool instances.
-        let _ = &policy; // suppress unused warning until discovery is wired
+        use agentzero_plugins::package::discover_plugins;
+        use agentzero_plugins::wasm::WasmIsolationPolicy;
+
+        let discovered = discover_plugins(
+            policy.wasm_global_plugin_dir.as_deref(),
+            policy.wasm_project_plugin_dir.as_deref(),
+            policy.wasm_dev_plugin_dir.as_deref(),
+        );
+        let isolation = WasmIsolationPolicy::default();
+        for plugin in discovered {
+            match WasmTool::from_manifest(
+                plugin.manifest.clone(),
+                plugin.wasm_path.clone(),
+                isolation.clone(),
+            ) {
+                Ok(tool) => tools.push(Box::new(tool)),
+                Err(e) => {
+                    tracing::warn!("skipping wasm plugin {}: {e}", plugin.manifest.id);
+                }
+            }
+        }
     }
 
     if let Some(r) = router {

@@ -63,7 +63,10 @@ pub fn load_tool_security_policy(
         enable_browser_open: config.browser.enabled,
         enable_composio: false,
         enable_pushover: false,
-        enable_wasm_plugins: false,
+        enable_wasm_plugins: config.security.plugin.wasm_enabled,
+        wasm_global_plugin_dir: config.security.plugin.global_plugin_dir.map(PathBuf::from),
+        wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),
+        wasm_dev_plugin_dir: config.security.plugin.dev_plugin_dir.map(PathBuf::from),
     })
 }
 

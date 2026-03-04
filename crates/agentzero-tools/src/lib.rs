@@ -94,6 +94,9 @@ pub struct ToolSecurityPolicy {
     pub enable_composio: bool,
     pub enable_pushover: bool,
     pub enable_wasm_plugins: bool,
+    pub wasm_global_plugin_dir: Option<PathBuf>,
+    pub wasm_project_plugin_dir: Option<PathBuf>,
+    pub wasm_dev_plugin_dir: Option<PathBuf>,
 }
 
 impl ToolSecurityPolicy {
@@ -151,6 +154,9 @@ impl ToolSecurityPolicy {
             enable_composio: false,
             enable_pushover: false,
             enable_wasm_plugins: false,
+            wasm_global_plugin_dir: None,
+            wasm_project_plugin_dir: None,
+            wasm_dev_plugin_dir: None,
         }
     }
 }

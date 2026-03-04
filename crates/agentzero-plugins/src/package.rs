@@ -326,6 +326,166 @@ pub fn remove_installed_plugin(
     Ok(removed)
 }
 
+/// A plugin discovered on disk, ready to be loaded as a `WasmTool`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredPlugin {
+    pub manifest: PluginManifest,
+    pub wasm_path: PathBuf,
+    /// Whether this plugin was found in a development directory (CWD/plugins/).
+    pub dev_mode: bool,
+}
+
+/// Discover installed plugins by scanning up to three directory tiers:
+///
+/// 1. **Global**: `{global_plugin_dir}/` — user-installed plugins
+/// 2. **Project**: `{project_plugin_dir}/` — project-specific plugins
+/// 3. **Development**: `{cwd_plugin_dir}/` — in-development plugins (hot-reload)
+///
+/// Later tiers override earlier ones when the same plugin id is found.
+/// Each directory is expected to have the structure used by `install_packaged_plugin`:
+///   `<plugin_id>/<version>/manifest.json` + `<wasm_file>`
+///
+/// The development directory also supports a flat layout for convenience:
+///   `<plugin_id>/manifest.json` + `<wasm_file>` (no version subdir)
+///
+/// Invalid manifests are warned and skipped — they never cause a hard failure.
+pub fn discover_plugins(
+    global_plugin_dir: Option<&Path>,
+    project_plugin_dir: Option<&Path>,
+    cwd_plugin_dir: Option<&Path>,
+) -> Vec<DiscoveredPlugin> {
+    let mut plugins: std::collections::HashMap<String, DiscoveredPlugin> =
+        std::collections::HashMap::new();
+
+    // Tier 1: Global
+    if let Some(dir) = global_plugin_dir {
+        for plugin in scan_plugin_dir(dir, false) {
+            plugins.insert(plugin.manifest.id.clone(), plugin);
+        }
+    }
+
+    // Tier 2: Project
+    if let Some(dir) = project_plugin_dir {
+        for plugin in scan_plugin_dir(dir, false) {
+            plugins.insert(plugin.manifest.id.clone(), plugin);
+        }
+    }
+
+    // Tier 3: Development (CWD)
+    if let Some(dir) = cwd_plugin_dir {
+        for plugin in scan_plugin_dir(dir, true) {
+            plugins.insert(plugin.manifest.id.clone(), plugin);
+        }
+    }
+
+    let mut result: Vec<DiscoveredPlugin> = plugins.into_values().collect();
+    result.sort_by(|a, b| a.manifest.id.cmp(&b.manifest.id));
+    result
+}
+
+/// Scan a single plugin directory for installed plugins.
+///
+/// Supports two layouts:
+///   - Versioned: `<id>/<version>/manifest.json`
+///   - Flat (dev): `<id>/manifest.json`
+fn scan_plugin_dir(dir: &Path, dev_mode: bool) -> Vec<DiscoveredPlugin> {
+    let mut found = Vec::new();
+
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return found, // Missing dir = zero plugins
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if !entry.path().is_dir() {
+            continue;
+        }
+
+        // Try flat layout first: <id>/manifest.json
+        let flat_manifest = entry.path().join(MANIFEST_FILE_NAME);
+        if flat_manifest.exists() {
+            if let Some(plugin) = try_load_plugin(&entry.path(), dev_mode) {
+                found.push(plugin);
+                continue;
+            }
+        }
+
+        // Try versioned layout: <id>/<version>/manifest.json
+        if let Ok(version_entries) = fs::read_dir(entry.path()) {
+            // Pick the latest version directory (lexicographic sort, last wins)
+            let mut best: Option<DiscoveredPlugin> = None;
+            for version_entry in version_entries {
+                let version_entry = match version_entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                if !version_entry.path().is_dir() {
+                    continue;
+                }
+                if let Some(plugin) = try_load_plugin(&version_entry.path(), dev_mode) {
+                    match &best {
+                        Some(existing) if existing.manifest.version >= plugin.manifest.version => {}
+                        _ => best = Some(plugin),
+                    }
+                }
+            }
+            if let Some(plugin) = best {
+                found.push(plugin);
+            }
+        }
+    }
+
+    found
+}
+
+/// Attempt to load a plugin from a directory containing `manifest.json`.
+fn try_load_plugin(dir: &Path, dev_mode: bool) -> Option<DiscoveredPlugin> {
+    let manifest_path = dir.join(MANIFEST_FILE_NAME);
+    let bytes = match fs::read(&manifest_path) {
+        Ok(b) => b,
+        Err(_) => return None,
+    };
+    let manifest: PluginManifest = match serde_json::from_slice(&bytes) {
+        Ok(m) => m,
+        Err(e) => {
+            #[cfg(feature = "wasm-runtime")]
+            tracing::warn!(
+                "skipping plugin at {}: invalid manifest: {e}",
+                dir.display()
+            );
+            let _ = e;
+            return None;
+        }
+    };
+    if let Err(e) = manifest.validate() {
+        #[cfg(feature = "wasm-runtime")]
+        tracing::warn!("skipping plugin {}: validation failed: {e}", manifest.id);
+        let _ = e;
+        return None;
+    }
+
+    let wasm_path = dir.join(&manifest.wasm_file);
+    if !wasm_path.exists() {
+        #[cfg(feature = "wasm-runtime")]
+        tracing::warn!(
+            "skipping plugin {}: wasm file not found at {}",
+            manifest.id,
+            wasm_path.display()
+        );
+        return None;
+    }
+
+    Some(DiscoveredPlugin {
+        manifest,
+        wasm_path,
+        dev_mode,
+    })
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -492,5 +652,143 @@ mod tests {
             .validate()
             .expect_err("incompatible API should fail");
         assert!(err.to_string().contains("runtime API compatibility failed"));
+    }
+
+    // --- Discovery tests ---
+
+    use super::discover_plugins;
+
+    fn write_test_plugin(dir: &std::path::Path, id: &str, version: &str) {
+        fs::create_dir_all(dir).expect("plugin dir should be created");
+        let wasm_bytes =
+            wat::parse_str(r#"(module (func (export "run") (result i32) i32.const 42))"#)
+                .expect("wat should compile");
+        let sha = super::sha256_hex(&wasm_bytes);
+        let manifest = PluginManifest {
+            id: id.to_string(),
+            version: version.to_string(),
+            entrypoint: "run".to_string(),
+            wasm_file: "plugin.wasm".to_string(),
+            wasm_sha256: sha,
+            capabilities: vec![],
+            hooks: vec![],
+            min_runtime_api: 1,
+            max_runtime_api: 2,
+            allowed_host_calls: vec![],
+        };
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should write");
+        fs::write(dir.join("plugin.wasm"), &wasm_bytes).expect("wasm should write");
+    }
+
+    #[test]
+    fn discover_plugins_empty_dirs_returns_empty() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let global = tmp.path().join("global");
+        let project = tmp.path().join("project");
+        let cwd = tmp.path().join("cwd");
+        // Dirs don't exist — should return empty, not error
+        let found = discover_plugins(Some(&global), Some(&project), Some(&cwd));
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn discover_plugins_finds_versioned_layout() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let global = tmp.path().join("global");
+        write_test_plugin(&global.join("my-tool").join("1.0.0"), "my-tool", "1.0.0");
+
+        let found = discover_plugins(Some(&global), None, None);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].manifest.id, "my-tool");
+        assert_eq!(found[0].manifest.version, "1.0.0");
+        assert!(!found[0].dev_mode);
+    }
+
+    #[test]
+    fn discover_plugins_finds_flat_layout() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let cwd = tmp.path().join("plugins");
+        write_test_plugin(&cwd.join("dev-tool"), "dev-tool", "0.1.0");
+
+        let found = discover_plugins(None, None, Some(&cwd));
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].manifest.id, "dev-tool");
+        assert!(found[0].dev_mode);
+    }
+
+    #[test]
+    fn discover_plugins_later_tier_overrides_earlier() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let global = tmp.path().join("global");
+        let project = tmp.path().join("project");
+        write_test_plugin(&global.join("shared").join("1.0.0"), "shared", "1.0.0");
+        write_test_plugin(&project.join("shared").join("2.0.0"), "shared", "2.0.0");
+
+        let found = discover_plugins(Some(&global), Some(&project), None);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].manifest.version, "2.0.0");
+    }
+
+    #[test]
+    fn discover_plugins_picks_latest_version() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let global = tmp.path().join("global");
+        write_test_plugin(&global.join("multi-v").join("1.0.0"), "multi-v", "1.0.0");
+        write_test_plugin(&global.join("multi-v").join("2.0.0"), "multi-v", "2.0.0");
+
+        let found = discover_plugins(Some(&global), None, None);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].manifest.version, "2.0.0");
+    }
+
+    #[test]
+    fn discover_plugins_skips_invalid_manifest() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let global = tmp.path().join("global");
+        let bad_dir = global.join("bad-plugin").join("1.0.0");
+        fs::create_dir_all(&bad_dir).expect("dir should be created");
+        fs::write(bad_dir.join("manifest.json"), b"not json").expect("write bad manifest");
+        fs::write(bad_dir.join("plugin.wasm"), b"\0asm\x01\0\0\0").expect("write wasm");
+
+        let found = discover_plugins(Some(&global), None, None);
+        assert!(found.is_empty(), "invalid manifest should be skipped");
+    }
+
+    #[test]
+    fn discover_plugins_skips_missing_wasm_file() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let global = tmp.path().join("global");
+        let dir = global.join("no-wasm").join("1.0.0");
+        fs::create_dir_all(&dir).expect("dir should be created");
+        let manifest = PluginManifest {
+            id: "no-wasm".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "run".to_string(),
+            wasm_file: "plugin.wasm".to_string(),
+            wasm_sha256: "a".repeat(64),
+            capabilities: vec![],
+            hooks: vec![],
+            min_runtime_api: 1,
+            max_runtime_api: 2,
+            allowed_host_calls: vec![],
+        };
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).expect("serialize"),
+        )
+        .expect("write");
+
+        let found = discover_plugins(Some(&global), None, None);
+        assert!(found.is_empty(), "missing wasm should be skipped");
+    }
+
+    #[test]
+    fn discover_plugins_none_dirs_returns_empty() {
+        let found = discover_plugins(None, None, None);
+        assert!(found.is_empty());
     }
 }

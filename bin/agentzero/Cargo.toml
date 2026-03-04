@@ -21,6 +21,7 @@ rag = ["agentzero-cli/rag"]
 hardware = ["agentzero-cli/hardware"]
 channels-standard = ["agentzero-cli/channels-standard"]
 plugins = ["agentzero-cli/plugins"]
+plugin-dev = ["agentzero-cli/plugin-dev"]
 gateway = ["agentzero-cli/gateway"]
 tui = ["agentzero-cli/tui"]
 
