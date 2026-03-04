@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Foreign function interface for AgentZero — Swift, Kotlin, Python, TypeScript bindings"
+repository.workspace = true
 publish = false
 
 [lib]

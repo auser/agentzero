@@ -77,6 +77,10 @@ impl Tool for DelegateCoordinationStatusTool {
         "delegate_coordination_status"
     }
 
+    fn description(&self) -> &'static str {
+        "Track and manage delegation coordination: list, record, or clear delegation events."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed: Input = serde_json::from_str(input)
             .context("delegate_coordination_status expects JSON: {\"op\", ...}")?;

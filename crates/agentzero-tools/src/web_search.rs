@@ -249,6 +249,23 @@ impl Tool for WebSearchTool {
         "web_search"
     }
 
+    fn description(&self) -> &'static str {
+        "Search the web using DuckDuckGo, Brave, or Jina and return a summary of results."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query"
+                }
+            },
+            "required": ["query"]
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: WebSearchInput =
             serde_json::from_str(input).context("web_search expects JSON: {\"query\": \"...\"}")?;

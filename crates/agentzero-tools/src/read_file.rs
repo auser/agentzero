@@ -121,6 +121,23 @@ impl Tool for ReadFileTool {
         "read_file"
     }
 
+    fn description(&self) -> &'static str {
+        "Read the contents of a file at the given path. Returns the file text or an error if the path is outside the workspace or the file is too large."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path to the file to read"
+                }
+            },
+            "required": ["path"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let safe_path = self.resolve_safe(input, &ctx.workspace_root)?;
 

@@ -184,6 +184,26 @@ impl Tool for BrowserTool {
         "browser"
     }
 
+    fn description(&self) -> &'static str {
+        "Control a headless browser: navigate to URLs, execute JavaScript, take screenshots, and extract page content."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Browser action: navigate, execute_js, screenshot, content, close",
+                    "enum": ["navigate", "execute_js", "screenshot", "content", "close"]
+                },
+                "url": { "type": "string", "description": "URL to navigate to (for navigate action)" },
+                "script": { "type": "string", "description": "JavaScript to execute (for execute_js action)" }
+            },
+            "required": ["action"]
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let action: BrowserAction =
             serde_json::from_str(input).context("browser expects JSON with \"action\" field")?;

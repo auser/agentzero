@@ -319,6 +319,27 @@ impl Tool for ApplyPatchTool {
         "apply_patch"
     }
 
+    fn description(&self) -> &'static str {
+        "Apply a unified patch to one or more files. Supports update, add, and delete operations with context-based matching and dry-run mode."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "patch": {
+                    "type": "string",
+                    "description": "The patch text in unified diff format"
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If true, show what would change without modifying files"
+                }
+            },
+            "required": ["patch"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let request: ApplyPatchInput = serde_json::from_str(input)
             .context("apply_patch expects JSON: {\"patch\": \"...\", \"dry_run\": false}")?;

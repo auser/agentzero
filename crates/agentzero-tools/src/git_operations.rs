@@ -157,6 +157,24 @@ impl Tool for GitOperationsTool {
         "git_operations"
     }
 
+    fn description(&self) -> &'static str {
+        "Perform git operations: status, diff, log, branch, add, commit, checkout, show, stash. Input is JSON with an \"op\" field."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "op": {
+                    "type": "string",
+                    "description": "Git operation: status, diff, log, branch, add, commit, checkout, show, stash",
+                    "enum": ["status", "diff", "log", "branch", "add", "commit", "checkout", "show", "stash"]
+                }
+            },
+            "required": ["op"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let op: GitOp =
             serde_json::from_str(input).context("git_operations expects JSON with \"op\" field")?;

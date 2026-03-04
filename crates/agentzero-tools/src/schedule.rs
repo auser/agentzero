@@ -250,6 +250,10 @@ impl Tool for ScheduleTool {
         "schedule"
     }
 
+    fn description(&self) -> &'static str {
+        "Manage scheduled tasks: create, list, update, remove, pause, resume, or parse cron expressions."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: ScheduleInput = serde_json::from_str(input)
             .context("schedule expects JSON: {\"action\": \"create|list|update|remove|pause|resume|parse\", ...}")?;

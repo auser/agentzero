@@ -75,6 +75,10 @@ impl Tool for ProxyConfigTool {
         "proxy_config"
     }
 
+    fn description(&self) -> &'static str {
+        "Manage HTTP/HTTPS proxy settings: get, set, clear, add/remove bypass hosts."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed: Input =
             serde_json::from_str(input).context("proxy_config expects JSON: {\"op\", ...}")?;

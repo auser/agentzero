@@ -26,6 +26,10 @@ impl Tool for HardwareBoardInfoTool {
         "hardware_board_info"
     }
 
+    fn description(&self) -> &'static str {
+        "List discovered hardware boards or get detailed info for a specific board."
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: BoardInfoInput = serde_json::from_str(input)
             .context("hardware_board_info expects JSON: {\"board\"?}")?;
@@ -84,6 +88,10 @@ pub struct HardwareMemoryMapTool;
 impl Tool for HardwareMemoryMapTool {
     fn name(&self) -> &'static str {
         "hardware_memory_map"
+    }
+
+    fn description(&self) -> &'static str {
+        "Get the flash and RAM memory map layout for a hardware board."
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -155,6 +163,10 @@ pub struct HardwareMemoryReadTool;
 impl Tool for HardwareMemoryReadTool {
     fn name(&self) -> &'static str {
         "hardware_memory_read"
+    }
+
+    fn description(&self) -> &'static str {
+        "Read memory from a hardware board at a given address."
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

@@ -98,6 +98,35 @@ impl Tool for WriteFileTool {
         "write_file"
     }
 
+    fn description(&self) -> &'static str {
+        "Write content to a file, creating it if it does not exist or overwriting if overwrite=true. Path must be within the workspace root."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path to the file to write"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Text content to write to the file"
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Set to true to overwrite an existing file"
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If true, report what would happen without writing"
+                }
+            },
+            "required": ["path", "content"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let request = Self::parse_input(input)?;
         let destination = self.resolve_destination(&request.path, &ctx.workspace_root)?;

@@ -253,7 +253,27 @@ pub trait MemoryStore: Send + Sync {
 
 #[async_trait]
 pub trait Tool: Send + Sync {
+    /// Unique tool identifier (e.g. `"read_file"`, `"shell"`).
     fn name(&self) -> &'static str;
+
+    /// Human-readable description of what this tool does.
+    /// Used in system prompts so the LLM knows when to invoke this tool.
+    fn description(&self) -> &'static str {
+        ""
+    }
+
+    /// JSON Schema describing the expected input parameters.
+    /// Returns `None` if the tool accepts free-form text input.
+    ///
+    /// When provided, this enables:
+    /// - Structured tool-use APIs (Anthropic tool_use, OpenAI function calling)
+    /// - Input validation before execution
+    /// - Auto-generated documentation
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Execute the tool with the given input and context.
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult>;
 }
 

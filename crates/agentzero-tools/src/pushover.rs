@@ -32,6 +32,10 @@ impl Tool for PushoverTool {
         "pushover"
     }
 
+    fn description(&self) -> &'static str {
+        "Send push notifications via the Pushover service."
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: PushoverInput =
             serde_json::from_str(input).context("pushover expects JSON: {\"message\", ...}")?;

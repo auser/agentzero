@@ -105,6 +105,10 @@ impl Tool for TaskPlanTool {
         "task_plan"
     }
 
+    fn description(&self) -> &'static str {
+        "Manage a structured task plan: create, list, update status, or clear tasks for tracking multi-step work."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let action: TaskAction =
             serde_json::from_str(input).context("task_plan expects JSON with \"action\" field")?;

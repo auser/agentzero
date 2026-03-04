@@ -113,6 +113,10 @@ impl Tool for ProcessTool {
         "process"
     }
 
+    fn description(&self) -> &'static str {
+        "Manage long-running background processes: start, stop, list, or read output."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let action: ProcessAction =
             serde_json::from_str(input).context("process expects JSON with \"action\" field")?;

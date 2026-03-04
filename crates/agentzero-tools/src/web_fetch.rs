@@ -35,6 +35,20 @@ impl Tool for WebFetchTool {
         "web_fetch"
     }
 
+    fn description(&self) -> &'static str {
+        "Fetch a URL and return its content as text (HTML converted to plain text)."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "The URL to fetch" }
+            },
+            "required": ["url"]
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let url = input.trim();
         if url.is_empty() {

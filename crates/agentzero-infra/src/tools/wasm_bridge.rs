@@ -62,6 +62,10 @@ impl Tool for WasmTool {
         self.name
     }
 
+    fn description(&self) -> &'static str {
+        "WASM plugin tool (description provided by plugin manifest)"
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let container = WasmPluginContainer {
             id: self.manifest.id.clone(),

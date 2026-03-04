@@ -27,38 +27,46 @@ impl AgentZeroCommand for PluginCommand {
                 wasm_file,
                 out_dir,
                 force,
+                scaffold,
             } => {
                 let out_dir = out_dir
                     .as_deref()
                     .map(PathBuf::from)
                     .unwrap_or_else(|| std::env::current_dir().expect("cwd should resolve"));
-                fs::create_dir_all(&out_dir)?;
-                let manifest_path = out_dir.join("manifest.json");
-                if manifest_path.exists() && !force {
-                    anyhow::bail!(
-                        "manifest already exists at {} (use --force to overwrite)",
+
+                if scaffold.as_deref() == Some("rust") {
+                    scaffold_rust_plugin(&id, &version, &out_dir, force)?;
+                } else if scaffold.is_some() {
+                    anyhow::bail!("unsupported scaffold type (supported: rust)");
+                } else {
+                    fs::create_dir_all(&out_dir)?;
+                    let manifest_path = out_dir.join("manifest.json");
+                    if manifest_path.exists() && !force {
+                        anyhow::bail!(
+                            "manifest already exists at {} (use --force to overwrite)",
+                            manifest_path.display()
+                        );
+                    }
+
+                    let manifest = PluginManifest {
+                        id,
+                        version,
+                        entrypoint,
+                        wasm_file,
+                        wasm_sha256: "0".repeat(64),
+                        capabilities: vec![],
+                        hooks: vec![],
+                        min_runtime_api: 2,
+                        max_runtime_api: 2,
+                        allowed_host_calls: vec![],
+                    };
+                    manifest.validate()?;
+                    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+                    println!(
+                        "Wrote plugin manifest template: {}",
                         manifest_path.display()
                     );
                 }
-
-                let manifest = PluginManifest {
-                    id,
-                    version,
-                    entrypoint,
-                    wasm_file,
-                    wasm_sha256: "0".repeat(64),
-                    capabilities: vec![],
-                    hooks: vec![],
-                    min_runtime_api: 2,
-                    max_runtime_api: 2,
-                    allowed_host_calls: vec![],
-                };
-                manifest.validate()?;
-                fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
-                println!(
-                    "Wrote plugin manifest template: {}",
-                    manifest_path.display()
-                );
             }
             PluginCommands::Validate { manifest } => {
                 let manifest = load_manifest(&manifest)?;
@@ -252,6 +260,102 @@ fn load_manifest(path: impl AsRef<Path>) -> anyhow::Result<PluginManifest> {
     Ok(manifest)
 }
 
+fn scaffold_rust_plugin(
+    id: &str,
+    version: &str,
+    out_dir: &Path,
+    force: bool,
+) -> anyhow::Result<()> {
+    let project_dir = out_dir.join(id);
+    if project_dir.exists() && !force {
+        anyhow::bail!(
+            "directory already exists: {} (use --force to overwrite)",
+            project_dir.display()
+        );
+    }
+    fs::create_dir_all(project_dir.join("src"))?;
+    fs::create_dir_all(project_dir.join(".cargo"))?;
+
+    // Cargo.toml
+    let crate_name = id.replace('-', "_");
+    fs::write(
+        project_dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "{id}"
+version = "{version}"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+agentzero-plugin-sdk = "0.1.4"
+serde_json = "1"
+"#
+        ),
+    )?;
+
+    // .cargo/config.toml
+    fs::write(
+        project_dir.join(".cargo/config.toml"),
+        r#"[build]
+target = "wasm32-wasip1"
+"#,
+    )?;
+
+    // src/lib.rs
+    fs::write(
+        project_dir.join("src/lib.rs"),
+        format!(
+            r#"use agentzero_plugin_sdk::prelude::*;
+
+declare_tool!("{crate_name}", execute);
+
+fn execute(input: ToolInput) -> ToolOutput {{
+    let req: serde_json::Value = match serde_json::from_str(&input.input) {{
+        Ok(v) => v,
+        Err(e) => return ToolOutput::error(format!("invalid input: {{e}}")),
+    }};
+
+    ToolOutput::success(format!("Hello from {id}! Input: {{req}}"))
+}}
+"#
+        ),
+    )?;
+
+    // manifest.json
+    let manifest = PluginManifest {
+        id: id.to_string(),
+        version: version.to_string(),
+        entrypoint: "az_tool_execute".to_string(),
+        wasm_file: "plugin.wasm".to_string(),
+        wasm_sha256: "0".repeat(64),
+        capabilities: vec![],
+        hooks: vec![],
+        min_runtime_api: 2,
+        max_runtime_api: 2,
+        allowed_host_calls: vec![],
+    };
+    fs::write(
+        project_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+
+    println!(
+        "Scaffolded Rust plugin project at {}",
+        project_dir.display()
+    );
+    println!();
+    println!("  cd {}", project_dir.display());
+    println!("  cargo build --release");
+    println!(
+        "  agentzero plugin package --manifest manifest.json --wasm target/wasm32-wasip1/release/{crate_name}.wasm --out {id}-{version}.tar"
+    );
+
+    Ok(())
+}
+
 fn deterministic_fixture() -> WasmExecutionRequest {
     WasmExecutionRequest {
         input: serde_json::json!({
@@ -304,6 +408,7 @@ mod tests {
                 wasm_file: "plugin.wasm".to_string(),
                 out_dir: Some(dir.to_string_lossy().to_string()),
                 force: false,
+                scaffold: None,
             },
         )
         .await

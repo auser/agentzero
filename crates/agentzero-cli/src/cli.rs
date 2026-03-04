@@ -596,7 +596,7 @@ pub enum TunnelCommands {
 #[cfg(feature = "plugins")]
 #[derive(Debug, Subcommand)]
 pub enum PluginCommands {
-    /// Scaffold a plugin manifest template.
+    /// Scaffold a plugin manifest template (or full Rust project with --scaffold rust).
     New {
         #[arg(long)]
         id: String,
@@ -611,6 +611,9 @@ pub enum PluginCommands {
         /// Overwrite existing manifest file if present.
         #[arg(long)]
         force: bool,
+        /// Generate a full project scaffold. Currently supports: "rust".
+        #[arg(long)]
+        scaffold: Option<String>,
     },
     /// Validate a plugin manifest.
     Validate {

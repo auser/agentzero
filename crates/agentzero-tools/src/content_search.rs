@@ -122,6 +122,39 @@ impl Tool for ContentSearchTool {
         "content_search"
     }
 
+    fn description(&self) -> &'static str {
+        "Search file contents for a regex pattern. Returns matching lines with file paths and line numbers."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Regex pattern to search for"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Subdirectory to search within (optional)"
+                },
+                "glob": {
+                    "type": "string",
+                    "description": "File glob filter (e.g. \"*.rs\", \"*.py\")"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of matches to return (default: 50)"
+                },
+                "case_insensitive": {
+                    "type": "boolean",
+                    "description": "If true, perform case-insensitive matching"
+                }
+            },
+            "required": ["pattern"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let request: ContentSearchInput = serde_json::from_str(input).context(
             "content_search expects JSON: {\"pattern\", \"path\"?, \"glob\"?, \"limit\"?, \"case_insensitive\"?}",

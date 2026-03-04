@@ -47,6 +47,10 @@ impl Tool for AgentsIpcTool {
         "agents_ipc"
     }
 
+    fn description(&self) -> &'static str {
+        "Inter-process communication between agents: send messages and receive responses."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: IpcRequest =
             serde_json::from_str(input).context("agents_ipc input must be valid JSON request")?;

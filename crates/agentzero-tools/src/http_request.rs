@@ -32,6 +32,22 @@ impl Tool for HttpRequestTool {
         "http_request"
     }
 
+    fn description(&self) -> &'static str {
+        "Send an HTTP request (GET, POST, PUT, DELETE) and return the response. Input format: \"METHOD URL [BODY]\"."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "method": { "type": "string", "description": "HTTP method (GET, POST, PUT, DELETE)" },
+                "url": { "type": "string", "description": "The URL to request" },
+                "body": { "type": "string", "description": "Optional request body" }
+            },
+            "required": ["method", "url"]
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let mut parts = input.trim().splitn(3, ' ');
         let method = parts.next().unwrap_or_default().to_ascii_uppercase();

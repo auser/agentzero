@@ -45,6 +45,7 @@ members = [
   "crates/agentzero-routing",
   "crates/agentzero-local",
   "crates/agentzero-ffi",
+  "crates/agentzero-plugin-sdk",
 ]
 resolver = "2"
 
@@ -53,6 +54,8 @@ version = "0.1.4"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"
+description = "AgentZero — modular AI-agent runtime and tool framework"
+repository = "https://github.com/agentzero-ai/agentzero"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -104,6 +107,7 @@ agentzero-delegation = { path = "crates/agentzero-delegation", version = "0.1.4"
 agentzero-routing = { path = "crates/agentzero-routing", version = "0.1.4" }
 agentzero-local = { path = "crates/agentzero-local", version = "0.1.4" }
 agentzero-ffi = { path = "crates/agentzero-ffi", version = "0.1.4" }
+agentzero-plugin-sdk = { path = "crates/agentzero-plugin-sdk", version = "0.1.4" }
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rusqlite = { version = "0.31", features = ["bundled"] }

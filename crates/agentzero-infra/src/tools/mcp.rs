@@ -245,6 +245,10 @@ impl Tool for McpTool {
         "mcp"
     }
 
+    fn description(&self) -> &'static str {
+        "Call a tool on an MCP (Model Context Protocol) server."
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed = McpCallInput::parse(input)?;
         let server = self

@@ -28,6 +28,10 @@ impl Tool for WasmModuleTool {
         "wasm_module"
     }
 
+    fn description(&self) -> &'static str {
+        "Inspect or list WASM modules in the workspace plugins directory."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: WasmModuleInput =
             serde_json::from_str(input).context("wasm_module expects JSON: {\"op\", ...}")?;
@@ -136,6 +140,10 @@ pub struct WasmToolExecTool;
 impl Tool for WasmToolExecTool {
     fn name(&self) -> &'static str {
         "wasm_tool"
+    }
+
+    fn description(&self) -> &'static str {
+        "Execute a function within a WASM module."
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

@@ -48,6 +48,20 @@ impl Tool for ScreenshotTool {
         "screenshot"
     }
 
+    fn description(&self) -> &'static str {
+        "Capture a screenshot of the current display and save it to a file."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "filename": { "type": "string", "description": "Output filename for the screenshot" }
+            },
+            "required": ["filename"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: ScreenshotInput = serde_json::from_str(input)
             .context("screenshot expects JSON: {\"filename\": \"...\"}")?;

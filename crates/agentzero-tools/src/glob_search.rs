@@ -61,6 +61,31 @@ impl Tool for GlobSearchTool {
         "glob_search"
     }
 
+    fn description(&self) -> &'static str {
+        "Search for files matching a glob pattern within the workspace. Returns a list of matching file paths."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob pattern to match (e.g. \"**/*.rs\", \"src/*.ts\")"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Subdirectory to search within (optional, defaults to workspace root)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (default: 100)"
+                }
+            },
+            "required": ["pattern"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let request: GlobSearchInput = serde_json::from_str(input)
             .context("glob_search expects JSON: {\"pattern\", \"path\"?, \"limit\"?}")?;

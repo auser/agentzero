@@ -27,6 +27,10 @@ impl Tool for CronAddTool {
         "cron_add"
     }
 
+    fn description(&self) -> &'static str {
+        "Add a new cron task with a schedule and command."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: CronAddInput = serde_json::from_str(input)
             .context("cron_add expects JSON: {\"id\", \"schedule\", \"command\"}")?;
@@ -50,6 +54,10 @@ pub struct CronListTool;
 impl Tool for CronListTool {
     fn name(&self) -> &'static str {
         "cron_list"
+    }
+
+    fn description(&self) -> &'static str {
+        "List all registered cron tasks."
     }
 
     async fn execute(&self, _input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -91,6 +99,10 @@ impl Tool for CronRemoveTool {
         "cron_remove"
     }
 
+    fn description(&self) -> &'static str {
+        "Remove a cron task by ID."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: CronRemoveInput =
             serde_json::from_str(input).context("cron_remove expects JSON: {\"id\": \"...\"}")?;
@@ -120,6 +132,10 @@ pub struct CronUpdateTool;
 impl Tool for CronUpdateTool {
     fn name(&self) -> &'static str {
         "cron_update"
+    }
+
+    fn description(&self) -> &'static str {
+        "Update an existing cron task's schedule or command."
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -157,6 +173,10 @@ impl Tool for CronPauseTool {
         "cron_pause"
     }
 
+    fn description(&self) -> &'static str {
+        "Pause a cron task (disable without removing)."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: CronPauseInput =
             serde_json::from_str(input).context("cron_pause expects JSON: {\"id\": \"...\"}")?;
@@ -182,6 +202,10 @@ pub struct CronResumeTool;
 impl Tool for CronResumeTool {
     fn name(&self) -> &'static str {
         "cron_resume"
+    }
+
+    fn description(&self) -> &'static str {
+        "Resume a paused cron task."
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

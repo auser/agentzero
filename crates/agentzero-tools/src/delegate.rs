@@ -45,6 +45,10 @@ impl Tool for DelegateTool {
         "delegate"
     }
 
+    fn description(&self) -> &'static str {
+        "Delegate a subtask to a named sub-agent with its own provider, model, and tool set."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed: Input =
             serde_json::from_str(input).map_err(|e| anyhow::anyhow!("invalid input: {e}"))?;

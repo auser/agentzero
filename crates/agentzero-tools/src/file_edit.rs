@@ -68,6 +68,39 @@ impl Tool for FileEditTool {
         "file_edit"
     }
 
+    fn description(&self) -> &'static str {
+        "Apply surgical text edits to a file by replacing exact old_text matches with new_text. Supports multiple edits and dry-run mode."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to edit"
+                },
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_text": { "type": "string", "description": "Exact text to find" },
+                            "new_text": { "type": "string", "description": "Replacement text" }
+                        },
+                        "required": ["old_text", "new_text"]
+                    },
+                    "description": "Array of search-and-replace edits"
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If true, show what would change without modifying the file"
+                }
+            },
+            "required": ["path", "edits"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let request: FileEditInput = serde_json::from_str(input).context(
             "file_edit expects JSON: {\"path\", \"edits\": [{\"old_text\", \"new_text\"}], \"dry_run\"}",

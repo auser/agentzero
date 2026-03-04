@@ -99,6 +99,20 @@ impl Tool for ImageInfoTool {
         "image_info"
     }
 
+    fn description(&self) -> &'static str {
+        "Get metadata about an image file: format, dimensions, and file size."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Path to the image file" }
+            },
+            "required": ["path"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: ImageInfoInput =
             serde_json::from_str(input).context("image_info expects JSON: {\"path\": \"...\"}")?;

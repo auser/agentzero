@@ -60,6 +60,10 @@ impl Tool for SopListTool {
         "sop_list"
     }
 
+    fn description(&self) -> &'static str {
+        "List all standard operating procedures (SOPs) in the workspace."
+    }
+
     async fn execute(&self, _input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let store = SopStore::load(&ctx.workspace_root).await?;
 
@@ -109,6 +113,10 @@ pub struct SopStatusTool;
 impl Tool for SopStatusTool {
     fn name(&self) -> &'static str {
         "sop_status"
+    }
+
+    fn description(&self) -> &'static str {
+        "Get the current status and progress of an SOP."
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -167,6 +175,10 @@ impl Tool for SopAdvanceTool {
         "sop_advance"
     }
 
+    fn description(&self) -> &'static str {
+        "Advance an SOP to the next step."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: SopAdvanceInput = serde_json::from_str(input)
             .context("sop_advance expects JSON: {\"id\", \"step_index\"}")?;
@@ -221,6 +233,10 @@ pub struct SopApproveTool;
 impl Tool for SopApproveTool {
     fn name(&self) -> &'static str {
         "sop_approve"
+    }
+
+    fn description(&self) -> &'static str {
+        "Approve a step in an SOP that requires human approval."
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -280,6 +296,10 @@ pub struct SopExecuteTool;
 impl Tool for SopExecuteTool {
     fn name(&self) -> &'static str {
         "sop_execute"
+    }
+
+    fn description(&self) -> &'static str {
+        "Create and begin executing a new SOP with defined steps."
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

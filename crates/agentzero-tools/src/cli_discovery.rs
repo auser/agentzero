@@ -25,6 +25,10 @@ impl Tool for CliDiscoveryTool {
         "cli_discovery"
     }
 
+    fn description(&self) -> &'static str {
+        "Discover available CLI tools and runtime environment: check command availability or get runtime info."
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed: Input =
             serde_json::from_str(input).context("cli_discovery expects JSON: {\"op\", ...}")?;

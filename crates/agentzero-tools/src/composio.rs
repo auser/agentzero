@@ -28,6 +28,10 @@ impl Tool for ComposioTool {
         "composio"
     }
 
+    fn description(&self) -> &'static str {
+        "Execute actions via the Composio third-party integration API."
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: ComposioInput =
             serde_json::from_str(input).context("composio expects JSON: {\"action\", ...}")?;

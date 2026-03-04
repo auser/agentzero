@@ -105,6 +105,20 @@ impl Tool for DocxReadTool {
         "docx_read"
     }
 
+    fn description(&self) -> &'static str {
+        "Extract text content from a DOCX (Word) file."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Path to the DOCX file" }
+            },
+            "required": ["path"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: DocxReadInput =
             serde_json::from_str(input).context("docx_read expects JSON: {\"path\": \"...\"}")?;

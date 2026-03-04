@@ -456,6 +456,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentzero-plugin-sdk"
+version = "0.1.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "agentzero-plugins"
 version = "0.1.4"
 dependencies = [

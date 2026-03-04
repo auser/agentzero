@@ -56,6 +56,20 @@ impl Tool for PdfReadTool {
         "pdf_read"
     }
 
+    fn description(&self) -> &'static str {
+        "Extract text content from a PDF file."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Path to the PDF file" }
+            },
+            "required": ["path"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: PdfReadInput =
             serde_json::from_str(input).context("pdf_read expects JSON: {\"path\": \"...\"}")?;

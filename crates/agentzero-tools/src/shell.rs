@@ -205,6 +205,23 @@ impl Tool for ShellTool {
         "shell"
     }
 
+    fn description(&self) -> &'static str {
+        "Execute a shell command from the allowlist. Input is the full command line. Returns stdout, stderr, and exit code."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to execute (e.g. \"ls -la\", \"cargo build\")"
+                }
+            },
+            "required": ["command"]
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let (command_name, args) = Self::parse_and_validate(&self.policy, input)?;
         if !self

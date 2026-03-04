@@ -29,6 +29,10 @@ impl Tool for ModelRoutingConfigTool {
         "model_routing_config"
     }
 
+    fn description(&self) -> &'static str {
+        "View or modify the model routing configuration at runtime."
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed: Input =
             serde_json::from_str(input).map_err(|e| anyhow::anyhow!("invalid input: {e}"))?;

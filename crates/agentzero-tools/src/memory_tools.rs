@@ -59,6 +59,22 @@ impl Tool for MemoryStoreTool {
         "memory_store"
     }
 
+    fn description(&self) -> &'static str {
+        "Store a key-value pair in persistent memory, optionally under a namespace."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "key": { "type": "string", "description": "The key to store" },
+                "value": { "type": "string", "description": "The value to store" },
+                "namespace": { "type": "string", "description": "Optional namespace for grouping" }
+            },
+            "required": ["key", "value"]
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: MemoryStoreInput = serde_json::from_str(input)
             .context("memory_store expects JSON: {\"key\", \"value\", \"namespace\"?}")?;
@@ -114,6 +130,21 @@ pub struct MemoryRecallTool;
 impl Tool for MemoryRecallTool {
     fn name(&self) -> &'static str {
         "memory_recall"
+    }
+
+    fn description(&self) -> &'static str {
+        "Recall stored values from memory by key or list recent entries in a namespace."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "key": { "type": "string", "description": "Specific key to recall" },
+                "namespace": { "type": "string", "description": "Namespace to search within" },
+                "limit": { "type": "integer", "description": "Max entries to return (default: 50)" }
+            }
+        }))
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -185,6 +216,21 @@ pub struct MemoryForgetTool;
 impl Tool for MemoryForgetTool {
     fn name(&self) -> &'static str {
         "memory_forget"
+    }
+
+    fn description(&self) -> &'static str {
+        "Remove a key-value pair from memory."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "key": { "type": "string", "description": "The key to forget" },
+                "namespace": { "type": "string", "description": "Namespace the key belongs to" }
+            },
+            "required": ["key"]
+        }))
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

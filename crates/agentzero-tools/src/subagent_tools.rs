@@ -66,6 +66,10 @@ impl Tool for SubAgentSpawnTool {
         "subagent_spawn"
     }
 
+    fn description(&self) -> &'static str {
+        "Spawn a sub-agent to handle a task asynchronously. Returns a session ID for tracking."
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: SubAgentSpawnInput = serde_json::from_str(input)
             .context("subagent_spawn expects JSON: {\"agent\": \"...\", \"task\": \"...\"}")?;
@@ -133,6 +137,10 @@ impl Tool for SubAgentListTool {
         "subagent_list"
     }
 
+    fn description(&self) -> &'static str {
+        "List all running sub-agent sessions and their statuses."
+    }
+
     async fn execute(&self, _input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         Ok(ToolResult {
             output: "subagent_list: no shared registry in standalone mode. Use subagent_spawn's registry.".to_string(),
@@ -163,6 +171,10 @@ pub struct SubAgentManageTool;
 impl Tool for SubAgentManageTool {
     fn name(&self) -> &'static str {
         "subagent_manage"
+    }
+
+    fn description(&self) -> &'static str {
+        "Manage a sub-agent session: cancel, get result, or check status."
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

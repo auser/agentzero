@@ -22,6 +22,10 @@ impl Tool for UrlValidationTool {
         "url_validation"
     }
 
+    fn description(&self) -> &'static str {
+        "Validate a URL against the access policy (private IPs, domain allowlist, etc.)."
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let trimmed = input.trim();
         if trimmed.is_empty() {

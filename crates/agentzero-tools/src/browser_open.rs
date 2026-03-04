@@ -53,6 +53,20 @@ impl Tool for BrowserOpenTool {
         "browser_open"
     }
 
+    fn description(&self) -> &'static str {
+        "Open a URL in the user's default web browser."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "The URL to open" }
+            },
+            "required": ["url"]
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: BrowserOpenInput =
             serde_json::from_str(input).context("browser_open expects JSON: {\"url\": \"...\"}")?;

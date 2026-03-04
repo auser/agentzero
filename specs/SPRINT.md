@@ -63,15 +63,43 @@
 - [x] `plugin-dev` feature forwarded through CLI → bin crate
 - [x] Tests (12 new, 38 total in plugins): empty dirs, versioned/flat discovery, tier override, latest version, invalid manifest skip, missing wasm skip, watcher creation/modification/ignore/missing-dir
 
-### Phase 4: Plugin SDK + `declare_tool!` Macro (Days 12-15)
+### Tool Trait Schema Enhancement ✅
 
-- [ ] Create `crates/agentzero-plugin-sdk/` crate (deps: `serde` + `serde_json` only)
-- [ ] Implement `ToolInput`, `ToolOutput`, `declare_tool!` macro
-- [ ] Macro generates: `az_alloc`, `az_tool_name`, `az_tool_execute` exports with bump allocator
-- [ ] Add `src/prelude.rs` re-exporting public API
-- [ ] Add to workspace `Cargo.toml` members + dependencies
-- [ ] Update `plugin new --scaffold rust` to generate SDK-based project template
-- [ ] Tests: sample plugin builds to `wasm32-wasip1`, macro generates correct ABI, integration test (build → package → install → discover → execute)
+- [x] Add `description() -> &'static str` default method to `Tool` trait in `agentzero-core`
+- [x] Add `input_schema() -> Option<serde_json::Value>` default method (JSON Schema format)
+- [x] Both methods have backward-compatible defaults (`""` and `None`)
+- [x] Add `description()` to all 50+ tool implementations across `agentzero-tools` and `agentzero-infra`
+- [x] Add `input_schema()` with full JSON Schema to 20 highest-value tools:
+  - [x] File I/O: read_file, write_file, file_edit, apply_patch
+  - [x] Shell: shell
+  - [x] Search: glob_search, content_search
+  - [x] Git: git_operations
+  - [x] Memory: memory_store, memory_recall, memory_forget
+  - [x] Web: web_search, web_fetch, http_request, browser, browser_open
+  - [x] Media: pdf_read, docx_read, screenshot, image_info
+- [x] Add `description()` only to remaining tools (cron, SOP, hardware, WASM, delegate, subagent, etc.)
+- [x] `cargo check` passes for agentzero-core, agentzero-tools, agentzero-infra
+- [x] 222 tests pass across modified crates
+
+**Purpose:** Enables structured tool-use APIs (Anthropic tool_use, OpenAI function calling), input validation, auto-generated documentation, and plugin SDK schema propagation.
+
+### Phase 4: Plugin SDK + `declare_tool!` Macro (Days 12-15) ✅
+
+- [x] Create `crates/agentzero-plugin-sdk/` crate (deps: `serde` + `serde_json` only)
+- [x] Implement `ToolInput`, `ToolOutput` types (Serialize/Deserialize, success/error/with_warning constructors)
+- [x] Implement `declare_tool!` macro generating: `az_alloc`, `az_tool_name`, `az_tool_execute` exports
+  - [x] Uses Rust allocator (`Vec::leak`) instead of raw bump allocator — no conflicts with std allocator
+  - [x] `pack_ptr_len` helper matches runtime's encoding (bits 0-31 = ptr, bits 32-63 = len)
+  - [x] Handles invalid JSON input gracefully (returns structured error, not WASM trap)
+- [x] Add `src/prelude.rs` re-exporting `ToolInput`, `ToolOutput`, `declare_tool!`
+- [x] Add to workspace `Cargo.toml` members + dependencies
+- [x] Update `plugin new --scaffold rust` to generate SDK-based project template
+  - [x] Generates: `Cargo.toml` (cdylib), `.cargo/config.toml` (wasm32-wasip1), `src/lib.rs`, `manifest.json`
+  - [x] Shows build + package commands after scaffolding
+- [x] Tests (10 native + 3 integration):
+  - [x] Native: ToolInput/ToolOutput serde, pack_ptr_len roundtrip/zero/max, sdk_alloc, macro expansion
+  - [x] ABI pointer tests gated to `target_pointer_width = "32"` (native 64-bit truncates packed pointers)
+  - [x] Integration: sample plugin built to `wasm32-wasip1` → loaded by WasmPluginRuntime → executed via `execute_v2_with_policy` → output verified (greeting, workspace root, error handling)
 
 ### Phase 5: Extract Official Plugin Packs (Days 16-19)
 
@@ -126,11 +154,11 @@
 
 ### Current Measurements (Baseline from Sprint 19)
 
-| Metric | Default (release) | Minimal (release-min) |
-|---|---|---|
-| Binary size (macOS arm64) | 18 MB | 5.2 MB (4.95 MiB) |
-| Unique crate deps | ~625 | 262 |
-| Cold-start (`--help`, min) | ~19ms | ~21ms |
-| Cold-start (`--help`, avg) | ~43ms | ~41ms |
+| Metric                     | Default (release) | Minimal (release-min) |
+| -------------------------- | ----------------- | --------------------- |
+| Binary size (macOS arm64)  | 18 MB             | 5.2 MB (4.95 MiB)     |
+| Unique crate deps          | ~625              | 262                   |
+| Cold-start (`--help`, min) | ~19ms             | ~21ms                 |
+| Cold-start (`--help`, avg) | ~43ms             | ~41ms                 |
 
 Previous sprint archived to `specs/sprints/19-lightweight-binary-landing-page-benchmarks.md`.
