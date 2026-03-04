@@ -7,7 +7,7 @@ license.workspace = true
 
 [features]
 default = ["wasm-runtime"]
-wasm-runtime = ["dep:wasmtime"]
+wasm-runtime = ["dep:wasmtime", "dep:wasmtime-wasi"]
 
 [dependencies]
 anyhow.workspace = true
@@ -16,7 +16,9 @@ serde_json.workspace = true
 sha2 = "0.10"
 tar = "0.4"
 thiserror.workspace = true
+tracing = { version = "0.1", optional = true }
 wasmtime = { version = "42", optional = true }
+wasmtime-wasi = { version = "42", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

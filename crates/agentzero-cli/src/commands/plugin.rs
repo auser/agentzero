@@ -49,8 +49,8 @@ impl AgentZeroCommand for PluginCommand {
                     wasm_sha256: "0".repeat(64),
                     capabilities: vec![],
                     hooks: vec![],
-                    min_runtime_api: 1,
-                    max_runtime_api: 1,
+                    min_runtime_api: 2,
+                    max_runtime_api: 2,
                     allowed_host_calls: vec![],
                 };
                 manifest.validate()?;
@@ -89,6 +89,7 @@ impl AgentZeroCommand for PluginCommand {
                     max_memory_mb: 64,
                     allow_network: false,
                     allow_fs_write: false,
+                    allow_fs_read: false,
                     allowed_host_calls: manifest.allowed_host_calls.clone(),
                 };
                 runtime.preflight_with_policy(&container, &policy)?;
@@ -135,6 +136,7 @@ impl AgentZeroCommand for PluginCommand {
                     max_memory_mb: 64,
                     allow_network: false,
                     allow_fs_write: false,
+                    allow_fs_read: false,
                     allowed_host_calls: manifest.allowed_host_calls.clone(),
                 };
                 let runtime = WasmPluginRuntime::new();
@@ -411,8 +413,8 @@ mod tests {
                 "wasm_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
                 "capabilities": [],
                 "hooks": [],
-                "min_runtime_api": 1,
-                "max_runtime_api": 1,
+                "min_runtime_api": 2,
+                "max_runtime_api": 2,
                 "allowed_host_calls": []
             }))
             .expect("manifest should serialize"),

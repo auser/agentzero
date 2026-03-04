@@ -6,21 +6,25 @@
 
 **Research:** [specs/research/002-plugin-first-architecture.md](research/002-plugin-first-architecture.md)
 
-### Phase 1: WASM ABI v2 + WASI Foundation (Days 1-4)
+### Phase 1: WASM ABI v2 + WASI Foundation (Days 1-4) ✅
 
-- [ ] Add `wasmtime-wasi` dependency behind `wasi` feature in `agentzero-plugins`
-- [ ] Define ABI v2 types: `WasmExecutionResultV2`, `WasmToolInput`
-- [ ] Implement `execute_v2_with_policy()` in `wasm.rs`:
-  - [ ] Create `WasiCtx` with capabilities based on `WasmIsolationPolicy`
-  - [ ] Register host functions via `linker.func_wrap()` (`az_log`, `az_read_file`, `az_http_get`, `az_env_get`)
-  - [ ] Add WASI preview1 via `wasmtime_wasi::preview1::add_to_linker()` (gated by policy)
-  - [ ] Write input JSON to WASM linear memory via `az_alloc` export
-  - [ ] Call `az_tool_execute(ptr, len) -> i64` (packed ptr|len return)
-  - [ ] Read output JSON from WASM memory
-- [ ] Bump `CURRENT_RUNTIME_API_VERSION` to 2 in `package.rs`
-- [ ] Add `capabilities: Vec<String>` to manifest schema
-- [ ] Keep existing v1 `execute()`/`execute_with_policy()` for backward compat
-- [ ] Tests: v2 ABI round-trip, WASI capability grant/deny, host function `az_log`, v1→v2 upgrade message, timeout/memory limits
+- [x] Add `wasmtime-wasi` dependency behind `wasm-runtime` feature in `agentzero-plugins`
+- [x] Define ABI v2 types: `WasmExecutionResultV2`, `WasmToolInput`, `WasmToolOutput`, `WasmV2Options`
+- [x] Implement `execute_v2_with_policy()` in `wasm.rs`:
+  - [x] Create `WasiP1Ctx` with capabilities based on `WasmIsolationPolicy`
+  - [x] Register host functions via `linker.func_wrap()` (`az_log` always, `az_env_get` gated)
+  - [x] Add WASI preview1 via `wasmtime_wasi::p1::add_to_linker_sync()` (gated by policy)
+  - [x] Write input JSON to WASM linear memory via `az_alloc` export
+  - [x] Call `az_tool_execute(ptr, len) -> i64` (packed ptr|len return)
+  - [x] Read output JSON from WASM memory
+- [x] Bump `CURRENT_RUNTIME_API_VERSION` to 2 in `package.rs`
+- [x] `capabilities: Vec<String>` already in manifest schema (via `WasmV2Options`)
+- [x] Keep existing v1 `execute()`/`execute_with_policy()` for backward compat
+- [x] Add `allow_fs_read` field to `WasmIsolationPolicy`
+- [x] Add `preflight_v2()` for v2 modules (skips v1 import validation)
+- [x] `validate_v2_imports()` allows WASI + az namespace, rejects undeclared
+- [x] `TimerGuard` drop pattern for clean epoch timer shutdown
+- [x] Tests (7 new, 23 total): v2 round-trip, missing az_alloc, az_log host function, undeclared host function rejection, v2 timeout, pack/unpack ptr_len
 
 ### Phase 2: WasmTool Bridge + Module Caching (Days 5-7)
 

@@ -7,7 +7,7 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
 const MANIFEST_FILE_NAME: &str = "manifest.json";
-const CURRENT_RUNTIME_API_VERSION: u32 = 1;
+const CURRENT_RUNTIME_API_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginManifest {
@@ -353,7 +353,7 @@ mod tests {
             capabilities: vec!["tool.call".to_string()],
             hooks: vec!["before_tool_call".to_string()],
             min_runtime_api: 1,
-            max_runtime_api: 1,
+            max_runtime_api: 2,
             allowed_host_calls: vec![],
         }
     }
@@ -485,8 +485,8 @@ mod tests {
     #[test]
     fn manifest_validate_rejects_incompatible_runtime_api_negative_path() {
         let mut manifest = sample_manifest();
-        manifest.min_runtime_api = 2;
-        manifest.max_runtime_api = 3;
+        manifest.min_runtime_api = 3;
+        manifest.max_runtime_api = 4;
 
         let err = manifest
             .validate()
