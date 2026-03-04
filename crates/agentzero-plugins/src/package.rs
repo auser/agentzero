@@ -658,6 +658,185 @@ pub fn install_from_url(
     result
 }
 
+// ── Plugin Registry ───────────────────────────────────────────────────────
+
+/// A single version entry in the registry index for a plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryVersionEntry {
+    pub version: String,
+    pub download_url: String,
+    pub sha256: String,
+    pub min_runtime_api: u32,
+    pub max_runtime_api: u32,
+}
+
+/// An entry in the registry index representing one plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryEntry {
+    pub id: String,
+    pub description: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub repository: String,
+    pub latest: String,
+    pub versions: Vec<RegistryVersionEntry>,
+}
+
+/// The full registry index loaded from disk or network.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RegistryIndex {
+    pub plugins: Vec<RegistryEntry>,
+}
+
+const REGISTRY_CACHE_DIR: &str = "registry-cache";
+const REGISTRY_INDEX_FILE: &str = "index.json";
+const REGISTRY_CACHE_MAX_AGE_SECS: u64 = 3600; // 1 hour
+
+impl RegistryIndex {
+    /// Load a cached registry index from the data directory.
+    /// Returns `None` if the cache is missing or expired.
+    pub fn load_cached(data_dir: &Path) -> Option<Self> {
+        let cache_path = data_dir.join(REGISTRY_CACHE_DIR).join(REGISTRY_INDEX_FILE);
+        if !cache_path.exists() {
+            return None;
+        }
+
+        // Check if cache is expired
+        if let Ok(meta) = fs::metadata(&cache_path) {
+            if let Ok(modified) = meta.modified() {
+                let age = std::time::SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or_default();
+                if age.as_secs() > REGISTRY_CACHE_MAX_AGE_SECS {
+                    return None;
+                }
+            }
+        }
+
+        let data = fs::read_to_string(&cache_path).ok()?;
+        serde_json::from_str(&data).ok()
+    }
+
+    /// Save the registry index to the cache directory.
+    pub fn save_cache(&self, data_dir: &Path) -> anyhow::Result<()> {
+        let cache_dir = data_dir.join(REGISTRY_CACHE_DIR);
+        fs::create_dir_all(&cache_dir)?;
+        let json = serde_json::to_string_pretty(self)?;
+        fs::write(cache_dir.join(REGISTRY_INDEX_FILE), json)?;
+        Ok(())
+    }
+
+    /// Search the index by query string (case-insensitive substring match
+    /// on id, description, and category).
+    pub fn search(&self, query: &str) -> Vec<&RegistryEntry> {
+        let q = query.to_lowercase();
+        self.plugins
+            .iter()
+            .filter(|p| {
+                p.id.to_lowercase().contains(&q)
+                    || p.description.to_lowercase().contains(&q)
+                    || p.category.to_lowercase().contains(&q)
+            })
+            .collect()
+    }
+
+    /// Look up a specific plugin by id.
+    pub fn get(&self, id: &str) -> Option<&RegistryEntry> {
+        self.plugins.iter().find(|p| p.id == id)
+    }
+}
+
+impl RegistryEntry {
+    /// Get the latest version entry.
+    pub fn latest_version(&self) -> Option<&RegistryVersionEntry> {
+        self.versions.iter().find(|v| v.version == self.latest)
+    }
+
+    /// Check whether a newer version exists compared to `current`.
+    pub fn has_update(&self, current: &str) -> bool {
+        self.latest != current
+    }
+}
+
+/// Load or refresh the registry index.
+///
+/// Tries the cache first. If expired or missing, reads from a local file
+/// path (for development) or returns an error suggesting manual refresh.
+pub fn load_registry_index(
+    data_dir: &Path,
+    registry_url: Option<&str>,
+) -> anyhow::Result<RegistryIndex> {
+    // Try cache first
+    if let Some(cached) = RegistryIndex::load_cached(data_dir) {
+        return Ok(cached);
+    }
+
+    // Try fetching from URL (file:// for now)
+    if let Some(url) = registry_url {
+        if let Some(file_path) = url.strip_prefix("file://") {
+            let data = fs::read_to_string(file_path)
+                .with_context(|| format!("failed to read registry index: {file_path}"))?;
+            let index: RegistryIndex =
+                serde_json::from_str(&data).with_context(|| "failed to parse registry index")?;
+            index.save_cache(data_dir)?;
+            return Ok(index);
+        }
+        return Err(anyhow!(
+            "HTTP registry fetch not yet supported. Use 'file://<path>' for local registries \
+             or run 'plugin refresh' after manually downloading the index."
+        ));
+    }
+
+    Err(anyhow!(
+        "No registry cache found and no registry URL configured. \
+         Set 'plugins.registry_url' in config or run 'plugin refresh --url <url>'."
+    ))
+}
+
+/// Check which installed plugins have updates available in the registry.
+pub fn check_outdated(state: &PluginState, index: &RegistryIndex) -> Vec<(String, String, String)> {
+    // Returns vec of (id, installed_version, latest_version)
+    let mut outdated = Vec::new();
+    for (id, entry) in &state.plugins {
+        if let Some(reg) = index.get(id) {
+            if reg.has_update(&entry.version) {
+                outdated.push((id.clone(), entry.version.clone(), reg.latest.clone()));
+            }
+        }
+    }
+    outdated
+}
+
+/// Generate a registry index entry for a plugin, suitable for `plugin publish`.
+pub fn generate_registry_entry(
+    manifest: &PluginManifest,
+    description: &str,
+    category: &str,
+    author: &str,
+    repository: &str,
+    download_url: &str,
+    wasm_sha256: &str,
+) -> RegistryEntry {
+    RegistryEntry {
+        id: manifest.id.clone(),
+        description: description.to_string(),
+        category: category.to_string(),
+        author: author.to_string(),
+        repository: repository.to_string(),
+        latest: manifest.version.clone(),
+        versions: vec![RegistryVersionEntry {
+            version: manifest.version.clone(),
+            download_url: download_url.to_string(),
+            sha256: wasm_sha256.to_string(),
+            min_runtime_api: manifest.min_runtime_api,
+            max_runtime_api: manifest.max_runtime_api,
+        }],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1074,5 +1253,216 @@ mod tests {
         let filtered = filter_by_state(plugins, &state);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].manifest.id, "enabled-plugin");
+    }
+
+    // ── Registry tests ───────────────────────────────────────────────────
+
+    use super::{
+        check_outdated, generate_registry_entry, load_registry_index, RegistryEntry, RegistryIndex,
+        RegistryVersionEntry,
+    };
+
+    fn sample_registry_index() -> RegistryIndex {
+        RegistryIndex {
+            plugins: vec![
+                RegistryEntry {
+                    id: "hardware-tools".to_string(),
+                    description: "Board info and memory tools".to_string(),
+                    category: "hardware".to_string(),
+                    author: "agentzero".to_string(),
+                    repository: "https://github.com/agentzero/plugins".to_string(),
+                    latest: "1.2.0".to_string(),
+                    versions: vec![
+                        RegistryVersionEntry {
+                            version: "1.0.0".to_string(),
+                            download_url: "https://example.com/hw-1.0.0.tar".to_string(),
+                            sha256: "a".repeat(64),
+                            min_runtime_api: 2,
+                            max_runtime_api: 2,
+                        },
+                        RegistryVersionEntry {
+                            version: "1.2.0".to_string(),
+                            download_url: "https://example.com/hw-1.2.0.tar".to_string(),
+                            sha256: "b".repeat(64),
+                            min_runtime_api: 2,
+                            max_runtime_api: 2,
+                        },
+                    ],
+                },
+                RegistryEntry {
+                    id: "cron-suite".to_string(),
+                    description: "Cron job management and scheduling".to_string(),
+                    category: "scheduling".to_string(),
+                    author: "agentzero".to_string(),
+                    repository: "https://github.com/agentzero/plugins".to_string(),
+                    latest: "0.3.0".to_string(),
+                    versions: vec![RegistryVersionEntry {
+                        version: "0.3.0".to_string(),
+                        download_url: "https://example.com/cron-0.3.0.tar".to_string(),
+                        sha256: "c".repeat(64),
+                        min_runtime_api: 2,
+                        max_runtime_api: 2,
+                    }],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn registry_search_by_id() {
+        let index = sample_registry_index();
+        let results = index.search("hardware");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "hardware-tools");
+    }
+
+    #[test]
+    fn registry_search_by_description() {
+        let index = sample_registry_index();
+        let results = index.search("scheduling");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "cron-suite");
+    }
+
+    #[test]
+    fn registry_search_case_insensitive() {
+        let index = sample_registry_index();
+        let results = index.search("CRON");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn registry_search_no_match() {
+        let index = sample_registry_index();
+        let results = index.search("nonexistent");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn registry_get_by_id() {
+        let index = sample_registry_index();
+        let entry = index.get("hardware-tools");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().latest, "1.2.0");
+    }
+
+    #[test]
+    fn registry_get_missing_returns_none() {
+        let index = sample_registry_index();
+        assert!(index.get("missing").is_none());
+    }
+
+    #[test]
+    fn registry_entry_latest_version() {
+        let index = sample_registry_index();
+        let entry = index.get("hardware-tools").unwrap();
+        let latest = entry.latest_version().unwrap();
+        assert_eq!(latest.version, "1.2.0");
+        assert!(latest.download_url.contains("1.2.0"));
+    }
+
+    #[test]
+    fn registry_entry_has_update() {
+        let index = sample_registry_index();
+        let entry = index.get("hardware-tools").unwrap();
+        assert!(entry.has_update("1.0.0"));
+        assert!(!entry.has_update("1.2.0"));
+    }
+
+    #[test]
+    fn registry_cache_save_and_load() {
+        let dir =
+            std::env::temp_dir().join(format!("az-registry-cache-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+
+        let index = sample_registry_index();
+        index.save_cache(&dir).expect("save should succeed");
+
+        let loaded = RegistryIndex::load_cached(&dir);
+        assert!(loaded.is_some());
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.plugins.len(), 2);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn registry_cache_missing_returns_none() {
+        let dir =
+            std::env::temp_dir().join(format!("az-registry-cache-miss-{}", std::process::id()));
+        assert!(RegistryIndex::load_cached(&dir).is_none());
+    }
+
+    #[test]
+    fn load_registry_from_file_url() {
+        let dir =
+            std::env::temp_dir().join(format!("az-registry-file-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+
+        let index = sample_registry_index();
+        let index_path = dir.join("test-index.json");
+        fs::write(&index_path, serde_json::to_string_pretty(&index).unwrap()).unwrap();
+
+        let url = format!("file://{}", index_path.display());
+        let loaded = load_registry_index(&dir, Some(&url)).expect("should load from file");
+        assert_eq!(loaded.plugins.len(), 2);
+
+        // Should now be cached
+        let cached = RegistryIndex::load_cached(&dir);
+        assert!(cached.is_some());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_registry_no_cache_no_url_fails() {
+        let dir = std::env::temp_dir().join(format!("az-registry-no-cache-{}", std::process::id()));
+        let err = load_registry_index(&dir, None).expect_err("should fail");
+        assert!(err.to_string().contains("No registry cache"));
+    }
+
+    #[test]
+    fn check_outdated_finds_updates() {
+        let index = sample_registry_index();
+        let mut state = PluginState::default();
+        state.record_install("hardware-tools", "1.0.0", "registry");
+        state.record_install("cron-suite", "0.3.0", "registry");
+
+        let outdated = check_outdated(&state, &index);
+        assert_eq!(outdated.len(), 1);
+        assert_eq!(outdated[0].0, "hardware-tools");
+        assert_eq!(outdated[0].1, "1.0.0"); // installed
+        assert_eq!(outdated[0].2, "1.2.0"); // latest
+    }
+
+    #[test]
+    fn check_outdated_none_when_up_to_date() {
+        let index = sample_registry_index();
+        let mut state = PluginState::default();
+        state.record_install("hardware-tools", "1.2.0", "registry");
+
+        let outdated = check_outdated(&state, &index);
+        assert!(outdated.is_empty());
+    }
+
+    #[test]
+    fn generate_registry_entry_round_trip() {
+        let manifest = sample_manifest();
+        let entry = generate_registry_entry(
+            &manifest,
+            "A sample plugin",
+            "general",
+            "test-author",
+            "https://github.com/test/repo",
+            "https://example.com/sample-1.0.0.tar",
+            &"f".repeat(64),
+        );
+        assert_eq!(entry.id, "sample-plugin");
+        assert_eq!(entry.latest, "1.0.0");
+        assert_eq!(entry.versions.len(), 1);
+        assert_eq!(
+            entry.versions[0].download_url,
+            "https://example.com/sample-1.0.0.tar"
+        );
     }
 }

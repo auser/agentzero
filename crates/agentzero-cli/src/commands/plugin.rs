@@ -1,8 +1,9 @@
 use crate::cli::PluginCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_plugins::package::{
-    install_from_url, install_packaged_plugin, list_installed_plugins, package_plugin,
-    remove_installed_plugin, PluginManifest, PluginState,
+    check_outdated, generate_registry_entry, install_from_url, install_packaged_plugin,
+    list_installed_plugins, load_registry_index, package_plugin, remove_installed_plugin,
+    PluginManifest, PluginState,
 };
 use agentzero_plugins::wasm::{
     WasmExecutionRequest, WasmIsolationPolicy, WasmPluginContainer, WasmPluginRuntime,
@@ -327,6 +328,131 @@ impl AgentZeroCommand for PluginCommand {
                         }
                     }
                 }
+            }
+            PluginCommands::Search {
+                query,
+                registry_url,
+            } => {
+                let index = load_registry_index(&ctx.data_dir, registry_url.as_deref())?;
+                let results = index.search(&query);
+                if results.is_empty() {
+                    println!("No plugins found matching '{query}'");
+                } else {
+                    println!("Found {} plugin(s):\n", results.len());
+                    println!("  ID                  LATEST   CATEGORY      DESCRIPTION");
+                    println!(
+                        "  ------------------- -------- ------------- ----------------------------"
+                    );
+                    for entry in results {
+                        println!(
+                            "  {:<19} {:<8} {:<13} {}",
+                            entry.id, entry.latest, entry.category, entry.description
+                        );
+                    }
+                }
+            }
+            PluginCommands::Outdated { registry_url } => {
+                let index = load_registry_index(&ctx.data_dir, registry_url.as_deref())?;
+                let state = PluginState::load(&ctx.data_dir);
+                let outdated = check_outdated(&state, &index);
+
+                if outdated.is_empty() {
+                    println!("All plugins are up to date");
+                } else {
+                    println!("{} plugin(s) have updates:\n", outdated.len());
+                    println!("  ID                  INSTALLED  LATEST");
+                    println!("  ------------------- ---------- ----------");
+                    for (id, installed, latest) in &outdated {
+                        println!("  {:<19} {:<10} {}", id, installed, latest);
+                    }
+                }
+            }
+            PluginCommands::Update {
+                id,
+                registry_url,
+                install_dir,
+            } => {
+                let index = load_registry_index(&ctx.data_dir, registry_url.as_deref())?;
+                let state = PluginState::load(&ctx.data_dir);
+                let install_root = install_dir
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| ctx.data_dir.join("plugins"));
+
+                let outdated = check_outdated(&state, &index);
+                let to_update: Vec<_> = if let Some(ref target_id) = id {
+                    outdated
+                        .into_iter()
+                        .filter(|(i, _, _)| i == target_id)
+                        .collect()
+                } else {
+                    outdated
+                };
+
+                if to_update.is_empty() {
+                    if let Some(target_id) = id {
+                        println!("Plugin '{target_id}' is up to date (or not installed)");
+                    } else {
+                        println!("All plugins are up to date");
+                    }
+                } else {
+                    for (id, installed_ver, latest_ver) in &to_update {
+                        let entry = index.get(id).unwrap();
+                        let version_entry = entry.latest_version().unwrap();
+                        println!(
+                            "Updating {id}: {installed_ver} → {latest_ver} from {}",
+                            version_entry.download_url
+                        );
+                        match install_from_url(
+                            &version_entry.download_url,
+                            &install_root,
+                            Some(&version_entry.sha256),
+                        ) {
+                            Ok(installed) => {
+                                let mut state = PluginState::load(&ctx.data_dir);
+                                state.record_install(
+                                    &installed.manifest.id,
+                                    &installed.manifest.version,
+                                    "registry",
+                                );
+                                state.save(&ctx.data_dir)?;
+                                println!("  Updated to {}", installed.manifest.version);
+                            }
+                            Err(e) => {
+                                println!("  Failed to update {id}: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+            PluginCommands::Publish {
+                manifest,
+                download_url,
+                sha256,
+                description,
+                category,
+                author,
+                repository,
+                out,
+            } => {
+                let manifest = load_manifest(&manifest)?;
+                let entry = generate_registry_entry(
+                    &manifest,
+                    &description,
+                    &category,
+                    &author,
+                    &repository,
+                    &download_url,
+                    &sha256,
+                );
+                let json = serde_json::to_string_pretty(&entry)?;
+
+                if let Some(out_path) = out {
+                    fs::write(&out_path, &json)?;
+                    println!("Registry entry written to {out_path}");
+                } else {
+                    println!("{json}");
+                }
+                println!("\nTo publish, add this entry to the registry index and open a PR.");
             }
         }
 

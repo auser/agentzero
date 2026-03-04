@@ -701,6 +701,58 @@ pub enum PluginCommands {
         #[arg(long)]
         install_dir: Option<String>,
     },
+    /// Search the plugin registry.
+    Search {
+        /// Search query (matches plugin id, description, and category).
+        query: String,
+        /// Registry URL (default: cached or configured).
+        #[arg(long)]
+        registry_url: Option<String>,
+    },
+    /// Check for plugin updates from the registry.
+    Outdated {
+        /// Registry URL (default: cached or configured).
+        #[arg(long)]
+        registry_url: Option<String>,
+    },
+    /// Update installed plugins to latest registry versions.
+    Update {
+        /// Plugin id to update (updates all if omitted).
+        #[arg(long)]
+        id: Option<String>,
+        /// Registry URL (default: cached or configured).
+        #[arg(long)]
+        registry_url: Option<String>,
+        #[arg(long)]
+        install_dir: Option<String>,
+    },
+    /// Generate a registry index entry for publishing.
+    Publish {
+        /// Path to plugin manifest.
+        #[arg(long)]
+        manifest: String,
+        /// Download URL for the packaged plugin.
+        #[arg(long)]
+        download_url: String,
+        /// SHA256 of the packaged plugin.
+        #[arg(long)]
+        sha256: String,
+        /// Plugin description.
+        #[arg(long, default_value = "")]
+        description: String,
+        /// Plugin category.
+        #[arg(long, default_value = "general")]
+        category: String,
+        /// Plugin author.
+        #[arg(long, default_value = "")]
+        author: String,
+        /// Plugin repository URL.
+        #[arg(long, default_value = "")]
+        repository: String,
+        /// Output file for the index entry JSON.
+        #[arg(long)]
+        out: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

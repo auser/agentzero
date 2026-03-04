@@ -164,14 +164,23 @@
 - [x] Tests: 7 new FFI tests (register success, multiple tools, duplicate name, tool trait impl, execute success, error propagation, starts empty)
 - Total: 19 tests in FFI crate (12 existing + 7 new)
 
-### Phase 8: Git-Based Registry (Days 26-30)
+### Phase 8: Git-Based Registry (Days 26-30) ✅
 
-- [ ] Create registry repo structure (index/, categories.json, featured.json)
-- [ ] Implement `plugin publish` (generate index JSON, open PR via `gh`)
-- [ ] Implement registry client (clone/fetch index, cache for 1 hour)
-- [ ] Seed registry with Phase 5 plugin packs
-- [ ] Static website generated from registry repo (GitHub Pages)
-- [ ] Tests: search returns results, install from registry + SHA256, update detects newer versions
+- [x] Registry data structures: `RegistryIndex`, `RegistryEntry`, `RegistryVersionEntry`
+  - Search by id/description/category (case-insensitive)
+  - Version lookup, update detection
+  - Cache with 1-hour expiry in `registry-cache/index.json`
+- [x] Registry client: `load_registry_index()` (cache → file:// URL → error)
+  - `check_outdated()` compares installed versions vs registry
+  - `generate_registry_entry()` for publish workflow
+- [x] CLI commands: `plugin search`, `plugin outdated`, `plugin update`, `plugin publish`
+  - Search: table output with id, version, category, description
+  - Outdated: shows installed vs latest version
+  - Update: downloads and installs newer versions from registry
+  - Publish: generates registry index JSON entry for PR submission
+- [ ] Seed registry with Phase 5 plugin packs — deferred to repo creation
+- [ ] Static website from registry repo — deferred to deployment phase
+- [x] Tests: 13 registry tests (search by id/description/case-insensitive, get/missing, latest version, has_update, cache save/load/missing, file URL load, no cache fails, outdated detection, entry generation)
 
 ### Verification (End-to-End)
 
