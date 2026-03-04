@@ -1,8 +1,8 @@
 use crate::cli::PluginCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_plugins::package::{
-    install_packaged_plugin, list_installed_plugins, package_plugin, remove_installed_plugin,
-    PluginManifest,
+    install_from_url, install_packaged_plugin, list_installed_plugins, package_plugin,
+    remove_installed_plugin, PluginManifest, PluginState,
 };
 use agentzero_plugins::wasm::{
     WasmExecutionRequest, WasmIsolationPolicy, WasmPluginContainer, WasmPluginRuntime,
@@ -176,12 +176,29 @@ impl AgentZeroCommand for PluginCommand {
             }
             PluginCommands::Install {
                 package,
+                url,
+                sha256,
                 install_dir,
             } => {
                 let install_root = install_dir
                     .map(PathBuf::from)
                     .unwrap_or_else(|| ctx.data_dir.join("plugins"));
-                let installed = install_packaged_plugin(package, &install_root)?;
+
+                let is_url_install = url.is_some();
+                let installed = if let Some(url) = url {
+                    install_from_url(&url, &install_root, sha256.as_deref())?
+                } else if let Some(package) = package {
+                    install_packaged_plugin(package, &install_root)?
+                } else {
+                    anyhow::bail!("either --package or --url is required");
+                };
+
+                // Record install in state
+                let mut state = PluginState::load(&ctx.data_dir);
+                let source = if is_url_install { "url" } else { "local" };
+                state.record_install(&installed.manifest.id, &installed.manifest.version, source);
+                state.save(&ctx.data_dir)?;
+
                 println!(
                     "Installed plugin {}@{} at {}",
                     installed.manifest.id,
@@ -235,10 +252,80 @@ impl AgentZeroCommand for PluginCommand {
                     } else {
                         println!("No installed plugin found for {id}");
                     }
-                } else if let Some(version) = version {
-                    println!("Removed plugin {id}@{version}");
                 } else {
-                    println!("Removed plugin {id} ({removed} version(s))");
+                    // Remove from state
+                    let mut state = PluginState::load(&ctx.data_dir);
+                    state.remove(&id);
+                    state.save(&ctx.data_dir)?;
+
+                    if let Some(version) = version {
+                        println!("Removed plugin {id}@{version}");
+                    } else {
+                        println!("Removed plugin {id} ({removed} version(s))");
+                    }
+                }
+            }
+            PluginCommands::Enable { id } => {
+                let mut state = PluginState::load(&ctx.data_dir);
+                state.enable(&id)?;
+                state.save(&ctx.data_dir)?;
+                println!("Enabled plugin {id}");
+            }
+            PluginCommands::Disable { id } => {
+                let mut state = PluginState::load(&ctx.data_dir);
+                state.disable(&id)?;
+                state.save(&ctx.data_dir)?;
+                println!("Disabled plugin {id}");
+            }
+            PluginCommands::Info { id, install_dir } => {
+                let install_root = install_dir
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| ctx.data_dir.join("plugins"));
+                let installed = list_installed_plugins(&install_root)?;
+                let matching: Vec<_> = installed.iter().filter(|p| p.id == id).collect();
+
+                if matching.is_empty() {
+                    println!("No installed plugin found with id '{id}'");
+                } else {
+                    let state = PluginState::load(&ctx.data_dir);
+                    let enabled = state.is_enabled(&id);
+                    let state_entry = state.plugins.get(&id);
+
+                    println!("Plugin: {id}");
+                    println!("  Enabled:  {enabled}");
+                    if let Some(entry) = state_entry {
+                        println!("  Source:   {}", entry.source);
+                        println!("  Installed at: {}", entry.installed_at);
+                    }
+                    println!("  Versions:");
+                    for p in &matching {
+                        // Load manifest for details
+                        let manifest_path = &p.manifest_path;
+                        if let Ok(manifest) = load_manifest(manifest_path) {
+                            println!("    {}:", p.version);
+                            println!("      Entrypoint:     {}", manifest.entrypoint);
+                            println!("      WASM file:      {}", manifest.wasm_file);
+                            println!("      SHA256:         {}", manifest.wasm_sha256);
+                            println!(
+                                "      API range:      {}..={}",
+                                manifest.min_runtime_api, manifest.max_runtime_api
+                            );
+                            if !manifest.capabilities.is_empty() {
+                                println!(
+                                    "      Capabilities:   {}",
+                                    manifest.capabilities.join(", ")
+                                );
+                            }
+                            if !manifest.allowed_host_calls.is_empty() {
+                                println!(
+                                    "      Host calls:     {}",
+                                    manifest.allowed_host_calls.join(", ")
+                                );
+                            }
+                        } else {
+                            println!("    {}: (manifest unreadable)", p.version);
+                        }
+                    }
                 }
             }
         }

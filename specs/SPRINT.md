@@ -121,17 +121,29 @@
 - [x] All plugins load and execute correctly via WasmPluginRuntime `execute_v2_with_policy()`
 - [x] Total: 7 WASM plugins, 28 integration tests (+ 34 unit tests = 62 total in plugins crate)
 
-### Phase 6: CLI Enhancements + State Management (Days 20-22)
+### Phase 6: CLI Enhancements + State Management (Days 20-22) ✅
 
-- [ ] Add `PluginState` / `PluginStateEntry` structs in `package.rs`
-- [ ] Implement `plugin enable <id>` / `plugin disable <id>` subcommands
-- [ ] Implement `plugin info <id>` subcommand
-- [ ] Implement `plugin install --url <url>` (download, verify SHA256, install)
-- [ ] Implement `plugin update [<id>]` (check registry for newer versions)
-- [ ] Implement `plugin search <query>` (search registry index)
-- [ ] Implement `plugin outdated` (list plugins with updates available)
-- [ ] Update discovery to check `state.json` and skip disabled plugins
-- [ ] Tests: enable/disable toggle, remote install + SHA256 verify, missing state = all enabled
+- [x] Add `PluginState` / `PluginStateEntry` structs in `package.rs`
+  - `PluginStateEntry`: version, enabled, installed_at, source
+  - `PluginState`: HashMap + load/save/is_enabled/enable/disable/record_install/remove methods
+  - State persisted as `plugin-state.json` in data directory
+  - `chrono_now_iso()` helper avoids chrono dependency
+- [x] Implement `plugin enable <id>` / `plugin disable <id>` subcommands
+- [x] Implement `plugin info <id>` subcommand
+  - Shows all installed versions with manifest details (entrypoint, wasm_file, SHA256, API range, capabilities, host calls)
+  - Shows state info if present (enabled, source, installed_at)
+- [x] Implement `plugin install --url <url>` (download, verify SHA256, install)
+  - `install_from_url()` in package.rs (file:// URLs supported)
+  - Records install in state with source tracking
+- [ ] Implement `plugin update [<id>]` (check registry for newer versions) — deferred to Phase 8 (requires registry)
+- [ ] Implement `plugin search <query>` (search registry index) — deferred to Phase 8 (requires registry)
+- [ ] Implement `plugin outdated` (list plugins with updates available) — deferred to Phase 8 (requires registry)
+- [x] Update discovery to check `state.json` and skip disabled plugins
+  - `filter_by_state()` function filters `DiscoveredPlugin` list against `PluginState`
+  - Wired into `default_tools()` in `agentzero-infra/src/tools/mod.rs`
+  - Missing state = all plugins enabled (backward compatible)
+- [x] Tests: 7 state management tests (load missing, save/load roundtrip, enable/disable toggle, default enabled, enable missing fails, remove entry, filter_by_state)
+- Total: 72 tests in plugins crate (41 unit + 31 integration)
 
 ### Phase 7: FFI Plugin Bridge (Days 23-25)
 

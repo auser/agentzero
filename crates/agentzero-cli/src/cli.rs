@@ -654,8 +654,15 @@ pub enum PluginCommands {
     },
     /// Install a packaged plugin archive.
     Install {
+        /// Path to a local .tar package file.
         #[arg(long)]
-        package: String,
+        package: Option<String>,
+        /// URL to download a plugin package from (supports file:// for local paths).
+        #[arg(long)]
+        url: Option<String>,
+        /// Expected SHA256 checksum for URL-based installs.
+        #[arg(long)]
+        sha256: Option<String>,
         #[arg(long)]
         install_dir: Option<String>,
     },
@@ -674,6 +681,23 @@ pub enum PluginCommands {
         /// Optional version; when omitted, removes all installed versions.
         #[arg(long)]
         version: Option<String>,
+        #[arg(long)]
+        install_dir: Option<String>,
+    },
+    /// Enable a disabled plugin.
+    Enable {
+        #[arg(long)]
+        id: String,
+    },
+    /// Disable a plugin without removing it.
+    Disable {
+        #[arg(long)]
+        id: String,
+    },
+    /// Show detailed information about an installed plugin.
+    Info {
+        #[arg(long)]
+        id: String,
         #[arg(long)]
         install_dir: Option<String>,
     },

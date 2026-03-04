@@ -4,3 +4,6 @@ Can you archive this sprint in `specs/sprints/<number>-<name>.md` and then creat
 
 I want to focus on shrinking the runtime as much as possible.
 
+---
+
+Won't we always need wsm-plugins as a feature since the whole system works with wasm plugins?

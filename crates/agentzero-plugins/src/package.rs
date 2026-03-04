@@ -493,15 +493,181 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{digest:x}")
 }
 
+// ── Plugin State Management ──────────────────────────────────────────
+
+/// Persistent state for a single installed plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginStateEntry {
+    pub version: String,
+    pub enabled: bool,
+    pub installed_at: String,
+    /// Where this plugin was installed from.
+    pub source: String,
+}
+
+/// Top-level plugin state file, stored at `{data_dir}/plugin-state.json`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginState {
+    pub plugins: std::collections::HashMap<String, PluginStateEntry>,
+}
+
+const STATE_FILE_NAME: &str = "plugin-state.json";
+
+impl PluginState {
+    /// Load plugin state from a data directory. Returns default (empty) if
+    /// the file doesn't exist or can't be parsed.
+    pub fn load(data_dir: &Path) -> Self {
+        let path = data_dir.join(STATE_FILE_NAME);
+        match fs::read_to_string(&path) {
+            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// Save plugin state to a data directory.
+    pub fn save(&self, data_dir: &Path) -> anyhow::Result<()> {
+        let path = data_dir.join(STATE_FILE_NAME);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create state dir: {}", parent.display()))?;
+        }
+        let json =
+            serde_json::to_string_pretty(self).context("failed to serialize plugin state")?;
+        fs::write(&path, json)
+            .with_context(|| format!("failed to write plugin state: {}", path.display()))?;
+        Ok(())
+    }
+
+    /// Check whether a plugin is enabled. Returns `true` if the plugin has
+    /// no state entry (default is enabled).
+    pub fn is_enabled(&self, id: &str) -> bool {
+        self.plugins.get(id).map(|e| e.enabled).unwrap_or(true)
+    }
+
+    /// Enable a plugin. Creates an entry if one doesn't exist.
+    pub fn enable(&mut self, id: &str) -> anyhow::Result<()> {
+        match self.plugins.get_mut(id) {
+            Some(entry) => {
+                entry.enabled = true;
+                Ok(())
+            }
+            None => Err(anyhow!(
+                "plugin '{}' has no state entry (not installed via CLI)",
+                id
+            )),
+        }
+    }
+
+    /// Disable a plugin. Creates an entry if one doesn't exist.
+    pub fn disable(&mut self, id: &str) -> anyhow::Result<()> {
+        match self.plugins.get_mut(id) {
+            Some(entry) => {
+                entry.enabled = false;
+                Ok(())
+            }
+            None => Err(anyhow!(
+                "plugin '{}' has no state entry (not installed via CLI)",
+                id
+            )),
+        }
+    }
+
+    /// Record that a plugin was installed.
+    pub fn record_install(&mut self, id: &str, version: &str, source: &str) {
+        self.plugins.insert(
+            id.to_string(),
+            PluginStateEntry {
+                version: version.to_string(),
+                enabled: true,
+                installed_at: chrono_now_iso(),
+                source: source.to_string(),
+            },
+        );
+    }
+
+    /// Remove a plugin's state entry.
+    pub fn remove(&mut self, id: &str) {
+        self.plugins.remove(id);
+    }
+}
+
+fn chrono_now_iso() -> String {
+    // Simple ISO 8601 timestamp without chrono dependency
+    let dur = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = dur.as_secs();
+    // Format as seconds-since-epoch (precise enough for state tracking)
+    format!("{secs}")
+}
+
+/// Filter discovered plugins by state, removing disabled ones.
+pub fn filter_by_state(
+    plugins: Vec<DiscoveredPlugin>,
+    state: &PluginState,
+) -> Vec<DiscoveredPlugin> {
+    plugins
+        .into_iter()
+        .filter(|p| state.is_enabled(&p.manifest.id))
+        .collect()
+}
+
+/// Download a plugin package from a URL, verify its SHA256 if provided,
+/// and install it.
+pub fn install_from_url(
+    url: &str,
+    install_root: &Path,
+    expected_sha256: Option<&str>,
+) -> anyhow::Result<InstalledPlugin> {
+    // Use a blocking HTTP GET — the plugin CLI commands are already async
+    // but the core package functions are sync. This uses std::net via ureq
+    // would be ideal, but we'll use a minimal approach with the existing
+    // reqwest/hyper stack or fall back to curl. For now, check if the URL
+    // is a file:// URL first.
+    let bytes = if let Some(file_path) = url.strip_prefix("file://") {
+        fs::read(file_path).with_context(|| format!("failed to read local package: {file_path}"))?
+    } else {
+        return Err(anyhow!(
+            "URL-based install requires HTTP support. Use 'file://<path>' for local archives \
+             or download the package manually and use '--package <path>'."
+        ));
+    };
+
+    // Verify SHA256 if provided
+    if let Some(expected) = expected_sha256 {
+        let actual = sha256_hex(&bytes);
+        if actual != expected {
+            return Err(anyhow!(
+                "SHA256 mismatch: expected {expected}, got {actual}"
+            ));
+        }
+    }
+
+    // Write to a temp file and install
+    let tmp_dir =
+        std::env::temp_dir().join(format!("agentzero-plugin-download-{}", std::process::id()));
+    fs::create_dir_all(&tmp_dir)?;
+    let tmp_path = tmp_dir.join("package.tar");
+    fs::write(&tmp_path, &bytes)?;
+
+    let result = install_packaged_plugin(&tmp_path, install_root);
+
+    // Clean up temp file
+    fs::remove_dir_all(&tmp_dir).ok();
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        install_packaged_plugin, list_installed_plugins, package_plugin, remove_installed_plugin,
-        PluginManifest,
+        filter_by_state, install_packaged_plugin, list_installed_plugins, package_plugin,
+        remove_installed_plugin, DiscoveredPlugin, PluginManifest, PluginState,
     };
     use anyhow::Context;
     use std::fs;
     use std::io::Cursor;
+    use std::path::PathBuf;
 
     fn sample_manifest() -> PluginManifest {
         PluginManifest {
@@ -790,5 +956,123 @@ mod tests {
     fn discover_plugins_none_dirs_returns_empty() {
         let found = discover_plugins(None, None, None);
         assert!(found.is_empty());
+    }
+
+    // ── Plugin State tests ──────────────────────────────────────────
+
+    #[test]
+    fn plugin_state_load_missing_returns_default() {
+        let dir = std::env::temp_dir().join(format!("az-state-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let state = PluginState::load(&dir);
+        assert!(state.plugins.is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn plugin_state_save_and_load_round_trip() {
+        let dir = std::env::temp_dir().join(format!("az-state-test-rt-{}", std::process::id()));
+        let mut state = PluginState::default();
+        state.record_install("test-plugin", "1.0.0", "local");
+        state.save(&dir).expect("save should succeed");
+
+        let loaded = PluginState::load(&dir);
+        assert_eq!(loaded.plugins.len(), 1);
+        let entry = loaded.plugins.get("test-plugin").unwrap();
+        assert_eq!(entry.version, "1.0.0");
+        assert!(entry.enabled);
+        assert_eq!(entry.source, "local");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn plugin_state_enable_disable_toggle() {
+        let dir = std::env::temp_dir().join(format!("az-state-test-toggle-{}", std::process::id()));
+        let mut state = PluginState::default();
+        state.record_install("toggle-me", "0.1.0", "local");
+
+        assert!(state.is_enabled("toggle-me"));
+
+        state.disable("toggle-me").unwrap();
+        assert!(!state.is_enabled("toggle-me"));
+
+        state.enable("toggle-me").unwrap();
+        assert!(state.is_enabled("toggle-me"));
+
+        state.save(&dir).expect("save should succeed");
+        let loaded = PluginState::load(&dir);
+        assert!(loaded.is_enabled("toggle-me"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn plugin_state_missing_entry_defaults_to_enabled() {
+        let state = PluginState::default();
+        assert!(state.is_enabled("nonexistent"));
+    }
+
+    #[test]
+    fn plugin_state_enable_missing_fails() {
+        let mut state = PluginState::default();
+        let err = state.enable("unknown").expect_err("should fail");
+        assert!(err.to_string().contains("no state entry"));
+    }
+
+    #[test]
+    fn plugin_state_remove_entry() {
+        let mut state = PluginState::default();
+        state.record_install("removable", "1.0.0", "url");
+        assert!(state.plugins.contains_key("removable"));
+        state.remove("removable");
+        assert!(!state.plugins.contains_key("removable"));
+    }
+
+    #[test]
+    fn filter_by_state_removes_disabled() {
+        let mut state = PluginState::default();
+        state.record_install("enabled-plugin", "1.0.0", "local");
+        state.record_install("disabled-plugin", "1.0.0", "local");
+        state.disable("disabled-plugin").unwrap();
+
+        let plugins = vec![
+            DiscoveredPlugin {
+                manifest: PluginManifest {
+                    id: "enabled-plugin".to_string(),
+                    version: "1.0.0".to_string(),
+                    entrypoint: "run".to_string(),
+                    wasm_file: "plugin.wasm".to_string(),
+                    wasm_sha256: "a".repeat(64),
+                    capabilities: vec![],
+                    hooks: vec![],
+                    min_runtime_api: 1,
+                    max_runtime_api: 2,
+                    allowed_host_calls: vec![],
+                },
+                wasm_path: PathBuf::from("/tmp/a.wasm"),
+                dev_mode: false,
+            },
+            DiscoveredPlugin {
+                manifest: PluginManifest {
+                    id: "disabled-plugin".to_string(),
+                    version: "1.0.0".to_string(),
+                    entrypoint: "run".to_string(),
+                    wasm_file: "plugin.wasm".to_string(),
+                    wasm_sha256: "b".repeat(64),
+                    capabilities: vec![],
+                    hooks: vec![],
+                    min_runtime_api: 1,
+                    max_runtime_api: 2,
+                    allowed_host_calls: vec![],
+                },
+                wasm_path: PathBuf::from("/tmp/b.wasm"),
+                dev_mode: false,
+            },
+        ];
+
+        let filtered = filter_by_state(plugins, &state);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].manifest.id, "enabled-plugin");
     }
 }

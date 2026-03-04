@@ -123,7 +123,7 @@ pub fn default_tools(
 
     #[cfg(feature = "wasm-plugins")]
     if policy.enable_wasm_plugins {
-        use agentzero_plugins::package::discover_plugins;
+        use agentzero_plugins::package::{discover_plugins, filter_by_state, PluginState};
         use agentzero_plugins::wasm::WasmIsolationPolicy;
 
         let discovered = discover_plugins(
@@ -131,6 +131,15 @@ pub fn default_tools(
             policy.wasm_project_plugin_dir.as_deref(),
             policy.wasm_dev_plugin_dir.as_deref(),
         );
+
+        // Filter out disabled plugins via state.json
+        let discovered = if let Some(ref global_dir) = policy.wasm_global_plugin_dir {
+            let state = PluginState::load(global_dir);
+            filter_by_state(discovered, &state)
+        } else {
+            discovered
+        };
+
         let isolation = WasmIsolationPolicy::default();
         for plugin in discovered {
             match WasmTool::from_manifest(
