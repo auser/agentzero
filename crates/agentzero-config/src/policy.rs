@@ -16,7 +16,7 @@ pub fn load_tool_security_policy(
     let mut allow_cidrs = Vec::new();
     for cidr_str in &url_cfg.allow_cidrs {
         allow_cidrs.push(
-            agentzero_common::url_policy::CidrRange::parse(cidr_str).with_context(|| {
+            agentzero_core::common::url_policy::CidrRange::parse(cidr_str).with_context(|| {
                 format!("invalid CIDR in security.url_access.allow_cidrs: {cidr_str}")
             })?,
         );

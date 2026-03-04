@@ -1,4 +1,4 @@
-use crate::url_policy::{enforce_url_policy, UrlAccessPolicy, UrlPolicyResult};
+use super::url_policy::{enforce_url_policy, UrlAccessPolicy, UrlPolicyResult};
 use anyhow::anyhow;
 use std::collections::HashMap;
 use url::Url;

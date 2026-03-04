@@ -2,8 +2,8 @@ use std::process::ExitCode;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    agentzero_security::redaction::install_redacting_panic_hook();
-    let _ = agentzero_security::policy::baseline_version();
+    agentzero_core::security::redaction::install_redacting_panic_hook();
+    let _ = agentzero_core::security::policy::baseline_version();
 
     match agentzero_cli::parse_cli_from(std::env::args_os()) {
         Ok(cli) => match agentzero_cli::execute(cli).await {
@@ -11,7 +11,7 @@ async fn main() -> ExitCode {
             Err(err) => {
                 eprintln!(
                     "error: {}",
-                    agentzero_security::redaction::redact_error_chain(err.as_ref())
+                    agentzero_core::security::redaction::redact_error_chain(err.as_ref())
                 );
                 ExitCode::from(1)
             }

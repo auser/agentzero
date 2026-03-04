@@ -28,7 +28,7 @@ tui = ["agentzero-cli/tui"]
 [dependencies]
 anyhow.workspace = true
 agentzero-cli = { workspace = true }
-agentzero-security = { workspace = true }
+agentzero-core = { workspace = true }
 tokio.workspace = true
 
 [[bin]]

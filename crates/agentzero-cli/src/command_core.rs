@@ -1,4 +1,4 @@
-use agentzero_common::paths::{
+use agentzero_core::common::paths::{
     default_data_dir as common_default_data_dir, DEFAULT_CONFIG_FILE, ENV_CONFIG_PATH, ENV_DATA_DIR,
 };
 use anyhow::{anyhow, Context};
@@ -146,7 +146,7 @@ pub trait AgentZeroCommand {
 #[cfg(test)]
 mod tests {
     use super::CommandContext;
-    use agentzero_common::paths::{
+    use agentzero_core::common::paths::{
         DEFAULT_CONFIG_FILE, DEFAULT_DATA_DIR_NAME, ENV_CONFIG_PATH, ENV_DATA_DIR,
     };
     use std::fs;

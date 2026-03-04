@@ -3,7 +3,7 @@ mod cli;
 mod command_core;
 mod commands;
 
-use agentzero_common::init_tracing;
+use agentzero_core::common::init_tracing;
 use clap::Parser;
 use cli::Cli;
 use gag::BufferRedirect;

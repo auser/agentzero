@@ -16,13 +16,10 @@ memory-turso = ["agentzero-memory/memory-turso"]
 anyhow.workspace = true
 async-trait.workspace = true
 agentzero-auth = { workspace = true }
-agentzero-common = { workspace = true }
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
-agentzero-delegation = { workspace = true }
 agentzero-infra = { workspace = true }
 agentzero-memory = { workspace = true }
-agentzero-routing = { workspace = true }
 agentzero-providers = { workspace = true }
 serde_json.workspace = true
 tokio.workspace = true

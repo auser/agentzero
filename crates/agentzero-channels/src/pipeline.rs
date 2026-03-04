@@ -1,5 +1,5 @@
 use crate::{Channel, ChannelMessage, ChannelRegistry};
-use agentzero_security::perplexity::{analyze_suffix, PerplexityResult};
+use agentzero_core::security::perplexity::{analyze_suffix, PerplexityResult};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;

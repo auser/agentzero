@@ -1,5 +1,5 @@
-use agentzero_common::url_policy::UrlAccessPolicy;
-use agentzero_common::util::parse_http_url_with_policy;
+use agentzero_core::common::url_policy::UrlAccessPolicy;
+use agentzero_core::common::util::parse_http_url_with_policy;
 use agentzero_core::{Tool, ToolContext, ToolResult};
 use anyhow::anyhow;
 use async_trait::async_trait;

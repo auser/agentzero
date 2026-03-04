@@ -3,9 +3,9 @@ mod plugin;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
 
+use agentzero_core::delegation::DelegateConfig;
+use agentzero_core::routing::ModelRouter;
 use agentzero_core::Tool;
-use agentzero_delegation::DelegateConfig;
-use agentzero_routing::ModelRouter;
 use agentzero_tools::ToolBuilder;
 use anyhow::Context;
 use serde::Deserialize;

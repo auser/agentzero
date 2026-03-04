@@ -1,5 +1,5 @@
+use agentzero_core::security::redaction::redact_text;
 use agentzero_core::{AuditEvent, AuditSink};
-use agentzero_security::redaction::redact_text;
 use anyhow::Context;
 use async_trait::async_trait;
 use serde_json::json;

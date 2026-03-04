@@ -1,4 +1,4 @@
-use agentzero_common::local_providers::is_local_provider;
+use agentzero_core::common::local_providers::is_local_provider;
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -278,7 +278,7 @@ impl Default for MemoryConfig {
 }
 
 fn default_sqlite_path() -> String {
-    agentzero_common::paths::default_sqlite_path()
+    agentzero_core::common::paths::default_sqlite_path()
         .map(|path| path.to_string_lossy().to_string())
         .unwrap_or_else(|| "./agentzero.db".to_string())
 }

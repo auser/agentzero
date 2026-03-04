@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-agentzero-common = { workspace = true }
+agentzero-core = { workspace = true }
 agentzero-crypto = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true

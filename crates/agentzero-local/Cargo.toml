@@ -8,7 +8,7 @@ description.workspace = true
 repository.workspace = true
 
 [dependencies]
-agentzero-common = { workspace = true }
+agentzero-core = { workspace = true }
 agentzero-health = { workspace = true }
 anyhow.workspace = true
 futures-util.workspace = true

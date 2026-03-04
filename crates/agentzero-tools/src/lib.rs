@@ -38,7 +38,7 @@ pub mod write_file;
 use std::path::PathBuf;
 
 pub use agents_ipc::AgentsIpcTool;
-pub use agentzero_common::url_policy::UrlAccessPolicy;
+pub use agentzero_core::common::url_policy::UrlAccessPolicy;
 pub use apply_patch::ApplyPatchTool;
 pub use browser::BrowserTool;
 pub use browser_open::BrowserOpenTool;

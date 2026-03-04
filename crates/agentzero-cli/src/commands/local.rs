@@ -1,7 +1,7 @@
 use crate::cli::LocalCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_common::local_providers::{is_local_provider, local_provider_meta};
 use agentzero_config::load;
+use agentzero_core::common::local_providers::{is_local_provider, local_provider_meta};
 use agentzero_local::{check_health, discover_local_services, DiscoveryOptions, ServiceStatus};
 use async_trait::async_trait;
 

@@ -1,8 +1,10 @@
+use agentzero_core::delegation::{
+    filter_tools, validate_delegation, DelegateConfig, DelegateRequest,
+};
 use agentzero_core::{
     Agent, AgentConfig, ChatResult, MemoryEntry, MemoryStore, Provider, Tool, ToolContext,
     ToolResult,
 };
-use agentzero_delegation::{filter_tools, validate_delegation, DelegateConfig, DelegateRequest};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;

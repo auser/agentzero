@@ -100,7 +100,7 @@ impl Default for OnboardConfig {
 }
 
 fn default_memory_path() -> String {
-    agentzero_common::paths::default_sqlite_path()
+    agentzero_core::common::paths::default_sqlite_path()
         .map(|path| path.to_string_lossy().to_string())
         .unwrap_or_else(|| "./agentzero.db".to_string())
 }

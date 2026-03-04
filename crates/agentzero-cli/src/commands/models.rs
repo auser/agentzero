@@ -1,7 +1,7 @@
 use crate::cli::ModelCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_common::local_providers::{is_local_provider, local_provider_meta};
 use agentzero_config::load;
+use agentzero_core::common::local_providers::{is_local_provider, local_provider_meta};
 use agentzero_providers::{find_models_for_provider, model_capabilities, supported_providers};
 use agentzero_storage::EncryptedJsonStore;
 use anyhow::{anyhow, Context};

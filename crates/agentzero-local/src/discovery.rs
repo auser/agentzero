@@ -1,4 +1,4 @@
-use agentzero_common::local_providers::{all_local_providers, LocalProviderType};
+use agentzero_core::common::local_providers::{all_local_providers, LocalProviderType};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]

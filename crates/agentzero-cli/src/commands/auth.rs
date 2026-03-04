@@ -4,7 +4,7 @@ use agentzero_auth::AuthStatus;
 use agentzero_auth::{
     AuthManager, AuthProfileSummary, PendingOAuthLogin, ProfileHealth, RefreshStatus,
 };
-use agentzero_common::util::build_query_string_ordered;
+use agentzero_core::common::util::build_query_string_ordered;
 use anyhow::{bail, Context};
 use async_trait::async_trait;
 use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};

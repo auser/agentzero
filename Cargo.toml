@@ -5,7 +5,6 @@ members = [
   "crates/agentzero-auth",
   "crates/agentzero-approval",
   "crates/agentzero-identity",
-  "crates/agentzero-common",
   "crates/agentzero-runtime",
   "crates/agentzero-testkit",
   "crates/agentzero-health",
@@ -16,7 +15,6 @@ members = [
   "crates/agentzero-coordination",
   "crates/agentzero-goals",
   "crates/agentzero-hooks",
-  "crates/agentzero-security",
   "crates/agentzero-cli",
   "crates/agentzero-config",
   "crates/agentzero-core",
@@ -41,8 +39,6 @@ members = [
   "crates/agentzero-update",
   "crates/agentzero-autonomy",
   "crates/agentzero-leak-guard",
-  "crates/agentzero-delegation",
-  "crates/agentzero-routing",
   "crates/agentzero-local",
   "crates/agentzero-ffi",
   "crates/agentzero-plugin-sdk",
@@ -68,7 +64,6 @@ agentzero-auth = { path = "crates/agentzero-auth", version = "0.1.4" }
 agentzero-bench = { path = "crates/agentzero-bench", version = "0.1.4" }
 agentzero-channels = { path = "crates/agentzero-channels", version = "0.1.4" }
 agentzero-cli = { path = "crates/agentzero-cli", version = "0.1.4", default-features = false }
-agentzero-common = { path = "crates/agentzero-common", version = "0.1.4" }
 agentzero-config = { path = "crates/agentzero-config", version = "0.1.4" }
 agentzero-coordination = { path = "crates/agentzero-coordination", version = "0.1.4" }
 agentzero-crypto = { path = "crates/agentzero-crypto", version = "0.1.4" }
@@ -90,7 +85,6 @@ agentzero-plugins = { path = "crates/agentzero-plugins", version = "0.1.4", defa
 agentzero-skills = { path = "crates/agentzero-skills", version = "0.1.4" }
 agentzero-providers = { path = "crates/agentzero-providers", version = "0.1.4" }
 agentzero-runtime = { path = "crates/agentzero-runtime", version = "0.1.4" }
-agentzero-security = { path = "crates/agentzero-security", version = "0.1.4" }
 agentzero-service = { path = "crates/agentzero-service", version = "0.1.4" }
 agentzero-storage = { path = "crates/agentzero-storage", version = "0.1.4" }
 agentzero-rag = { path = "crates/agentzero-rag", version = "0.1.4" }
@@ -103,8 +97,6 @@ agentzero-tunnel = { path = "crates/agentzero-tunnel", version = "0.1.4" }
 agentzero-update = { path = "crates/agentzero-update", version = "0.1.4" }
 agentzero-autonomy = { path = "crates/agentzero-autonomy", version = "0.1.4" }
 agentzero-leak-guard = { path = "crates/agentzero-leak-guard", version = "0.1.4" }
-agentzero-delegation = { path = "crates/agentzero-delegation", version = "0.1.4" }
-agentzero-routing = { path = "crates/agentzero-routing", version = "0.1.4" }
 agentzero-local = { path = "crates/agentzero-local", version = "0.1.4" }
 agentzero-ffi = { path = "crates/agentzero-ffi", version = "0.1.4" }
 agentzero-plugin-sdk = { path = "crates/agentzero-plugin-sdk", version = "0.1.4" }

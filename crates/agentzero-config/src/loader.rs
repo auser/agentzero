@@ -1,5 +1,5 @@
 use crate::model::AgentZeroConfig;
-use agentzero_common::local_providers::local_provider_meta;
+use agentzero_core::common::local_providers::local_provider_meta;
 use anyhow::{anyhow, Context};
 use config::{Config, Environment, File};
 use std::collections::HashMap;

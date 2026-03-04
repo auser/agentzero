@@ -1,9 +1,9 @@
+use crate::security::redaction::redact_text;
 use crate::types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, HookEvent, HookFailureMode,
     HookRiskTier, HookSink, MemoryEntry, MemoryStore, MetricsSink, Provider, ResearchTrigger, Tool,
     ToolContext, UserMessage,
 };
-use agentzero_security::redaction::redact_text;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};

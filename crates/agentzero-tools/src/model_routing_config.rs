@@ -1,5 +1,5 @@
+use agentzero_core::routing::ModelRouter;
 use agentzero_core::{Tool, ToolContext, ToolResult};
-use agentzero_routing::ModelRouter;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
@@ -108,7 +108,7 @@ impl Tool for ModelRoutingConfigTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentzero_routing::{ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter};
+    use agentzero_core::routing::{ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter};
 
     fn test_router() -> ModelRouter {
         ModelRouter {

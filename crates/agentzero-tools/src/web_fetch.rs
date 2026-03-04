@@ -1,5 +1,5 @@
-use agentzero_common::url_policy::UrlAccessPolicy;
-use agentzero_common::util::parse_http_url_with_policy;
+use agentzero_core::common::url_policy::UrlAccessPolicy;
+use agentzero_core::common::util::parse_http_url_with_policy;
 use agentzero_core::{Tool, ToolContext, ToolResult};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
@@ -120,7 +120,7 @@ mod tests {
 
     #[tokio::test]
     async fn web_fetch_blocks_blocklisted_domain_negative_path() {
-        use agentzero_common::url_policy::UrlAccessPolicy;
+        use agentzero_core::common::url_policy::UrlAccessPolicy;
         let tool = WebFetchTool::default().with_url_policy(UrlAccessPolicy {
             domain_blocklist: vec!["evil.example".to_string()],
             ..Default::default()

@@ -1,6 +1,6 @@
 use crate::cli::{EstopCommands, EstopLevel};
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_security::otp;
+use agentzero_core::security::otp;
 use agentzero_storage::EncryptedJsonStore;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -256,7 +256,7 @@ mod tests {
     use super::{EstopCommand, EstopOptions, OtpSecret, OTP_SECRET_FILE};
     use crate::cli::{EstopCommands, EstopLevel};
     use crate::command_core::{AgentZeroCommand, CommandContext};
-    use agentzero_security::otp;
+    use agentzero_core::security::otp;
     use agentzero_storage::EncryptedJsonStore;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};

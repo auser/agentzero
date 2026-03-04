@@ -14,10 +14,10 @@ pub struct EncryptedJsonStore {
 
 impl EncryptedJsonStore {
     pub fn in_default_data_dir(file_name: &str) -> anyhow::Result<Self> {
-        let data_dir = agentzero_common::paths::default_data_dir().ok_or_else(|| {
+        let data_dir = agentzero_core::common::paths::default_data_dir().ok_or_else(|| {
             anyhow::anyhow!(
                 "failed to determine default data directory; set {}",
-                agentzero_common::paths::ENV_DATA_DIR
+                agentzero_core::common::paths::ENV_DATA_DIR
             )
         })?;
         Self::in_config_dir(&data_dir, file_name)
