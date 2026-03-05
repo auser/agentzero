@@ -68,6 +68,11 @@ const pillars = [
     <nav class="az-nav">
       <div class="az-nav-inner">
         <a href={base} class="az-logo">AgentZero</a>
+        <button class="az-hamburger" aria-label="Toggle menu" aria-expanded="false">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
         <div class="az-nav-links">
           <a href="#features">Features</a>
           <a href="#why">Why AgentZero</a>
@@ -78,6 +83,26 @@ const pillars = [
         </div>
       </div>
     </nav>
+
+    <script>
+      const hamburger = document.querySelector('.az-hamburger');
+      const navLinks = document.querySelector('.az-nav-links');
+      if (hamburger && navLinks) {
+        hamburger.addEventListener('click', () => {
+          const expanded = hamburger.getAttribute('aria-expanded') === 'true';
+          hamburger.setAttribute('aria-expanded', String(!expanded));
+          hamburger.classList.toggle('az-hamburger--open');
+          navLinks.classList.toggle('az-nav-links--open');
+        });
+        navLinks.querySelectorAll('a').forEach(link => {
+          link.addEventListener('click', () => {
+            hamburger.setAttribute('aria-expanded', 'false');
+            hamburger.classList.remove('az-hamburger--open');
+            navLinks.classList.remove('az-nav-links--open');
+          });
+        });
+      }
+    </script>
 
     <main>
       <!-- Hero -->
