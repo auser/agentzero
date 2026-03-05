@@ -80,3 +80,83 @@ pub fn build_provider_with_transport(
         _ => Box::new(OpenAiCompatibleProvider::new(base_url, api_key, model)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_transport() -> TransportConfig {
+        TransportConfig {
+            timeout_ms: 30_000,
+            max_retries: 3,
+            circuit_breaker_threshold: 5,
+            circuit_breaker_reset_ms: 30_000,
+        }
+    }
+
+    #[test]
+    fn build_provider_with_privacy_allows_local_in_local_only() {
+        let result = build_provider_with_privacy(
+            "ollama",
+            "http://localhost:11434".to_string(),
+            String::new(),
+            "llama3".to_string(),
+            default_transport(),
+            "local_only",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn build_provider_with_privacy_rejects_cloud_in_local_only() {
+        let result = build_provider_with_privacy(
+            "anthropic",
+            "https://api.anthropic.com".to_string(),
+            "sk-test".to_string(),
+            "claude-sonnet-4-6".to_string(),
+            default_transport(),
+            "local_only",
+        );
+        let err = result.err().expect("should reject cloud provider");
+        assert!(err.to_string().contains("local provider"), "error: {err}");
+    }
+
+    #[test]
+    fn build_provider_with_privacy_rejects_cloud_in_full_mode() {
+        let result = build_provider_with_privacy(
+            "openai",
+            "https://api.openai.com".to_string(),
+            "sk-test".to_string(),
+            "gpt-4o".to_string(),
+            default_transport(),
+            "full",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_provider_with_privacy_allows_cloud_in_off_mode() {
+        let result = build_provider_with_privacy(
+            "anthropic",
+            "https://api.anthropic.com".to_string(),
+            "sk-test".to_string(),
+            "claude-sonnet-4-6".to_string(),
+            default_transport(),
+            "off",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn build_provider_with_privacy_allows_cloud_in_encrypted_mode() {
+        let result = build_provider_with_privacy(
+            "anthropic",
+            "https://api.anthropic.com".to_string(),
+            "sk-test".to_string(),
+            "claude-sonnet-4-6".to_string(),
+            default_transport(),
+            "encrypted",
+        );
+        assert!(result.is_ok());
+    }
+}

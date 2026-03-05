@@ -104,4 +104,20 @@ mod tests {
         let parse = RiskDomain::from_str("unknown-domain");
         assert!(parse.is_err());
     }
+
+    #[test]
+    fn privacy_relay_domain_is_high_risk_with_deny_by_default() {
+        assert_eq!(tier_for(RiskDomain::PrivacyRelay), RiskTier::P1High);
+        let controls = controls_for(RiskDomain::PrivacyRelay);
+        assert!(controls.deny_by_default);
+        assert!(controls.requires_explicit_allowlist);
+        assert!(controls.requires_redaction);
+        assert!(controls.requires_timeout);
+    }
+
+    #[test]
+    fn privacy_relay_domain_parses_from_string() {
+        let domain = RiskDomain::from_str("privacy_relay").unwrap();
+        assert_eq!(domain, RiskDomain::PrivacyRelay);
+    }
 }
