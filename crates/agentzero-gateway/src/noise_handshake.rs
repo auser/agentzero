@@ -238,6 +238,131 @@ pub(crate) async fn noise_handshake_step2(
     }
 }
 
+/// Request body for IK single-round-trip handshake.
+#[derive(Debug, Deserialize)]
+pub(crate) struct HandshakeIkRequest {
+    /// Base64-encoded IK message (→ e, es, s, ss).
+    pub message: String,
+}
+
+/// Response body for IK handshake (handshake complete in one round-trip).
+#[derive(Debug, Serialize)]
+pub(crate) struct HandshakeIkResponse {
+    /// Base64-encoded server response (← e, ee, se).
+    pub message: String,
+    /// Hex-encoded session ID for use in `X-Noise-Session` header.
+    pub session_id: String,
+}
+
+/// IK handshake handler: single POST completes the handshake.
+///
+/// The client must know the server's static public key beforehand (cached from
+/// a previous `GET /v1/privacy/info` call). Returns the server response message
+/// and session ID in one round-trip.
+pub(crate) async fn noise_handshake_ik(
+    State(state): State<GatewayState>,
+    Json(req): Json<HandshakeIkRequest>,
+) -> impl IntoResponse {
+    let (sessions, keypair, _handshakes) = match privacy_components(&state) {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "noise encryption not enabled"})),
+            )
+        }
+    };
+
+    let client_msg = match STANDARD.decode(&req.message) {
+        Ok(m) => m,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("invalid base64: {e}")})),
+            )
+        }
+    };
+
+    // Create IK responder with server's keypair
+    let mut responder = match NoiseHandshaker::new_responder("IK", keypair) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("IK init failed: {e}")})),
+            )
+        }
+    };
+
+    // Read client's → e, es, s, ss
+    let mut payload_buf = [0u8; 65535];
+    if let Err(e) = responder.read_message(&client_msg, &mut payload_buf) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("IK read failed: {e}")})),
+        );
+    }
+
+    // Write server's ← e, ee, se
+    let mut out_buf = [0u8; 65535];
+    let len = match responder.write_message(b"", &mut out_buf) {
+        Ok(l) => l,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("IK write failed: {e}")})),
+            )
+        }
+    };
+
+    // Handshake should be finished after 2 messages in IK
+    if !responder.is_finished() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "IK handshake did not complete"})),
+        );
+    }
+
+    // Transition to transport mode
+    let session = match responder.into_transport() {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("transport transition failed: {e}")})),
+            )
+        }
+    };
+
+    let session_id_hex = session
+        .session_id()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+
+    match sessions.insert(session) {
+        Ok(_) => {
+            crate::gateway_metrics::record_noise_handshake("success_ik");
+            crate::gateway_metrics::set_noise_sessions_active(sessions.len() as f64);
+            let response = HandshakeIkResponse {
+                message: STANDARD.encode(&out_buf[..len]),
+                session_id: session_id_hex,
+            };
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(response).unwrap()),
+            )
+        }
+        Err(e) => {
+            crate::gateway_metrics::record_noise_handshake("failure");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": format!("session store full: {e}")})),
+            )
+        }
+    }
+}
+
 /// Extract privacy components from gateway state. Returns None if privacy is not enabled.
 fn privacy_components(
     state: &GatewayState,

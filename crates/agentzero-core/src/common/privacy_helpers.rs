@@ -45,6 +45,23 @@ pub fn resolve_boundary(child: &str, parent: &str) -> String {
     }
 }
 
+/// Check if a memory entry with `entry_boundary` should be visible to a
+/// query running under `query_boundary`.
+///
+/// Rules:
+/// - Empty entry boundary → visible to everyone (pre-migration data).
+/// - `"local_only"` entry → only visible to `"local_only"` queries.
+/// - `"encrypted_only"` entry → visible to `"local_only"` and `"encrypted_only"`.
+/// - `"any"` / empty / other → visible to all.
+pub fn boundary_allows_recall(entry_boundary: &str, query_boundary: &str) -> bool {
+    match entry_boundary {
+        "" | "any" | "inherit" => true,
+        "local_only" => query_boundary == "local_only",
+        "encrypted_only" => matches!(query_boundary, "local_only" | "encrypted_only"),
+        _ => true,
+    }
+}
+
 /// Known tool names that require outbound network access.
 const NETWORK_TOOLS: &[&str] = &[
     "web_search",
@@ -125,5 +142,37 @@ mod tests {
         assert!(is_network_tool("http_request"));
         assert!(!is_network_tool("shell"));
         assert!(!is_network_tool("read_file"));
+    }
+
+    #[test]
+    fn boundary_recall_empty_entry_visible_to_all() {
+        assert!(boundary_allows_recall("", "local_only"));
+        assert!(boundary_allows_recall("", "encrypted_only"));
+        assert!(boundary_allows_recall("", "any"));
+        assert!(boundary_allows_recall("", ""));
+    }
+
+    #[test]
+    fn boundary_recall_local_only_entry_only_visible_to_local() {
+        assert!(boundary_allows_recall("local_only", "local_only"));
+        assert!(!boundary_allows_recall("local_only", "encrypted_only"));
+        assert!(!boundary_allows_recall("local_only", "any"));
+        assert!(!boundary_allows_recall("local_only", ""));
+    }
+
+    #[test]
+    fn boundary_recall_encrypted_only_visible_to_local_and_encrypted() {
+        assert!(boundary_allows_recall("encrypted_only", "local_only"));
+        assert!(boundary_allows_recall("encrypted_only", "encrypted_only"));
+        assert!(!boundary_allows_recall("encrypted_only", "any"));
+        assert!(!boundary_allows_recall("encrypted_only", ""));
+    }
+
+    #[test]
+    fn boundary_recall_any_and_inherit_visible_to_all() {
+        assert!(boundary_allows_recall("any", "local_only"));
+        assert!(boundary_allows_recall("any", "any"));
+        assert!(boundary_allows_recall("inherit", "encrypted_only"));
+        assert!(boundary_allows_recall("inherit", ""));
     }
 }

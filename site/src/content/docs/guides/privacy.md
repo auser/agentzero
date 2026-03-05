@@ -93,17 +93,23 @@ blocked_providers = ["openai"]                    # Never use OpenAI
 
 When `mode = "encrypted"` or `mode = "full"`, the gateway uses the [Noise Protocol](http://noiseprotocol.org/) for end-to-end encryption.
 
-**Handshake pattern:** XX (mutual authentication)
+**Handshake patterns:** XX (mutual authentication) and IK (known server key, faster reconnection)
 **Cipher suite:** X25519_ChaChaPoly_BLAKE2s
 
 ### How It Works
 
-1. Client calls `GET /v1/privacy/info` to discover gateway capabilities
+**XX pattern** (first connection):
+1. Client calls `GET /v1/privacy/info` to discover gateway capabilities and supported patterns
 2. Client initiates XX handshake via `POST /v1/noise/handshake/step1`
 3. Server responds with its ephemeral + static keys
 4. Client completes handshake via `POST /v1/noise/handshake/step2`
 5. Server returns a session ID
 6. All subsequent requests use `X-Noise-Session: <id>` with encrypted bodies
+
+**IK pattern** (reconnection with cached server key):
+1. Client sends a single `POST /v1/noise/handshake/ik` with client message + cached server public key
+2. Server completes handshake in one round-trip and returns a session ID
+3. The `auto_noise_handshake()` helper selects IK when a cached server key is available, falling back to XX otherwise
 
 ### Configuration
 
@@ -114,6 +120,45 @@ handshake_pattern = "XX"       # XX (mutual auth) or IK (known server key)
 session_timeout_secs = 3600    # Sessions expire after 1 hour
 max_sessions = 1000            # Maximum concurrent sessions
 ```
+
+> **Note:** `privacy.mode = "encrypted"` requires `privacy.noise.enabled = true`. Config validation will reject the combination of encrypted mode with noise disabled.
+
+## Memory Privacy Boundaries
+
+Memory entries are tagged with the effective privacy boundary and source channel when stored. This ensures that agents with different boundaries see isolated conversation histories even when sharing the same memory backend.
+
+- Each `MemoryEntry` carries `privacy_boundary` (e.g., `"local_only"`, `"encrypted_only"`) and `source_channel` (e.g., `"telegram"`, `"cli"`)
+- `recent_for_boundary()` filters entries so an agent only sees entries matching its boundary
+- Empty boundary entries are visible to all agents (backward-compatible default)
+- SQLite databases are automatically migrated to include the new columns
+
+### Channel Privacy
+
+Each channel can have its own privacy boundary:
+
+```toml
+[channels_config]
+default_privacy_boundary = "encrypted_only"  # Global default for all channels
+
+[channels.telegram]
+privacy_boundary = "encrypted_only"
+
+[channels.cli]
+privacy_boundary = "local_only"  # CLI stays local
+```
+
+Channel dispatch enforces boundaries: messages with `local_only` boundary are blocked from being sent to non-local channels (Telegram, Discord, Slack, etc.). Only `cli` and `transcription` are considered local channels.
+
+### Privacy Test Command
+
+Validate your privacy configuration with the built-in diagnostic tool:
+
+```bash
+agentzero privacy test          # Human-readable output
+agentzero privacy test --json   # Machine-readable JSON
+```
+
+Runs 8 checks: config validation, boundary resolution, memory isolation, sealed envelope round-trip, Noise XX/IK handshakes, channel locality, and encrypted store round-trip.
 
 ## Sealed Envelopes & Relay Mode
 

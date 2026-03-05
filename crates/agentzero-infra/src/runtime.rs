@@ -249,6 +249,7 @@ pub fn run_agent_streaming(
 ) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let handle = tokio::spawn(async move {
+        let privacy_boundary = execution.config.privacy_boundary.clone();
         let mut agent = Agent::new(
             execution.config,
             execution.provider,
@@ -265,12 +266,11 @@ pub fn run_agent_streaming(
             agent = agent.with_hooks(hooks);
         }
 
+        let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
+        ctx.privacy_boundary = privacy_boundary;
+
         let response = agent
-            .respond_streaming(
-                UserMessage { text: message },
-                &ToolContext::new(workspace_root.to_string_lossy().to_string()),
-                tx,
-            )
+            .respond_streaming(UserMessage { text: message }, &ctx, tx)
             .await?;
         let metrics_snapshot = runtime_metrics.export_json();
         info!(metrics = %metrics_snapshot, "streaming runtime metrics snapshot");
@@ -288,6 +288,7 @@ pub async fn run_agent_with_runtime(
     workspace_root: PathBuf,
     message: String,
 ) -> anyhow::Result<RunAgentOutput> {
+    let privacy_boundary = execution.config.privacy_boundary.clone();
     let mut agent = Agent::new(
         execution.config,
         execution.provider,
@@ -304,12 +305,10 @@ pub async fn run_agent_with_runtime(
         agent = agent.with_hooks(hooks);
     }
 
-    let response = agent
-        .respond(
-            UserMessage { text: message },
-            &ToolContext::new(workspace_root.to_string_lossy().to_string()),
-        )
-        .await?;
+    let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
+    ctx.privacy_boundary = privacy_boundary;
+
+    let response = agent.respond(UserMessage { text: message }, &ctx).await?;
     let metrics_snapshot = runtime_metrics.export_json();
     info!(metrics = %metrics_snapshot, "runtime metrics snapshot");
 

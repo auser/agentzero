@@ -38,6 +38,10 @@ pub struct ChannelInstanceConfig {
     pub allowed_pubkeys: Vec<String>,
     #[serde(default)]
     pub allowed_senders: Vec<String>,
+    /// Per-channel privacy boundary override.
+    /// Empty string means inherit from `[channels] default_privacy_boundary`.
+    #[serde(default)]
+    pub privacy_boundary: String,
 }
 
 /// Register channels into `registry` based on the provided per-channel configs.
@@ -286,5 +290,20 @@ mod tests {
         let errors = register_configured_channels(&mut registry, &configs);
         assert!(errors.is_empty());
         assert!(registry.has_channel("telegram"));
+    }
+
+    #[test]
+    fn channel_instance_config_privacy_boundary_defaults_empty() {
+        let cfg = ChannelInstanceConfig::default();
+        assert_eq!(cfg.privacy_boundary, "");
+    }
+
+    #[test]
+    fn channel_instance_config_with_privacy_boundary() {
+        let cfg = ChannelInstanceConfig {
+            privacy_boundary: "local_only".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.privacy_boundary, "local_only");
     }
 }

@@ -1810,10 +1810,16 @@ fn privacy_all_four_modes_accepted() {
         } else {
             "kind=\"openrouter\"\nbase_url=\"https://openrouter.ai/api\"\nmodel=\"gpt-4o-mini\""
         };
+        // Encrypted mode requires noise.enabled = true.
+        let noise_section = if *mode == "encrypted" {
+            "\n[privacy.noise]\nenabled=true\n"
+        } else {
+            ""
+        };
         fs::write(
             &config_path,
             format!(
-                "[provider]\n{provider}\n\n[privacy]\nmode=\"{mode}\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n"
+                "[provider]\n{provider}\n\n[privacy]\nmode=\"{mode}\"\n{noise_section}\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n"
             ),
         )
         .expect("config should be written");
@@ -2101,6 +2107,9 @@ model = "llama3"
 [privacy]
 mode = "encrypted"
 
+[privacy.noise]
+enabled = true
+
 [agents.research]
 provider = "anthropic"
 model = "claude-sonnet-4-6"
@@ -2133,6 +2142,101 @@ web_search = "any"
             cfg.security.tool_boundaries.get("shell").unwrap(),
             "local_only"
         );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn channels_global_config_default_privacy_boundary_empty() {
+    let cfg = crate::ChannelsGlobalConfig::default();
+    assert_eq!(cfg.default_privacy_boundary, "");
+}
+
+#[test]
+fn channels_global_config_toml_parses_default_privacy_boundary() {
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        r#"
+[channels_config]
+default_privacy_boundary = "encrypted_only"
+"#,
+    )
+    .unwrap();
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config should load");
+        assert_eq!(
+            cfg.channels_config.default_privacy_boundary,
+            "encrypted_only"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn validate_rejects_encrypted_mode_without_noise() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        r#"
+[provider]
+kind = "ollama"
+base_url = "http://localhost:11434"
+model = "llama3"
+
+[privacy]
+mode = "encrypted"
+
+[privacy.noise]
+enabled = false
+"#,
+    )
+    .expect("write");
+
+    with_clean_agentzero_env(|| {
+        let err = load(&config_path).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("encrypted") && msg.contains("noise"),
+            "error should mention encrypted mode requiring noise: {msg}"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn validate_accepts_encrypted_mode_with_noise_enabled() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        r#"
+[provider]
+kind = "ollama"
+base_url = "http://localhost:11434"
+model = "llama3"
+
+[privacy]
+mode = "encrypted"
+
+[privacy.noise]
+enabled = true
+"#,
+    )
+    .expect("write");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config should load with encrypted+noise");
+        assert_eq!(cfg.privacy.mode, "encrypted");
+        assert!(cfg.privacy.noise.enabled);
     });
 
     fs::remove_dir_all(dir).ok();

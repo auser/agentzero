@@ -38,11 +38,14 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
     // Noise Protocol handshake and transport routes (privacy feature).
     #[cfg(feature = "privacy")]
     {
-        use crate::noise_handshake::{noise_handshake_step1, noise_handshake_step2};
+        use crate::noise_handshake::{
+            noise_handshake_ik, noise_handshake_step1, noise_handshake_step2,
+        };
 
         router = router
             .route("/v1/noise/handshake/step1", post(noise_handshake_step1))
             .route("/v1/noise/handshake/step2", post(noise_handshake_step2))
+            .route("/v1/noise/handshake/ik", post(noise_handshake_ik))
             .route("/v1/privacy/info", get(privacy_info));
 
         // Noise transport middleware: decrypt request / encrypt response for
@@ -128,6 +131,11 @@ async fn privacy_info(
         (None, None)
     };
 
+    let mut supported_patterns = vec!["XX"];
+    if public_key.is_some() {
+        supported_patterns.push("IK");
+    }
+
     axum::Json(serde_json::json!({
         "noise_enabled": noise_enabled,
         "handshake_pattern": "XX",
@@ -135,5 +143,6 @@ async fn privacy_info(
         "key_fingerprint": key_fingerprint,
         "sealed_envelopes_enabled": relay_mode,
         "relay_mode": relay_mode,
+        "supported_patterns": supported_patterns,
     }))
 }

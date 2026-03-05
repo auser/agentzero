@@ -386,6 +386,7 @@ mod tests {
             .append(MemoryEntry {
                 role: "user".to_string(),
                 content: "hello".to_string(),
+                ..Default::default()
             })
             .await
             .expect("sqlite append should work");
@@ -449,6 +450,7 @@ mod tests {
             .append(MemoryEntry {
                 role: "user".to_string(),
                 content: "memory-list-entry".to_string(),
+                ..Default::default()
             })
             .await
             .expect("append should succeed");

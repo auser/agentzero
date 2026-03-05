@@ -48,6 +48,7 @@ impl SqliteMemoryStore {
                 conn.execute_batch(&format!("PRAGMA key = \"x'{hex_key}'\""))?;
                 conn.execute(MEMORY_SCHEMA, [])
                     .context("failed to create memory table after migration")?;
+                migrate_privacy_columns(&conn)?;
                 return Ok(Self {
                     conn: Mutex::new(conn),
                 });
@@ -56,10 +57,28 @@ impl SqliteMemoryStore {
 
         conn.execute(MEMORY_SCHEMA, [])
             .context("failed to create memory table")?;
+        migrate_privacy_columns(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
+}
+
+/// Add privacy_boundary and source_channel columns if they don't exist yet.
+/// SQLite doesn't support `ADD COLUMN IF NOT EXISTS`, so we catch the
+/// "duplicate column" error and ignore it.
+fn migrate_privacy_columns(conn: &Connection) -> anyhow::Result<()> {
+    for sql in &[
+        "ALTER TABLE memory ADD COLUMN privacy_boundary TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE memory ADD COLUMN source_channel TEXT DEFAULT NULL",
+    ] {
+        match conn.execute_batch(sql) {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("duplicate column") => {}
+            Err(e) => return Err(e).context("failed to migrate memory table"),
+        }
+    }
+    Ok(())
 }
 
 fn hex_encode_key(key: &StorageKey) -> String {
@@ -93,8 +112,8 @@ impl MemoryStore for SqliteMemoryStore {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         conn.execute(
-            "INSERT INTO memory(role, content) VALUES(?1, ?2)",
-            params![entry.role, entry.content],
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel) VALUES(?1, ?2, ?3, ?4)",
+            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel],
         )?;
         Ok(())
     }
@@ -102,7 +121,7 @@ impl MemoryStore for SqliteMemoryStore {
     async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
-            "SELECT role, content
+            "SELECT role, content, privacy_boundary, source_channel
              FROM memory
              ORDER BY id DESC
              LIMIT ?1",
@@ -111,6 +130,44 @@ impl MemoryStore for SqliteMemoryStore {
             Ok(MemoryEntry {
                 role: row.get(0)?,
                 content: row.get(1)?,
+                privacy_boundary: row.get::<_, String>(2).unwrap_or_default(),
+                source_channel: row.get::<_, Option<String>>(3).unwrap_or_default(),
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        out.reverse();
+        Ok(out)
+    }
+
+    async fn recent_for_boundary(
+        &self,
+        limit: usize,
+        boundary: &str,
+        source_channel: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT role, content, privacy_boundary, source_channel
+             FROM memory
+             WHERE (privacy_boundary = '' OR privacy_boundary = ?1
+                    OR privacy_boundary IN ('any', 'inherit')
+                    OR (?1 = 'local_only' AND privacy_boundary = 'encrypted_only'))
+               AND (?2 IS NULL OR source_channel IS NULL OR source_channel = ?2)
+             ORDER BY id DESC
+             LIMIT ?3",
+        )?;
+        let boundary_owned = boundary.to_string();
+        let source_owned = source_channel.map(|s| s.to_string());
+        let rows = stmt.query_map(params![boundary_owned, source_owned, limit as i64], |row| {
+            Ok(MemoryEntry {
+                role: row.get(0)?,
+                content: row.get(1)?,
+                privacy_boundary: row.get::<_, String>(2).unwrap_or_default(),
+                source_channel: row.get::<_, Option<String>>(3).unwrap_or_default(),
             })
         })?;
 
@@ -173,6 +230,7 @@ mod tests {
             .append(MemoryEntry {
                 role: "user".to_string(),
                 content: "first".to_string(),
+                ..Default::default()
             })
             .await
             .expect("first append should succeed");
@@ -180,6 +238,7 @@ mod tests {
             .append(MemoryEntry {
                 role: "assistant".to_string(),
                 content: "second".to_string(),
+                ..Default::default()
             })
             .await
             .expect("second append should succeed");
@@ -187,6 +246,7 @@ mod tests {
             .append(MemoryEntry {
                 role: "user".to_string(),
                 content: "third".to_string(),
+                ..Default::default()
             })
             .await
             .expect("third append should succeed");
@@ -222,6 +282,7 @@ mod tests {
             .append(MemoryEntry {
                 role: "user".to_string(),
                 content: "hello".to_string(),
+                ..Default::default()
             })
             .await
             .expect("append should succeed");
@@ -244,6 +305,7 @@ mod tests {
                 .append(MemoryEntry {
                     role: "user".to_string(),
                     content: "secret message".to_string(),
+                    ..Default::default()
                 })
                 .await
                 .expect("append should succeed");
@@ -284,6 +346,7 @@ mod tests {
                 .append(MemoryEntry {
                     role: "user".to_string(),
                     content: "data".to_string(),
+                    ..Default::default()
                 })
                 .await
                 .expect("append should succeed");
@@ -312,6 +375,7 @@ mod tests {
                 .append(MemoryEntry {
                     role: "user".to_string(),
                     content: "before migration".to_string(),
+                    ..Default::default()
                 })
                 .await
                 .expect("append should succeed");
@@ -319,6 +383,7 @@ mod tests {
                 .append(MemoryEntry {
                     role: "assistant".to_string(),
                     content: "also before migration".to_string(),
+                    ..Default::default()
                 })
                 .await
                 .expect("second append should succeed");
@@ -356,6 +421,7 @@ mod tests {
             .append(MemoryEntry {
                 role: "user".to_string(),
                 content: "data".to_string(),
+                ..Default::default()
             })
             .await
             .expect("append");
@@ -373,6 +439,7 @@ mod tests {
                 .append(MemoryEntry {
                     role: "user".to_string(),
                     content: format!("msg-{i}"),
+                    ..Default::default()
                 })
                 .await
                 .expect("append");
@@ -391,6 +458,7 @@ mod tests {
             .append(MemoryEntry {
                 role: "user".to_string(),
                 content: big.clone(),
+                ..Default::default()
             })
             .await
             .expect("append big");
@@ -408,11 +476,227 @@ mod tests {
             .append(MemoryEntry {
                 role: "user".to_string(),
                 content: content.to_string(),
+                ..Default::default()
             })
             .await
             .expect("append unicode");
         let recent = store.recent(1).await.expect("recent");
         assert_eq!(recent[0].content, content);
+        fs::remove_file(db_path).ok();
+    }
+
+    // --- Privacy boundary tests (Sprint 25, Phase 1) ---
+
+    #[tokio::test]
+    async fn append_with_boundary_roundtrips() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: "local msg".to_string(),
+                privacy_boundary: "local_only".to_string(),
+                source_channel: Some("cli".to_string()),
+            })
+            .await
+            .unwrap();
+        let recent = store.recent(1).await.unwrap();
+        assert_eq!(recent[0].privacy_boundary, "local_only");
+        assert_eq!(recent[0].source_channel.as_deref(), Some("cli"));
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn boundary_filtering_excludes_other_boundaries() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+
+        // Insert local_only and any entries
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: "local secret".to_string(),
+                privacy_boundary: "local_only".to_string(),
+                source_channel: None,
+            })
+            .await
+            .unwrap();
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: "public msg".to_string(),
+                privacy_boundary: "any".to_string(),
+                source_channel: None,
+            })
+            .await
+            .unwrap();
+
+        // Query with "any" boundary should NOT see local_only entries
+        let filtered = store.recent_for_boundary(10, "any", None).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].content, "public msg");
+
+        // Query with "local_only" should see both
+        let all = store
+            .recent_for_boundary(10, "local_only", None)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn empty_boundary_visible_to_all() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: "pre-migration entry".to_string(),
+                privacy_boundary: String::new(),
+                source_channel: None,
+            })
+            .await
+            .unwrap();
+
+        for boundary in &["local_only", "encrypted_only", "any", ""] {
+            let result = store.recent_for_boundary(10, boundary, None).await.unwrap();
+            assert_eq!(
+                result.len(),
+                1,
+                "empty-boundary entry should be visible to '{boundary}'"
+            );
+        }
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn source_channel_filtering() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: "from telegram".to_string(),
+                privacy_boundary: String::new(),
+                source_channel: Some("telegram".to_string()),
+            })
+            .await
+            .unwrap();
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: "from cli".to_string(),
+                privacy_boundary: String::new(),
+                source_channel: Some("cli".to_string()),
+            })
+            .await
+            .unwrap();
+
+        let tg = store
+            .recent_for_boundary(10, "", Some("telegram"))
+            .await
+            .unwrap();
+        assert_eq!(tg.len(), 1);
+        assert_eq!(tg[0].content, "from telegram");
+
+        // None source_channel returns all
+        let all = store.recent_for_boundary(10, "", None).await.unwrap();
+        assert_eq!(all.len(), 2);
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn migration_is_idempotent() {
+        let db_path = temp_db_path();
+        // Open twice — the second open should re-run migration without error
+        let store = SqliteMemoryStore::open(&db_path, None).expect("first open");
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: "before re-migration".to_string(),
+                privacy_boundary: "encrypted_only".to_string(),
+                source_channel: None,
+            })
+            .await
+            .unwrap();
+        drop(store);
+
+        let store = SqliteMemoryStore::open(&db_path, None).expect("second open should succeed");
+        let recent = store.recent(1).await.unwrap();
+        assert_eq!(recent[0].content, "before re-migration");
+        assert_eq!(recent[0].privacy_boundary, "encrypted_only");
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn existing_entries_get_empty_boundary_after_migration() {
+        let db_path = temp_db_path();
+        // Simulate pre-migration: create DB without privacy columns
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+                )",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO memory(role, content) VALUES(?1, ?2)",
+                rusqlite::params!["user", "old data"],
+            )
+            .unwrap();
+        }
+
+        // Open via SqliteMemoryStore — should auto-migrate and read old data
+        let store = SqliteMemoryStore::open(&db_path, None).expect("migration open");
+        let recent = store.recent(1).await.unwrap();
+        assert_eq!(recent[0].content, "old data");
+        assert_eq!(recent[0].privacy_boundary, "");
+        assert!(recent[0].source_channel.is_none());
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn encrypted_only_visible_to_local_and_encrypted() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: "enc msg".to_string(),
+                privacy_boundary: "encrypted_only".to_string(),
+                source_channel: None,
+            })
+            .await
+            .unwrap();
+
+        // encrypted_only should see it
+        let enc = store
+            .recent_for_boundary(10, "encrypted_only", None)
+            .await
+            .unwrap();
+        assert_eq!(enc.len(), 1);
+
+        // local_only should see it (stricter can see less-strict)
+        let local = store
+            .recent_for_boundary(10, "local_only", None)
+            .await
+            .unwrap();
+        assert_eq!(local.len(), 1);
+
+        // any should NOT see it
+        let any = store.recent_for_boundary(10, "any", None).await.unwrap();
+        assert_eq!(any.len(), 0);
+
         fs::remove_file(db_path).ok();
     }
 }

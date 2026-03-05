@@ -22,6 +22,10 @@ pub struct PrivacyInfo {
     pub key_fingerprint: Option<String>,
     pub sealed_envelopes_enabled: bool,
     pub relay_mode: bool,
+    /// Handshake patterns supported by the server. `["XX"]` is always
+    /// supported; `"IK"` is available when `public_key` is present.
+    #[serde(default)]
+    pub supported_patterns: Vec<String>,
 }
 
 /// Transport-agnostic Noise handshake orchestrator.
@@ -41,10 +45,18 @@ pub struct NoiseClientHandshake {
 }
 
 impl NoiseClientHandshake {
-    /// Create a new client handshake with a fresh keypair.
+    /// Create a new client XX handshake with a fresh keypair.
     pub fn new() -> anyhow::Result<Self> {
         let client_kp = NoiseKeypair::generate()?;
         let handshaker = NoiseHandshaker::new_initiator("XX", &client_kp)?;
+        Ok(Self { handshaker })
+    }
+
+    /// Create a new client IK handshake. Requires the server's static public
+    /// key (32 bytes). Completes in 1 HTTP round-trip instead of 2.
+    pub fn new_ik(server_public_key: &[u8; 32]) -> anyhow::Result<Self> {
+        let client_kp = NoiseKeypair::generate()?;
+        let handshaker = NoiseHandshaker::new_ik_initiator(&client_kp, server_public_key)?;
         Ok(Self { handshaker })
     }
 
@@ -126,6 +138,8 @@ mod tests {
         assert!(info.noise_enabled);
         assert_eq!(info.handshake_pattern, "XX");
         assert_eq!(info.key_epoch, Some(5));
+        // supported_patterns defaults to empty vec when not in JSON
+        assert!(info.supported_patterns.is_empty());
     }
 
     #[test]
@@ -151,11 +165,13 @@ mod tests {
             key_fingerprint: Some("deadbeef".to_string()),
             sealed_envelopes_enabled: true,
             relay_mode: false,
+            supported_patterns: vec!["XX".to_string(), "IK".to_string()],
         };
         let json = serde_json::to_value(&info).expect("should serialize");
         assert_eq!(json["noise_enabled"], true);
         assert_eq!(json["public_key"], "abc123");
         assert_eq!(json["key_epoch"], 42);
+        assert_eq!(json["supported_patterns"], serde_json::json!(["XX", "IK"]));
     }
 
     #[test]
@@ -168,6 +184,7 @@ mod tests {
             key_fingerprint: None,
             sealed_envelopes_enabled: false,
             relay_mode: false,
+            supported_patterns: vec!["XX".to_string()],
         };
         let json = serde_json::to_value(&info).expect("should serialize");
         assert!(json.get("public_key").is_none());
@@ -231,5 +248,78 @@ mod tests {
         // Should be valid base64
         assert!(STANDARD.decode(&msg).is_ok());
         assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn ik_client_handshake_round_trip() {
+        // IK handshake: client knows server's static key beforehand.
+        let server_kp = NoiseKeypair::generate().unwrap();
+
+        // Client creates IK handshake with server's public key
+        let mut client_hs = NoiseClientHandshake::new_ik(&server_kp.public).unwrap();
+        let step1_b64 = client_hs.step1().unwrap();
+
+        // Server side: IK responder processes step1 (→ e, es, s, ss)
+        let mut server_hs = NoiseHandshaker::new_responder("IK", &server_kp).unwrap();
+        let step1_bytes = STANDARD.decode(&step1_b64).unwrap();
+        let mut payload_buf = [0u8; 65535];
+        server_hs
+            .read_message(&step1_bytes, &mut payload_buf)
+            .unwrap();
+
+        // Server responds (← e, ee, se)
+        let mut buf = [0u8; 65535];
+        let len = server_hs.write_message(b"", &mut buf).unwrap();
+        let server_resp_b64 = STANDARD.encode(&buf[..len]);
+
+        // Server is done after 2 messages in IK
+        assert!(server_hs.is_finished());
+        let mut server_session = server_hs.into_transport().unwrap();
+
+        // Client processes response and finishes
+        client_hs.process_step1_response(&server_resp_b64).unwrap();
+        assert!(client_hs.handshaker.is_finished());
+        let mut client_session = client_hs.finish("ik-session-1".to_string()).unwrap();
+
+        // Verify encrypt/decrypt
+        let (encrypted, sid) = client_session.encrypt_request(b"ik hello").unwrap();
+        assert_eq!(sid, "ik-session-1");
+        let decrypted = server_session.decrypt(&encrypted).unwrap();
+        assert_eq!(decrypted, b"ik hello");
+
+        let encrypted = server_session.encrypt(b"ik reply").unwrap();
+        let decrypted = client_session.decrypt_response(&encrypted).unwrap();
+        assert_eq!(decrypted, b"ik reply");
+    }
+
+    #[test]
+    fn ik_wrong_server_key_fails() {
+        let server_kp = NoiseKeypair::generate().unwrap();
+        let wrong_kp = NoiseKeypair::generate().unwrap();
+
+        // Client uses wrong server public key
+        let mut client_hs = NoiseClientHandshake::new_ik(&wrong_kp.public).unwrap();
+        let step1_b64 = client_hs.step1().unwrap();
+
+        // Server (with the real key) tries to process — should fail
+        let mut server_hs = NoiseHandshaker::new_responder("IK", &server_kp).unwrap();
+        let step1_bytes = STANDARD.decode(&step1_b64).unwrap();
+        let mut payload_buf = [0u8; 65535];
+        let result = server_hs.read_message(&step1_bytes, &mut payload_buf);
+        assert!(result.is_err(), "IK with wrong key should fail");
+    }
+
+    #[test]
+    fn privacy_info_supported_patterns_includes_ik() {
+        let json = serde_json::json!({
+            "noise_enabled": true,
+            "handshake_pattern": "XX",
+            "public_key": "YWJj",
+            "sealed_envelopes_enabled": false,
+            "relay_mode": false,
+            "supported_patterns": ["XX", "IK"],
+        });
+        let info: PrivacyInfo = serde_json::from_value(json).expect("should deserialize");
+        assert_eq!(info.supported_patterns, vec!["XX", "IK"]);
     }
 }

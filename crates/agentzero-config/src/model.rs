@@ -258,6 +258,14 @@ impl AgentZeroConfig {
                 ));
             }
         }
+        // Encrypted mode requires Noise to be enabled — without an encrypted
+        // transport, there is no mechanism to enforce the "encrypted" promise.
+        if self.privacy.mode == "encrypted" && !self.privacy.noise.enabled {
+            return Err(anyhow!(
+                "privacy.mode 'encrypted' requires privacy.noise.enabled = true; \
+                 either enable Noise or change the privacy mode"
+            ));
+        }
 
         // Per-agent privacy boundary validation.
         let valid_boundaries = ["", "inherit", "local_only", "encrypted_only", "any"];
@@ -1177,6 +1185,9 @@ pub struct ChannelsGlobalConfig {
     pub stream_mode: String,
     pub draft_update_interval_ms: u64,
     pub interrupt_on_new_message: bool,
+    /// Default privacy boundary applied to all channels unless overridden.
+    /// Empty string means inherit the global `privacy.mode`.
+    pub default_privacy_boundary: String,
 }
 
 impl Default for ChannelsGlobalConfig {
@@ -1188,6 +1199,7 @@ impl Default for ChannelsGlobalConfig {
             stream_mode: "off".to_string(),
             draft_update_interval_ms: 500,
             interrupt_on_new_message: false,
+            default_privacy_boundary: String::new(),
         }
     }
 }

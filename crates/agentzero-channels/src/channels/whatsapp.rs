@@ -86,6 +86,7 @@ mod impl_ {
             channel: "whatsapp".to_string(),
             timestamp: helpers::now_epoch_secs(),
             thread_ts: None,
+            privacy_boundary: String::new(),
         })
     }
 

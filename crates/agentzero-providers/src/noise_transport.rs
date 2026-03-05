@@ -66,6 +66,62 @@ pub async fn perform_noise_handshake(gateway_base_url: &str) -> anyhow::Result<N
     handshake.finish(session_id)
 }
 
+/// Perform a Noise IK handshake with a gateway over HTTP (single round-trip).
+///
+/// Requires the server's static public key (32 bytes, typically cached from a
+/// previous `GET /v1/privacy/info` call).
+///
+/// 1. POST `/v1/noise/handshake/ik` — sends `→ e, es, s, ss`
+/// 2. Receives server's `← e, ee, se` + session ID
+/// 3. Returns a `NoiseClientSession` ready for encrypt/decrypt.
+pub async fn perform_noise_handshake_ik(
+    gateway_base_url: &str,
+    server_public_key: &[u8; 32],
+) -> anyhow::Result<NoiseClientSession> {
+    let client = reqwest::Client::new();
+    let base = gateway_base_url.trim_end_matches('/');
+
+    let mut handshake = NoiseClientHandshake::new_ik(server_public_key)?;
+    let step1_msg = handshake.step1()?;
+
+    let resp = client
+        .post(format!("{base}/v1/noise/handshake/ik"))
+        .json(&serde_json::json!({ "message": step1_msg }))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("noise IK handshake failed: HTTP {}", resp.status());
+    }
+
+    let body: serde_json::Value = resp.json().await?;
+    let server_message = body["message"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing message in IK response"))?;
+    let session_id = body["session_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing session_id in IK response"))?
+        .to_string();
+
+    // Process server's ← e, ee, se — handshake should be complete
+    handshake.process_step1_response(server_message)?;
+    handshake.finish(session_id)
+}
+
+/// Auto-select the best handshake pattern and perform it.
+///
+/// Uses IK when the server's public key is cached (1 round-trip), otherwise
+/// falls back to XX (2 round-trips).
+pub async fn auto_noise_handshake(
+    gateway_base_url: &str,
+    cached_server_key: Option<&[u8; 32]>,
+) -> anyhow::Result<NoiseClientSession> {
+    match cached_server_key {
+        Some(key) => perform_noise_handshake_ik(gateway_base_url, key).await,
+        None => perform_noise_handshake(gateway_base_url).await,
+    }
+}
+
 /// HTTP transport that wraps requests with Noise encryption.
 ///
 /// Serializes the `ChatRequest` to JSON, encrypts it via the Noise session,

@@ -238,6 +238,34 @@ impl LeakGuardPolicy {
             )),
         }
     }
+
+    /// Check whether outbound content to a target channel respects privacy
+    /// boundaries.  Returns `Err` with a description when content from a
+    /// `local_only` boundary is about to be sent to a non-local channel.
+    ///
+    /// This is a defense-in-depth heuristic — it cannot cryptographically
+    /// guarantee isolation but catches the most common leakage paths.
+    pub fn check_boundary(
+        &self,
+        _text: &str,
+        content_boundary: &str,
+        target_channel: &str,
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if content_boundary == "local_only" && !crate::is_local_channel(target_channel) {
+            warn!(
+                target_channel,
+                content_boundary, "leak guard blocked local_only content to non-local channel"
+            );
+            return Err(format!(
+                "outbound message blocked: content with boundary 'local_only' \
+                 cannot be sent to non-local channel '{target_channel}'"
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -341,5 +369,66 @@ mod tests {
     fn shannon_entropy_varies_with_randomness() {
         assert!(shannon_entropy("aaaaaaaaaa") < 1.0);
         assert!(shannon_entropy("aB3$xZ9!qW") > 3.0);
+    }
+
+    #[test]
+    fn check_boundary_blocks_local_only_to_nonlocal() {
+        let g = guard();
+        let result = g.check_boundary("some content", "local_only", "telegram");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("local_only"));
+        assert!(msg.contains("telegram"));
+    }
+
+    #[test]
+    fn check_boundary_allows_local_only_to_cli() {
+        let g = guard();
+        let result = g.check_boundary("some content", "local_only", "cli");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_boundary_allows_any_to_nonlocal() {
+        let g = guard();
+        let result = g.check_boundary("some content", "any", "telegram");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_boundary_allows_empty_to_nonlocal() {
+        let g = guard();
+        let result = g.check_boundary("some content", "", "slack");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_boundary_disabled_allows_everything() {
+        let g = LeakGuardPolicy {
+            enabled: false,
+            ..guard()
+        };
+        let result = g.check_boundary("content", "local_only", "discord");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_boundary_blocks_local_only_to_slack() {
+        let g = guard();
+        assert!(g.check_boundary("secret", "local_only", "slack").is_err());
+    }
+
+    #[test]
+    fn check_boundary_blocks_local_only_to_discord() {
+        let g = guard();
+        assert!(g.check_boundary("secret", "local_only", "discord").is_err());
+    }
+
+    #[test]
+    fn check_boundary_allows_local_only_to_transcription() {
+        let g = guard();
+        assert!(g
+            .check_boundary("secret", "local_only", "transcription")
+            .is_ok());
     }
 }

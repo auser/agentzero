@@ -151,3 +151,14 @@ The plugin system (`agentzero-plugins` crate) introduces additional attack surfa
 - **Tool network leakage** — Mitigated: `local_only` disables network tools (web_search, http_request, web_fetch, composio) at policy level and enforces localhost-only domain allowlist.
 - **Plugin network leakage** — Mitigated: WASM plugins have `allow_network = false` when network tools are disabled.
 - **Boundary escalation** — Mitigated: config validation rejects agent boundaries more permissive than global mode. Runtime resolution enforces child-can't-exceed-parent rule.
+- **Encrypted mode without transport** — Mitigated: config validation rejects `privacy.mode = "encrypted"` when `privacy.noise.enabled = false`.
+
+### Memory Boundary Enforcement (Sprint 25)
+- **Cross-boundary memory leakage** — Mitigated: `MemoryEntry` carries `privacy_boundary` and `source_channel` fields. `recent_for_boundary()` filters entries by boundary, ensuring agents with different boundaries see isolated conversation histories.
+- **Backward-compatible migration** — Mitigated: SQLite schema adds columns with `DEFAULT ''` / `DEFAULT NULL`. Pre-existing entries get empty boundary (visible to all, matching pre-boundary behavior). `#[serde(default)]` on struct fields handles old JSON gracefully.
+- **Source channel isolation** — Mitigated: memory queries can filter by `source_channel`, preventing cross-channel data leakage when channels have different trust levels.
+
+### Channel Privacy Enforcement (Sprint 25)
+- **Local-only content to cloud channels** — Mitigated: `dispatch_with_boundary()` blocks messages with `local_only` boundary from being sent to non-local channels (Telegram, Discord, Slack, etc.). Only `cli` and `transcription` are treated as local.
+- **Leak guard boundary check** — Mitigated: `LeakGuardPolicy.check_boundary()` provides defense-in-depth by blocking `local_only` content from non-local channel dispatch, independent of the channel registry's own check.
+- **IK handshake with wrong server key** — Mitigated: IK pattern validates server static key during handshake; mismatched keys cause handshake failure rather than silent degradation.

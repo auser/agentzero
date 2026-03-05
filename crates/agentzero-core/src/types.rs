@@ -303,10 +303,17 @@ pub enum StopReason {
     Other(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryEntry {
     pub role: String,
     pub content: String,
+    /// Privacy boundary under which this entry was created (e.g. "local_only",
+    /// "encrypted_only", "any"). Empty string means unrestricted (visible to all).
+    #[serde(default)]
+    pub privacy_boundary: String,
+    /// Channel that originated this entry (e.g. "telegram", "cli").
+    #[serde(default)]
+    pub source_channel: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -417,6 +424,31 @@ pub trait Provider: Send + Sync {
 pub trait MemoryStore: Send + Sync {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()>;
     async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>>;
+
+    /// Query recent entries filtered by privacy boundary.
+    ///
+    /// Only entries whose `privacy_boundary` is compatible with `boundary` are
+    /// returned.  The default implementation over-fetches via `recent()` and
+    /// filters in-memory; backends can override with an optimized query.
+    async fn recent_for_boundary(
+        &self,
+        limit: usize,
+        boundary: &str,
+        source_channel: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        use crate::common::privacy_helpers::boundary_allows_recall;
+        let all = self.recent(limit * 2).await?;
+        Ok(all
+            .into_iter()
+            .filter(|e| {
+                boundary_allows_recall(&e.privacy_boundary, boundary)
+                    && source_channel.map_or(true, |ch| {
+                        e.source_channel.as_deref().map_or(true, |s| s == ch)
+                    })
+            })
+            .take(limit)
+            .collect())
+    }
 }
 
 #[async_trait]

@@ -111,17 +111,20 @@ impl EncryptedJsonStore {
     }
 
     fn temporary_path(&self) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time should move forward")
             .as_nanos();
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
         let file_name = self
             .path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("agentzero-store.json");
         self.path
-            .with_file_name(format!(".{file_name}.tmp.{stamp}"))
+            .with_file_name(format!(".{file_name}.tmp.{stamp}.{seq}"))
     }
 
     fn enforce_private_permissions(&self, _path: &Path) -> anyhow::Result<()> {

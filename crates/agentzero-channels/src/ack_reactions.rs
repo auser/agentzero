@@ -214,6 +214,7 @@ mod tests {
             channel: channel.into(),
             timestamp: 0,
             thread_ts: None,
+            privacy_boundary: String::new(),
         }
     }
 

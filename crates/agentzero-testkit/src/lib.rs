@@ -95,6 +95,7 @@ mod tests {
             MemoryEntry {
                 role: "user".to_string(),
                 content: "hello".to_string(),
+                ..Default::default()
             },
         )
         .await

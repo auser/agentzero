@@ -129,6 +129,7 @@ mod impl_ {
                             channel: "acp".to_string(),
                             timestamp: helpers::now_epoch_secs(),
                             thread_ts: None,
+                            privacy_boundary: String::new(),
                         };
                         if tx.send(channel_msg).await.is_err() {
                             return Ok(());

@@ -134,6 +134,7 @@ impl MemoryStore for TursoMemoryStore {
                 content: row
                     .get::<String>(1)
                     .context("invalid content column type")?,
+                ..Default::default()
             });
         }
         out.reverse();
@@ -283,6 +284,7 @@ mod tests {
             .append(agentzero_core::MemoryEntry {
                 role: "user".to_string(),
                 content: "integration-roundtrip".to_string(),
+                ..Default::default()
             })
             .await
             .expect("append should succeed");

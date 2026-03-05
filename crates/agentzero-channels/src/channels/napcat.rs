@@ -162,6 +162,7 @@ mod impl_ {
                             channel: "napcat".to_string(),
                             timestamp: helpers::now_epoch_secs(),
                             thread_ts: None,
+                            privacy_boundary: String::new(),
                         };
                         if tx.send(msg).await.is_err() {
                             return Ok(());

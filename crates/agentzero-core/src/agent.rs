@@ -494,10 +494,15 @@ impl Agent {
         prompt: &str,
         request_id: &str,
         stream_sink: Option<StreamSink>,
+        source_channel: Option<&str>,
     ) -> Result<String, AgentError> {
         let recent_memory = self
             .memory
-            .recent(self.config.memory_window_size)
+            .recent_for_boundary(
+                self.config.memory_window_size,
+                &self.config.privacy_boundary,
+                source_channel,
+            )
             .await
             .map_err(|source| AgentError::Memory { source })?;
         self.audit(
@@ -590,6 +595,7 @@ impl Agent {
         role: &str,
         content: &str,
         request_id: &str,
+        source_channel: Option<&str>,
     ) -> Result<(), AgentError> {
         self.hook(
             "before_memory_write",
@@ -600,6 +606,8 @@ impl Agent {
             .append(MemoryEntry {
                 role: role.to_string(),
                 content: content.to_string(),
+                privacy_boundary: self.config.privacy_boundary.clone(),
+                source_channel: source_channel.map(String::from),
             })
             .await
             .map_err(|source| AgentError::Memory { source })?;
@@ -659,7 +667,12 @@ impl Agent {
              When done gathering, summarize your findings without a tool: prefix."
         );
         let mut prompt = self
-            .call_provider_with_context(&research_prompt, request_id, None)
+            .call_provider_with_context(
+                &research_prompt,
+                request_id,
+                None,
+                ctx.source_channel.as_deref(),
+            )
             .await?;
         let mut findings: Vec<String> = Vec::new();
 
@@ -700,7 +713,12 @@ impl Agent {
                     result.output
                 );
                 prompt = self
-                    .call_provider_with_context(&next_prompt, request_id, None)
+                    .call_provider_with_context(
+                        &next_prompt,
+                        request_id,
+                        None,
+                        ctx.source_channel.as_deref(),
+                    )
                     .await?;
             } else {
                 break;
@@ -744,7 +762,11 @@ impl Agent {
         // Load recent memory and convert to conversation messages.
         let recent_memory = self
             .memory
-            .recent(self.config.memory_window_size)
+            .recent_for_boundary(
+                self.config.memory_window_size,
+                &self.config.privacy_boundary,
+                ctx.source_channel.as_deref(),
+            )
             .await
             .map_err(|source| AgentError::Memory { source })?;
         self.audit(
@@ -854,8 +876,13 @@ impl Agent {
                 || chat_result.stop_reason == Some(StopReason::EndTurn)
             {
                 let response_text = chat_result.output_text;
-                self.write_to_memory("assistant", &response_text, request_id)
-                    .await?;
+                self.write_to_memory(
+                    "assistant",
+                    &response_text,
+                    request_id,
+                    ctx.source_channel.as_deref(),
+                )
+                .await?;
                 self.audit("respond_success", json!({"request_id": request_id}))
                     .await;
                 self.hook(
@@ -1181,8 +1208,13 @@ impl Agent {
         };
 
         let response_text = final_result.output_text;
-        self.write_to_memory("assistant", &response_text, request_id)
-            .await?;
+        self.write_to_memory(
+            "assistant",
+            &response_text,
+            request_id,
+            ctx.source_channel.as_deref(),
+        )
+        .await?;
         self.audit("respond_success", json!({"request_id": request_id}))
             .await;
         self.hook(
@@ -1312,7 +1344,13 @@ impl Agent {
             }),
         )
         .await;
-        self.write_to_memory("user", &user.text, request_id).await?;
+        self.write_to_memory(
+            "user",
+            &user.text,
+            request_id,
+            ctx.source_channel.as_deref(),
+        )
+        .await?;
 
         let research_context = if self.should_research(&user.text) {
             self.run_research_phase(&user.text, ctx, request_id).await?
@@ -1514,10 +1552,20 @@ impl Agent {
         }
 
         let response_text = self
-            .call_provider_with_context(&prompt, request_id, stream_sink)
+            .call_provider_with_context(
+                &prompt,
+                request_id,
+                stream_sink,
+                ctx.source_channel.as_deref(),
+            )
             .await?;
-        self.write_to_memory("assistant", &response_text, request_id)
-            .await?;
+        self.write_to_memory(
+            "assistant",
+            &response_text,
+            request_id,
+            ctx.source_channel.as_deref(),
+        )
+        .await?;
         self.audit("respond_success", json!({"request_id": request_id}))
             .await;
 
@@ -1949,10 +1997,12 @@ mod tests {
             MemoryEntry {
                 role: "assistant".to_string(),
                 content: "very-old".to_string(),
+                ..Default::default()
             },
             MemoryEntry {
                 role: "user".to_string(),
                 content: "recent-before-request".to_string(),
+                ..Default::default()
             },
         ]));
         let prompts = Arc::new(Mutex::new(Vec::new()));
@@ -1995,6 +2045,7 @@ mod tests {
         let entries = Arc::new(Mutex::new(vec![MemoryEntry {
             role: "assistant".to_string(),
             content: "historic context ".repeat(16),
+            ..Default::default()
         }]));
         let prompts = Arc::new(Mutex::new(Vec::new()));
         let memory = TestMemory {
@@ -3715,6 +3766,7 @@ mod tests {
             .append(MemoryEntry {
                 role: "user".to_string(),
                 content: "old question".to_string(),
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -3722,6 +3774,7 @@ mod tests {
             .append(MemoryEntry {
                 role: "assistant".to_string(),
                 content: "old answer".to_string(),
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -3931,10 +3984,12 @@ mod tests {
             MemoryEntry {
                 role: "assistant".to_string(),
                 content: "newest".to_string(),
+                ..Default::default()
             },
             MemoryEntry {
                 role: "user".to_string(),
                 content: "oldest".to_string(),
+                ..Default::default()
             },
         ];
         let msgs = memory_to_messages(&entries);
@@ -4615,5 +4670,73 @@ mod tests {
     fn agent_config_system_prompt_defaults_to_none() {
         let config = AgentConfig::default();
         assert!(config.system_prompt.is_none());
+    }
+
+    #[tokio::test]
+    async fn memory_write_propagates_source_channel_from_context() {
+        let memory = TestMemory::default();
+        let entries = memory.entries.clone();
+        let provider = StructuredProvider::new(vec![ChatResult {
+            output_text: "noted".to_string(),
+            tool_calls: vec![],
+            stop_reason: None,
+        }]);
+        let config = AgentConfig {
+            privacy_boundary: "encrypted_only".to_string(),
+            ..AgentConfig::default()
+        };
+        let agent = Agent::new(config, Box::new(provider), Box::new(memory), vec![]);
+
+        let mut ctx = ToolContext::new(".".to_string());
+        ctx.source_channel = Some("telegram".to_string());
+        ctx.privacy_boundary = "encrypted_only".to_string();
+
+        agent
+            .respond(
+                UserMessage {
+                    text: "hello".to_string(),
+                },
+                &ctx,
+            )
+            .await
+            .expect("respond should succeed");
+
+        let stored = entries.lock().expect("memory lock poisoned");
+        // First entry is user, second is assistant.
+        assert_eq!(stored[0].source_channel.as_deref(), Some("telegram"));
+        assert_eq!(stored[0].privacy_boundary, "encrypted_only");
+        assert_eq!(stored[1].source_channel.as_deref(), Some("telegram"));
+        assert_eq!(stored[1].privacy_boundary, "encrypted_only");
+    }
+
+    #[tokio::test]
+    async fn memory_write_source_channel_none_when_ctx_empty() {
+        let memory = TestMemory::default();
+        let entries = memory.entries.clone();
+        let provider = StructuredProvider::new(vec![ChatResult {
+            output_text: "ok".to_string(),
+            tool_calls: vec![],
+            stop_reason: None,
+        }]);
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(memory),
+            vec![],
+        );
+
+        agent
+            .respond(
+                UserMessage {
+                    text: "hi".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("respond should succeed");
+
+        let stored = entries.lock().expect("memory lock poisoned");
+        assert!(stored[0].source_channel.is_none());
+        assert!(stored[1].source_channel.is_none());
     }
 }

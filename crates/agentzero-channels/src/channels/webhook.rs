@@ -96,6 +96,7 @@ mod tests {
             channel: "webhook".into(),
             timestamp: helpers::now_epoch_secs(),
             thread_ts: None,
+            privacy_boundary: String::new(),
         };
 
         ch.inject_message(msg).await.unwrap();

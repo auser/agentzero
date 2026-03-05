@@ -40,6 +40,10 @@ pub struct ChannelMessage {
     pub channel: String,
     pub timestamp: u64,
     pub thread_ts: Option<String>,
+    /// Privacy boundary inherited from the channel configuration.
+    /// Empty string means inherit the global privacy mode.
+    #[serde(default)]
+    pub privacy_boundary: String,
 }
 
 /// A message to send through a channel (outbound).
@@ -201,6 +205,18 @@ pub struct ChannelDelivery {
 }
 
 // ---------------------------------------------------------------------------
+// Channel locality
+// ---------------------------------------------------------------------------
+
+/// Channels that operate entirely locally (no network egress).
+const LOCAL_CHANNELS: &[&str] = &["cli", "transcription"];
+
+/// Check if a channel operates locally (no outbound network traffic).
+pub fn is_local_channel(name: &str) -> bool {
+    LOCAL_CHANNELS.contains(&name)
+}
+
+// ---------------------------------------------------------------------------
 // Channel registry
 // ---------------------------------------------------------------------------
 
@@ -240,12 +256,35 @@ impl ChannelRegistry {
         self.channels.values().cloned().collect()
     }
 
+    /// Dispatch a message to a channel. If `boundary` is `"local_only"`, only
+    /// local channels (CLI, transcription) are allowed; non-local targets are
+    /// rejected with `accepted: false`.
     pub async fn dispatch(
         &self,
         channel: &str,
         payload: serde_json::Value,
     ) -> Option<ChannelDelivery> {
+        self.dispatch_with_boundary(channel, payload, "").await
+    }
+
+    /// Dispatch with an explicit privacy boundary check.
+    pub async fn dispatch_with_boundary(
+        &self,
+        channel: &str,
+        payload: serde_json::Value,
+        boundary: &str,
+    ) -> Option<ChannelDelivery> {
         let ch = self.channels.get(channel)?;
+
+        // Enforce privacy boundary: local_only blocks non-local channels.
+        if boundary == "local_only" && !is_local_channel(channel) {
+            return Some(ChannelDelivery {
+                accepted: false,
+                channel: channel.to_string(),
+                detail: "blocked by local_only privacy boundary".to_string(),
+            });
+        }
+
         let content = payload
             .get("text")
             .or_else(|| payload.get("content"))
@@ -308,6 +347,7 @@ mod tests {
                 channel: "echo".into(),
                 timestamp: 123,
                 thread_ts: None,
+                privacy_boundary: String::new(),
             })
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))
@@ -342,6 +382,7 @@ mod tests {
             channel: "test".into(),
             timestamp: 999,
             thread_ts: Some("thread-1".into()),
+            privacy_boundary: String::new(),
         };
 
         let json = serde_json::to_string(&msg).expect("serialize should succeed");
@@ -440,5 +481,107 @@ mod tests {
     fn builtin_registry_has_cli_channel() {
         let registry = ChannelRegistry::with_builtin_handlers();
         assert!(registry.has_channel("cli"));
+    }
+
+    // --- Phase 2: Channel privacy boundary tests ---
+
+    #[test]
+    fn channel_message_serde_backward_compat_without_privacy_boundary() {
+        // Old JSON without privacy_boundary should deserialize with default empty string.
+        let json = r#"{"id":"1","sender":"a","reply_target":"a","content":"hi","channel":"cli","timestamp":0}"#;
+        let msg: ChannelMessage = serde_json::from_str(json).expect("deserialize old format");
+        assert_eq!(msg.privacy_boundary, "");
+    }
+
+    #[test]
+    fn channel_message_serde_with_privacy_boundary() {
+        let msg = ChannelMessage {
+            id: "1".into(),
+            sender: "a".into(),
+            reply_target: "a".into(),
+            content: "hi".into(),
+            channel: "cli".into(),
+            timestamp: 0,
+            thread_ts: None,
+            privacy_boundary: "local_only".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ChannelMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.privacy_boundary, "local_only");
+    }
+
+    #[test]
+    fn is_local_channel_cli_and_transcription() {
+        assert!(is_local_channel("cli"));
+        assert!(is_local_channel("transcription"));
+    }
+
+    #[test]
+    fn is_local_channel_non_local() {
+        assert!(!is_local_channel("telegram"));
+        assert!(!is_local_channel("discord"));
+        assert!(!is_local_channel("slack"));
+        assert!(!is_local_channel("webhook"));
+        assert!(!is_local_channel("email"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_local_only_blocks_non_local_channel() {
+        let mut registry = ChannelRegistry::new();
+        registry.register(Arc::new(EchoChannel)); // "echo" is non-local
+        let delivery = registry
+            .dispatch_with_boundary("echo", serde_json::json!({"text": "secret"}), "local_only")
+            .await
+            .expect("should return delivery");
+        assert!(!delivery.accepted);
+        assert!(delivery.detail.contains("local_only"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_local_only_allows_local_channel() {
+        // CLI is local, so local_only should allow it.
+        let registry = ChannelRegistry::with_builtin_handlers();
+        let delivery = registry
+            .dispatch_with_boundary("cli", serde_json::json!({"text": "hello"}), "local_only")
+            .await
+            .expect("should return delivery");
+        assert!(delivery.accepted);
+    }
+
+    #[tokio::test]
+    async fn dispatch_any_boundary_allows_all() {
+        let mut registry = ChannelRegistry::new();
+        registry.register(Arc::new(EchoChannel));
+        let delivery = registry
+            .dispatch_with_boundary("echo", serde_json::json!({"text": "hello"}), "any")
+            .await
+            .expect("should return delivery");
+        assert!(delivery.accepted);
+    }
+
+    #[tokio::test]
+    async fn dispatch_empty_boundary_allows_all() {
+        let mut registry = ChannelRegistry::new();
+        registry.register(Arc::new(EchoChannel));
+        let delivery = registry
+            .dispatch_with_boundary("echo", serde_json::json!({"text": "hello"}), "")
+            .await
+            .expect("should return delivery");
+        assert!(delivery.accepted);
+    }
+
+    #[tokio::test]
+    async fn dispatch_encrypted_only_allows_non_local() {
+        let mut registry = ChannelRegistry::new();
+        registry.register(Arc::new(EchoChannel));
+        let delivery = registry
+            .dispatch_with_boundary(
+                "echo",
+                serde_json::json!({"text": "hello"}),
+                "encrypted_only",
+            )
+            .await
+            .expect("should return delivery");
+        assert!(delivery.accepted);
     }
 }

@@ -1400,4 +1400,10 @@ pub enum PrivacyCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Run diagnostic checks on the privacy subsystem.
+    Test {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
 }

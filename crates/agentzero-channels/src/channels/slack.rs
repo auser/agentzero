@@ -180,6 +180,7 @@ mod impl_ {
                             channel: "slack".to_string(),
                             timestamp: helpers::now_epoch_secs(),
                             thread_ts,
+                            privacy_boundary: String::new(),
                         };
 
                         if tx.send(channel_msg).await.is_err() {
@@ -298,6 +299,7 @@ mod impl_ {
                     channel: "slack".to_string(),
                     timestamp: helpers::now_epoch_secs(),
                     thread_ts,
+                    privacy_boundary: String::new(),
                 };
 
                 if tx.send(channel_msg).await.is_err() {
