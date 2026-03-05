@@ -10,6 +10,7 @@ repository.workspace = true
 [features]
 default = []
 memory-turso = ["dep:libsql", "dep:tokio"]
+vendored-openssl = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
 
 [dependencies]
 anyhow.workspace = true
@@ -24,9 +25,6 @@ serde_json.workspace = true
 sha2.workspace = true
 libsql = { version = "0.9.29", default-features = true, optional = true }
 tokio = { workspace = true, optional = true }
-
-[target.'cfg(windows)'.dependencies]
-openssl-sys = { version = "0.9", features = ["vendored"] }
 
 [dev-dependencies]
 tokio.workspace = true

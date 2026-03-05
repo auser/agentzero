@@ -100,6 +100,7 @@ jobs:
             bin_path: target/x86_64-pc-windows-msvc/release/agentzero.exe
             ext: ".exe"
             cross: false
+            extra_features: vendored-openssl
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -145,10 +146,15 @@ jobs:
           CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: >-
             ${{ matrix.target_name == 'linux-armv7' && 'arm-linux-gnueabihf-gcc' || '' }}
         run: |
+          FEATURES="${{ matrix.extra_features }}"
+          FEAT_FLAG=""
+          if [[ -n "$FEATURES" ]]; then
+            FEAT_FLAG="--features $FEATURES"
+          fi
           if [[ "${{ matrix.use_zigbuild }}" == "true" ]]; then
-            cargo zigbuild -p agentzero --release --target ${{ matrix.rust_target }}
+            cargo zigbuild -p agentzero --release --target ${{ matrix.rust_target }} $FEAT_FLAG
           else
-            cargo build -p agentzero --release --target ${{ matrix.rust_target }}
+            cargo build -p agentzero --release --target ${{ matrix.rust_target }} $FEAT_FLAG
           fi
       - name: Validate linux size budget (default)
         if: matrix.target_name == 'linux-x86_64'
@@ -163,10 +169,14 @@ jobs:
           RUST_TARGET: ${{ matrix.rust_target }}
           USE_ZIGBUILD: ${{ matrix.use_zigbuild }}
         run: |
+          FEATURES="minimal"
+          if [[ -n "${{ matrix.extra_features }}" ]]; then
+            FEATURES="$FEATURES,${{ matrix.extra_features }}"
+          fi
           if [[ "$USE_ZIGBUILD" == "true" ]]; then
-            cargo zigbuild -p agentzero --profile release-min --target "$RUST_TARGET" --no-default-features --features minimal
+            cargo zigbuild -p agentzero --profile release-min --target "$RUST_TARGET" --no-default-features --features "$FEATURES"
           else
-            cargo build -p agentzero --profile release-min --target "$RUST_TARGET" --no-default-features --features minimal
+            cargo build -p agentzero --profile release-min --target "$RUST_TARGET" --no-default-features --features "$FEATURES"
           fi
       - name: Validate linux size budget (minimal)
         if: matrix.target_name == 'linux-x86_64'

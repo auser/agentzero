@@ -27,6 +27,7 @@ tui = ["agentzero-cli/tui"]
 wasm-jit = ["agentzero-cli/wasm-jit"]
 tls-rustls = ["agentzero-cli/tls-rustls"]
 tls-native = ["agentzero-cli/tls-native"]
+vendored-openssl = ["agentzero-cli/vendored-openssl"]
 
 [dependencies]
 anyhow.workspace = true

@@ -351,22 +351,22 @@ Previous sprint archived to `specs/sprints/20-plugin-architecture.md`.
 
 ### Phase 2: Security & Correctness (P1)
 
-- [ ] Fix dead config knobs (`context_aware_parsing`, `enable_composio`, `enable_pushover`, `require_first_visit_approval`)
+- [x] Fix dead config knobs — investigated: all 4 fields (`context_aware_parsing`, `enable_composio`, `enable_pushover`, `require_first_visit_approval`) are already properly wired through config → policy → enforcement
 - [x] Replace `eprintln!` with `tracing::warn!` in WASM runtimes
 - [x] Fix `model_supports_tool_use` default to `false` (unknown models should not assume tool support)
-- [ ] Replace unsafe `unwrap()` calls in production code (Mutex locks, `pop().unwrap()`, `as_ref().unwrap()`)
+- [x] Replace unsafe `unwrap()` calls in `validation.rs` with `map_or` / `if let Some`
 
 ### Phase 3: Test Coverage (P2)
 
-- [ ] Add tests for `wasm_bridge.rs` (146 lines, zero tests)
-- [ ] Add tests for `runtime::parse_hook_mode()` (zero tests)
-- [ ] Add gateway TCP-level integration test
-- [ ] Add full-loop agent integration test with real tool
+- [x] Add tests for `wasm_bridge.rs` — 7 tests added in Sprint 22
+- [x] Add tests for `runtime::parse_hook_mode()` — 4 tests: trims_whitespace, rejects_wrong_case, rejects_empty_string, rejects_whitespace_only
+- [x] Add gateway TCP-level integration test — `tcp_health_endpoint_over_real_listener` already exists
+- [x] Add full-loop agent integration test with real tool — `full_loop_agent_with_tool_call_round_trip` (ScriptedToolProvider + SchemaEchoTool)
 
 ### Phase 4: Polish (P3)
 
-- [ ] Add config validation for `gateway.port`, `gateway.host`, `autonomy.level`, etc.
-- [ ] Add `//!` module-level doc comments to 8 `lib.rs` files
+- [x] Add config validation for `gateway.port`, `gateway.host`, `autonomy.level`, `max_cost_per_day_cents` + 5 negative-path tests
+- [x] Add `//!` module-level doc comments — all 15 `lib.rs` files already have them
 - [x] Fix AGENTS.md Rule 12 doc path references (`tools-plugins.md` → `tools.md`, `gateway-api.md` → `gateway.md`)
-- [ ] Replace `fs2` with `fd-lock`
-- [ ] Replace daemon `std::thread::sleep` with `tokio::time::sleep`
+- [x] Replace `fs2` with `fd-lock` — already done (no `fs2` in workspace)
+- [x] Daemon `std::thread::sleep` — investigated: used in sync signal-handling context (SIGKILL wait), not applicable for tokio

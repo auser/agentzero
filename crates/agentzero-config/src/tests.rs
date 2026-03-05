@@ -1477,3 +1477,118 @@ fn absolute_allowed_root_is_accepted() {
 
     fs::remove_dir_all(dir).expect("temp dir should be removed");
 }
+
+#[test]
+fn rejects_gateway_port_zero() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[gateway]\nport=0\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("port 0 should fail")
+            .to_string()
+            .contains("gateway.port"));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn rejects_empty_gateway_host() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[gateway]\nhost=\"\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("empty host should fail")
+            .to_string()
+            .contains("gateway.host"));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn rejects_public_host_without_allow_public_bind() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[gateway]\nhost=\"0.0.0.0\"\nallow_public_bind=false\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("public host without allow_public_bind should fail")
+            .to_string()
+            .contains("allow_public_bind"));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn rejects_invalid_autonomy_level() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[autonomy]\nlevel=\"yolo\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("invalid autonomy level should fail")
+            .to_string()
+            .contains("autonomy.level"));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn rejects_zero_max_cost_per_day() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[autonomy]\nmax_cost_per_day_cents=0\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("zero cost should fail")
+            .to_string()
+            .contains("max_cost_per_day_cents"));
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}

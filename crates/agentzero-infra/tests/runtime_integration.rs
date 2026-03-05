@@ -1,8 +1,12 @@
-use agentzero_core::{AgentConfig, AuditEvent, AuditSink, StreamChunk, Tool};
+use agentzero_core::{
+    AgentConfig, AuditEvent, AuditSink, ChatResult, ConversationMessage, ReasoningConfig,
+    StopReason, StreamChunk, Tool, ToolContext, ToolDefinition, ToolResult, ToolUseRequest,
+};
 use agentzero_infra::runtime::{run_agent_streaming, run_agent_with_runtime, RuntimeExecution};
 use agentzero_infra::tools::{default_tools, ToolSecurityPolicy};
 use agentzero_testkit::{EchoTool, FailingProvider, StaticProvider, TestMemoryStore};
 use async_trait::async_trait;
+use serde_json::json;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -250,4 +254,134 @@ fn default_tools_all_have_schemas() {
         "the following tools are missing input_schema(): {:?}",
         missing
     );
+}
+
+// --- Full-loop structured tool use test ---
+
+/// A tool that has an `input_schema()` so structured tool use activates,
+/// and echoes back the `message` field from its JSON input.
+struct SchemaEchoTool;
+
+#[async_trait]
+impl Tool for SchemaEchoTool {
+    fn name(&self) -> &'static str {
+        "echo"
+    }
+
+    fn description(&self) -> &'static str {
+        "Echo back the message field"
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "type": "object",
+            "required": ["message"],
+            "properties": {
+                "message": {"type": "string"}
+            }
+        }))
+    }
+
+    async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+        // Input arrives as JSON string for structured tool use.
+        let v: serde_json::Value =
+            serde_json::from_str(input).unwrap_or(serde_json::Value::String(input.to_string()));
+        let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or(input);
+        Ok(ToolResult {
+            output: format!("echoed:{msg}"),
+        })
+    }
+}
+
+/// A provider that scripts a tool-call round-trip:
+/// - First `complete_with_tools` call returns a ToolUseRequest for the "echo" tool.
+/// - Second call (after tool result is appended) returns a final text response
+///   that includes the tool result.
+struct ScriptedToolProvider {
+    call_count: Arc<Mutex<usize>>,
+}
+
+impl ScriptedToolProvider {
+    fn new() -> Self {
+        Self {
+            call_count: Arc::new(Mutex::new(0)),
+        }
+    }
+}
+
+#[async_trait]
+impl agentzero_core::Provider for ScriptedToolProvider {
+    async fn complete(&self, _prompt: &str) -> anyhow::Result<ChatResult> {
+        Ok(ChatResult::default())
+    }
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        _tools: &[ToolDefinition],
+        _reasoning: &ReasoningConfig,
+    ) -> anyhow::Result<ChatResult> {
+        let mut count = self.call_count.lock().expect("lock poisoned");
+        *count += 1;
+        let call_num = *count;
+        drop(count);
+
+        if call_num == 1 {
+            // First call: return a tool use request.
+            Ok(ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    input: json!({"message": "hello from tool"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            })
+        } else {
+            // Second call: the conversation should contain the tool result.
+            // Extract it and return a final response referencing it.
+            let tool_output = messages
+                .iter()
+                .filter_map(|m| match m {
+                    ConversationMessage::ToolResult(r) => Some(r.content.as_str()),
+                    _ => None,
+                })
+                .last()
+                .unwrap_or("no tool result");
+            Ok(ChatResult {
+                output_text: format!("Tool said: {tool_output}"),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            })
+        }
+    }
+}
+
+#[tokio::test]
+async fn full_loop_agent_with_tool_call_round_trip() {
+    let execution = RuntimeExecution {
+        config: AgentConfig {
+            model_supports_tool_use: true,
+            // Short timeout for test.
+            request_timeout_ms: 10_000,
+            ..Default::default()
+        },
+        provider: Box::new(ScriptedToolProvider::new()),
+        memory: Box::new(TestMemoryStore::default()),
+        tools: vec![Box::new(SchemaEchoTool) as Box<dyn Tool>],
+        audit_sink: None,
+        hook_sink: None,
+    };
+
+    let output = run_agent_with_runtime(
+        execution,
+        PathBuf::from("/tmp"),
+        "Please echo hello".to_string(),
+    )
+    .await
+    .expect("full-loop agent should succeed");
+
+    // The provider's second call sees "echoed:hello from tool" from SchemaEchoTool,
+    // then wraps it into the final response.
+    assert_eq!(output.response_text, "Tool said: echoed:hello from tool");
 }

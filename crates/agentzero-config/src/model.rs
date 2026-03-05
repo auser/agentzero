@@ -194,7 +194,7 @@ impl AgentZeroConfig {
         }
 
         // Autonomy validation
-        match self.autonomy.level.as_str() {
+        match self.autonomy.level.trim() {
             "supervised" | "autonomous" | "semi" | "locked" => {}
             other => {
                 return Err(anyhow!(
@@ -204,6 +204,9 @@ impl AgentZeroConfig {
         }
         if self.autonomy.max_actions_per_hour == 0 {
             return Err(anyhow!("autonomy.max_actions_per_hour must be > 0"));
+        }
+        if self.autonomy.max_cost_per_day_cents == 0 {
+            return Err(anyhow!("autonomy.max_cost_per_day_cents must be > 0"));
         }
 
         Ok(())
