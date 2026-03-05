@@ -2,8 +2,10 @@
 #
 # Pre-commit hook for agentzero
 # - Formats code with cargo fmt
-# - Runs clippy
-# - Runs tests
+# - Runs clippy (cached — fast when nothing changed)
+#
+# Full test suite runs in CI and can be triggered locally with:
+#   cargo test --workspace --lib
 #
 # To install this hook, run:
 #   git config core.hooksPath .githooks
@@ -38,10 +40,5 @@ if ! cargo clippy --workspace --all-targets -- -D warnings; then
     exit 1
 fi
 echo "Clippy passed"
-echo ""
-
-# Run tests (prefer nextest for speed, fallback to cargo test)
-echo "Running tests..."
-cargo test --workspace --lib
 
 echo "All pre-commit checks passed!"

@@ -16,6 +16,9 @@ pub struct UrlAccessPolicy {
     pub domain_allowlist: Vec<String>,
     pub domain_blocklist: Vec<String>,
     pub approved_domains: Vec<String>,
+    /// When true, domains not in `approved_domains` or `allow_domains` require
+    /// explicit first-visit approval from the user before access is granted.
+    pub require_first_visit_approval: bool,
 }
 
 impl Default for UrlAccessPolicy {
@@ -29,6 +32,7 @@ impl Default for UrlAccessPolicy {
             domain_allowlist: Vec::new(),
             domain_blocklist: Vec::new(),
             approved_domains: Vec::new(),
+            require_first_visit_approval: false,
         }
     }
 }
@@ -155,6 +159,13 @@ pub fn enforce_url_policy(url: &Url, policy: &UrlAccessPolicy) -> UrlPolicyResul
     if policy.enforce_domain_allowlist && !is_domain_allowed(&host, &policy.domain_allowlist) {
         return UrlPolicyResult::Blocked {
             reason: format!("domain `{host}` is not in the allowlist"),
+        };
+    }
+
+    // 6. Check first-visit approval requirement
+    if policy.require_first_visit_approval {
+        return UrlPolicyResult::RequiresApproval {
+            domain: host.to_string(),
         };
     }
 

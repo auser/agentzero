@@ -20,6 +20,7 @@ pub struct AgentZeroConfig {
     pub web_fetch: WebFetchConfig,
     pub web_search: WebSearchConfig,
     pub composio: ComposioConfig,
+    pub pushover: PushoverConfig,
     pub cost: CostConfig,
     pub identity: IdentityConfig,
     pub multimodal: MultimodalConfig,
@@ -890,6 +891,12 @@ pub struct ComposioConfig {
     pub enabled: bool,
     pub api_key: Option<String>,
     pub entity_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct PushoverConfig {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

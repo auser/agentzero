@@ -39,8 +39,16 @@ pub fn load_tool_security_policy(
             max_args: config.security.shell.max_args,
             max_arg_length: config.security.shell.max_arg_length,
             max_output_bytes: config.security.shell.max_output_bytes,
-            forbidden_chars: config.security.shell.forbidden_chars,
-            command_policy: Default::default(),
+            forbidden_chars: config.security.shell.forbidden_chars.clone(),
+            command_policy: if config.security.shell.context_aware_parsing {
+                Some(
+                    agentzero_tools::shell::ShellCommandPolicy::from_legacy_forbidden_chars(
+                        &config.security.shell.forbidden_chars,
+                    ),
+                )
+            } else {
+                None
+            },
         },
         url_access: UrlAccessPolicy {
             block_private_ip: url_cfg.block_private_ip,
@@ -51,6 +59,7 @@ pub fn load_tool_security_policy(
             domain_allowlist: url_cfg.domain_allowlist.clone(),
             domain_blocklist: url_cfg.domain_blocklist.clone(),
             approved_domains: url_cfg.approved_domains.clone(),
+            require_first_visit_approval: url_cfg.require_first_visit_approval,
         },
         enable_write_file: config.security.write_file.enabled,
         enable_mcp: config.security.mcp.enabled,
@@ -65,8 +74,8 @@ pub fn load_tool_security_policy(
         enable_web_fetch: config.web_fetch.enabled,
         enable_url_validation: true,
         enable_agents_ipc: true,
-        enable_composio: false,
-        enable_pushover: false,
+        enable_composio: config.composio.enabled,
+        enable_pushover: config.pushover.enabled,
         enable_wasm_plugins: config.security.plugin.wasm_enabled,
         wasm_global_plugin_dir: config.security.plugin.global_plugin_dir.map(PathBuf::from),
         wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),
