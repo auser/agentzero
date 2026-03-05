@@ -342,11 +342,11 @@ impl agentzero_core::Provider for ScriptedToolProvider {
             // Extract it and return a final response referencing it.
             let tool_output = messages
                 .iter()
-                .filter_map(|m| match m {
+                .rev()
+                .find_map(|m| match m {
                     ConversationMessage::ToolResult(r) => Some(r.content.as_str()),
                     _ => None,
                 })
-                .last()
                 .unwrap_or("no tool result");
             Ok(ChatResult {
                 output_text: format!("Tool said: {tool_output}"),
