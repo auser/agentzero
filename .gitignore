@@ -27,3 +27,4 @@ auth_profiles.json
 .playwright-mcp
 **/*.db*
 .astro/
+.claude/
