@@ -51,6 +51,18 @@ impl Tool for DelegateTool {
         "Delegate a subtask to a named sub-agent with its own provider, model, and tool set."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "agent": { "type": "string", "description": "Name of the sub-agent to delegate to" },
+                "prompt": { "type": "string", "description": "The prompt/task to send to the sub-agent" }
+            },
+            "required": ["agent", "prompt"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed: Input =
             serde_json::from_str(input).map_err(|e| anyhow::anyhow!("invalid input: {e}"))?;
@@ -76,14 +88,15 @@ impl Tool for DelegateTool {
             config.model.clone(),
         );
 
-        let effective_prompt = match &config.system_prompt {
-            Some(sp) => format!("System: {sp}\n\nUser: {}", parsed.prompt),
-            None => parsed.prompt.clone(),
-        };
-
         let output = if config.agentic {
-            run_agentic(provider, config, &effective_prompt, ctx, &self.tool_builder).await?
+            run_agentic(provider, config, &parsed.prompt, ctx, &self.tool_builder).await?
         } else {
+            // For single-shot (non-agentic) delegates, use <system> tags so the
+            // provider's `extract_system_prompt()` can parse them.
+            let effective_prompt = match &config.system_prompt {
+                Some(sp) => format!("<system>{sp}</system>\n{}", parsed.prompt),
+                None => parsed.prompt.clone(),
+            };
             run_single_shot(provider.as_ref(), &effective_prompt).await?
         };
 
@@ -140,6 +153,7 @@ async fn run_agentic(
 ) -> anyhow::Result<String> {
     let agent_config = AgentConfig {
         max_tool_iterations: config.max_iterations,
+        system_prompt: config.system_prompt.clone(),
         ..Default::default()
     };
     let memory = EphemeralMemory::default();
@@ -332,18 +346,18 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_is_prepended_to_user_prompt() {
+    fn system_prompt_uses_xml_tags_for_single_shot() {
         let config = DelegateConfig {
             system_prompt: Some("You are a research assistant.".into()),
             ..Default::default()
         };
         let user_prompt = "Find docs about X";
         let effective = match &config.system_prompt {
-            Some(sp) => format!("System: {sp}\n\nUser: {user_prompt}"),
+            Some(sp) => format!("<system>{sp}</system>\n{user_prompt}"),
             None => user_prompt.to_string(),
         };
-        assert!(effective.starts_with("System: You are a research assistant."));
-        assert!(effective.ends_with("User: Find docs about X"));
+        assert!(effective.starts_with("<system>You are a research assistant.</system>"));
+        assert!(effective.ends_with("Find docs about X"));
     }
 
     #[test]
@@ -351,10 +365,27 @@ mod tests {
         let config = DelegateConfig::default();
         let user_prompt = "Find docs about X";
         let effective = match &config.system_prompt {
-            Some(sp) => format!("System: {sp}\n\nUser: {user_prompt}"),
+            Some(sp) => format!("<system>{sp}</system>\n{user_prompt}"),
             None => user_prompt.to_string(),
         };
         assert_eq!(effective, "Find docs about X");
+    }
+
+    #[test]
+    fn agentic_delegate_passes_system_prompt_via_config() {
+        // Verify that agentic mode sets system_prompt on AgentConfig.
+        let config = DelegateConfig {
+            system_prompt: Some("Be concise.".into()),
+            max_iterations: 5,
+            ..Default::default()
+        };
+        let agent_config = AgentConfig {
+            max_tool_iterations: config.max_iterations,
+            system_prompt: config.system_prompt.clone(),
+            ..Default::default()
+        };
+        assert_eq!(agent_config.system_prompt.as_deref(), Some("Be concise."));
+        assert_eq!(agent_config.max_tool_iterations, 5);
     }
 
     #[test]

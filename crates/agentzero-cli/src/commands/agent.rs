@@ -1,6 +1,9 @@
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_infra::runtime::{run_agent_once, RunAgentRequest};
+use agentzero_infra::runtime::{
+    build_runtime_execution, run_agent_once, run_agent_streaming, RunAgentRequest,
+};
 use async_trait::async_trait;
+use std::io::Write;
 
 pub struct AgentOptions {
     /// Message to send to agent
@@ -11,6 +14,8 @@ pub struct AgentOptions {
     pub model: Option<String>,
     /// Use a specific auth profile by name (from `auth list`)
     pub profile: Option<String>,
+    /// Enable streaming output
+    pub stream: bool,
 }
 
 pub struct AgentCommand;
@@ -20,6 +25,10 @@ impl AgentZeroCommand for AgentCommand {
     type Options = AgentOptions;
 
     async fn run(ctx: &CommandContext, opts: Self::Options) -> anyhow::Result<()> {
+        if opts.stream {
+            return run_streaming(ctx, opts).await;
+        }
+
         let output = run_agent_once(RunAgentRequest {
             workspace_root: ctx.workspace_root.clone(),
             config_path: ctx.config_path.clone(),
@@ -34,6 +43,35 @@ impl AgentZeroCommand for AgentCommand {
         println!("{}", output.response_text);
         Ok(())
     }
+}
+
+async fn run_streaming(ctx: &CommandContext, opts: AgentOptions) -> anyhow::Result<()> {
+    let message = opts.message.clone();
+    let execution = build_runtime_execution(RunAgentRequest {
+        workspace_root: ctx.workspace_root.clone(),
+        config_path: ctx.config_path.clone(),
+        message: message.clone(),
+        provider_override: opts.provider,
+        model_override: opts.model,
+        profile_override: opts.profile,
+        extra_tools: vec![],
+    })
+    .await?;
+
+    let (mut rx, handle) = run_agent_streaming(execution, ctx.workspace_root.clone(), message);
+
+    while let Some(chunk) = rx.recv().await {
+        if !chunk.delta.is_empty() {
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            write!(out, "{}", chunk.delta)?;
+            out.flush()?;
+        }
+    }
+    println!();
+
+    handle.await??;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -83,6 +121,7 @@ mod tests {
                 provider: None,
                 model: None,
                 profile: None,
+                stream: false,
             },
         )
         .await
@@ -108,6 +147,7 @@ mod tests {
                 provider: None,
                 model: None,
                 profile: None,
+                stream: false,
             },
         )
         .await
@@ -123,18 +163,65 @@ mod tests {
             provider: None,
             model: None,
             profile: None,
+            stream: false,
         };
         assert_eq!(opts.message, "test message");
+        assert!(!opts.stream);
 
         let empty_opts = AgentOptions {
             message: String::new(),
             provider: Some("ollama".to_string()),
             model: Some("llama3".to_string()),
             profile: Some("myprofile".to_string()),
+            stream: false,
         };
         assert!(empty_opts.message.is_empty());
         assert_eq!(empty_opts.provider.as_deref(), Some("ollama"));
         assert_eq!(empty_opts.model.as_deref(), Some("llama3"));
         assert_eq!(empty_opts.profile.as_deref(), Some("myprofile"));
+    }
+
+    #[test]
+    fn stream_flag_defaults_false() {
+        let opts = AgentOptions {
+            message: "hi".to_string(),
+            provider: None,
+            model: None,
+            profile: None,
+            stream: false,
+        };
+        assert!(!opts.stream);
+    }
+
+    #[tokio::test]
+    async fn stream_error_propagation() {
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        fs::write(
+            &config_path,
+            "[provider]\nkind=\"openai\"\nbase_url=\"https://api.openai.com\"\nmodel=\"gpt-4o-mini\"\n\n[memory]\nbackend=\"sqlite\"\nsqlite_path=\"./agentzero.db\"\n",
+        )
+        .expect("config should be written");
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path,
+        };
+
+        let err = AgentCommand::run(
+            &ctx,
+            AgentOptions {
+                message: "hello".to_string(),
+                provider: None,
+                model: None,
+                profile: None,
+                stream: true,
+            },
+        )
+        .await
+        .expect_err("missing api key should fail even with --stream");
+        assert!(err.to_string().contains("missing API key"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
 }

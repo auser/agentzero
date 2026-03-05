@@ -260,9 +260,10 @@ mod runtime_impl {
                             let _ = wasi_builder.preopened_dir(dir, ".");
                         }
                         Err(e) => {
-                            eprintln!(
-                                "warning: failed to preopen workspace dir '{}': {e}",
-                                options.workspace_root
+                            tracing::warn!(
+                                path = %options.workspace_root,
+                                error = %e,
+                                "failed to preopen workspace dir"
                             );
                         }
                     }
@@ -633,9 +634,10 @@ mod runtime_impl {
                             }
                         }
                         Err(e) => {
-                            eprintln!(
-                                "warning: failed to preopen workspace dir '{}': {e}",
-                                options.workspace_root
+                            tracing::warn!(
+                                path = %options.workspace_root,
+                                error = %e,
+                                "failed to preopen workspace dir"
                             );
                         }
                     }
@@ -1060,9 +1062,10 @@ mod runtime_impl {
                 if let Err(e) =
                     wasi_builder.preopened_dir(&options.workspace_root, ".", perms, file_perms)
                 {
-                    eprintln!(
-                        "warning: failed to preopen workspace dir '{}': {e}",
-                        options.workspace_root
+                    tracing::warn!(
+                        path = %options.workspace_root,
+                        error = %e,
+                        "failed to preopen workspace dir"
                     );
                 }
             }
@@ -1492,9 +1495,10 @@ mod runtime_impl {
                 if let Err(e) =
                     wasi_builder.preopened_dir(&options.workspace_root, ".", perms, file_perms)
                 {
-                    eprintln!(
-                        "warning: failed to preopen workspace dir '{}': {e}",
-                        options.workspace_root
+                    tracing::warn!(
+                        path = %options.workspace_root,
+                        error = %e,
+                        "failed to preopen workspace dir"
                     );
                 }
             }
@@ -1911,7 +1915,7 @@ mod runtime_impl {
             // Persist AOT artifact (best-effort — cache miss is not fatal)
             if !expected_sha256.is_empty() {
                 if let Err(e) = Self::write_cache(&module, &cache_dir, expected_sha256) {
-                    eprintln!("warning: failed to write module cache: {e}");
+                    tracing::warn!(error = %e, "failed to write module cache");
                 }
             }
 

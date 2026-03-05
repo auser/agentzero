@@ -33,6 +33,19 @@ impl Tool for ModelRoutingConfigTool {
         "View or modify the model routing configuration at runtime."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "op": { "type": "string", "enum": ["list_routes", "list_embedding_routes", "resolve_hint", "classify_query", "route_query"], "description": "The routing operation to perform" },
+                "hint": { "type": "string", "description": "Route hint to resolve (for resolve_hint)" },
+                "query": { "type": "string", "description": "Query to classify or route (for classify_query/route_query)" }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed: Input =
             serde_json::from_str(input).map_err(|e| anyhow::anyhow!("invalid input: {e}"))?;

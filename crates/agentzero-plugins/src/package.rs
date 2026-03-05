@@ -33,6 +33,8 @@ fn lock_install_root(install_root: &Path) -> anyhow::Result<fs::File> {
 pub struct PluginManifest {
     pub id: String,
     pub version: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub entrypoint: String,
     pub wasm_file: String,
     pub wasm_sha256: String,
@@ -921,6 +923,7 @@ mod tests {
         PluginManifest {
             id: "sample-plugin".to_string(),
             version: "1.0.0".to_string(),
+            description: None,
             entrypoint: "run".to_string(),
             wasm_file: "plugin.wasm".to_string(),
             wasm_sha256: "0".repeat(64),
@@ -1081,6 +1084,7 @@ mod tests {
         let manifest = PluginManifest {
             id: id.to_string(),
             version: version.to_string(),
+            description: None,
             entrypoint: "run".to_string(),
             wasm_file: "plugin.wasm".to_string(),
             wasm_sha256: sha,
@@ -1181,6 +1185,7 @@ mod tests {
         let manifest = PluginManifest {
             id: "no-wasm".to_string(),
             version: "1.0.0".to_string(),
+            description: None,
             entrypoint: "run".to_string(),
             wasm_file: "plugin.wasm".to_string(),
             wasm_sha256: "a".repeat(64),
@@ -1289,6 +1294,7 @@ mod tests {
                 manifest: PluginManifest {
                     id: "enabled-plugin".to_string(),
                     version: "1.0.0".to_string(),
+                    description: None,
                     entrypoint: "run".to_string(),
                     wasm_file: "plugin.wasm".to_string(),
                     wasm_sha256: "a".repeat(64),
@@ -1305,6 +1311,7 @@ mod tests {
                 manifest: PluginManifest {
                     id: "disabled-plugin".to_string(),
                     version: "1.0.0".to_string(),
+                    description: None,
                     entrypoint: "run".to_string(),
                     wasm_file: "plugin.wasm".to_string(),
                     wasm_sha256: "b".repeat(64),

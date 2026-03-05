@@ -52,6 +52,7 @@ impl AgentZeroCommand for PluginCommand {
                     let manifest = PluginManifest {
                         id,
                         version,
+                        description: None,
                         entrypoint,
                         wasm_file,
                         wasm_sha256: "0".repeat(64),
@@ -541,6 +542,7 @@ fn execute(input: ToolInput) -> ToolOutput {{
     let manifest = PluginManifest {
         id: id.to_string(),
         version: version.to_string(),
+        description: Some(format!("{id} plugin")),
         entrypoint: "az_tool_execute".to_string(),
         wasm_file: "plugin.wasm".to_string(),
         wasm_sha256: "0".repeat(64),

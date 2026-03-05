@@ -29,6 +29,17 @@ impl Tool for CliDiscoveryTool {
         "Discover available CLI tools and runtime environment: check command availability or get runtime info."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "type": "object",
+            "required": ["op"],
+            "properties": {
+                "op": {"type": "string", "description": "Operation: check_command or runtime_info"},
+                "command": {"type": "string", "description": "Command name to check (for check_command op)"}
+            }
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed: Input =
             serde_json::from_str(input).context("cli_discovery expects JSON: {\"op\", ...}")?;

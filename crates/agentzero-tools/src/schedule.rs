@@ -254,6 +254,20 @@ impl Tool for ScheduleTool {
         "Manage scheduled tasks: create, list, update, remove, pause, resume, or parse cron expressions."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["create", "list", "update", "remove", "pause", "resume", "parse"], "description": "The scheduling action to perform" },
+                "id": { "type": "string", "description": "Task ID (required for create/update/remove/pause/resume)" },
+                "schedule": { "type": "string", "description": "Cron expression or natural language schedule (e.g. 'every 5 minutes')" },
+                "command": { "type": "string", "description": "Command to run on schedule" }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: ScheduleInput = serde_json::from_str(input)
             .context("schedule expects JSON: {\"action\": \"create|list|update|remove|pause|resume|parse\", ...}")?;

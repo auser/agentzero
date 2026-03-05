@@ -303,6 +303,8 @@ pub struct AgentSettings {
     pub loop_detection_no_progress_threshold: usize,
     pub loop_detection_ping_pong_cycles: usize,
     pub loop_detection_failure_streak: usize,
+    /// Optional system prompt sent to the LLM at the start of each conversation.
+    pub system_prompt: Option<String>,
 }
 
 impl Default for AgentSettings {
@@ -320,6 +322,7 @@ impl Default for AgentSettings {
             loop_detection_no_progress_threshold: 3,
             loop_detection_ping_pong_cycles: 2,
             loop_detection_failure_streak: 3,
+            system_prompt: None,
         }
     }
 }

@@ -196,8 +196,12 @@ name = "agentzero-gateway"
 version = "0.1.4"
 dependencies = [
  "agentzero-channels",
+ "agentzero-config",
+ "agentzero-core",
+ "agentzero-infra",
  "agentzero-storage",
  "anyhow",
+ "async-stream",
  "axum 0.7.9",
  "futures-util",
  "http-body-util",

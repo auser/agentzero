@@ -17,6 +17,7 @@ pub use types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ChatResult,
     ConversationMessage, HookEvent, HookFailureMode, HookPolicy, HookRiskTier, HookSink,
     MemoryEntry, MemoryStore, MetricsSink, Provider, ReasoningConfig, ResearchPolicy,
-    ResearchTrigger, StopReason, StreamChunk, Tool, ToolCallDelta, ToolContext, ToolDefinition,
-    ToolResult, ToolResultMessage, ToolUseRequest, UserMessage,
+    ResearchTrigger, StopReason, StreamChunk, StreamSink, Tool, ToolCallDelta, ToolContext,
+    ToolDefinition, ToolResult, ToolResultMessage, ToolUseRequest, UserMessage,
 };
+pub use validation::validate_json;

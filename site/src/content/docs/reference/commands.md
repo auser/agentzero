@@ -776,6 +776,52 @@ agentzero plugin remove --id my-plugin --version 0.1.0    # Specific version
 | Network access | No | No |
 | Filesystem writes | No | No |
 
+### `tools`
+
+Inspect registered tools, their descriptions, and JSON schemas. Useful for debugging which tools the agent has access to and verifying schema definitions.
+
+#### `tools list`
+
+List all registered tools.
+
+```bash
+agentzero tools list
+agentzero tools list --with-schema
+agentzero tools list --json
+```
+
+| Flag | Description |
+|---|---|
+| `--with-schema` | Only show tools that have a JSON input schema defined |
+| `--json` | Output as JSON array |
+
+#### `tools info`
+
+Show details for a specific tool.
+
+```bash
+agentzero tools info read_file
+agentzero tools info shell
+```
+
+| Argument | Description |
+|---|---|
+| `<NAME>` | **(Required)** Tool name to inspect |
+
+#### `tools schema`
+
+Print the JSON input schema for a specific tool.
+
+```bash
+agentzero tools schema read_file
+agentzero tools schema shell --pretty
+```
+
+| Argument / Flag | Description |
+|---|---|
+| `<NAME>` | **(Required)** Tool name |
+| `--pretty` | Pretty-print the JSON schema |
+
 ---
 
 ## Memory & Knowledge

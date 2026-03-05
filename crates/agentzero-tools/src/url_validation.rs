@@ -26,6 +26,16 @@ impl Tool for UrlValidationTool {
         "Validate a URL against the access policy (private IPs, domain allowlist, etc.)."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "required": ["url"],
+            "properties": {
+                "url": {"type": "string", "description": "URL to validate"}
+            }
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let trimmed = input.trim();
         if trimmed.is_empty() {

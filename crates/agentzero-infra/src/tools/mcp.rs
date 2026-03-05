@@ -4,8 +4,10 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{ChildStdin, ChildStdout, Command};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 const DEFAULT_MCP_TIMEOUT_MS: u64 = 10_000;
@@ -48,9 +50,49 @@ impl McpCallInput {
     }
 }
 
+/// A cached MCP server session holding the subprocess and its I/O handles.
+struct McpSession {
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    child: Child,
+    next_id: u64,
+    /// Tool schemas captured from `tools/list` response.
+    tool_schemas: HashMap<String, Value>,
+}
+
+impl McpSession {
+    /// Send a JSON-RPC request and return the result, using an auto-incrementing ID.
+    async fn request(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Value> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        write_message(&mut self.stdin, &req).await?;
+        read_response_for_id(&mut self.stdout, id, timeout_ms).await
+    }
+}
+
+impl Drop for McpSession {
+    fn drop(&mut self) {
+        // Best-effort kill when session is dropped.
+        let _ = self.child.start_kill();
+    }
+}
+
 pub struct McpTool {
     servers: HashMap<String, McpServerConfig>,
     timeout_ms: u64,
+    /// Cached sessions per server name. Each slot is `None` until first connect.
+    sessions: HashMap<String, Arc<Mutex<Option<McpSession>>>>,
 }
 
 impl McpTool {
@@ -94,20 +136,27 @@ impl McpTool {
             }
         }
 
+        let sessions = servers
+            .keys()
+            .map(|name| (name.clone(), Arc::new(Mutex::new(None))))
+            .collect();
+
         Ok(Self {
             servers,
             timeout_ms: DEFAULT_MCP_TIMEOUT_MS,
+            sessions,
         })
     }
 
-    async fn call_server(
-        &self,
-        server: &McpServerConfig,
-        tool_name: &str,
-        arguments: Value,
-    ) -> anyhow::Result<String> {
-        let mut child = Command::new(&server.command)
-            .args(&server.args)
+    /// Spawn a new MCP server process, initialize the session, and cache tool schemas.
+    async fn spawn_session(&self, server_name: &str) -> anyhow::Result<McpSession> {
+        let config = self
+            .servers
+            .get(server_name)
+            .ok_or_else(|| anyhow!("unknown mcp server `{server_name}`"))?;
+
+        let mut child = Command::new(&config.command)
+            .args(&config.args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -115,8 +164,8 @@ impl McpTool {
             .with_context(|| {
                 format!(
                     "failed to spawn mcp server command: {} {}",
-                    server.command,
-                    server.args.join(" ")
+                    config.command,
+                    config.args.join(" ")
                 )
             })?;
 
@@ -129,101 +178,82 @@ impl McpTool {
             .take()
             .ok_or_else(|| anyhow!("mcp server stdout unavailable"))?;
 
-        let mut stdin = child_stdin;
-        let mut stdout = BufReader::new(child_stdout);
+        let mut session = McpSession {
+            stdin: child_stdin,
+            stdout: BufReader::new(child_stdout),
+            child,
+            next_id: 1,
+            tool_schemas: HashMap::new(),
+        };
 
-        self.initialize_session(&mut stdin, &mut stdout).await?;
+        // Initialize handshake.
+        let init_params = json!({
+            "protocolVersion": "2025-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "agentzero", "version": "0.1.0"}
+        });
+        session
+            .request("initialize", init_params, self.timeout_ms)
+            .await?;
 
-        let listed_tools = self.list_tools(&mut stdin, &mut stdout).await?;
-        if !listed_tools.iter().any(|name| name == tool_name) {
+        let notification = json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {}
+        });
+        write_message(&mut session.stdin, &notification).await?;
+
+        // List tools and cache schemas.
+        let result = session
+            .request("tools/list", json!({}), self.timeout_ms)
+            .await?;
+        if let Some(tools) = result.get("tools").and_then(Value::as_array) {
+            for tool in tools {
+                if let Some(name) = tool.get("name").and_then(Value::as_str) {
+                    let schema = tool
+                        .get("inputSchema")
+                        .cloned()
+                        .unwrap_or(json!({"type": "object"}));
+                    session.tool_schemas.insert(name.to_string(), schema);
+                }
+            }
+        }
+
+        Ok(session)
+    }
+
+    /// Execute a tool call on a cached session.
+    async fn call_tool_cached(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        arguments: Value,
+    ) -> anyhow::Result<String> {
+        let slot = self
+            .sessions
+            .get(server_name)
+            .ok_or_else(|| anyhow!("unknown mcp server `{server_name}`"))?
+            .clone();
+
+        let mut guard = slot.lock().await;
+        let session = guard
+            .as_mut()
+            .ok_or_else(|| anyhow!("mcp session not initialized"))?;
+
+        // Validate tool exists in cached schema list.
+        if !session.tool_schemas.contains_key(tool_name) {
             return Err(anyhow!(
                 "mcp tool `{tool_name}` not exposed by selected server"
             ));
         }
 
-        let result = self
-            .call_tool(&mut stdin, &mut stdout, tool_name, arguments)
+        let params = json!({
+            "name": tool_name,
+            "arguments": arguments,
+        });
+        let result = session
+            .request("tools/call", params, self.timeout_ms)
             .await?;
-
-        let _ = child.kill().await;
-        Ok(result)
-    }
-
-    async fn initialize_session(
-        &self,
-        stdin: &mut ChildStdin,
-        stdout: &mut BufReader<ChildStdout>,
-    ) -> anyhow::Result<()> {
-        let init = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "agentzero", "version": "0.1.0"}
-            }
-        });
-        write_message(stdin, &init).await?;
-        read_response_for_id(stdout, 1, self.timeout_ms).await?;
-
-        let initialized = json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-            "params": {}
-        });
-        write_message(stdin, &initialized).await?;
-
-        Ok(())
-    }
-
-    async fn list_tools(
-        &self,
-        stdin: &mut ChildStdin,
-        stdout: &mut BufReader<ChildStdout>,
-    ) -> anyhow::Result<Vec<String>> {
-        let req = json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {}
-        });
-        write_message(stdin, &req).await?;
-        let result = read_response_for_id(stdout, 2, self.timeout_ms).await?;
-
-        let tools = result
-            .get("tools")
-            .and_then(Value::as_array)
-            .ok_or_else(|| anyhow!("invalid tools/list result shape"))?;
-
-        Ok(tools
-            .iter()
-            .filter_map(|tool| {
-                tool.get("name")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .collect())
-    }
-
-    async fn call_tool(
-        &self,
-        stdin: &mut ChildStdin,
-        stdout: &mut BufReader<ChildStdout>,
-        name: &str,
-        arguments: Value,
-    ) -> anyhow::Result<String> {
-        let req = json!({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": name,
-                "arguments": arguments,
-            }
-        });
-        write_message(stdin, &req).await?;
-        let result = read_response_for_id(stdout, 3, self.timeout_ms).await?;
 
         if let Some(content) = result.get("content").and_then(Value::as_array) {
             let text_chunks = content
@@ -249,15 +279,81 @@ impl Tool for McpTool {
         "Call a tool on an MCP (Model Context Protocol) server."
     }
 
+    fn input_schema(&self) -> Option<Value> {
+        Some(json!({
+            "type": "object",
+            "required": ["server", "tool"],
+            "properties": {
+                "server": {
+                    "type": "string",
+                    "description": "Name of the MCP server to call"
+                },
+                "tool": {
+                    "type": "string",
+                    "description": "Tool name to invoke on the server"
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "JSON object with tool arguments"
+                }
+            }
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed = McpCallInput::parse(input)?;
-        let server = self
-            .servers
-            .get(&parsed.server)
-            .ok_or_else(|| anyhow!("unknown mcp server `{}`", parsed.server))?;
+        let server_name = parsed.server.clone();
+        let tool_name = parsed.tool.clone();
+        let arguments = parsed.arguments.clone();
+
+        let server_name_ref = server_name.as_str();
+
+        // Ensure session exists (lazy connect).
+        {
+            let slot = self
+                .sessions
+                .get(server_name_ref)
+                .ok_or_else(|| anyhow!("unknown mcp server `{}`", parsed.server))?
+                .clone();
+            let mut guard = slot.lock().await;
+            if guard.is_none() {
+                let session = self.spawn_session(server_name_ref).await?;
+                *guard = Some(session);
+            }
+        }
+
+        // First attempt.
+        match self
+            .call_tool_cached(server_name_ref, &tool_name, arguments.clone())
+            .await
+        {
+            Ok(output) => return Ok(ToolResult { output }),
+            Err(e) => {
+                tracing::warn!(
+                    server = %server_name_ref,
+                    tool = %tool_name,
+                    error = %e,
+                    "mcp call failed, reconnecting"
+                );
+                // Clear session for reconnect.
+                let slot = self.sessions.get(server_name_ref).unwrap().clone();
+                let mut guard = slot.lock().await;
+                *guard = None;
+            }
+        }
+
+        // Reconnect attempt.
+        {
+            let slot = self.sessions.get(server_name_ref).unwrap().clone();
+            let mut guard = slot.lock().await;
+            if guard.is_none() {
+                let session = self.spawn_session(server_name_ref).await?;
+                *guard = Some(session);
+            }
+        }
 
         let output = self
-            .call_server(server, &parsed.tool, parsed.arguments)
+            .call_tool_cached(server_name_ref, &tool_name, arguments)
             .await
             .with_context(|| {
                 format!(
@@ -404,5 +500,41 @@ mod tests {
             .expect_err("unknown server should fail")
             .to_string()
             .contains("unknown mcp server"));
+    }
+
+    #[test]
+    fn input_schema_returns_dispatcher_schema() {
+        let tool = McpTool::from_servers_json(
+            r#"{"fs":{"command":"echo","args":[]}}"#,
+            &[String::from("fs")],
+        )
+        .expect("mcp config should parse");
+
+        let schema = tool.input_schema().expect("should return schema");
+        assert_eq!(schema["type"], "object");
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("server")));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("tool")));
+        assert!(schema["properties"]["server"]["type"] == "string");
+        assert!(schema["properties"]["tool"]["type"] == "string");
+        assert!(schema["properties"]["arguments"]["type"] == "object");
+    }
+
+    #[test]
+    fn session_slots_created_for_each_server() {
+        let tool = McpTool::from_servers_json(
+            r#"{"fs":{"command":"echo","args":[]},"git":{"command":"echo","args":[]}}"#,
+            &[String::from("fs"), String::from("git")],
+        )
+        .expect("mcp config should parse");
+
+        assert_eq!(tool.sessions.len(), 2);
+        assert!(tool.sessions.contains_key("fs"));
+        assert!(tool.sessions.contains_key("git"));
     }
 }

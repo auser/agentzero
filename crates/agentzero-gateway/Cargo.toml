@@ -9,8 +9,12 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+agentzero-config = { workspace = true }
+agentzero-core = { workspace = true }
+agentzero-infra = { workspace = true }
 agentzero-storage = { workspace = true }
 agentzero-channels = { workspace = true }
+async-stream = "0.3"
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "ws"] }
 futures-util = "0.3"
 serde.workspace = true

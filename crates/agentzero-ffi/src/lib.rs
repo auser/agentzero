@@ -130,15 +130,19 @@ pub trait ToolCallback: Send + Sync {
 pub struct FfiTool {
     /// Leaked string for the `&'static str` requirement of `Tool::name()`.
     name: &'static str,
+    /// Leaked description from the callback.
+    description: &'static str,
     callback: Arc<dyn ToolCallback>,
 }
 
 impl FfiTool {
     /// Create an `FfiTool` from a name and callback.
     pub fn new(name: String, callback: Arc<dyn ToolCallback>) -> Self {
-        let leaked: &'static str = Box::leak(name.into_boxed_str());
+        let leaked_name: &'static str = Box::leak(name.into_boxed_str());
+        let leaked_desc: &'static str = Box::leak(callback.description().into_boxed_str());
         Self {
-            name: leaked,
+            name: leaked_name,
+            description: leaked_desc,
             callback,
         }
     }
@@ -157,9 +161,7 @@ impl Tool for FfiTool {
     }
 
     fn description(&self) -> &'static str {
-        // Can't call callback.description() here since it returns String,
-        // not &'static str. Use a fixed description instead.
-        "FFI plugin tool (registered via foreign language binding)"
+        self.description
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -659,6 +661,10 @@ mod tests {
     impl ToolCallback for EchoCallback {
         fn execute(&self, input: String, _workspace_root: String) -> Result<String, String> {
             Ok(format!("echo: {input}"))
+        }
+
+        fn description(&self) -> String {
+            "Echoes the input back".to_string()
         }
     }
 

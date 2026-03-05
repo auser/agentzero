@@ -121,8 +121,8 @@ All code must follow idiomatic Rust. These are not suggestions — they are mand
   - Configuration schema or defaults → `site/src/content/docs/config/`
   - Architecture or crate structure → `site/src/content/docs/architecture/`
   - Security boundaries or policies → `site/src/content/docs/security/`
-  - Tool or plugin APIs → `site/src/content/docs/reference/tools-plugins.md` and `plugin-api.md`
-  - Gateway endpoints → `site/src/content/docs/reference/gateway-api.md`
+  - Tool or plugin APIs → `site/src/content/docs/reference/tools.md` and `plugin-api.md`
+  - Gateway endpoints → `site/src/content/docs/reference/gateway.md`
 - New user-facing features require a new or updated guide in `site/src/content/docs/guides/`.
 - When adding a new documentation page, update the sidebar config in `site/astro.config.mjs`.
 - Agent enforcement:

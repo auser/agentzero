@@ -70,6 +70,19 @@ impl Tool for SubAgentSpawnTool {
         "Spawn a sub-agent to handle a task asynchronously. Returns a session ID for tracking."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "agent": { "type": "string", "description": "Name of the sub-agent to spawn" },
+                "task": { "type": "string", "description": "Task description for the sub-agent" },
+                "context": { "type": "string", "description": "Optional context to pass to the sub-agent" }
+            },
+            "required": ["agent", "task"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: SubAgentSpawnInput = serde_json::from_str(input)
             .context("subagent_spawn expects JSON: {\"agent\": \"...\", \"task\": \"...\"}")?;
@@ -141,6 +154,14 @@ impl Tool for SubAgentListTool {
         "List all running sub-agent sessions and their statuses."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, _input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         Ok(ToolResult {
             output: "subagent_list: no shared registry in standalone mode. Use subagent_spawn's registry.".to_string(),
@@ -175,6 +196,18 @@ impl Tool for SubAgentManageTool {
 
     fn description(&self) -> &'static str {
         "Manage a sub-agent session: cancel, get result, or check status."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "description": "The session ID of the sub-agent to manage" },
+                "action": { "type": "string", "enum": ["status", "kill", "result"], "description": "The management action to perform" }
+            },
+            "required": ["session_id", "action"],
+            "additionalProperties": false
+        }))
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

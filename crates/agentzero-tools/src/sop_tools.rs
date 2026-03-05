@@ -64,6 +64,14 @@ impl Tool for SopListTool {
         "List all standard operating procedures (SOPs) in the workspace."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, _input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let store = SopStore::load(&ctx.workspace_root).await?;
 
@@ -117,6 +125,17 @@ impl Tool for SopStatusTool {
 
     fn description(&self) -> &'static str {
         "Get the current status and progress of an SOP."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "The SOP plan ID" }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }))
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -179,6 +198,18 @@ impl Tool for SopAdvanceTool {
         "Advance an SOP to the next step."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "The SOP plan ID" },
+                "step_index": { "type": "integer", "description": "Index of the step to mark as completed" }
+            },
+            "required": ["id", "step_index"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: SopAdvanceInput = serde_json::from_str(input)
             .context("sop_advance expects JSON: {\"id\", \"step_index\"}")?;
@@ -237,6 +268,18 @@ impl Tool for SopApproveTool {
 
     fn description(&self) -> &'static str {
         "Approve a step in an SOP that requires human approval."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "The SOP plan ID" },
+                "step_index": { "type": "integer", "description": "Index of the step to approve" }
+            },
+            "required": ["id", "step_index"],
+            "additionalProperties": false
+        }))
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -300,6 +343,19 @@ impl Tool for SopExecuteTool {
 
     fn description(&self) -> &'static str {
         "Create and begin executing a new SOP with defined steps."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Unique SOP plan ID" },
+                "steps": { "type": "array", "items": { "type": "string" }, "description": "List of step titles" },
+                "approval_required": { "type": "array", "items": { "type": "integer" }, "description": "Indices of steps requiring human approval" }
+            },
+            "required": ["id", "steps"],
+            "additionalProperties": false
+        }))
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

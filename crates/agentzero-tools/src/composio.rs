@@ -32,6 +32,19 @@ impl Tool for ComposioTool {
         "Execute actions via the Composio third-party integration API."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "description": "The Composio action to execute (e.g. github.star_repo)" },
+                "params": { "type": "object", "description": "Optional parameters for the action" },
+                "api_key": { "type": "string", "description": "Optional Composio API key (falls back to COMPOSIO_API_KEY env var)" }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: ComposioInput =
             serde_json::from_str(input).context("composio expects JSON: {\"action\", ...}")?;

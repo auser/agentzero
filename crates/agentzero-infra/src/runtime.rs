@@ -66,7 +66,11 @@ impl HookSink for AuditHookSink {
     }
 }
 
-pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutput> {
+/// Build a `RuntimeExecution` from a `RunAgentRequest`. This resolves config,
+/// API keys, provider, memory, tools, audit, and hooks — everything needed to
+/// run the agent. Extracted so both `run_agent_once` and streaming callers can
+/// share the setup logic.
+pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<RuntimeExecution> {
     let mut config = load(&req.config_path)?;
 
     // Apply CLI overrides before resolving the API key / constructing provider.
@@ -120,7 +124,8 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
     tools.extend(req.extra_tools);
     let audit_policy = load_audit_policy(&req.workspace_root, &req.config_path)?;
     let audit_path = audit_policy.path.clone();
-    let execution = RuntimeExecution {
+
+    Ok(RuntimeExecution {
         config: AgentConfig {
             max_tool_iterations: config.agent.max_tool_iterations,
             request_timeout_ms: config.agent.request_timeout_ms,
@@ -179,8 +184,9 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
                     .transpose()?
                     .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
             },
-            model_supports_tool_use: caps.map_or(true, |c| c.tool_use),
+            model_supports_tool_use: caps.is_some_and(|c| c.tool_use),
             model_supports_vision: caps.is_some_and(|c| c.vision),
+            system_prompt: config.agent.system_prompt.clone(),
         },
         provider,
         memory,
@@ -197,9 +203,14 @@ pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutp
         } else {
             None
         },
-    };
+    })
+}
 
-    run_agent_with_runtime(execution, req.workspace_root, req.message).await
+pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutput> {
+    let message = req.message.clone();
+    let workspace_root = req.workspace_root.clone();
+    let execution = build_runtime_execution(req).await?;
+    run_agent_with_runtime(execution, workspace_root, message).await
 }
 
 fn parse_hook_mode(input: &str) -> anyhow::Result<HookFailureMode> {
@@ -211,6 +222,52 @@ fn parse_hook_mode(input: &str) -> anyhow::Result<HookFailureMode> {
             anyhow::bail!("invalid hook error mode `{other}`; expected block, warn, or ignore")
         }
     }
+}
+
+/// Streaming variant of `run_agent_once`. Returns a receiver for incremental
+/// `StreamChunk`s and a join handle that resolves to the final `RunAgentOutput`.
+pub fn run_agent_streaming(
+    execution: RuntimeExecution,
+    workspace_root: PathBuf,
+    message: String,
+) -> (
+    tokio::sync::mpsc::UnboundedReceiver<agentzero_core::StreamChunk>,
+    tokio::task::JoinHandle<anyhow::Result<RunAgentOutput>>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle = tokio::spawn(async move {
+        let mut agent = Agent::new(
+            execution.config,
+            execution.provider,
+            execution.memory,
+            execution.tools,
+        );
+
+        let runtime_metrics = RuntimeMetrics::new();
+        agent = agent.with_metrics(Box::new(runtime_metrics.clone()));
+        if let Some(audit) = execution.audit_sink {
+            agent = agent.with_audit(audit);
+        }
+        if let Some(hooks) = execution.hook_sink {
+            agent = agent.with_hooks(hooks);
+        }
+
+        let response = agent
+            .respond_streaming(
+                UserMessage { text: message },
+                &ToolContext::new(workspace_root.to_string_lossy().to_string()),
+                tx,
+            )
+            .await?;
+        let metrics_snapshot = runtime_metrics.export_json();
+        info!(metrics = %metrics_snapshot, "streaming runtime metrics snapshot");
+
+        Ok(RunAgentOutput {
+            response_text: response.text,
+            metrics_snapshot,
+        })
+    });
+    (rx, handle)
 }
 
 pub async fn run_agent_with_runtime(
@@ -711,6 +768,159 @@ mod tests {
     fn resolve_delegate_base_url_passes_through_unknown_kind() {
         let url = super::resolve_delegate_base_url("unknown-provider-xyz");
         assert_eq!(url, "unknown-provider-xyz");
+    }
+
+    // --- Streaming runtime tests ---
+
+    use agentzero_core::{
+        AgentConfig, ChatResult, MemoryEntry, MemoryStore, Provider, ReasoningConfig, StreamChunk,
+        ToolDefinition,
+    };
+    use async_trait::async_trait;
+
+    #[derive(Default)]
+    struct FakeMemory;
+
+    #[async_trait]
+    impl MemoryStore for FakeMemory {
+        async fn append(&self, _entry: MemoryEntry) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn recent(&self, _limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(vec![])
+        }
+    }
+
+    struct FakeStreamProvider {
+        response: String,
+    }
+
+    #[async_trait]
+    impl Provider for FakeStreamProvider {
+        async fn complete(&self, _prompt: &str) -> anyhow::Result<ChatResult> {
+            Ok(ChatResult {
+                output_text: self.response.clone(),
+                ..Default::default()
+            })
+        }
+
+        async fn complete_streaming(
+            &self,
+            _prompt: &str,
+            sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+        ) -> anyhow::Result<ChatResult> {
+            for ch in self.response.chars() {
+                let _ = sender.send(StreamChunk {
+                    delta: ch.to_string(),
+                    done: false,
+                    tool_call_delta: None,
+                });
+            }
+            let _ = sender.send(StreamChunk {
+                delta: String::new(),
+                done: true,
+                tool_call_delta: None,
+            });
+            Ok(ChatResult {
+                output_text: self.response.clone(),
+                ..Default::default()
+            })
+        }
+
+        async fn complete_streaming_with_tools(
+            &self,
+            _messages: &[agentzero_core::ConversationMessage],
+            _tools: &[ToolDefinition],
+            _reasoning: &ReasoningConfig,
+            sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+        ) -> anyhow::Result<ChatResult> {
+            for ch in self.response.chars() {
+                let _ = sender.send(StreamChunk {
+                    delta: ch.to_string(),
+                    done: false,
+                    tool_call_delta: None,
+                });
+            }
+            let _ = sender.send(StreamChunk {
+                delta: String::new(),
+                done: true,
+                tool_call_delta: None,
+            });
+            Ok(ChatResult {
+                output_text: self.response.clone(),
+                ..Default::default()
+            })
+        }
+    }
+
+    fn fake_streaming_execution(response: &str) -> super::RuntimeExecution {
+        super::RuntimeExecution {
+            config: AgentConfig {
+                model_supports_tool_use: false,
+                ..Default::default()
+            },
+            provider: Box::new(FakeStreamProvider {
+                response: response.to_string(),
+            }),
+            memory: Box::new(FakeMemory),
+            tools: vec![],
+            audit_sink: None,
+            hook_sink: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_receiver_delivers_chunks() {
+        let execution = fake_streaming_execution("Hello");
+        let (mut rx, handle) =
+            super::run_agent_streaming(execution, PathBuf::from("/tmp"), "hi".to_string());
+
+        let mut chunks = Vec::new();
+        while let Some(chunk) = rx.recv().await {
+            chunks.push(chunk);
+        }
+        handle
+            .await
+            .expect("task should not panic")
+            .expect("should succeed");
+
+        assert!(chunks.len() >= 2, "should have content + done chunks");
+        assert!(chunks.last().unwrap().done);
+    }
+
+    #[tokio::test]
+    async fn streaming_handle_resolves_to_output() {
+        let execution = fake_streaming_execution("World");
+        let (mut rx, handle) =
+            super::run_agent_streaming(execution, PathBuf::from("/tmp"), "hi".to_string());
+
+        // Drain the receiver.
+        while rx.recv().await.is_some() {}
+
+        let output = handle
+            .await
+            .expect("task should not panic")
+            .expect("should succeed");
+        assert_eq!(output.response_text, "World");
+    }
+
+    #[tokio::test]
+    async fn streaming_output_matches_accumulated_chunks() {
+        let execution = fake_streaming_execution("abc");
+        let (mut rx, handle) =
+            super::run_agent_streaming(execution, PathBuf::from("/tmp"), "hi".to_string());
+
+        let mut accumulated = String::new();
+        while let Some(chunk) = rx.recv().await {
+            if !chunk.done {
+                accumulated.push_str(&chunk.delta);
+            }
+        }
+        let output = handle
+            .await
+            .expect("task should not panic")
+            .expect("should succeed");
+        assert_eq!(accumulated, output.response_text);
     }
 
     #[test]

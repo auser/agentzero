@@ -405,7 +405,7 @@ async fn ping_with_valid_token_returns_echo() {
 // --- api_chat ---
 
 #[tokio::test]
-async fn api_chat_returns_echo_reply() {
+async fn api_chat_returns_service_unavailable_without_config() {
     let state = GatewayState::test_with_bearer(None);
     state.paired_tokens.lock().unwrap().clear();
     let app = build_router(state, &default_config());
@@ -421,22 +421,13 @@ async fn api_chat_returns_echo_reply() {
         .oneshot(request)
         .await
         .expect("response should be returned");
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .expect("body should collect")
-        .to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
-    assert!(json["message"].as_str().unwrap().contains("world"));
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 // --- v1_chat_completions ---
 
 #[tokio::test]
-async fn v1_chat_completions_returns_openai_format() {
+async fn v1_chat_completions_returns_service_unavailable_without_config() {
     let state = GatewayState::test_with_bearer(None);
     state.paired_tokens.lock().unwrap().clear();
     let app = build_router(state, &default_config());
@@ -459,24 +450,7 @@ async fn v1_chat_completions_returns_openai_format() {
         .oneshot(request)
         .await
         .expect("response should be returned");
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let resp_body = response
-        .into_body()
-        .collect()
-        .await
-        .expect("body should collect")
-        .to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&resp_body).expect("should be json");
-    assert_eq!(json["object"], "chat.completion");
-    assert!(json["id"].as_str().unwrap().starts_with("chatcmpl-"));
-    let choices = json["choices"].as_array().unwrap();
-    assert_eq!(choices.len(), 1);
-    assert_eq!(choices[0]["finish_reason"], "stop");
-    assert!(choices[0]["message"]["content"]
-        .as_str()
-        .unwrap()
-        .contains("ping"));
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 // --- legacy_webhook ---
@@ -569,4 +543,63 @@ async fn v1_models_requires_auth_when_bearer_set() {
         .await
         .expect("response should be returned");
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+// --- Phase 5: gateway agent wiring tests ---
+
+#[tokio::test]
+async fn gateway_state_config_fields_are_active() {
+    let state = GatewayState::test_with_bearer(None).with_gateway_config(false, true);
+    assert!(!state.require_pairing);
+    assert!(state.allow_public_bind);
+    // Pairing TTL support
+    let state = GatewayState::test_with_bearer(None).with_pairing_ttl(60);
+    assert_eq!(state.pairing_ttl_secs, Some(60));
+    assert!(state.pairing_code_valid().is_some());
+}
+
+#[tokio::test]
+async fn pairing_code_expires_after_ttl() {
+    let mut state = GatewayState::test_with_bearer(None);
+    state.pairing_ttl_secs = Some(0); // immediate expiry
+    assert!(state.pairing_code_valid().is_none());
+    // pair endpoint should reject when code is expired
+    let app = build_router(state, &default_config());
+    let request = Request::builder()
+        .method("POST")
+        .uri("/pair")
+        .header("x-pairing-code", "406823")
+        .body(Body::empty())
+        .expect("request should build");
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn v1_chat_completions_stream_returns_service_unavailable_without_config() {
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let body = json!({
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": "ping"}],
+        "stream": true
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }

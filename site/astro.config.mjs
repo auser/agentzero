@@ -5,7 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   site: "https://agentzero.github.io",
-  base: "/agentzero/",
+  base: "/",
   outDir: "../gh-pages",
   integrations: [
     starlight({

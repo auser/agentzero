@@ -333,14 +333,24 @@ fn to_anthropic_tool(def: &ToolDefinition) -> AnthropicToolDef {
     }
 }
 
+/// Extract the system prompt from the first `ConversationMessage::System` in the list.
+fn extract_system_from_messages(messages: &[ConversationMessage]) -> Option<String> {
+    messages.iter().find_map(|msg| match msg {
+        ConversationMessage::System { content } => Some(content.clone()),
+        _ => None,
+    })
+}
+
 fn to_anthropic_messages(messages: &[ConversationMessage]) -> Vec<Message> {
     messages
         .iter()
-        .map(|msg| match msg {
-            ConversationMessage::User { content } => Message {
+        .filter_map(|msg| match msg {
+            // System messages are extracted separately for the Anthropic API payload.
+            ConversationMessage::System { .. } => None,
+            ConversationMessage::User { content } => Some(Message {
                 role: "user".to_string(),
                 content: MessageContent::Text(content.clone()),
-            },
+            }),
             ConversationMessage::Assistant {
                 content,
                 tool_calls,
@@ -358,22 +368,22 @@ fn to_anthropic_messages(messages: &[ConversationMessage]) -> Vec<Message> {
                         input: tc.input.clone(),
                     });
                 }
-                Message {
+                Some(Message {
                     role: "assistant".to_string(),
                     content: if blocks.is_empty() {
                         MessageContent::Text(String::new())
                     } else {
                         MessageContent::Blocks(blocks)
                     },
-                }
+                })
             }
-            ConversationMessage::ToolResult(result) => Message {
+            ConversationMessage::ToolResult(result) => Some(Message {
                 role: "user".to_string(),
                 content: MessageContent::Blocks(vec![InputContentBlock::ToolResult {
                     tool_use_id: result.tool_use_id.clone(),
                     content: result.content.clone(),
                 }]),
-            },
+            }),
         })
         .collect()
 }
@@ -643,12 +653,13 @@ impl Provider for AnthropicProvider {
         };
 
         let anthropic_tools: Vec<AnthropicToolDef> = tools.iter().map(to_anthropic_tool).collect();
+        let system = extract_system_from_messages(messages);
 
         let payload = MessagesRequest {
             model: self.model.clone(),
             max_tokens,
             messages: to_anthropic_messages(messages),
-            system: None,
+            system,
             thinking,
             stream: false,
             tools: if anthropic_tools.is_empty() {
@@ -746,12 +757,13 @@ impl Provider for AnthropicProvider {
         };
 
         let anthropic_tools: Vec<AnthropicToolDef> = tools.iter().map(to_anthropic_tool).collect();
+        let system = extract_system_from_messages(messages);
 
         let payload = MessagesRequest {
             model: self.model.clone(),
             max_tokens,
             messages: to_anthropic_messages(messages),
-            system: None,
+            system,
             thinking,
             stream: true,
             tools: if anthropic_tools.is_empty() {
@@ -1592,6 +1604,52 @@ mod tests {
         assert_eq!(result[0].role, "user");
         assert_eq!(result[1].role, "assistant");
         assert_eq!(result[2].role, "user"); // tool results sent as user messages in Anthropic
+    }
+
+    #[test]
+    fn to_anthropic_messages_filters_out_system() {
+        use agentzero_core::ConversationMessage;
+
+        let messages = vec![
+            ConversationMessage::System {
+                content: "You are a helpful assistant.".to_string(),
+            },
+            ConversationMessage::User {
+                content: "Hello".to_string(),
+            },
+        ];
+
+        let result = to_anthropic_messages(&messages);
+        // System message should be filtered out — Anthropic uses a separate `system` field.
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].role, "user");
+    }
+
+    #[test]
+    fn extract_system_from_messages_returns_system_content() {
+        use agentzero_core::ConversationMessage;
+
+        let messages = vec![
+            ConversationMessage::System {
+                content: "Be concise.".to_string(),
+            },
+            ConversationMessage::User {
+                content: "Hi".to_string(),
+            },
+        ];
+        let system = extract_system_from_messages(&messages);
+        assert_eq!(system, Some("Be concise.".to_string()));
+    }
+
+    #[test]
+    fn extract_system_from_messages_returns_none_when_absent() {
+        use agentzero_core::ConversationMessage;
+
+        let messages = vec![ConversationMessage::User {
+            content: "Hi".to_string(),
+        }];
+        let system = extract_system_from_messages(&messages);
+        assert!(system.is_none());
     }
 
     #[test]

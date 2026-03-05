@@ -25,6 +25,8 @@ pub struct AgentConfig {
     pub model_supports_tool_use: bool,
     /// Whether the current model supports vision (image content blocks).
     pub model_supports_vision: bool,
+    /// Optional system prompt sent to the LLM at the start of each conversation.
+    pub system_prompt: Option<String>,
 }
 
 impl Default for AgentConfig {
@@ -44,6 +46,7 @@ impl Default for AgentConfig {
             reasoning: ReasoningConfig::default(),
             model_supports_tool_use: true,
             model_supports_vision: false,
+            system_prompt: None,
         }
     }
 }
@@ -168,6 +171,9 @@ pub struct StreamChunk {
     pub tool_call_delta: Option<ToolCallDelta>,
 }
 
+/// Convenience alias for the sender half of a streaming channel.
+pub type StreamSink = tokio::sync::mpsc::UnboundedSender<StreamChunk>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolContext {
     pub workspace_root: String,
@@ -233,6 +239,8 @@ pub struct ToolResultMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "role")]
 pub enum ConversationMessage {
+    #[serde(rename = "system")]
+    System { content: String },
     #[serde(rename = "user")]
     User { content: String },
     #[serde(rename = "assistant")]
@@ -249,6 +257,7 @@ impl ConversationMessage {
     /// Estimate the character count of this message for truncation budgeting.
     pub fn char_count(&self) -> usize {
         match self {
+            Self::System { content } => content.len(),
             Self::User { content } => content.len(),
             Self::Assistant {
                 content,
@@ -483,6 +492,31 @@ mod tests {
         let parsed: ToolResultMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.tool_use_id, "call_123");
         assert!(!parsed.is_error);
+    }
+
+    #[test]
+    fn conversation_message_system_serde() {
+        let msg = ConversationMessage::System {
+            content: "You are a helpful assistant.".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"role\":\"system\""));
+        assert!(json.contains("You are a helpful assistant."));
+        let parsed: ConversationMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ConversationMessage::System { content } => {
+                assert_eq!(content, "You are a helpful assistant.")
+            }
+            _ => panic!("expected System variant"),
+        }
+    }
+
+    #[test]
+    fn conversation_message_system_char_count() {
+        let msg = ConversationMessage::System {
+            content: "Be brief.".to_string(),
+        };
+        assert_eq!(msg.char_count(), 9);
     }
 
     #[test]

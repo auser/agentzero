@@ -79,6 +79,19 @@ impl Tool for ProxyConfigTool {
         "Manage HTTP/HTTPS proxy settings: get, set, clear, add/remove bypass hosts."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "type": "object",
+            "required": ["op"],
+            "properties": {
+                "op": {"type": "string", "description": "Operation: get, set, clear, add_bypass, remove_bypass"},
+                "protocol": {"type": "string", "description": "Protocol: http, https, or socks"},
+                "url": {"type": "string", "description": "Proxy URL (for set op)"},
+                "host": {"type": "string", "description": "Bypass host (for add_bypass/remove_bypass ops)"}
+            }
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed: Input =
             serde_json::from_str(input).context("proxy_config expects JSON: {\"op\", ...}")?;

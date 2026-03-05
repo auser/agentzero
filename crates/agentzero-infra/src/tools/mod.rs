@@ -13,16 +13,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use agentzero_tools::{
-    ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool, ComposioTool,
+    AgentsIpcTool, ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool, ComposioTool,
     ContentSearchTool, CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool,
     CronUpdateTool, DelegateCoordinationStatusTool, DelegateTool, DocxReadTool, FileEditTool,
     GitOperationsTool, GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool,
-    HardwareMemoryReadTool, ImageInfoTool, MemoryForgetTool, MemoryRecallTool, MemoryStoreTool,
-    ModelRoutingConfigTool, PdfReadTool, ProcessTool, ProxyConfigTool, PushoverTool,
-    ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool, ShellPolicy, ShellTool,
-    SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, SubAgentListTool,
-    SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool, ToolSecurityPolicy, WasmModuleTool,
-    WasmToolExecTool, WebSearchTool, WriteFilePolicy, WriteFileTool,
+    HardwareMemoryReadTool, HttpRequestTool, ImageInfoTool, MemoryForgetTool, MemoryRecallTool,
+    MemoryStoreTool, ModelRoutingConfigTool, PdfReadTool, ProcessTool, ProxyConfigTool,
+    PushoverTool, ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool, ShellPolicy,
+    ShellTool, SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool,
+    SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool, ToolSecurityPolicy,
+    UrlValidationTool, WasmModuleTool, WasmToolExecTool, WebFetchTool, WebSearchTool,
+    WriteFilePolicy, WriteFileTool,
 };
 pub use mcp::McpTool;
 pub use plugin::ProcessPluginTool;
@@ -99,6 +100,28 @@ pub fn default_tools(
 
     if policy.enable_browser_open {
         tools.push(Box::new(BrowserOpenTool::default()));
+    }
+
+    if policy.enable_http_request {
+        tools.push(Box::new(
+            HttpRequestTool::default().with_url_policy(policy.url_access.clone()),
+        ));
+    }
+
+    if policy.enable_web_fetch {
+        tools.push(Box::new(
+            WebFetchTool::default().with_url_policy(policy.url_access.clone()),
+        ));
+    }
+
+    if policy.enable_url_validation {
+        tools.push(Box::new(
+            UrlValidationTool::default().with_url_policy(policy.url_access.clone()),
+        ));
+    }
+
+    if policy.enable_agents_ipc {
+        tools.push(Box::new(AgentsIpcTool));
     }
 
     if policy.enable_mcp {
@@ -241,5 +264,63 @@ mod tests {
             .map(|tool| tool.name())
             .collect::<Vec<_>>();
         assert!(!names.contains(&"write_file"));
+    }
+
+    #[test]
+    fn default_tools_include_agents_ipc_when_enabled() {
+        let policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        // agents_ipc defaults to true
+        assert!(policy.enable_agents_ipc);
+        let tools = default_tools(&policy, None, None).expect("default tools should build");
+        let names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+        assert!(
+            names.contains(&"agents_ipc"),
+            "agents_ipc should be registered"
+        );
+    }
+
+    #[test]
+    fn default_tools_include_network_tools_when_enabled() {
+        let mut policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        policy.enable_http_request = true;
+        policy.enable_web_fetch = true;
+        policy.enable_url_validation = true;
+
+        let tools = default_tools(&policy, None, None).expect("default tools should build");
+        let names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+        assert!(
+            names.contains(&"http_request"),
+            "http_request should be registered"
+        );
+        assert!(
+            names.contains(&"web_fetch"),
+            "web_fetch should be registered"
+        );
+        assert!(
+            names.contains(&"url_validation"),
+            "url_validation should be registered"
+        );
+    }
+
+    #[test]
+    fn default_tools_exclude_network_tools_when_disabled() {
+        let mut policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        policy.enable_http_request = false;
+        policy.enable_web_fetch = false;
+        policy.enable_url_validation = false;
+        policy.enable_agents_ipc = false;
+
+        let tools = default_tools(&policy, None, None).expect("default tools should build");
+        let names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+        assert!(!names.contains(&"http_request"));
+        assert!(!names.contains(&"web_fetch"));
+        assert!(!names.contains(&"url_validation"));
+        assert!(!names.contains(&"agents_ipc"));
     }
 }

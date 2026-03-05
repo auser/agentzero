@@ -36,6 +36,20 @@ impl Tool for PushoverTool {
         "Send push notifications via the Pushover service."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "required": ["message"],
+            "properties": {
+                "message": {"type": "string", "description": "Notification message"},
+                "title": {"type": "string", "description": "Optional notification title"},
+                "priority": {"type": "integer", "description": "Priority: -2 to 2"},
+                "token": {"type": "string", "description": "Pushover API token (or use PUSHOVER_TOKEN env)"},
+                "user": {"type": "string", "description": "Pushover user key (or use PUSHOVER_USER env)"}
+            }
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: PushoverInput =
             serde_json::from_str(input).context("pushover expects JSON: {\"message\", ...}")?;

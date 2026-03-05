@@ -64,6 +64,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             provider,
             model,
             profile,
+            stream,
         } => {
             commands::agent::AgentCommand::run(
                 &ctx,
@@ -72,6 +73,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     provider,
                     model,
                     profile,
+                    stream,
                 },
             )
             .await

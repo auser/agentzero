@@ -2,9 +2,10 @@ use crate::security::redaction::redact_text;
 use crate::types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ConversationMessage,
     HookEvent, HookFailureMode, HookRiskTier, HookSink, MemoryEntry, MemoryStore, MetricsSink,
-    Provider, ResearchTrigger, StopReason, Tool, ToolContext, ToolDefinition, ToolResultMessage,
-    UserMessage,
+    Provider, ResearchTrigger, StopReason, StreamSink, Tool, ToolContext, ToolDefinition,
+    ToolResultMessage, UserMessage,
 };
+use crate::validation::validate_json;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -86,23 +87,36 @@ fn single_required_string_field(schema: &serde_json::Value) -> Option<String> {
 
 /// Convert structured tool input (`Value`) to the `&str` format `Tool::execute()` expects.
 ///
+/// - Validates the input against the tool's JSON schema (if present).
 /// - If the value is a bare JSON string, unwrap it.
 /// - If the tool schema has a single required string field, extract that field.
 /// - Otherwise, serialize to JSON string (for tools that parse JSON via `from_str`).
-fn prepare_tool_input(tool: &dyn Tool, raw_input: &serde_json::Value) -> String {
+///
+/// Returns `Err` with a human-readable message if schema validation fails.
+fn prepare_tool_input(tool: &dyn Tool, raw_input: &serde_json::Value) -> Result<String, String> {
+    // Bare strings are the legacy text-input path — pass through without schema validation.
     if let Some(s) = raw_input.as_str() {
-        return s.to_string();
+        return Ok(s.to_string());
     }
 
+    // Validate structured input against the tool's JSON schema.
     if let Some(schema) = tool.input_schema() {
+        if let Err(errors) = validate_json(raw_input, &schema) {
+            return Err(format!(
+                "Invalid input for tool '{}': {}",
+                tool.name(),
+                errors.join("; ")
+            ));
+        }
+
         if let Some(field) = single_required_string_field(&schema) {
             if let Some(val) = raw_input.get(&field).and_then(|v| v.as_str()) {
-                return val.to_string();
+                return Ok(val.to_string());
             }
         }
     }
 
-    serde_json::to_string(raw_input).unwrap_or_default()
+    Ok(serde_json::to_string(raw_input).unwrap_or_default())
 }
 
 /// Truncate conversation messages to fit within a character budget.
@@ -456,6 +470,7 @@ impl Agent {
         &self,
         prompt: &str,
         request_id: &str,
+        stream_sink: Option<StreamSink>,
     ) -> Result<String, AgentError> {
         let recent_memory = self
             .memory
@@ -500,11 +515,16 @@ impl Agent {
         )
         .await;
         let provider_started = Instant::now();
-        let completion = match self
-            .provider
-            .complete_with_reasoning(&provider_prompt, &self.config.reasoning)
-            .await
-        {
+        let provider_result = if let Some(sink) = stream_sink {
+            self.provider
+                .complete_streaming(&provider_prompt, sink)
+                .await
+        } else {
+            self.provider
+                .complete_with_reasoning(&provider_prompt, &self.config.reasoning)
+                .await
+        };
+        let completion = match provider_result {
             Ok(result) => result,
             Err(source) => {
                 self.observe_histogram(
@@ -616,7 +636,7 @@ impl Agent {
              When done gathering, summarize your findings without a tool: prefix."
         );
         let mut prompt = self
-            .call_provider_with_context(&research_prompt, request_id)
+            .call_provider_with_context(&research_prompt, request_id, None)
             .await?;
         let mut findings: Vec<String> = Vec::new();
 
@@ -657,7 +677,7 @@ impl Agent {
                     result.output
                 );
                 prompt = self
-                    .call_provider_with_context(&next_prompt, request_id)
+                    .call_provider_with_context(&next_prompt, request_id, None)
                     .await?;
             } else {
                 break;
@@ -685,6 +705,7 @@ impl Agent {
         user_text: &str,
         research_context: &str,
         ctx: &ToolContext,
+        stream_sink: Option<StreamSink>,
     ) -> Result<AssistantMessage, AgentError> {
         self.audit(
             "structured_tool_use_start",
@@ -709,7 +730,16 @@ impl Agent {
         )
         .await;
 
-        let mut messages: Vec<ConversationMessage> = memory_to_messages(&recent_memory);
+        let mut messages: Vec<ConversationMessage> = Vec::new();
+
+        // Prepend system prompt if configured.
+        if let Some(ref sp) = self.config.system_prompt {
+            messages.push(ConversationMessage::System {
+                content: sp.clone(),
+            });
+        }
+
+        messages.extend(memory_to_messages(&recent_memory));
 
         if !research_context.is_empty() {
             messages.push(ConversationMessage::User {
@@ -748,11 +778,21 @@ impl Agent {
             .await;
 
             let provider_started = Instant::now();
-            let chat_result = match self
-                .provider
-                .complete_with_tools(&messages, &tool_definitions, &self.config.reasoning)
-                .await
-            {
+            let provider_result = if let Some(ref sink) = stream_sink {
+                self.provider
+                    .complete_streaming_with_tools(
+                        &messages,
+                        &tool_definitions,
+                        &self.config.reasoning,
+                        sink.clone(),
+                    )
+                    .await
+            } else {
+                self.provider
+                    .complete_with_tools(&messages, &tool_definitions, &self.config.reasoning)
+                    .await
+            };
+            let chat_result = match provider_result {
                 Ok(result) => result,
                 Err(source) => {
                     self.observe_histogram(
@@ -838,7 +878,20 @@ impl Agent {
                         async move {
                             match tool {
                                 Some(tool) => {
-                                    let input_str = prepare_tool_input(&**tool, &tc.input);
+                                    let input_str = match prepare_tool_input(&**tool, &tc.input) {
+                                        Ok(s) => s,
+                                        Err(validation_err) => {
+                                            return (
+                                                tc.name.clone(),
+                                                String::new(),
+                                                ToolResultMessage {
+                                                    tool_use_id: tc.id.clone(),
+                                                    content: validation_err,
+                                                    is_error: true,
+                                                },
+                                            );
+                                        }
+                                    };
                                     match tool.execute(&input_str, ctx).await {
                                         Ok(result) => (
                                             tc.name.clone(),
@@ -888,7 +941,18 @@ impl Agent {
                 for tc in tool_calls {
                     let result_msg = match self.tools.iter().find(|t| t.name() == tc.name) {
                         Some(tool) => {
-                            let input_str = prepare_tool_input(&**tool, &tc.input);
+                            let input_str = match prepare_tool_input(&**tool, &tc.input) {
+                                Ok(s) => s,
+                                Err(validation_err) => {
+                                    failure_streak += 1;
+                                    tool_results.push(ToolResultMessage {
+                                        tool_use_id: tc.id.clone(),
+                                        content: validation_err,
+                                        is_error: true,
+                                    });
+                                    continue;
+                                }
+                            };
                             self.audit(
                                 "tool_requested",
                                 json!({
@@ -1081,11 +1145,17 @@ impl Agent {
         });
         truncate_messages(&mut messages, self.config.max_prompt_chars);
 
-        let final_result = self
-            .provider
-            .complete_with_tools(&messages, &[], &self.config.reasoning)
-            .await
-            .map_err(|source| AgentError::Provider { source })?;
+        let final_result = if let Some(ref sink) = stream_sink {
+            self.provider
+                .complete_streaming_with_tools(&messages, &[], &self.config.reasoning, sink.clone())
+                .await
+                .map_err(|source| AgentError::Provider { source })?
+        } else {
+            self.provider
+                .complete_with_tools(&messages, &[], &self.config.reasoning)
+                .await
+                .map_err(|source| AgentError::Provider { source })?
+        };
 
         let response_text = final_result.output_text;
         self.write_to_memory("assistant", &response_text, request_id)
@@ -1120,7 +1190,7 @@ impl Agent {
             .await?;
         let timed = timeout(
             Duration::from_millis(self.config.request_timeout_ms),
-            self.respond_inner(&request_id, user, ctx),
+            self.respond_inner(&request_id, user, ctx, None),
         )
         .await;
         let result = match timed {
@@ -1153,11 +1223,61 @@ impl Agent {
         result
     }
 
+    /// Streaming variant of `respond()`. Sends incremental `StreamChunk`s through
+    /// `sink` as tokens arrive from the provider. Returns the final accumulated
+    /// `AssistantMessage` once the stream completes.
+    pub async fn respond_streaming(
+        &self,
+        user: UserMessage,
+        ctx: &ToolContext,
+        sink: StreamSink,
+    ) -> Result<AssistantMessage, AgentError> {
+        let request_id = Self::next_request_id();
+        self.increment_counter("requests_total");
+        let run_started = Instant::now();
+        self.hook("before_run", json!({"request_id": request_id}))
+            .await?;
+        let timed = timeout(
+            Duration::from_millis(self.config.request_timeout_ms),
+            self.respond_inner(&request_id, user, ctx, Some(sink)),
+        )
+        .await;
+        let result = match timed {
+            Ok(result) => result,
+            Err(_) => Err(AgentError::Timeout {
+                timeout_ms: self.config.request_timeout_ms,
+            }),
+        };
+
+        let after_detail = match &result {
+            Ok(response) => json!({
+                "request_id": request_id,
+                "status": "ok",
+                "response_len": response.text.len(),
+                "duration_ms": run_started.elapsed().as_millis(),
+            }),
+            Err(err) => json!({
+                "request_id": request_id,
+                "status": "error",
+                "error": redact_text(&err.to_string()),
+                "duration_ms": run_started.elapsed().as_millis(),
+            }),
+        };
+        info!(
+            request_id = %request_id,
+            duration_ms = %run_started.elapsed().as_millis(),
+            "streaming agent run completed"
+        );
+        self.hook("after_run", after_detail).await?;
+        result
+    }
+
     async fn respond_inner(
         &self,
         request_id: &str,
         user: UserMessage,
         ctx: &ToolContext,
+        stream_sink: Option<StreamSink>,
     ) -> Result<AssistantMessage, AgentError> {
         self.audit(
             "respond_start",
@@ -1180,7 +1300,7 @@ impl Agent {
         // Use structured tool dispatch when the model supports it and tools have schemas.
         if self.config.model_supports_tool_use && self.has_tool_definitions() {
             return self
-                .respond_with_tools(request_id, &user.text, &research_context, ctx)
+                .respond_with_tools(request_id, &user.text, &research_context, ctx, stream_sink)
                 .await;
         }
 
@@ -1370,7 +1490,9 @@ impl Agent {
             prompt = format!("Research findings:\n{research_context}\n\nUser request:\n{prompt}");
         }
 
-        let response_text = self.call_provider_with_context(&prompt, request_id).await?;
+        let response_text = self
+            .call_provider_with_context(&prompt, request_id, stream_sink)
+            .await?;
         self.write_to_memory("assistant", &response_text, request_id)
             .await?;
         self.audit("respond_success", json!({"request_id": request_id}))
@@ -3620,7 +3742,7 @@ mod tests {
     async fn prepare_tool_input_extracts_single_string_field() {
         let tool = StructuredEchoTool;
         let input = json!({"text": "hello world"});
-        let result = prepare_tool_input(&tool, &input);
+        let result = prepare_tool_input(&tool, &input).expect("valid input");
         assert_eq!(result, "hello world");
     }
 
@@ -3654,7 +3776,7 @@ mod tests {
 
         let tool = MultiFieldTool;
         let input = json!({"path": "a.txt", "content": "hello"});
-        let result = prepare_tool_input(&tool, &input);
+        let result = prepare_tool_input(&tool, &input).expect("valid input");
         // Should be valid JSON.
         let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid JSON");
         assert_eq!(parsed["path"], "a.txt");
@@ -3665,8 +3787,75 @@ mod tests {
     async fn prepare_tool_input_unwraps_bare_string() {
         let tool = StructuredEchoTool;
         let input = json!("plain text");
-        let result = prepare_tool_input(&tool, &input);
+        let result = prepare_tool_input(&tool, &input).expect("valid input");
         assert_eq!(result, "plain text");
+    }
+
+    #[tokio::test]
+    async fn prepare_tool_input_rejects_schema_violating_input() {
+        struct StrictTool;
+        #[async_trait]
+        impl Tool for StrictTool {
+            fn name(&self) -> &'static str {
+                "strict"
+            }
+            fn input_schema(&self) -> Option<serde_json::Value> {
+                Some(json!({
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {
+                        "path": { "type": "string" }
+                    }
+                }))
+            }
+            async fn execute(
+                &self,
+                _input: &str,
+                _ctx: &ToolContext,
+            ) -> anyhow::Result<ToolResult> {
+                unreachable!("should not be called with invalid input")
+            }
+        }
+
+        // Missing required field
+        let result = prepare_tool_input(&StrictTool, &json!({}));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Invalid input for tool 'strict'"));
+        assert!(err.contains("missing required field"));
+    }
+
+    #[tokio::test]
+    async fn prepare_tool_input_rejects_wrong_type() {
+        struct TypedTool;
+        #[async_trait]
+        impl Tool for TypedTool {
+            fn name(&self) -> &'static str {
+                "typed"
+            }
+            fn input_schema(&self) -> Option<serde_json::Value> {
+                Some(json!({
+                    "type": "object",
+                    "required": ["count"],
+                    "properties": {
+                        "count": { "type": "integer" }
+                    }
+                }))
+            }
+            async fn execute(
+                &self,
+                _input: &str,
+                _ctx: &ToolContext,
+            ) -> anyhow::Result<ToolResult> {
+                unreachable!("should not be called with invalid input")
+            }
+        }
+
+        // Wrong type: string instead of integer
+        let result = prepare_tool_input(&TypedTool, &json!({"count": "not a number"}));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("expected type \"integer\""));
     }
 
     #[test]
@@ -3775,5 +3964,633 @@ mod tests {
             "required": ["count"]
         });
         assert_eq!(single_required_string_field(&schema), None);
+    }
+
+    // --- Streaming tests ---
+
+    use crate::types::StreamChunk;
+
+    /// Provider that sends individual token chunks through the streaming sink.
+    struct StreamingProvider {
+        responses: Vec<ChatResult>,
+        call_count: AtomicUsize,
+        received_messages: Arc<Mutex<Vec<Vec<ConversationMessage>>>>,
+    }
+
+    impl StreamingProvider {
+        fn new(responses: Vec<ChatResult>) -> Self {
+            Self {
+                responses,
+                call_count: AtomicUsize::new(0),
+                received_messages: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for StreamingProvider {
+        async fn complete(&self, _prompt: &str) -> anyhow::Result<ChatResult> {
+            let idx = self.call_count.fetch_add(1, Ordering::Relaxed);
+            Ok(self.responses.get(idx).cloned().unwrap_or_default())
+        }
+
+        async fn complete_streaming(
+            &self,
+            _prompt: &str,
+            sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+        ) -> anyhow::Result<ChatResult> {
+            let idx = self.call_count.fetch_add(1, Ordering::Relaxed);
+            let result = self.responses.get(idx).cloned().unwrap_or_default();
+            // Send word-by-word chunks.
+            for word in result.output_text.split_whitespace() {
+                let _ = sender.send(StreamChunk {
+                    delta: format!("{word} "),
+                    done: false,
+                    tool_call_delta: None,
+                });
+            }
+            let _ = sender.send(StreamChunk {
+                delta: String::new(),
+                done: true,
+                tool_call_delta: None,
+            });
+            Ok(result)
+        }
+
+        async fn complete_with_tools(
+            &self,
+            messages: &[ConversationMessage],
+            _tools: &[ToolDefinition],
+            _reasoning: &ReasoningConfig,
+        ) -> anyhow::Result<ChatResult> {
+            self.received_messages
+                .lock()
+                .expect("lock")
+                .push(messages.to_vec());
+            let idx = self.call_count.fetch_add(1, Ordering::Relaxed);
+            Ok(self.responses.get(idx).cloned().unwrap_or_default())
+        }
+
+        async fn complete_streaming_with_tools(
+            &self,
+            messages: &[ConversationMessage],
+            _tools: &[ToolDefinition],
+            _reasoning: &ReasoningConfig,
+            sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+        ) -> anyhow::Result<ChatResult> {
+            self.received_messages
+                .lock()
+                .expect("lock")
+                .push(messages.to_vec());
+            let idx = self.call_count.fetch_add(1, Ordering::Relaxed);
+            let result = self.responses.get(idx).cloned().unwrap_or_default();
+            // Send character-by-character for text.
+            for ch in result.output_text.chars() {
+                let _ = sender.send(StreamChunk {
+                    delta: ch.to_string(),
+                    done: false,
+                    tool_call_delta: None,
+                });
+            }
+            let _ = sender.send(StreamChunk {
+                delta: String::new(),
+                done: true,
+                tool_call_delta: None,
+            });
+            Ok(result)
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_text_only_sends_chunks() {
+        let provider = StreamingProvider::new(vec![ChatResult {
+            output_text: "Hello world".to_string(),
+            ..Default::default()
+        }]);
+        let agent = Agent::new(
+            AgentConfig {
+                model_supports_tool_use: false,
+                ..Default::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![],
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let response = agent
+            .respond_streaming(
+                UserMessage {
+                    text: "hi".to_string(),
+                },
+                &test_ctx(),
+                tx,
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "Hello world");
+
+        // Collect all chunks.
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = rx.try_recv() {
+            chunks.push(chunk);
+        }
+        assert!(chunks.len() >= 2, "should have at least text + done chunks");
+        assert!(chunks.last().unwrap().done, "last chunk should be done");
+    }
+
+    #[tokio::test]
+    async fn streaming_single_tool_call_round_trip() {
+        let provider = StreamingProvider::new(vec![
+            ChatResult {
+                output_text: "I'll echo that.".to_string(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    input: json!({"text": "hello"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: "Done echoing.".to_string(),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let response = agent
+            .respond_streaming(
+                UserMessage {
+                    text: "echo hello".to_string(),
+                },
+                &test_ctx(),
+                tx,
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "Done echoing.");
+
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = rx.try_recv() {
+            chunks.push(chunk);
+        }
+        // Should have chunks from both provider calls (tool use + final response).
+        assert!(chunks.len() >= 2, "should have streaming chunks");
+    }
+
+    #[tokio::test]
+    async fn streaming_multi_iteration_tool_calls() {
+        let provider = StreamingProvider::new(vec![
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    input: json!({"text": "first"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_2".to_string(),
+                    name: "upper".to_string(),
+                    input: json!({"text": "second"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: "All done.".to_string(),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool), Box::new(StructuredUpperTool)],
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let response = agent
+            .respond_streaming(
+                UserMessage {
+                    text: "do two things".to_string(),
+                },
+                &test_ctx(),
+                tx,
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "All done.");
+
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = rx.try_recv() {
+            chunks.push(chunk);
+        }
+        // Chunks from 3 provider calls.
+        let done_count = chunks.iter().filter(|c| c.done).count();
+        assert!(
+            done_count >= 3,
+            "should have done chunks from 3 provider calls, got {}",
+            done_count
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_timeout_returns_error() {
+        struct StreamingSlowProvider;
+
+        #[async_trait]
+        impl Provider for StreamingSlowProvider {
+            async fn complete(&self, _prompt: &str) -> anyhow::Result<ChatResult> {
+                sleep(Duration::from_millis(500)).await;
+                Ok(ChatResult::default())
+            }
+
+            async fn complete_streaming(
+                &self,
+                _prompt: &str,
+                _sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+            ) -> anyhow::Result<ChatResult> {
+                sleep(Duration::from_millis(500)).await;
+                Ok(ChatResult::default())
+            }
+        }
+
+        let agent = Agent::new(
+            AgentConfig {
+                request_timeout_ms: 50,
+                model_supports_tool_use: false,
+                ..Default::default()
+            },
+            Box::new(StreamingSlowProvider),
+            Box::new(TestMemory::default()),
+            vec![],
+        );
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let result = agent
+            .respond_streaming(
+                UserMessage {
+                    text: "hi".to_string(),
+                },
+                &test_ctx(),
+                tx,
+            )
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AgentError::Timeout { timeout_ms } => assert_eq!(timeout_ms, 50),
+            other => panic!("expected Timeout, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_no_schema_fallback_sends_chunks() {
+        // Tools without schemas → text-only fallback path.
+        let provider = StreamingProvider::new(vec![ChatResult {
+            output_text: "Fallback response".to_string(),
+            ..Default::default()
+        }]);
+        let agent = Agent::new(
+            AgentConfig::default(), // model_supports_tool_use: true, but no schemas
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)], // EchoTool has no input_schema
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let response = agent
+            .respond_streaming(
+                UserMessage {
+                    text: "hi".to_string(),
+                },
+                &test_ctx(),
+                tx,
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "Fallback response");
+
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = rx.try_recv() {
+            chunks.push(chunk);
+        }
+        assert!(!chunks.is_empty(), "should have streaming chunks");
+        assert!(chunks.last().unwrap().done, "last chunk should be done");
+    }
+
+    #[tokio::test]
+    async fn streaming_tool_error_does_not_abort() {
+        let provider = StreamingProvider::new(vec![
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "boom".to_string(),
+                    input: json!({}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: "Recovered from error.".to_string(),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredFailingTool)],
+        );
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let response = agent
+            .respond_streaming(
+                UserMessage {
+                    text: "boom".to_string(),
+                },
+                &test_ctx(),
+                tx,
+            )
+            .await
+            .expect("should succeed despite tool error");
+
+        assert_eq!(response.text, "Recovered from error.");
+    }
+
+    #[tokio::test]
+    async fn streaming_parallel_tools() {
+        let provider = StreamingProvider::new(vec![
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![
+                    ToolUseRequest {
+                        id: "call_1".to_string(),
+                        name: "echo".to_string(),
+                        input: json!({"text": "a"}),
+                    },
+                    ToolUseRequest {
+                        id: "call_2".to_string(),
+                        name: "upper".to_string(),
+                        input: json!({"text": "b"}),
+                    },
+                ],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: "Parallel done.".to_string(),
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::EndTurn),
+            },
+        ]);
+
+        let agent = Agent::new(
+            AgentConfig {
+                parallel_tools: true,
+                ..Default::default()
+            },
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool), Box::new(StructuredUpperTool)],
+        );
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let response = agent
+            .respond_streaming(
+                UserMessage {
+                    text: "parallel test".to_string(),
+                },
+                &test_ctx(),
+                tx,
+            )
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.text, "Parallel done.");
+    }
+
+    #[tokio::test]
+    async fn streaming_done_chunk_sentinel() {
+        let provider = StreamingProvider::new(vec![ChatResult {
+            output_text: "abc".to_string(),
+            tool_calls: vec![],
+            stop_reason: Some(StopReason::EndTurn),
+        }]);
+
+        let agent = Agent::new(
+            AgentConfig::default(),
+            Box::new(provider),
+            Box::new(TestMemory::default()),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let _response = agent
+            .respond_streaming(
+                UserMessage {
+                    text: "test".to_string(),
+                },
+                &test_ctx(),
+                tx,
+            )
+            .await
+            .expect("should succeed");
+
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = rx.try_recv() {
+            chunks.push(chunk);
+        }
+
+        // Must have at least one done chunk.
+        let done_chunks: Vec<_> = chunks.iter().filter(|c| c.done).collect();
+        assert!(
+            !done_chunks.is_empty(),
+            "must have at least one done sentinel chunk"
+        );
+        // The last chunk should be done.
+        assert!(chunks.last().unwrap().done, "final chunk must be done=true");
+        // Non-done chunks should have content.
+        let content_chunks: Vec<_> = chunks
+            .iter()
+            .filter(|c| !c.done && !c.delta.is_empty())
+            .collect();
+        assert!(!content_chunks.is_empty(), "should have content chunks");
+    }
+
+    // ===== System prompt tests =====
+
+    #[tokio::test]
+    async fn system_prompt_prepended_in_structured_path() {
+        let provider = StructuredProvider::new(vec![ChatResult {
+            output_text: "I understand.".to_string(),
+            stop_reason: Some(StopReason::EndTurn),
+            ..Default::default()
+        }]);
+        let received = provider.received_messages.clone();
+        let memory = TestMemory::default();
+
+        let agent = Agent::new(
+            AgentConfig {
+                model_supports_tool_use: true,
+                system_prompt: Some("You are a math tutor.".to_string()),
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(memory),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        let result = agent
+            .respond(
+                UserMessage {
+                    text: "What is 2+2?".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("respond should succeed");
+
+        assert_eq!(result.text, "I understand.");
+
+        let msgs = received.lock().expect("lock");
+        assert!(!msgs.is_empty(), "provider should have been called");
+        let first_call = &msgs[0];
+        // First message should be the system prompt.
+        match &first_call[0] {
+            ConversationMessage::System { content } => {
+                assert_eq!(content, "You are a math tutor.");
+            }
+            other => panic!("expected System message first, got {other:?}"),
+        }
+        // Second message should be the user message.
+        match &first_call[1] {
+            ConversationMessage::User { content } => {
+                assert_eq!(content, "What is 2+2?");
+            }
+            other => panic!("expected User message second, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn no_system_prompt_omits_system_message() {
+        let provider = StructuredProvider::new(vec![ChatResult {
+            output_text: "ok".to_string(),
+            stop_reason: Some(StopReason::EndTurn),
+            ..Default::default()
+        }]);
+        let received = provider.received_messages.clone();
+        let memory = TestMemory::default();
+
+        let agent = Agent::new(
+            AgentConfig {
+                model_supports_tool_use: true,
+                system_prompt: None,
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(memory),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        agent
+            .respond(
+                UserMessage {
+                    text: "hello".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("respond should succeed");
+
+        let msgs = received.lock().expect("lock");
+        let first_call = &msgs[0];
+        // First message should be User, not System.
+        match &first_call[0] {
+            ConversationMessage::User { content } => {
+                assert_eq!(content, "hello");
+            }
+            other => panic!("expected User message first (no system prompt), got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn system_prompt_persists_across_tool_iterations() {
+        // Provider: first call requests a tool, second call returns final answer.
+        let provider = StructuredProvider::new(vec![
+            ChatResult {
+                output_text: String::new(),
+                tool_calls: vec![ToolUseRequest {
+                    id: "call_1".to_string(),
+                    name: "echo".to_string(),
+                    input: serde_json::json!({"text": "ping"}),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+            },
+            ChatResult {
+                output_text: "pong".to_string(),
+                stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
+            },
+        ]);
+        let received = provider.received_messages.clone();
+        let memory = TestMemory::default();
+
+        let agent = Agent::new(
+            AgentConfig {
+                model_supports_tool_use: true,
+                system_prompt: Some("Always be concise.".to_string()),
+                ..AgentConfig::default()
+            },
+            Box::new(provider),
+            Box::new(memory),
+            vec![Box::new(StructuredEchoTool)],
+        );
+
+        let result = agent
+            .respond(
+                UserMessage {
+                    text: "test".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("respond should succeed");
+        assert_eq!(result.text, "pong");
+
+        let msgs = received.lock().expect("lock");
+        // Both provider calls should have the system prompt as first message.
+        for (i, call_msgs) in msgs.iter().enumerate() {
+            match &call_msgs[0] {
+                ConversationMessage::System { content } => {
+                    assert_eq!(content, "Always be concise.", "call {i} system prompt");
+                }
+                other => panic!("call {i}: expected System first, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn agent_config_system_prompt_defaults_to_none() {
+        let config = AgentConfig::default();
+        assert!(config.system_prompt.is_none());
     }
 }

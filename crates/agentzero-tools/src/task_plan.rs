@@ -109,6 +109,21 @@ impl Tool for TaskPlanTool {
         "Manage a structured task plan: create, list, update status, or clear tasks for tracking multi-step work."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["create", "add", "update", "list", "delete"], "description": "The task plan action to perform" },
+                "tasks": { "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string" }, "status": { "type": "string" } }, "required": ["title"] }, "description": "Tasks to create (for create action)" },
+                "title": { "type": "string", "description": "Task title (for add action)" },
+                "id": { "type": "integer", "description": "Task ID (for update action)" },
+                "status": { "type": "string", "enum": ["pending", "in_progress", "completed"], "description": "New status (for update action)" }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let action: TaskAction =
             serde_json::from_str(input).context("task_plan expects JSON with \"action\" field")?;

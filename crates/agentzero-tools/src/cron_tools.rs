@@ -31,6 +31,19 @@ impl Tool for CronAddTool {
         "Add a new cron task with a schedule and command."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Unique task ID" },
+                "schedule": { "type": "string", "description": "Cron expression (e.g. '0 * * * *')" },
+                "command": { "type": "string", "description": "Command to execute" }
+            },
+            "required": ["id", "schedule", "command"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: CronAddInput = serde_json::from_str(input)
             .context("cron_add expects JSON: {\"id\", \"schedule\", \"command\"}")?;
@@ -58,6 +71,14 @@ impl Tool for CronListTool {
 
     fn description(&self) -> &'static str {
         "List all registered cron tasks."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
     }
 
     async fn execute(&self, _input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -103,6 +124,17 @@ impl Tool for CronRemoveTool {
         "Remove a cron task by ID."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "ID of the cron task to remove" }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: CronRemoveInput =
             serde_json::from_str(input).context("cron_remove expects JSON: {\"id\": \"...\"}")?;
@@ -136,6 +168,19 @@ impl Tool for CronUpdateTool {
 
     fn description(&self) -> &'static str {
         "Update an existing cron task's schedule or command."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "ID of the cron task to update" },
+                "schedule": { "type": "string", "description": "New cron schedule expression" },
+                "command": { "type": "string", "description": "New command to execute" }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }))
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -177,6 +222,17 @@ impl Tool for CronPauseTool {
         "Pause a cron task (disable without removing)."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "ID of the cron task to pause" }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: CronPauseInput =
             serde_json::from_str(input).context("cron_pause expects JSON: {\"id\": \"...\"}")?;
@@ -206,6 +262,17 @@ impl Tool for CronResumeTool {
 
     fn description(&self) -> &'static str {
         "Resume a paused cron task."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "ID of the cron task to resume" }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }))
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

@@ -64,6 +64,8 @@ pub(crate) struct ModelItem {
 pub(crate) struct ChatCompletionsRequest {
     pub(crate) model: Option<String>,
     pub(crate) messages: Vec<CompletionMessage>,
+    #[serde(default)]
+    pub(crate) stream: bool,
 }
 
 #[derive(Debug, Deserialize)]

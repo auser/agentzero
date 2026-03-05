@@ -19,17 +19,17 @@ pub(crate) struct GatewayState {
     pub(crate) token_store_path: Option<Arc<PathBuf>>,
     pub(crate) perplexity_filter: Arc<PerplexityFilterSettings>,
     /// Pairing code creation timestamp (for TTL-based expiry).
-    #[allow(dead_code)]
     pub(crate) pairing_created_at: Instant,
     /// How many seconds the pairing code is valid. `None` = no expiry.
-    #[allow(dead_code)]
     pub(crate) pairing_ttl_secs: Option<u64>,
     /// Require pairing flow (from `[gateway]` config).
-    #[allow(dead_code)]
     pub(crate) require_pairing: bool,
     /// Allow binding to non-loopback interfaces (from `[gateway]` config).
-    #[allow(dead_code)]
     pub(crate) allow_public_bind: bool,
+    /// Path to the agentzero config file (for building agent runtime).
+    pub(crate) config_path: Option<Arc<PathBuf>>,
+    /// Workspace root directory.
+    pub(crate) workspace_root: Option<Arc<PathBuf>>,
 }
 
 impl GatewayState {
@@ -55,19 +55,20 @@ impl GatewayState {
             pairing_ttl_secs: None,
             require_pairing: true,
             allow_public_bind: false,
+            config_path: None,
+            workspace_root: None,
         }
     }
 
     /// Set the pairing code TTL. After `ttl_secs` seconds, `pairing_code_valid()`
     /// returns `None` even if a code was set.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn with_pairing_ttl(mut self, ttl_secs: u64) -> Self {
         self.pairing_ttl_secs = Some(ttl_secs);
         self
     }
 
     /// Set gateway config fields from loaded config.
-    #[allow(dead_code)]
     pub(crate) fn with_gateway_config(
         mut self,
         require_pairing: bool,
@@ -78,8 +79,18 @@ impl GatewayState {
         self
     }
 
+    /// Set workspace paths for agent runtime execution.
+    pub(crate) fn with_agent_paths(
+        mut self,
+        config_path: PathBuf,
+        workspace_root: PathBuf,
+    ) -> Self {
+        self.config_path = Some(Arc::new(config_path));
+        self.workspace_root = Some(Arc::new(workspace_root));
+        self
+    }
+
     /// Return the current pairing code if it exists and hasn't expired.
-    #[allow(dead_code)]
     pub(crate) fn pairing_code_valid(&self) -> Option<&str> {
         let code = self.pairing_code.as_deref()?;
         if let Some(ttl) = self.pairing_ttl_secs {
@@ -90,7 +101,6 @@ impl GatewayState {
         Some(code)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn with_perplexity_filter(mut self, settings: PerplexityFilterSettings) -> Self {
         self.perplexity_filter = Arc::new(settings);
         self
@@ -119,6 +129,8 @@ impl GatewayState {
             pairing_ttl_secs: None,
             require_pairing: true,
             allow_public_bind: false,
+            config_path: None,
+            workspace_root: None,
         }
     }
 
@@ -139,6 +151,8 @@ impl GatewayState {
             pairing_ttl_secs: None,
             require_pairing: true,
             allow_public_bind: false,
+            config_path: None,
+            workspace_root: None,
         }
     }
 }

@@ -12,6 +12,7 @@ use napi_derive::napi;
 use crate::{
     AgentResponse as CoreResponse, AgentStatus as CoreStatus, AgentZeroConfig as CoreConfig,
     AgentZeroController as CoreController, AgentZeroError as CoreError, ChatMessage as CoreMessage,
+    FfiTool, ToolCallback,
 };
 
 #[napi(object)]
@@ -26,6 +27,18 @@ pub struct NodeAgentZeroConfig {
 impl From<NodeAgentZeroConfig> for CoreConfig {
     fn from(c: NodeAgentZeroConfig) -> Self {
         CoreConfig {
+            config_path: c.config_path,
+            workspace_root: c.workspace_root,
+            provider: c.provider,
+            model: c.model,
+            profile: c.profile,
+        }
+    }
+}
+
+impl From<CoreConfig> for NodeAgentZeroConfig {
+    fn from(c: CoreConfig) -> Self {
+        Self {
             config_path: c.config_path,
             workspace_root: c.workspace_root,
             provider: c.provider,
@@ -126,5 +139,69 @@ impl AgentZeroController {
     #[napi]
     pub fn version(&self) -> String {
         self.inner.version()
+    }
+
+    #[napi]
+    pub fn get_config(&self) -> napi::Result<NodeAgentZeroConfig> {
+        self.inner
+            .get_config()
+            .map(NodeAgentZeroConfig::from)
+            .map_err(core_error_to_napi)
+    }
+
+    #[napi]
+    pub fn update_config(&self, config: NodeAgentZeroConfig) -> napi::Result<()> {
+        self.inner
+            .update_config(config.into())
+            .map_err(core_error_to_napi)
+    }
+
+    #[napi]
+    pub fn register_tool(&self, name: String, description: String) -> napi::Result<()> {
+        let callback: Box<dyn ToolCallback> = Box::new(NodeStubCallback { desc: description });
+        self.inner
+            .register_tool_impl(name, Arc::from(callback))
+            .map_err(core_error_to_napi)
+    }
+
+    #[napi]
+    pub fn registered_tool_names(&self) -> Vec<String> {
+        self.inner.registered_tool_names()
+    }
+
+    /// Non-blocking version of `send_message` that returns a Promise.
+    /// Avoids blocking the Node.js event loop.
+    #[napi]
+    pub async fn send_message_async(&self, message: String) -> napi::Result<NodeAgentResponse> {
+        let inner = Arc::clone(&self.inner);
+        // Run the blocking send_message on a separate thread so the event loop stays free.
+        let result = tokio::task::spawn_blocking(move || inner.send_message(message))
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("task panicked: {e}")))?;
+        result
+            .map(NodeAgentResponse::from)
+            .map_err(core_error_to_napi)
+    }
+}
+
+/// Stub callback for tools registered from Node.js via `register_tool`.
+///
+/// Provides the tool name and description to the agent's tool list.
+/// Full JS callback execution requires `send_message_async` to avoid
+/// deadlocking the Node.js event loop.
+struct NodeStubCallback {
+    desc: String,
+}
+
+impl ToolCallback for NodeStubCallback {
+    fn execute(&self, _input: String, _workspace_root: String) -> Result<String, String> {
+        Err(
+            "Node.js tool callback not yet connected — register a full callback via the JS SDK"
+                .to_string(),
+        )
+    }
+
+    fn description(&self) -> String {
+        self.desc.clone()
     }
 }

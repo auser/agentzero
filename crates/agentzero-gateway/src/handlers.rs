@@ -7,6 +7,9 @@ use crate::models::{
 use crate::state::GatewayState;
 use crate::util::{generate_session_token, now_epoch_secs};
 use agentzero_channels::pipeline::check_perplexity;
+use agentzero_infra::runtime::{
+    build_runtime_execution, run_agent_once, run_agent_streaming, RunAgentRequest,
+};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -18,6 +21,8 @@ use axum::{
 };
 use futures_util::StreamExt;
 use serde_json::{json, Value};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 pub(crate) async fn dashboard(State(state): State<GatewayState>) -> Html<String> {
     Html(format!(
@@ -44,7 +49,7 @@ pub(crate) async fn pair(
     headers: HeaderMap,
     _body: Option<Json<PairRequest>>,
 ) -> Result<Json<PairResponse>, StatusCode> {
-    let Some(expected_code) = state.pairing_code.as_deref() else {
+    let Some(expected_code) = state.pairing_code_valid() else {
         return Err(StatusCode::UNAUTHORIZED);
     };
 
@@ -54,7 +59,7 @@ pub(crate) async fn pair(
     let Ok(code) = code_header.to_str() else {
         return Err(StatusCode::UNAUTHORIZED);
     };
-    if code.trim() != expected_code.as_str() {
+    if code.trim() != expected_code {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -119,6 +124,36 @@ pub(crate) async fn legacy_webhook(
     }))
 }
 
+/// Build a `RunAgentRequest` from gateway state. Returns `SERVICE_UNAVAILABLE`
+/// if the gateway was started without a config/workspace path.
+fn build_agent_request(
+    state: &GatewayState,
+    message: String,
+    model_override: Option<String>,
+) -> Result<RunAgentRequest, StatusCode> {
+    let config_path = state
+        .config_path
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?
+        .as_ref()
+        .clone();
+    let workspace_root = state
+        .workspace_root
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?
+        .as_ref()
+        .clone();
+    Ok(RunAgentRequest {
+        workspace_root,
+        config_path,
+        message,
+        provider_override: None,
+        model_override,
+        profile_override: None,
+        extra_tools: vec![],
+    })
+}
+
 pub(crate) async fn api_chat(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -131,9 +166,15 @@ pub(crate) async fn api_chat(
         return Err(StatusCode::BAD_REQUEST);
     }
 
+    let agent_req = build_agent_request(&state, req.message, None)?;
+    let output = run_agent_once(agent_req).await.map_err(|e| {
+        tracing::error!(error = %e, "api_chat agent execution failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
     Ok(Json(ChatResponse {
-        message: format!("agent reply: {}", req.message),
-        tokens_used_estimate: req.message.len() + req.context.len() * 8,
+        message: output.response_text,
+        tokens_used_estimate: 0,
     }))
 }
 
@@ -141,7 +182,7 @@ pub(crate) async fn v1_chat_completions(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Json(req): Json<ChatCompletionsRequest>,
-) -> Result<Json<ChatCompletionsResponse>, StatusCode> {
+) -> Result<Response, StatusCode> {
     authorize_request(&state, &headers, false)?;
 
     let last_user = req
@@ -157,7 +198,17 @@ pub(crate) async fn v1_chat_completions(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let model = req.model.unwrap_or_else(|| "gpt-4o-mini".to_string());
+    let model_override = req.model;
+
+    if req.stream {
+        return v1_chat_completions_stream(&state, &last_user, model_override).await;
+    }
+
+    let agent_req = build_agent_request(&state, last_user, model_override)?;
+    let output = run_agent_once(agent_req).await.map_err(|e| {
+        tracing::error!(error = %e, "v1_chat_completions agent execution failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(ChatCompletionsResponse {
         id: format!("chatcmpl-{}", now_epoch_secs()),
@@ -166,11 +217,74 @@ pub(crate) async fn v1_chat_completions(
             index: 0,
             message: CompletionChoiceMessage {
                 role: "assistant",
-                content: format!("({model}) {last_user}"),
+                content: output.response_text,
             },
             finish_reason: "stop",
         }],
-    }))
+    })
+    .into_response())
+}
+
+/// SSE streaming variant of v1/chat/completions (OpenAI-compatible).
+async fn v1_chat_completions_stream(
+    state: &GatewayState,
+    message: &str,
+    model_override: Option<String>,
+) -> Result<Response, StatusCode> {
+    let agent_req = build_agent_request(state, message.to_string(), model_override)?;
+    let execution = build_runtime_execution(agent_req).await.map_err(|e| {
+        tracing::error!(error = %e, "v1_chat_completions_stream build failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let workspace_root = state
+        .workspace_root
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?
+        .as_ref()
+        .clone();
+
+    let (mut rx, _handle) = run_agent_streaming(execution, workspace_root, message.to_string());
+    let id = format!("chatcmpl-{}", now_epoch_secs());
+
+    let stream = async_stream::stream! {
+        while let Some(chunk) = rx.recv().await {
+            if chunk.done {
+                let data = json!({
+                    "id": id,
+                    "object": "chat.completion.chunk",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop"
+                    }]
+                });
+                yield Ok::<_, std::convert::Infallible>(
+                    axum::response::sse::Event::default().data(data.to_string())
+                );
+                yield Ok(axum::response::sse::Event::default().data("[DONE]"));
+                break;
+            }
+            if !chunk.delta.is_empty() {
+                let data = json!({
+                    "id": id,
+                    "object": "chat.completion.chunk",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": chunk.delta},
+                        "finish_reason": null
+                    }]
+                });
+                yield Ok::<_, std::convert::Infallible>(
+                    axum::response::sse::Event::default().data(data.to_string())
+                );
+            }
+        }
+    };
+
+    Ok(axum::response::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response())
 }
 
 pub(crate) async fn v1_models(
@@ -215,17 +329,70 @@ pub(crate) async fn ws_chat(
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
     authorize_request(&state, &headers, true)?;
-    Ok(ws.on_upgrade(handle_socket).into_response())
+    let config_path = state
+        .config_path
+        .clone()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let workspace_root = state
+        .workspace_root
+        .clone()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(ws
+        .on_upgrade(move |socket| handle_socket(socket, config_path, workspace_root))
+        .into_response())
 }
 
-async fn handle_socket(mut socket: WebSocket) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    config_path: Arc<PathBuf>,
+    workspace_root: Arc<PathBuf>,
+) {
     while let Some(Ok(msg)) = socket.next().await {
         match msg {
             Message::Text(text) => {
-                let _ = socket.send(Message::Text(format!("echo: {text}"))).await;
-            }
-            Message::Binary(data) => {
-                let _ = socket.send(Message::Binary(data)).await;
+                let req = RunAgentRequest {
+                    workspace_root: workspace_root.as_ref().clone(),
+                    config_path: config_path.as_ref().clone(),
+                    message: text.to_string(),
+                    provider_override: None,
+                    model_override: None,
+                    profile_override: None,
+                    extra_tools: vec![],
+                };
+                let execution = match build_runtime_execution(req).await {
+                    Ok(exec) => exec,
+                    Err(e) => {
+                        let _ = socket
+                            .send(Message::Text(
+                                json!({"type": "error", "message": e.to_string()}).to_string(),
+                            ))
+                            .await;
+                        continue;
+                    }
+                };
+                let (mut rx, handle) = run_agent_streaming(
+                    execution,
+                    workspace_root.as_ref().clone(),
+                    text.to_string(),
+                );
+                while let Some(chunk) = rx.recv().await {
+                    if !chunk.delta.is_empty() {
+                        let frame = json!({
+                            "type": "delta",
+                            "delta": chunk.delta,
+                        });
+                        if socket.send(Message::Text(frame.to_string())).await.is_err() {
+                            break;
+                        }
+                    }
+                    if chunk.done {
+                        break;
+                    }
+                }
+                let _ = socket
+                    .send(Message::Text(json!({"type": "done"}).to_string()))
+                    .await;
+                let _ = handle.await;
             }
             Message::Close(_) => break,
             _ => {}

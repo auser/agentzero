@@ -241,51 +241,132 @@
 
 ---
 
-## Sprint 22: Hardening, Coverage & Polish
+## Sprint 22: Streaming Agent Loop, Gateway Wiring & Hardening
 
-**Goal:** Fix correctness gaps from Sprint 21 (validation not wired, tools not registered), harden error handling, fill test coverage gaps, and polish config validation and documentation.
+**Goal:** Wire streaming end-to-end from provider layer through agent loop, runtime, CLI, and gateway. Close critical gaps: system prompt support, MCP connection caching, tool schema coverage, FFI parity.
+
+**Branch:** `feat/streaming-gateway`
+
+### Phase 1: Streaming Agent Loop — [x] DONE
+
+- [x] Add `StreamSink` type alias to `types.rs`, re-export from `lib.rs`
+- [x] Add `Agent::respond_streaming()` — timeout wrapper passing sink to `respond_inner`
+- [x] Modify `respond_with_tools()` to accept `Option<StreamSink>`, call `complete_streaming_with_tools()` when present
+- [x] Modify `call_provider_with_context()` to accept `Option<StreamSink>`, call `complete_streaming()` for text-only path
+- [x] 8 new tests: streaming text-only, single tool call, multi-iteration, timeout, no-schema fallback, tool error recovery, parallel tools, done-chunk sentinel
+- [x] 190 core tests pass, 0 clippy warnings
+
+### Phase 2: Runtime Streaming Channel — [x] DONE
+
+- [x] Add `run_agent_streaming()` returning `(UnboundedReceiver<StreamChunk>, JoinHandle<Result<RunAgentOutput>>)`
+- [x] Extract `build_runtime_execution()` for shared setup between streaming/non-streaming
+- [x] Tests (3): receiver delivers chunks, handle resolves to output, output text matches accumulated chunks
+- [x] 17 runtime tests pass, 0 clippy warnings
+
+### Phase 3: CLI `--stream` Flag — [x] DONE
+
+- [x] Add `--stream` flag to Agent command in `cli.rs`
+- [x] In `AgentCommand::run()`: dispatch to `run_streaming()` when `--stream` set
+- [x] `run_streaming()`: loop `rx.recv()`, `write!` + `flush` each delta
+- [x] Tests (2): stream flag defaults false, error propagation with --stream
+- [x] 7 agent tests + 1 integration test pass
+
+### Phase 4: System Prompt Support — [x] DONE
+
+- [x] Add `ConversationMessage::System { content }` variant to `types.rs`
+- [x] Add `system_prompt: Option<String>` to `AgentConfig` and `AgentSettings`
+- [x] In `respond_with_tools()`: prepend `System` message when configured
+- [x] Anthropic: extract system from messages → `MessagesRequest.system` field; filter from messages
+- [x] OpenAI: map `System` → `{"role": "system", "content": "..."}`
+- [x] Thread `system_prompt` through `runtime.rs` from config
+- [x] Fix `delegate.rs`: use `<system>...</system>` tags for single-shot, `AgentConfig.system_prompt` for agentic
+- [x] Tests (8): serde round-trip, char_count, agent prepend, agent omit-when-none, agent persist-across-iterations, config default, Anthropic filter+extract, OpenAI system role
+- [x] 198 core tests, 125 provider tests, 16 delegate tests pass, 0 clippy warnings
+
+### Phase 5: Gateway Agent Wiring — [x] DONE
+
+- [x] Add `agentzero-infra`, `agentzero-config`, `agentzero-core`, `async-stream` to gateway Cargo.toml
+- [x] Add `config_path`/`workspace_root` to `GatewayState` and `GatewayRunOptions`
+- [x] Load `[gateway]` config from TOML; enforce `allow_public_bind`; wire perplexity filter from security config
+- [x] Replace `api_chat` echo with `run_agent_once()` (returns 503 without config)
+- [x] Replace `v1_chat_completions` echo with `run_agent_once()` + model override passthrough
+- [x] Add SSE streaming to `v1_chat_completions` when `stream: true` via `async_stream` + `axum::response::Sse`
+- [x] Replace `ws_chat` echo with `run_agent_streaming()` — delta frames + `{"type":"done"}` sentinel
+- [x] Use `pairing_code_valid()` (TTL-aware) instead of raw code access in pair handler
+- [x] Tests (5): api_chat 503 without config, v1_chat_completions 503, stream 503, config fields active, pairing TTL expiry
+- [x] 55 gateway tests pass, 0 clippy warnings
+
+### Phase 6: MCP Connection Caching — [x] DONE
+
+- [x] Add `McpSession` struct with cached stdin/stdout/child, auto-incrementing request ID, `tool_schemas` HashMap
+- [x] Add `sessions: HashMap<String, Arc<Mutex<Option<McpSession>>>>` to `McpTool` for per-server caching
+- [x] `spawn_session()` initializes handshake + caches `inputSchema` from `tools/list`
+- [x] `execute()` lazily connects, calls `call_tool_cached()`, on error clears slot and retries once
+- [x] Implement `input_schema()` for `McpTool` (dispatcher schema: server/tool/arguments)
+- [x] Tests (5): parse input, reject unknown server, reject unknown request, input_schema returns schema, session slots created
+- [x] 35 infra tests pass, 0 clippy warnings
+
+### Phase 7: Tool Schema Coverage — [x] DONE
+
+- [x] Add `input_schema()` to 28 remaining tools across 14 files:
+  - Batch A (5): cli_discovery, delegate_coordination_status, url_validation, proxy_config, pushover (hardware_board_info was already counted here)
+  - Batch B (7): composio, agents_ipc, delegate, model_routing_config, task_plan, process_tool, hardware_board_info/memory_map/memory_read
+  - Batch C (7): schedule, cron_add/list/remove/update/pause/resume
+  - Batch D (5): sop_list/status/advance/approve/execute
+  - Batch E (4): subagent_spawn/list/manage, wasm_module/wasm_tool
+- [x] WasmTool (wasm_bridge) and ProcessPluginTool (plugin.rs) skipped — dynamic plugin wrappers with no fixed schema
+- [x] MCP tool `input_schema()` already added in Phase 6
+- [x] 243 tools tests pass, 0 clippy warnings
+
+### Phase 8: FFI Node Bindings Parity — [x] DONE
+
+- [x] Add `get_config()` → `NodeAgentZeroConfig` (with `From<CoreConfig>` reverse conversion)
+- [x] Add `update_config(config)` → `()`
+- [x] Add `register_tool(name, description)` with `NodeStubCallback` implementing `ToolCallback`
+- [x] Add `send_message_async(message)` → `Promise<NodeAgentResponse>` via `spawn_blocking`
+- [x] Add `registered_tool_names()` → `Vec<String>`
+- [x] 19 FFI tests pass (core-level tests already cover get_config, update_config, register_tool round-trips)
+
+### Phase 9: Infra Integration Tests — [x] DONE
+
+- [x] 8 new integration tests in `crates/agentzero-infra/tests/runtime_integration.rs`
+- [x] Tests: run_agent_once_with_mock_provider, run_agent_streaming_delivers_chunks, run_agent_once_records_audit_events, run_agent_once_provider_error_propagates, run_agent_streaming_handle_resolves_to_output, default_tools_read_file_present, default_tools_write_file_absent_by_default, default_tools_all_have_schemas
+
+Previous sprint archived to `specs/sprints/20-plugin-architecture.md`.
+
+---
+
+## Sprint 22H: Hardening, Coverage & Polish
+
+**Goal:** Close correctness gaps, wire dead code, harden error paths, expand test coverage, and polish documentation. Audit-driven from post-Sprint 21 codebase review.
 
 **Branch:** `feat/plugins`
 
-### Phase 1: Wire Schema Validation into Tool Dispatch — [ ]
+### Phase 1: Correctness (P0)
 
-- [ ] Re-export `validate_json` from `agentzero-core` top-level
-- [ ] Call `validate_json` in tool dispatch before `execute()` when a schema is present
-- [ ] Return `ToolResultMessage { is_error: true }` on validation failure
-- [ ] Tests: schema-violating input → error result
+- [x] Wire `validate_json` into tool dispatch — call schema validation in `prepare_tool_input()` before execution, return error on violation
+- [x] Register `WebFetchTool`, `UrlValidationTool`, `AgentsIpcTool`, `HttpRequestTool` in `default_tools()` with policy flags
+- [x] Fix `WasmTool::description()` and `FfiTool::description()` — return actual manifest description instead of placeholder
+- [x] Document `agentzero tools list/info/schema` CLI commands in site docs
 
-### Phase 2: Register Missing Tools — [ ]
+### Phase 2: Security & Correctness (P1)
 
-- [ ] Add `enable_web_fetch`, `enable_url_validation`, `enable_agents_ipc` flags to `ToolSecurityPolicy`
-- [ ] Wire flags in `load_tool_security_policy()` from config
-- [ ] Register `WebFetchTool`, `UrlValidationTool`, `AgentsIpcTool` in `default_tools()`
+- [ ] Fix dead config knobs (`context_aware_parsing`, `enable_composio`, `enable_pushover`, `require_first_visit_approval`)
+- [x] Replace `eprintln!` with `tracing::warn!` in WASM runtimes
+- [x] Fix `model_supports_tool_use` default to `false` (unknown models should not assume tool support)
+- [ ] Replace unsafe `unwrap()` calls in production code (Mutex locks, `pop().unwrap()`, `as_ref().unwrap()`)
 
-### Phase 3: Fix Tool Descriptions & Document CLI — [ ]
+### Phase 3: Test Coverage (P2)
 
-- [ ] Fix `WasmTool::description()` — leak description string at init (same as `name`)
-- [ ] Fix `FfiTool::description()` — same pattern
-- [ ] Document `agentzero tools list/info/schema` in `site/src/content/docs/reference/commands.md`
-
-### Phase 4: Security & Config Hardening — [ ]
-
-- [ ] Fix dead config knobs: `context_aware_parsing`, `enable_composio`, `enable_pushover`, `require_first_visit_approval`
-- [ ] Replace 5 `eprintln!` in `wasm.rs` with `tracing::warn!`
-- [ ] Fix `model_supports_tool_use` default to `false` in `runtime.rs`
-- [ ] Replace unsafe `unwrap()` calls in `commands.rs`, `agent.rs`, `shell.rs`
-
-### Phase 5: Test Coverage — [ ]
-
-- [ ] Add tests for `wasm_bridge.rs` (`WasmTool::from_manifest()`, error paths)
-- [ ] Add tests for `runtime::parse_hook_mode()` (all branches + error)
+- [ ] Add tests for `wasm_bridge.rs` (146 lines, zero tests)
+- [ ] Add tests for `runtime::parse_hook_mode()` (zero tests)
 - [ ] Add gateway TCP-level integration test
-- [ ] Add full-loop agent integration test with a real tool
+- [ ] Add full-loop agent integration test with real tool
 
-### Phase 6: Polish — [ ]
+### Phase 4: Polish (P3)
 
-- [ ] Add config validation for `gateway.port`, `gateway.host`, `autonomy.level`, `observability.backend`, `channels_config.stream_mode`, `WasmSecurityConfig` enum strings, `circuit_breaker_threshold > 0`
+- [ ] Add config validation for `gateway.port`, `gateway.host`, `autonomy.level`, etc.
 - [ ] Add `//!` module-level doc comments to 8 `lib.rs` files
-- [ ] Fix AGENTS.md Rule 12 doc path references (`tools-plugins.md` → `tools.md`, `gateway-api.md` → `gateway.md`)
-- [ ] Replace `fs2` with `fd-lock` in `agentzero-plugins`
+- [x] Fix AGENTS.md Rule 12 doc path references (`tools-plugins.md` → `tools.md`, `gateway-api.md` → `gateway.md`)
+- [ ] Replace `fs2` with `fd-lock`
 - [ ] Replace daemon `std::thread::sleep` with `tokio::time::sleep`
-
-Previous sprint archived to `specs/sprints/20-plugin-architecture.md`.

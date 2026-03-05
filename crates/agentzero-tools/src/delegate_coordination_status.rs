@@ -81,6 +81,20 @@ impl Tool for DelegateCoordinationStatusTool {
         "Track and manage delegation coordination: list, record, or clear delegation events."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "type": "object",
+            "required": ["op"],
+            "properties": {
+                "op": {"type": "string", "description": "Operation: list, record, or clear"},
+                "agent_name": {"type": "string", "description": "Agent name (for record)"},
+                "status": {"type": "string", "description": "Status string (for record)"},
+                "prompt_summary": {"type": "string", "description": "Prompt summary (for record)"},
+                "iterations_used": {"type": "integer", "description": "Iterations used (for record)"}
+            }
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let parsed: Input = serde_json::from_str(input)
             .context("delegate_coordination_status expects JSON: {\"op\", ...}")?;

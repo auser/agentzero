@@ -682,6 +682,12 @@ fn to_openai_messages(messages: &[ConversationMessage]) -> Vec<Message> {
     messages
         .iter()
         .map(|msg| match msg {
+            ConversationMessage::System { content } => Message {
+                role: "system".to_string(),
+                content: Some(content.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+            },
             ConversationMessage::User { content } => Message::user(content.clone()),
             ConversationMessage::Assistant {
                 content,
@@ -1377,6 +1383,31 @@ mod tests {
         assert!(result[1].tool_calls.is_some());
         assert_eq!(result[2].role, "tool");
         assert_eq!(result[2].tool_call_id.as_deref(), Some("call_1"));
+    }
+
+    #[test]
+    fn to_openai_messages_maps_system_to_system_role() {
+        use agentzero_core::ConversationMessage;
+
+        let messages = vec![
+            ConversationMessage::System {
+                content: "You are a helpful assistant.".to_string(),
+            },
+            ConversationMessage::User {
+                content: "Hello".to_string(),
+            },
+        ];
+
+        let result = to_openai_messages(&messages);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].role, "system");
+        assert_eq!(
+            result[0].content.as_deref(),
+            Some("You are a helpful assistant.")
+        );
+        assert!(result[0].tool_calls.is_none());
+        assert!(result[0].tool_call_id.is_none());
+        assert_eq!(result[1].role, "user");
     }
 
     #[test]

@@ -32,6 +32,18 @@ impl Tool for WasmModuleTool {
         "Inspect or list WASM modules in the workspace plugins directory."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "type": "object",
+            "properties": {
+                "op": { "type": "string", "enum": ["inspect", "list"], "description": "The WASM module operation" },
+                "path": { "type": "string", "description": "Path to the WASM file (for inspect)" }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: WasmModuleInput =
             serde_json::from_str(input).context("wasm_module expects JSON: {\"op\", ...}")?;
@@ -144,6 +156,19 @@ impl Tool for WasmToolExecTool {
 
     fn description(&self) -> &'static str {
         "Execute a function within a WASM module."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "type": "object",
+            "properties": {
+                "module": { "type": "string", "description": "Path to the WASM module file" },
+                "function": { "type": "string", "description": "Function to invoke (default: _start)" },
+                "args": { "type": "object", "description": "Arguments to pass to the function" }
+            },
+            "required": ["module"],
+            "additionalProperties": false
+        }))
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

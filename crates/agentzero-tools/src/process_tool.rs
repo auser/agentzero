@@ -117,6 +117,19 @@ impl Tool for ProcessTool {
         "Manage long-running background processes: start, stop, list, or read output."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["spawn", "list", "output", "kill"], "description": "The process action to perform" },
+                "command": { "type": "string", "description": "Shell command to run (for spawn)" },
+                "id": { "type": "integer", "description": "Process ID (for output/kill)" }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let action: ProcessAction =
             serde_json::from_str(input).context("process expects JSON with \"action\" field")?;

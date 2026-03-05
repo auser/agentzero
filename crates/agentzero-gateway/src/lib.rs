@@ -27,6 +27,10 @@ pub struct GatewayRunOptions {
     pub new_pairing: bool,
     /// Middleware configuration (rate limiting, CORS, request size limits).
     pub middleware: MiddlewareConfig,
+    /// Path to agentzero.toml config file (enables real agent execution).
+    pub config_path: Option<PathBuf>,
+    /// Workspace root directory.
+    pub workspace_root: Option<PathBuf>,
 }
 
 pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::Result<()> {
@@ -41,18 +45,61 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         println!("Cleared paired gateway tokens; generating fresh pairing code.");
     }
 
+    // Load config from TOML if available.
+    let full_config = options
+        .config_path
+        .as_ref()
+        .and_then(|p| agentzero_config::load(p).ok());
+
+    let (require_pairing, allow_public_bind) = match full_config.as_ref().map(|c| &c.gateway) {
+        Some(gw) => (gw.require_pairing, gw.allow_public_bind),
+        None => (true, false),
+    };
+
+    // Enforce allow_public_bind: refuse non-loopback addresses unless config allows it.
+    if !allow_public_bind {
+        let check_addr: SocketAddr = format!("{host}:{port}")
+            .parse()
+            .context("invalid gateway host/port")?;
+        if !check_addr.ip().is_loopback() {
+            anyhow::bail!(
+                "gateway: binding to non-loopback address {host} is not allowed \
+                 (set gateway.allow_public_bind = true in config to override)"
+            );
+        }
+    }
+
     let paired_tokens = load_paired_tokens(options.token_store_path.as_deref())?;
     let pairing_code = if paired_tokens.is_empty() {
         Some(generate_pairing_code())
     } else {
         None
     };
-    let state = GatewayState::new(
+    let mut state = GatewayState::new(
         pairing_code.clone(),
         otp_secret,
         paired_tokens,
         options.token_store_path,
-    );
+    )
+    .with_gateway_config(require_pairing, allow_public_bind);
+
+    // Wire perplexity filter from loaded security config.
+    if let Some(ref cfg) = full_config {
+        let pf = &cfg.security.perplexity_filter;
+        state =
+            state.with_perplexity_filter(agentzero_channels::pipeline::PerplexityFilterSettings {
+                enabled: pf.enable_perplexity_filter,
+                perplexity_threshold: pf.perplexity_threshold,
+                suffix_window_chars: pf.suffix_window_chars,
+                min_prompt_chars: pf.min_prompt_chars,
+                symbol_ratio_threshold: pf.symbol_ratio_threshold,
+            });
+    }
+
+    if let (Some(config_path), Some(workspace_root)) = (options.config_path, options.workspace_root)
+    {
+        state = state.with_agent_paths(config_path, workspace_root);
+    }
 
     let app = build_router(state, &options.middleware);
 

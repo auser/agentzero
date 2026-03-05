@@ -51,6 +51,21 @@ impl Tool for AgentsIpcTool {
         "Inter-process communication between agents: send messages and receive responses."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "op": { "type": "string", "enum": ["send", "recv", "list", "clear"], "description": "The IPC operation to perform" },
+                "from": { "type": "string", "description": "Sender agent name (required for send)" },
+                "to": { "type": "string", "description": "Recipient agent name (required for send/recv)" },
+                "payload": { "type": "string", "description": "Message payload (required for send)" },
+                "limit": { "type": "integer", "description": "Max messages to return (for list)" }
+            },
+            "required": ["op"],
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: IpcRequest =
             serde_json::from_str(input).context("agents_ipc input must be valid JSON request")?;

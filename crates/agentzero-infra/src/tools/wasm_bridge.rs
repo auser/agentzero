@@ -22,6 +22,8 @@ pub struct WasmTool {
     /// Leaked string for the `&'static str` requirement of `Tool::name()`.
     /// This is ~20 bytes per plugin and lives for the program lifetime.
     name: &'static str,
+    /// Leaked description from the plugin manifest.
+    description: &'static str,
     manifest: PluginManifest,
     wasm_path: PathBuf,
     policy: WasmIsolationPolicy,
@@ -59,12 +61,20 @@ impl WasmTool {
         };
         let module = Arc::new(WasmPluginRuntime::compile_module(&engine, &wasm_path)?);
 
-        // Leak the plugin name for the &'static str requirement.
-        // ~20 bytes per plugin; agent processes are short-lived.
+        // Leak the plugin name and description for the &'static str requirement.
+        // ~50 bytes per plugin; agent processes are short-lived.
         let name: &'static str = Box::leak(manifest.id.clone().into_boxed_str());
+        let description: &'static str = Box::leak(
+            manifest
+                .description
+                .clone()
+                .unwrap_or_default()
+                .into_boxed_str(),
+        );
 
         Ok(Self {
             name,
+            description,
             manifest,
             wasm_path,
             policy,
@@ -90,7 +100,7 @@ impl Tool for WasmTool {
     }
 
     fn description(&self) -> &'static str {
-        "WASM plugin tool (description provided by plugin manifest)"
+        self.description
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

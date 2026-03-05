@@ -102,6 +102,9 @@ pub enum Commands {
         /// Use a specific auth profile by name (from `auth list`).
         #[arg(long)]
         profile: Option<String>,
+        /// Stream tokens incrementally as they arrive.
+        #[arg(long)]
+        stream: bool,
     },
     /// Manage provider subscription authentication profiles.
     Auth {

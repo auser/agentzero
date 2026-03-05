@@ -30,6 +30,16 @@ impl Tool for HardwareBoardInfoTool {
         "List discovered hardware boards or get detailed info for a specific board."
     }
 
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "type": "object",
+            "properties": {
+                "board": { "type": "string", "description": "Optional board ID to get detailed info for. Omit to list all boards." }
+            },
+            "additionalProperties": false
+        }))
+    }
+
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let req: BoardInfoInput = serde_json::from_str(input)
             .context("hardware_board_info expects JSON: {\"board\"?}")?;
@@ -92,6 +102,17 @@ impl Tool for HardwareMemoryMapTool {
 
     fn description(&self) -> &'static str {
         "Get the flash and RAM memory map layout for a hardware board."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "type": "object",
+            "properties": {
+                "board": { "type": "string", "description": "The board ID to get the memory map for" }
+            },
+            "required": ["board"],
+            "additionalProperties": false
+        }))
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -167,6 +188,19 @@ impl Tool for HardwareMemoryReadTool {
 
     fn description(&self) -> &'static str {
         "Read memory from a hardware board at a given address."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "type": "object",
+            "properties": {
+                "board": { "type": "string", "description": "The board ID to read memory from" },
+                "address": { "type": "string", "description": "Hex address to read (e.g. 0x20000000)" },
+                "length": { "type": "integer", "description": "Number of bytes to read (1-256, default 64)" }
+            },
+            "required": ["board", "address"],
+            "additionalProperties": false
+        }))
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
