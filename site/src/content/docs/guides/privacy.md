@@ -210,7 +210,7 @@ persist_path = "keys/"     # Store keys on disk for restart recovery
 ```bash
 agentzero privacy rotate-keys          # Rotate if interval elapsed
 agentzero privacy rotate-keys --force  # Force immediate rotation
-agentzero privacy key-info             # Show current key fingerprint + epoch
+agentzero privacy status               # Show current mode, key rotation, session info
 ```
 
 ## Monitoring

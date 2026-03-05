@@ -233,6 +233,37 @@ max_iterations = 5
 # max_depth = 3
 # agentic = true
 # allowed_tools = ["web_search", "web_fetch"]
+# privacy_boundary = "encrypted_only"            # inherit, local_only, encrypted_only, any
+# allowed_providers = ["anthropic"]               # restrict to specific provider kinds
+# blocked_providers = []                          # block specific provider kinds
+
+# ─── Privacy ────────────────────────────────────────────
+[privacy]
+mode = "off"                                      # off | local_only | encrypted | full
+# block_cloud_providers = false                   # legacy; prefer mode = "local_only"
+# enforce_local_provider = false                  # force local provider regardless of mode
+
+[privacy.noise]
+enabled = false                                   # auto-enabled by mode = "encrypted" or "full"
+handshake_pattern = "XX"                          # XX (mutual auth) or IK (known server key)
+session_timeout_secs = 3600                       # session TTL in seconds
+max_sessions = 1000                               # max concurrent Noise sessions
+
+[privacy.sealed_envelopes]
+enabled = false                                   # auto-enabled by mode = "full"
+max_envelope_bytes = 65536                        # max sealed envelope payload size
+
+[privacy.key_rotation]
+enabled = false                                   # auto-enabled by mode = "encrypted" or "full"
+interval_hours = 24                               # hours between automatic rotations
+persist_path = "keys/"                            # key persistence directory (relative to data dir)
+
+# [security.tool_boundaries]                      # per-tool privacy boundaries
+# shell = "local_only"
+# web_search = "any"
+
+# [channels_config]
+# default_privacy_boundary = "encrypted_only"     # global default for all channels
 ```
 
 ## Config Inspection Commands

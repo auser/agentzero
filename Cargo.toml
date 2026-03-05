@@ -21,7 +21,7 @@ default-members = ["bin/agentzero"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.4"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"
@@ -34,21 +34,21 @@ async-trait = "0.1"
 clap = { version = "4.5", features = ["derive"] }
 config = { version = "0.14", default-features = false, features = ["toml"] }
 dotenvy = "0.15"
-agentzero-auth = { path = "crates/agentzero-auth", version = "0.1.4" }
-agentzero-bench = { path = "crates/agentzero-bench", version = "0.1.4" }
-agentzero-channels = { path = "crates/agentzero-channels", version = "0.1.4" }
-agentzero-cli = { path = "crates/agentzero-cli", version = "0.1.4", default-features = false }
-agentzero-config = { path = "crates/agentzero-config", version = "0.1.4" }
-agentzero-core = { path = "crates/agentzero-core", version = "0.1.4" }
-agentzero-gateway = { path = "crates/agentzero-gateway", version = "0.1.4" }
-agentzero-infra = { path = "crates/agentzero-infra", version = "0.1.4" }
-agentzero-plugins = { path = "crates/agentzero-plugins", version = "0.1.4", default-features = false }
-agentzero-providers = { path = "crates/agentzero-providers", version = "0.1.4" }
-agentzero-storage = { path = "crates/agentzero-storage", version = "0.1.4" }
-agentzero-testkit = { path = "crates/agentzero-testkit", version = "0.1.4" }
-agentzero-tools = { path = "crates/agentzero-tools", version = "0.1.4" }
-agentzero-ffi = { path = "crates/agentzero-ffi", version = "0.1.4" }
-agentzero-plugin-sdk = { path = "crates/agentzero-plugin-sdk", version = "0.1.4" }
+agentzero-auth = { path = "crates/agentzero-auth", version = "0.3.0" }
+agentzero-bench = { path = "crates/agentzero-bench", version = "0.3.0" }
+agentzero-channels = { path = "crates/agentzero-channels", version = "0.3.0" }
+agentzero-cli = { path = "crates/agentzero-cli", version = "0.3.0", default-features = false }
+agentzero-config = { path = "crates/agentzero-config", version = "0.3.0" }
+agentzero-core = { path = "crates/agentzero-core", version = "0.3.0" }
+agentzero-gateway = { path = "crates/agentzero-gateway", version = "0.3.0" }
+agentzero-infra = { path = "crates/agentzero-infra", version = "0.3.0" }
+agentzero-plugins = { path = "crates/agentzero-plugins", version = "0.3.0", default-features = false }
+agentzero-providers = { path = "crates/agentzero-providers", version = "0.3.0" }
+agentzero-storage = { path = "crates/agentzero-storage", version = "0.3.0" }
+agentzero-testkit = { path = "crates/agentzero-testkit", version = "0.3.0" }
+agentzero-tools = { path = "crates/agentzero-tools", version = "0.3.0" }
+agentzero-ffi = { path = "crates/agentzero-ffi", version = "0.3.0" }
+agentzero-plugin-sdk = { path = "crates/agentzero-plugin-sdk", version = "0.3.0" }
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
 rusqlite = { version = "0.31", features = ["bundled-sqlcipher"] }

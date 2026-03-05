@@ -1,6 +1,6 @@
 {
   "name": "@agentzero/ffi",
-  "version": "0.1.4",
+  "version": "0.3.0",
   "description": "AgentZero native Node.js addon",
   "main": "index.js",
   "types": "index.d.ts",

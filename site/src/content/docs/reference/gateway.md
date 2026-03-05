@@ -32,6 +32,12 @@ The gateway binds to `127.0.0.1` (localhost only) by default. Setting `allow_pub
 | `GET` | `/v1/models` | Bearer | List available models (OpenAI-compatible) |
 | `GET` | `/ws/chat` | Bearer | WebSocket chat with streaming agent responses |
 | `POST` | `/webhook` | Bearer | Legacy webhook endpoint |
+| `GET` | `/v1/privacy/info` | None | Privacy capabilities discovery (feature-gated) |
+| `POST` | `/v1/noise/handshake/step1` | None | Noise XX handshake step 1 (feature-gated) |
+| `POST` | `/v1/noise/handshake/step2` | None | Noise XX handshake step 2 (feature-gated) |
+| `POST` | `/v1/noise/handshake/ik` | None | Noise IK handshake (feature-gated) |
+| `POST` | `/v1/relay/submit` | None | Submit sealed envelope (relay mode, feature-gated) |
+| `GET` | `/v1/relay/poll/:routing_id` | None | Poll sealed envelopes (relay mode, feature-gated) |
 
 ## Authentication
 
@@ -136,6 +142,52 @@ curl http://127.0.0.1:42617/v1/models \
   -H "Authorization: Bearer <token>"
 ```
 
+## Privacy Endpoints
+
+These endpoints are available when the gateway is built with the `privacy` Cargo feature and privacy is configured. See the [Privacy Guide](/guides/privacy/) for details.
+
+### Privacy Info (`GET /v1/privacy/info`)
+
+Discover gateway privacy capabilities before initiating a handshake.
+
+```json
+{
+  "noise_enabled": true,
+  "handshake_pattern": "XX",
+  "public_key": "<base64-encoded X25519 public key>",
+  "key_fingerprint": "a1b2c3d4e5f6a1b2",
+  "sealed_envelopes_enabled": false,
+  "relay_mode": false,
+  "supported_patterns": ["XX", "IK"]
+}
+```
+
+### Noise Handshake (XX Pattern)
+
+Two-step mutual authentication handshake:
+
+1. `POST /v1/noise/handshake/step1` — Client sends `{"client_message": "<base64>"}`. Server returns `{"server_message": "<base64>"}`.
+2. `POST /v1/noise/handshake/step2` — Client sends `{"client_message": "<base64>"}`. Server returns `{"session_id": "<64-char hex>"}`.
+
+### Noise Handshake (IK Pattern)
+
+Single round-trip handshake when the client knows the server's public key:
+
+`POST /v1/noise/handshake/ik` — Client sends `{"client_message": "<base64>", "server_public_key": "<base64>"}`. Server returns `{"server_message": "<base64>", "session_id": "<64-char hex>"}`.
+
+### Noise Transport
+
+After handshake, all requests include `X-Noise-Session: <session_id>` header with encrypted body. The gateway middleware transparently decrypts request bodies and encrypts response bodies.
+
+### Relay (Sealed Envelopes)
+
+Available when `relay_mode = true` in gateway config:
+
+- `POST /v1/relay/submit` — Submit a sealed envelope. Body: `{"routing_id": "<64-char hex>", "payload": "<base64>", "nonce": "<base64 24-byte>", "ttl_secs": 300}`. Returns HTTP 409 on replay (duplicate nonce).
+- `GET /v1/relay/poll/:routing_id` — Poll for envelopes addressed to a routing ID.
+
+The relay strips identifying headers (`X-Forwarded-For`, `X-Real-IP`, `Via`) from all requests.
+
 ## Metrics
 
 The `/metrics` endpoint exposes Prometheus-compatible metrics for monitoring:
@@ -145,6 +197,15 @@ The `/metrics` endpoint exposes Prometheus-compatible metrics for monitoring:
 - `gateway_errors_total{error_type}` — Error counter by structured error type
 - `gateway_ws_connections_total` — WebSocket connection counter
 - `gateway_active_connections` — Current active connection gauge
+
+**Privacy metrics** (when `privacy` feature is enabled):
+
+- `agentzero_noise_sessions_active` — Active Noise sessions (gauge)
+- `agentzero_noise_handshakes_total{result}` — Handshake attempts by result (counter)
+- `agentzero_relay_mailbox_envelopes` — Envelopes in relay mailboxes (gauge)
+- `agentzero_relay_submit_total` — Total envelope submissions (counter)
+- `agentzero_key_rotation_total{epoch}` — Key rotation events (counter)
+- `agentzero_privacy_encrypt_duration_seconds` — Encrypt/decrypt latency (histogram)
 
 **Prometheus scrape config:**
 

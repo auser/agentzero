@@ -4,7 +4,7 @@ description: Security threat model covering the AgentZero runtime surface.
 ---
 
 ## Scope
-This document covers the current AgentZero runtime surface in Sprint 0:
+This document covers the AgentZero runtime surface:
 - CLI execution (`bin/agentzero`, `crates/agentzero-cli`)
 - provider network calls (`crates/agentzero-infra::provider`)
 - memory backends (SQLite default, optional Turso)

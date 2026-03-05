@@ -61,6 +61,35 @@ description: AgentZero development roadmap — completed milestones and future d
 - `model_supports_tool_use` defaults to `false` (unknown models don't assume tool support)
 - Full test coverage: wasm_bridge, parse_hook_mode, gateway TCP integration, full-loop agent with tool calls
 
+### Production Readiness & Observability (Sprint 23)
+
+- Real Prometheus metrics (counters, histograms, gauges) with request metrics middleware
+- Dynamic `/v1/models` from provider catalog
+- WebSocket hardening (heartbeat ping/pong, idle timeout, binary frame rejection)
+- Structured error types (`GatewayError` with 8 variants, JSON error responses)
+- Storage test expansion (19 → 46 tests), provider tracing spans, config audit
+- Site documentation: gateway docs, architecture docs, threat model, provider guide
+
+### Private AI Production-Readiness (Sprint 24)
+
+- Gateway privacy wiring: NoiseSessionStore, RelayMailbox, key rotation task on startup
+- Client-side Noise handshake (`NoiseClientHandshake`, `NoiseClientSession`, `NoiseHttpTransport`)
+- `GET /v1/privacy/info` endpoint for capability discovery
+- Security hardening: sealed envelope replay protection (nonce dedup, HTTP 409), local provider URL enforcement, network-level tool enforcement, plugin network isolation
+- Per-component privacy boundaries (`PrivacyBoundary` enum with `resolve()`, agent/tool/channel boundaries)
+- 6 Prometheus privacy metrics, E2E encryption integration tests
+- Key rotation lifecycle (`force_rotate()`, `--force` CLI flag, persist on rotate)
+- `Serialize` removed from `IdentityKeyPair` (prevent secret key leaks)
+
+### Privacy End-to-End (Sprint 25)
+
+- Memory privacy boundaries: `MemoryEntry` carries `privacy_boundary` and `source_channel`, `recent_for_boundary()` filters by boundary, SQLite schema migrated
+- Channel privacy boundaries: `ChannelMessage.privacy_boundary`, `dispatch_with_boundary()` blocks `local_only` → non-local channels, per-channel boundary config
+- Noise IK client handshake: 1 round-trip fast reconnect when server key is cached, `auto_noise_handshake()` selects IK vs XX
+- `agentzero privacy test` command: 8 diagnostic checks (config, boundaries, memory, envelopes, Noise XX/IK, channels, encrypted store)
+- Integration wiring: `ToolContext.privacy_boundary`, leak guard `check_boundary()`, config validation for encrypted-without-noise
+- 1,724 tests passing, 0 clippy warnings
+
 ## Planned
 
 ### Near-Term

@@ -105,7 +105,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-agentzero-plugin-sdk = "0.1.4"
+agentzero-plugin-sdk = "0.3.0"
 serde_json = "1"
 ```
 

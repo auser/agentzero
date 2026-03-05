@@ -994,6 +994,70 @@ agentzero approval evaluate --actor agent --action shell --risk high --decision 
 | `--reason <TEXT>` | Reason for the decision |
 | `--json` | Emit machine-readable JSON output |
 
+### `privacy`
+
+Manage privacy mode, key rotation, and run diagnostics. Requires the `privacy` Cargo feature flag.
+
+#### `privacy status`
+
+Show current privacy mode and feature status.
+
+```bash
+agentzero privacy status
+agentzero privacy status --json
+```
+
+| Flag | Description |
+|---|---|
+| `--json` | Emit machine-readable JSON output |
+
+Output includes: privacy mode, Noise Protocol status, sealed envelopes status, key rotation status and interval.
+
+#### `privacy rotate-keys`
+
+Rotate identity keypair. Checks if the rotation interval has elapsed; use `--force` for immediate rotation.
+
+```bash
+agentzero privacy rotate-keys
+agentzero privacy rotate-keys --force
+agentzero privacy rotate-keys --json
+```
+
+| Flag | Description |
+|---|---|
+| `--force` | Force immediate rotation regardless of interval |
+| `--json` | Emit machine-readable JSON output |
+
+Output includes: new epoch number, key fingerprint, whether rotation occurred, next rotation timestamp.
+
+#### `privacy generate-keypair`
+
+Generate a new identity keypair without activating it. Use `rotate-keys` to activate a new key.
+
+```bash
+agentzero privacy generate-keypair
+agentzero privacy generate-keypair --json
+```
+
+| Flag | Description |
+|---|---|
+| `--json` | Emit machine-readable JSON output |
+
+#### `privacy test`
+
+Run 8 diagnostic checks on the privacy subsystem: config validation, boundary resolution, memory isolation, sealed envelope round-trip, Noise XX handshake, Noise IK handshake, channel locality, encrypted store round-trip.
+
+```bash
+agentzero privacy test
+agentzero privacy test --json
+```
+
+| Flag | Description |
+|---|---|
+| `--json` | Emit machine-readable JSON output with per-check pass/fail |
+
+Returns exit code `1` if any checks fail.
+
 ---
 
 ## Models & Local Providers

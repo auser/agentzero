@@ -6,6 +6,28 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-05
+
+### Added
+- **Privacy end-to-end enforcement (Sprint 25)** — Memory entries carry `privacy_boundary` and `source_channel` fields with `recent_for_boundary()` filtering; channel messages propagate boundaries with `dispatch_with_boundary()` blocking `local_only` → non-local channels; Noise IK handshake for 1-round-trip fast reconnect; `agentzero privacy test` runs 8 diagnostic checks; integration wiring through `ToolContext.privacy_boundary` and leak guard `check_boundary()`
+- **Production-ready privacy system (Sprint 24)** — Gateway initializes NoiseSessionStore, RelayMailbox, and key rotation on startup; client-side Noise handshake (`NoiseClientHandshake`, `NoiseClientSession`, `NoiseHttpTransport`); `GET /v1/privacy/info` endpoint; sealed envelope replay protection (nonce dedup, HTTP 409); local provider URL enforcement; network-level tool enforcement in `local_only` mode; plugin network isolation; per-component privacy boundaries (`PrivacyBoundary` enum with `resolve()` for agents, tools, channels); 6 Prometheus privacy metrics
+- **Gateway production readiness (Sprint 23)** — Real Prometheus metrics with request instrumentation; dynamic `/v1/models` from provider catalog; WebSocket hardening (heartbeat ping/pong, idle timeout, binary frame rejection); structured `GatewayError` with 8 variants and JSON error responses; provider tracing spans on all 8 methods; storage test expansion (19 → 46 tests)
+- Privacy CLI commands: `privacy status`, `privacy rotate-keys [--force]`, `privacy generate-keypair`, `privacy test [--json]`
+- Noise Protocol handshake patterns: XX (mutual auth) and IK (known server key, fast reconnect)
+- Per-component privacy boundaries for agents, tools, and channels with child-can't-exceed-parent enforcement
+- Config validation: rejects `encrypted` mode without `noise.enabled`, boundary escalation, non-localhost URLs in `local_only`
+- Responsive mobile navigation with hamburger menu for documentation site
+
+### Fixed
+- Resolve clippy `double_ended_iterator_last` lint for Rust 1.93
+- Use vendored-openssl only on Windows, system OpenSSL elsewhere
+- Noise middleware: empty-body requests with session header now get encrypted responses
+- `IdentityKeyPair` no longer implements `Serialize` (prevents secret key leaks)
+
+### Changed
+- Privacy metrics (`record_key_rotation`, `record_encrypt_duration`) wired into actual code paths
+- Pre-commit hook optimized: `cargo fmt --check` (read-only) instead of rewrite+re-stage
+
 ## [0.1.4] - 2026-03-02
 
 ## [0.1.3] - 2026-03-03
