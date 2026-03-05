@@ -90,6 +90,17 @@ pub trait Tool: Send + Sync {
 
 The `input_schema()` method returns a JSON Schema describing expected input parameters. When provided, this enables structured tool-use APIs (Anthropic `tool_use`, OpenAI function calling) and input validation before execution. All 50+ built-in tools implement this method.
 
+### CLI Introspection
+
+```bash
+agentzero tools list                  # List all registered tools
+agentzero tools list --with-schema    # Include JSON schemas
+agentzero tools list --json           # Machine-readable output
+agentzero tools info read_file        # Show details for a specific tool
+agentzero tools schema read_file      # Print the JSON schema
+agentzero tools schema shell --pretty # Pretty-printed schema
+```
+
 The `ToolContext` carries workspace-scoped security state:
 
 ```rust

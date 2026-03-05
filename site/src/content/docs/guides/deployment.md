@@ -5,6 +5,10 @@ description: Deploy AgentZero's HTTP gateway standalone, behind a reverse proxy,
 
 AgentZero's gateway exposes an HTTP API for programmatic access to the agent runtime. This guide covers three deployment patterns.
 
+:::tip
+For a complete production-hardened setup covering encryption, TLS, authentication, security policies, and monitoring, see the [Production Setup Guide](/guides/production/).
+:::
+
 ## Standalone (Direct)
 
 The simplest deployment — run the gateway directly:

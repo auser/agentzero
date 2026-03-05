@@ -16,7 +16,7 @@ AgentZero's core principle is that **every subsystem is a trait**. This means yo
 | **Security** | Policy config | Allowlists, OTP, audit, estop, leak guard, syscall anomaly | Config-driven (`[security.*]`) |
 | **Observability** | Config-driven | Runtime traces, OpenTelemetry export | `[observability]` config |
 | **Runtime** | Orchestrator | Native single-process | `[runtime]` config (native/docker) |
-| **Plugins** | WASM sandbox | Extism-based plugin host | `.wasm` modules with `manifest.json` |
+| **Plugins** | WASM sandbox | wasmi interpreter (wasmtime JIT optional) | `.wasm` modules with `manifest.json` |
 | **Skills** | Skill registry | Built-in skillforge + SOP engine | Install from local/remote/git |
 | **Identity** | Config-driven | OpenClaw markdown, AIEOS JSON | `[identity]` config |
 | **Gateway** | HTTP service | Axum-based REST API | Endpoint handlers |

@@ -13,6 +13,7 @@ pub enum RiskDomain {
     ProviderNetwork,
     ChannelIngress,
     RemoteMemory,
+    PrivacyRelay,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +33,7 @@ impl FromStr for RiskDomain {
             "provider_network" => Ok(Self::ProviderNetwork),
             "channel_ingress" => Ok(Self::ChannelIngress),
             "remote_memory" => Ok(Self::RemoteMemory),
+            "privacy_relay" => Ok(Self::PrivacyRelay),
             other => Err(format!("unsupported risk domain: {other}")),
         }
     }
@@ -47,6 +49,7 @@ pub fn tier_for(domain: RiskDomain) -> RiskTier {
         RiskDomain::ChannelIngress => RiskTier::P0Critical,
         RiskDomain::ProviderNetwork => RiskTier::P1High,
         RiskDomain::RemoteMemory => RiskTier::P1High,
+        RiskDomain::PrivacyRelay => RiskTier::P1High,
     }
 }
 
@@ -73,6 +76,12 @@ pub fn controls_for(domain: RiskDomain) -> RequiredControls {
         RiskDomain::RemoteMemory => RequiredControls {
             deny_by_default: false,
             requires_explicit_allowlist: false,
+            requires_redaction: true,
+            requires_timeout: true,
+        },
+        RiskDomain::PrivacyRelay => RequiredControls {
+            deny_by_default: true,
+            requires_explicit_allowlist: true,
             requires_redaction: true,
             requires_timeout: true,
         },

@@ -11,7 +11,7 @@ This document covers the current AgentZero runtime surface in Sprint 0:
 - built-in tools (`read_file`, `shell`)
 - gateway HTTP endpoint (`crates/agentzero-gateway`)
 
-Controls are codified in `crates/agentzero-security`:
+Controls are codified in `crates/agentzero-core/src/security/`:
 - Risk tiers and required controls: `policy.rs`
 - Secret redaction guardrails: `redaction.rs`
 
@@ -68,9 +68,9 @@ Baseline version: `2026-02-27`
   - avoid sensitive data in diagnostics
 
 ## Current Sprint 0 Controls
-- Centralized error/panic redaction in `agentzero-security::redaction`.
+- Centralized error/panic redaction in `agentzero_core::security::redaction`.
 - Redacted user-facing CLI error chain output in `bin/agentzero/bins/cli.rs`.
-- Policy baseline for domain-to-tier and control mapping in `agentzero-security::policy`.
+- Policy baseline for domain-to-tier and control mapping in `agentzero_core::security::policy`.
 - Global tool restrictions are configured centrally in `agentzero.toml` under `[security.*]` and enforced at tool construction.
 - `read_file` fail-closed policy: blocks absolute/traversal paths, enforces allowed root, blocks binary files, and caps reads at 64 KiB.
 - `shell` fail-closed policy: deny-by-default allowlist, argument count bound, and shell metacharacter rejection.

@@ -1592,3 +1592,238 @@ fn rejects_zero_max_cost_per_day() {
 
     fs::remove_dir_all(dir).expect("temp dir should be removed");
 }
+
+// --- Privacy config tests ---
+
+#[test]
+fn privacy_defaults_to_off_when_section_absent() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config should load without privacy section");
+        assert_eq!(cfg.privacy.mode, "off");
+        assert!(!cfg.privacy.enforce_local_provider);
+        assert!(!cfg.privacy.block_cloud_providers);
+        assert!(!cfg.privacy.noise.enabled);
+        assert_eq!(cfg.privacy.noise.handshake_pattern, "XX");
+        assert_eq!(cfg.privacy.noise.session_timeout_secs, 3600);
+        assert_eq!(cfg.privacy.noise.max_sessions, 256);
+        assert!(!cfg.privacy.sealed_envelopes.enabled);
+        assert_eq!(cfg.privacy.sealed_envelopes.default_ttl_secs, 86400);
+        assert!(!cfg.privacy.key_rotation.enabled);
+        assert_eq!(cfg.privacy.key_rotation.rotation_interval_secs, 604_800);
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn privacy_parses_full_toml_section() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        r#"
+[security]
+allowed_root = "."
+allowed_commands = ["echo"]
+
+[privacy]
+mode = "encrypted"
+enforce_local_provider = false
+block_cloud_providers = false
+
+[privacy.noise]
+enabled = true
+handshake_pattern = "XX"
+session_timeout_secs = 1800
+max_sessions = 128
+
+[privacy.sealed_envelopes]
+enabled = true
+default_ttl_secs = 43200
+max_envelope_bytes = 2097152
+
+[privacy.key_rotation]
+enabled = true
+rotation_interval_secs = 86400
+overlap_secs = 3600
+key_store_path = "/tmp/keys"
+"#,
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("config with privacy should load");
+        assert_eq!(cfg.privacy.mode, "encrypted");
+        assert!(cfg.privacy.noise.enabled);
+        assert_eq!(cfg.privacy.noise.session_timeout_secs, 1800);
+        assert_eq!(cfg.privacy.noise.max_sessions, 128);
+        assert!(cfg.privacy.sealed_envelopes.enabled);
+        assert_eq!(cfg.privacy.sealed_envelopes.default_ttl_secs, 43200);
+        assert_eq!(cfg.privacy.sealed_envelopes.max_envelope_bytes, 2_097_152);
+        assert!(cfg.privacy.key_rotation.enabled);
+        assert_eq!(cfg.privacy.key_rotation.rotation_interval_secs, 86400);
+        assert_eq!(cfg.privacy.key_rotation.overlap_secs, 3600);
+        assert_eq!(cfg.privacy.key_rotation.key_store_path, "/tmp/keys");
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn privacy_rejects_invalid_mode() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[privacy]\nmode=\"invalid\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        let err = result.expect_err("invalid mode should fail").to_string();
+        assert!(
+            err.contains("privacy.mode"),
+            "error should mention privacy.mode: {err}"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn privacy_rejects_cloud_provider_in_local_only_mode() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"openrouter\"\nbase_url=\"https://openrouter.ai/api\"\nmodel=\"gpt-4o-mini\"\n\n[privacy]\nmode=\"local_only\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        let err = result
+            .expect_err("cloud provider in local_only should fail")
+            .to_string();
+        assert!(
+            err.contains("local provider"),
+            "error should mention local provider: {err}"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn privacy_allows_local_provider_in_local_only_mode() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"ollama\"\nbase_url=\"http://localhost:11434\"\nmodel=\"llama3\"\n\n[privacy]\nmode=\"local_only\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("ollama in local_only should succeed");
+        assert_eq!(cfg.privacy.mode, "local_only");
+        assert_eq!(cfg.provider.kind, "ollama");
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn privacy_enforce_local_provider_blocks_cloud() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"anthropic\"\nbase_url=\"https://api.anthropic.com\"\nmodel=\"claude-sonnet-4-6\"\n\n[privacy]\nmode=\"off\"\nenforce_local_provider=true\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        let err = result
+            .expect_err("enforce_local_provider should reject cloud")
+            .to_string();
+        assert!(
+            err.contains("local provider"),
+            "error should mention local provider: {err}"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn privacy_rejects_invalid_handshake_pattern() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[privacy.noise]\nhandshake_pattern=\"NK\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        let err = result.expect_err("invalid pattern should fail").to_string();
+        assert!(
+            err.contains("handshake_pattern"),
+            "error should mention handshake_pattern: {err}"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn privacy_all_four_modes_accepted() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    for mode in &["off", "local_only", "encrypted", "full"] {
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        let provider = if *mode == "local_only" || *mode == "full" {
+            "kind=\"ollama\"\nbase_url=\"http://localhost:11434\"\nmodel=\"llama3\""
+        } else {
+            "kind=\"openrouter\"\nbase_url=\"https://openrouter.ai/api\"\nmodel=\"gpt-4o-mini\""
+        };
+        fs::write(
+            &config_path,
+            format!(
+                "[provider]\n{provider}\n\n[privacy]\nmode=\"{mode}\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n"
+            ),
+        )
+        .expect("config should be written");
+
+        with_clean_agentzero_env(|| {
+            let cfg = load(&config_path)
+                .unwrap_or_else(|e| panic!("mode '{mode}' should be accepted: {e}"));
+            assert_eq!(cfg.privacy.mode, *mode);
+        });
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+}

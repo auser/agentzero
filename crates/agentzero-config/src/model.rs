@@ -34,6 +34,7 @@ pub struct AgentZeroConfig {
     pub model_routes: Vec<ModelRoute>,
     pub embedding_routes: Vec<EmbeddingRoute>,
     pub agents: HashMap<String, DelegateAgentConfig>,
+    pub privacy: PrivacyConfig,
 }
 
 impl AgentZeroConfig {
@@ -207,6 +208,45 @@ impl AgentZeroConfig {
         }
         if self.autonomy.max_cost_per_day_cents == 0 {
             return Err(anyhow!("autonomy.max_cost_per_day_cents must be > 0"));
+        }
+
+        // Privacy validation
+        match self.privacy.mode.as_str() {
+            "off" | "local_only" | "encrypted" | "full" => {}
+            other => {
+                return Err(anyhow!(
+                    "privacy.mode must be one of: off, local_only, encrypted, full; got `{other}`"
+                ));
+            }
+        }
+        if (self.privacy.mode == "local_only" || self.privacy.enforce_local_provider)
+            && !is_local_provider(&self.provider.kind)
+        {
+            return Err(anyhow!(
+                "privacy mode '{}' requires a local provider, but '{}' is a cloud provider; \
+                 use ollama, llamacpp, lmstudio, vllm, sglang, or another local provider",
+                self.privacy.mode,
+                self.provider.kind
+            ));
+        }
+        if self.privacy.noise.session_timeout_secs == 0 {
+            return Err(anyhow!("privacy.noise.session_timeout_secs must be > 0"));
+        }
+        if self.privacy.noise.max_sessions == 0 {
+            return Err(anyhow!("privacy.noise.max_sessions must be > 0"));
+        }
+        if self.privacy.sealed_envelopes.max_envelope_bytes == 0 {
+            return Err(anyhow!(
+                "privacy.sealed_envelopes.max_envelope_bytes must be > 0"
+            ));
+        }
+        match self.privacy.noise.handshake_pattern.as_str() {
+            "XX" | "IK" => {}
+            other => {
+                return Err(anyhow!(
+                    "privacy.noise.handshake_pattern must be XX or IK; got `{other}`"
+                ));
+            }
         }
 
         Ok(())
@@ -1368,6 +1408,105 @@ impl Default for SyscallAnomalyConfig {
                 "execve".to_string(),
                 "futex".to_string(),
             ],
+        }
+    }
+}
+
+// --- Privacy AI configuration ---
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PrivacyConfig {
+    /// Privacy mode: "off", "local_only", "encrypted", or "full".
+    pub mode: String,
+    /// When true, reject cloud providers — only local providers allowed.
+    pub enforce_local_provider: bool,
+    /// When true, block all outbound network calls to non-loopback destinations
+    /// during agent execution (strict local-only mode).
+    pub block_cloud_providers: bool,
+    /// Noise Protocol settings for E2E encrypted gateway communication.
+    pub noise: NoiseConfig,
+    /// Sealed envelope settings for zero-knowledge packet routing.
+    pub sealed_envelopes: SealedEnvelopeConfig,
+    /// Automatic key rotation settings.
+    pub key_rotation: KeyRotationConfig,
+}
+
+impl Default for PrivacyConfig {
+    fn default() -> Self {
+        Self {
+            mode: "off".to_string(),
+            enforce_local_provider: false,
+            block_cloud_providers: false,
+            noise: NoiseConfig::default(),
+            sealed_envelopes: SealedEnvelopeConfig::default(),
+            key_rotation: KeyRotationConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct NoiseConfig {
+    pub enabled: bool,
+    /// Noise handshake pattern: "XX" (mutual auth) or "IK" (known server key).
+    pub handshake_pattern: String,
+    /// Session timeout in seconds.
+    pub session_timeout_secs: u64,
+    /// Maximum concurrent Noise sessions.
+    pub max_sessions: usize,
+}
+
+impl Default for NoiseConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            handshake_pattern: "XX".to_string(),
+            session_timeout_secs: 3600,
+            max_sessions: 256,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SealedEnvelopeConfig {
+    pub enabled: bool,
+    /// Default TTL for sealed envelopes in seconds.
+    pub default_ttl_secs: u32,
+    /// Maximum envelope size in bytes.
+    pub max_envelope_bytes: usize,
+}
+
+impl Default for SealedEnvelopeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_ttl_secs: 86400,
+            max_envelope_bytes: 1_048_576,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct KeyRotationConfig {
+    pub enabled: bool,
+    /// Rotation interval in seconds (default: 7 days).
+    pub rotation_interval_secs: u64,
+    /// Overlap period where both old and new keys are valid.
+    pub overlap_secs: u64,
+    /// Path to the key store directory. Empty = default data dir.
+    pub key_store_path: String,
+}
+
+impl Default for KeyRotationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            rotation_interval_secs: 604_800,
+            overlap_secs: 86_400,
+            key_store_path: String::new(),
         }
     }
 }

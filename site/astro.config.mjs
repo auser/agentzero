@@ -37,6 +37,8 @@ export default defineConfig({
           items: [
             { label: "Provider Setup", slug: "guides/providers" },
             { label: "Gateway Deployment", slug: "guides/deployment" },
+            { label: "Production Setup", slug: "guides/production" },
+            { label: "Daily Usage", slug: "guides/daily-usage" },
             { label: "Testing", slug: "guides/testing" },
             { label: "Plugin Authoring", slug: "guides/plugins" },
             { label: "FFI Bindings", slug: "guides/ffi-bindings" },

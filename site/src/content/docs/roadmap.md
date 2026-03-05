@@ -53,6 +53,14 @@ description: AgentZero development roadmap — completed milestones and future d
 - **MCP connection caching** — `McpSession` with cached subprocess connections and tool schemas
 - **FFI Node.js parity** — `register_tool()`, `send_message_async()`, `registered_tool_names()`
 
+### Hardening & Polish (Sprint 22H)
+
+- JSON schema validation wired into tool dispatch (`prepare_tool_input()`)
+- Config validation for `gateway.port`, `gateway.host`, `autonomy.level`, `max_cost_per_day_cents`
+- Unsafe `unwrap()` calls replaced with safe alternatives
+- `model_supports_tool_use` defaults to `false` (unknown models don't assume tool support)
+- Full test coverage: wasm_bridge, parse_hook_mode, gateway TCP integration, full-loop agent with tool calls
+
 ## Planned
 
 ### Near-Term

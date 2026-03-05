@@ -110,13 +110,26 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
     // Look up model capabilities for the agent loop.
     let caps = model_capabilities(&config.provider.kind, &config.provider.model);
 
-    let provider = agentzero_providers::build_provider_with_transport(
-        &config.provider.kind,
-        config.provider.base_url.clone(),
-        key,
-        config.provider.model.clone(),
-        transport_config,
-    );
+    let provider = if config.privacy.block_cloud_providers
+        || matches!(config.privacy.mode.as_str(), "local_only" | "full")
+    {
+        agentzero_providers::build_provider_with_privacy(
+            &config.provider.kind,
+            config.provider.base_url.clone(),
+            key,
+            config.provider.model.clone(),
+            transport_config,
+            &config.privacy.mode,
+        )?
+    } else {
+        agentzero_providers::build_provider_with_transport(
+            &config.provider.kind,
+            config.provider.base_url.clone(),
+            key,
+            config.provider.model.clone(),
+            transport_config,
+        )
+    };
     let memory = build_memory_store(&req.config_path).await?;
     let tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
     let mut tools: Vec<Box<dyn Tool>> = default_tools(&tool_policy, router, delegate_agents)?;

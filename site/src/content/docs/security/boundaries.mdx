@@ -144,7 +144,7 @@ The autonomy policy controls which tools require user approval:
 
 ## Redaction System
 
-The `agentzero-security` crate provides automatic redaction of sensitive data across all error messages, logs, and panic output.
+The `agentzero-core` security module provides automatic redaction of sensitive data across all error messages, logs, and panic output.
 
 **Patterns automatically redacted:**
 
@@ -163,7 +163,7 @@ The `agentzero-security` crate provides automatic redaction of sensitive data ac
 
 ## Risk Domains
 
-Security controls are organized by risk domain, each with required controls enforced by `agentzero-security::policy`:
+Security controls are organized by risk domain, each with required controls enforced by `agentzero_core::security::policy`:
 
 | Domain | Priority | Controls |
 |---|---|---|

@@ -42,6 +42,29 @@ register_providers! {
     _ => OpenAiCompatibleProvider,
 }
 
+/// Build a provider with privacy enforcement. When `privacy_mode` is
+/// `"local_only"` or `"full"`, rejects cloud providers with an error.
+pub fn build_provider_with_privacy(
+    kind: &str,
+    base_url: String,
+    api_key: String,
+    model: String,
+    transport: TransportConfig,
+    privacy_mode: &str,
+) -> anyhow::Result<Box<dyn agentzero_core::Provider>> {
+    if matches!(privacy_mode, "local_only" | "full")
+        && !agentzero_core::common::local_providers::is_local_provider(kind)
+    {
+        anyhow::bail!(
+            "privacy mode '{privacy_mode}' requires a local provider, \
+             but '{kind}' is a cloud provider"
+        );
+    }
+    Ok(build_provider_with_transport(
+        kind, base_url, api_key, model, transport,
+    ))
+}
+
 /// Build a provider with explicit transport configuration from TOML.
 pub fn build_provider_with_transport(
     kind: &str,
