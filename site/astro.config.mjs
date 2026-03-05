@@ -4,7 +4,7 @@ import starlightClientMermaid from "@pasqal-io/starlight-client-mermaid";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  site: "https://agentzero.github.io",
+  site: "https://tryagentzero.com",
   base: "/",
   outDir: "../gh-pages",
   integrations: [
