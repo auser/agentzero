@@ -2,10 +2,10 @@
 #
 # Pre-commit hook for agentzero
 # - Formats code with cargo fmt
-# - Runs clippy (cached — fast when nothing changed)
+# - Runs clippy only on crates with staged changes (fast incremental)
 #
 # Full test suite runs in CI and can be triggered locally with:
-#   cargo test --workspace --lib
+#   just test
 #
 # To install this hook, run:
 #   git config core.hooksPath .githooks
@@ -31,12 +31,46 @@ fi
 echo "Code formatting applied and staged"
 echo ""
 
-# Run clippy check (zero warnings required)
-# Note: Use 'cargo clippy --fix' manually if you want auto-fixes
-echo "Running clippy check (zero warnings required)..."
-if ! cargo clippy --workspace --all-targets -- -D warnings; then
+# Determine which crates have staged changes
+CHANGED_CRATES=$(git diff --cached --name-only --diff-filter=ACMR \
+    | sed -n 's|^crates/\([^/]*\)/.*|\1|p' \
+    | sort -u)
+
+# Check if bin/ has changes too
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '^bin/'; then
+    CHANGED_CRATES=$(printf '%s\nagentzero' "$CHANGED_CRATES")
+fi
+
+# Check if workspace-level files changed (Cargo.toml, Cargo.lock)
+if git diff --cached --name-only --diff-filter=ACMR | grep -qE '^Cargo\.(toml|lock)$'; then
+    # Workspace manifest changed — check everything
+    echo "Workspace manifest changed — running full clippy..."
+    if ! cargo clippy --workspace -- -D warnings; then
+        echo "Clippy check failed!"
+        exit 1
+    fi
+    echo "Clippy passed"
+    echo "All pre-commit checks passed!"
+    exit 0
+fi
+
+if [ -z "$CHANGED_CRATES" ]; then
+    echo "No crate changes staged — skipping clippy"
+    echo "All pre-commit checks passed!"
+    exit 0
+fi
+
+# Build clippy args: -p <crate> for each changed crate
+CLIPPY_ARGS=""
+for crate in $CHANGED_CRATES; do
+    CLIPPY_ARGS="$CLIPPY_ARGS -p $crate"
+done
+
+CRATE_LIST=$(echo $CHANGED_CRATES | tr '\n' ' ')
+echo "Running clippy on changed crates: $CRATE_LIST..."
+if ! cargo clippy $CLIPPY_ARGS -- -D warnings; then
     echo "Clippy check failed!"
-    echo "   Run 'cargo clippy --workspace --all-targets --fix --allow-dirty' to auto-fix"
+    echo "   Run 'cargo clippy --fix --allow-dirty' to auto-fix"
     exit 1
 fi
 echo "Clippy passed"

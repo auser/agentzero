@@ -263,8 +263,26 @@ async fn run_process(command: &str, workspace_root: &str) -> ProcessOutput {
         }
     };
 
-    let stdout_handle = child.stdout.take().unwrap();
-    let stderr_handle = child.stderr.take().unwrap();
+    let stdout_handle = match child.stdout.take() {
+        Some(h) => h,
+        None => {
+            return ProcessOutput {
+                exit_code: None,
+                stdout: String::new(),
+                stderr: "stdout not piped on spawned child".to_string(),
+            };
+        }
+    };
+    let stderr_handle = match child.stderr.take() {
+        Some(h) => h,
+        None => {
+            return ProcessOutput {
+                exit_code: None,
+                stdout: String::new(),
+                stderr: "stderr not piped on spawned child".to_string(),
+            };
+        }
+    };
 
     let stdout_task = tokio::spawn(read_limited(stdout_handle));
     let stderr_task = tokio::spawn(read_limited(stderr_handle));

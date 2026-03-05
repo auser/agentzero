@@ -128,7 +128,11 @@ impl ShellTool {
             return Err(anyhow!("too many shell arguments"));
         }
 
-        let cmd_policy = policy.command_policy.as_ref().unwrap();
+        // SAFETY: parse_context_aware is only called when command_policy.is_some()
+        let cmd_policy = policy
+            .command_policy
+            .as_ref()
+            .expect("command_policy must be Some in context-aware mode");
         for (i, token) in tokens.iter().enumerate().skip(1) {
             if token.text.is_empty() {
                 return Err(anyhow!("empty shell argument is not allowed"));

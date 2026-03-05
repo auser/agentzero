@@ -25,7 +25,7 @@ pub fn validate_json(value: &Value, schema: &Value) -> Result<(), Vec<String>> {
 
 fn validate_inner(value: &Value, schema: &Value, path: &str, errors: &mut Vec<String>) {
     // Empty schema or boolean true accepts anything.
-    if schema.is_boolean() || (schema.is_object() && schema.as_object().unwrap().is_empty()) {
+    if schema.is_boolean() || schema.as_object().is_some_and(|o| o.is_empty()) {
         return;
     }
 
@@ -61,9 +61,7 @@ fn validate_inner(value: &Value, schema: &Value, path: &str, errors: &mut Vec<St
     }
 
     // Object-specific checks.
-    if value.is_object() {
-        let obj = value.as_object().unwrap();
-
+    if let Some(obj) = value.as_object() {
         // Check `required` fields.
         if let Some(required) = schema_obj.get("required").and_then(|v| v.as_array()) {
             for req in required {

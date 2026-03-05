@@ -545,6 +545,56 @@ async fn v1_models_requires_auth_when_bearer_set() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
+// --- TCP-level integration test ---
+
+#[tokio::test]
+async fn tcp_health_endpoint_over_real_listener() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let state = GatewayState::test_with_bearer(None);
+    let app = build_router(state, &default_config());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("should bind to ephemeral port");
+    let addr = listener.local_addr().expect("should have local addr");
+
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("server should run");
+    });
+
+    // Give server a moment to start accepting connections
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Send a raw HTTP/1.1 request over TCP
+    let mut stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("should connect to gateway");
+    stream
+        .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .expect("should send request");
+
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .await
+        .expect("should read response");
+    let response_str = String::from_utf8_lossy(&response);
+
+    assert!(
+        response_str.starts_with("HTTP/1.1 200"),
+        "should get 200 OK, got: {}",
+        response_str.lines().next().unwrap_or("(empty)")
+    );
+    assert!(
+        response_str.contains(r#""status":"ok"#),
+        "body should contain health status"
+    );
+
+    server.abort();
+}
+
 // --- Phase 5: gateway agent wiring tests ---
 
 #[tokio::test]

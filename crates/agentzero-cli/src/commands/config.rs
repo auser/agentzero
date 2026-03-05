@@ -135,7 +135,8 @@ fn set_config_value(
             .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
     }
 
-    let leaf = segments.last().unwrap();
+    // segments is non-empty: validated by the `segments.is_empty()` check above
+    let leaf = segments.last().expect("segments must be non-empty");
     let typed_value = infer_toml_value(raw_value);
 
     current

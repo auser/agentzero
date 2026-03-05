@@ -120,7 +120,10 @@ pub fn handle_command_with_context(
         }
         ChatCommand::Approvals => {
             if let Some(ctx) = ctx {
-                let list = ctx.auto_approve.lock().unwrap();
+                let list = ctx
+                    .auto_approve
+                    .lock()
+                    .expect("auto_approve mutex poisoned");
                 if list.is_empty() {
                     CommandResult::Response("Current approvals: (none)".to_string())
                 } else {
@@ -157,7 +160,10 @@ pub fn handle_command_with_context(
 }
 
 fn approve_tool(tool: &str, ctx: &CommandContext) -> CommandResult {
-    let mut list = ctx.auto_approve.lock().unwrap();
+    let mut list = ctx
+        .auto_approve
+        .lock()
+        .expect("auto_approve mutex poisoned");
     if list.contains(&tool.to_string()) {
         return CommandResult::Response(format!("Tool `{tool}` is already approved."));
     }
@@ -167,7 +173,10 @@ fn approve_tool(tool: &str, ctx: &CommandContext) -> CommandResult {
 }
 
 fn unapprove_tool(tool: &str, ctx: &CommandContext) -> CommandResult {
-    let mut list = ctx.auto_approve.lock().unwrap();
+    let mut list = ctx
+        .auto_approve
+        .lock()
+        .expect("auto_approve mutex poisoned");
     let before = list.len();
     list.retain(|t| t != tool);
     if list.len() == before {

@@ -1,3 +1,9 @@
+//! Configuration loading and policy mapping for AgentZero.
+//!
+//! Loads `agentzero.toml` with dotenv overlay, validates all fields, and
+//! maps the config model into security policies (`ToolSecurityPolicy`,
+//! `AuditPolicy`) consumed by the runtime.
+
 mod loader;
 mod model;
 mod policy;

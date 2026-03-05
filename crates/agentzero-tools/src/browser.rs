@@ -136,8 +136,14 @@ impl BrowserTool {
             )
         })?;
 
-        let stdout_handle = child.stdout.take().unwrap();
-        let stderr_handle = child.stderr.take().unwrap();
+        let stdout_handle = child
+            .stdout
+            .take()
+            .context("stdout not piped on spawned child")?;
+        let stderr_handle = child
+            .stderr
+            .take()
+            .context("stderr not piped on spawned child")?;
 
         let stdout_task = tokio::spawn(read_limited(stdout_handle));
         let stderr_task = tokio::spawn(read_limited(stderr_handle));

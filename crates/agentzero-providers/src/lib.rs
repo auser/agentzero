@@ -1,3 +1,9 @@
+//! LLM provider abstraction for AgentZero.
+//!
+//! Implements the `Provider` trait for Anthropic and OpenAI-compatible APIs.
+//! Handles streaming, tool-use message formatting, model catalog lookup,
+//! and provider-specific quirks (reasoning tokens, system prompts).
+
 mod anthropic;
 mod catalog;
 mod models;

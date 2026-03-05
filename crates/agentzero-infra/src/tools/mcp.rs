@@ -336,7 +336,13 @@ impl Tool for McpTool {
                     "mcp call failed, reconnecting"
                 );
                 // Clear session for reconnect.
-                let slot = self.sessions.get(server_name_ref).unwrap().clone();
+                let slot = self
+                    .sessions
+                    .get(server_name_ref)
+                    .ok_or_else(|| {
+                        anyhow!("mcp session slot missing for server `{server_name_ref}`")
+                    })?
+                    .clone();
                 let mut guard = slot.lock().await;
                 *guard = None;
             }
@@ -344,7 +350,11 @@ impl Tool for McpTool {
 
         // Reconnect attempt.
         {
-            let slot = self.sessions.get(server_name_ref).unwrap().clone();
+            let slot = self
+                .sessions
+                .get(server_name_ref)
+                .ok_or_else(|| anyhow!("mcp session slot missing for server `{server_name_ref}`"))?
+                .clone();
             let mut guard = slot.lock().await;
             if guard.is_none() {
                 let session = self.spawn_session(server_name_ref).await?;

@@ -175,6 +175,37 @@ impl AgentZeroConfig {
             ));
         }
 
+        // Gateway validation
+        if self.gateway.host.trim().is_empty() {
+            return Err(anyhow!("gateway.host must not be empty"));
+        }
+        if self.gateway.port == 0 {
+            return Err(anyhow!("gateway.port must be > 0"));
+        }
+        if !self.gateway.allow_public_bind
+            && self.gateway.host != "127.0.0.1"
+            && self.gateway.host != "::1"
+            && self.gateway.host != "localhost"
+        {
+            return Err(anyhow!(
+                "gateway.host `{}` binds publicly but gateway.allow_public_bind is false",
+                self.gateway.host
+            ));
+        }
+
+        // Autonomy validation
+        match self.autonomy.level.as_str() {
+            "supervised" | "autonomous" | "semi" | "locked" => {}
+            other => {
+                return Err(anyhow!(
+                    "autonomy.level must be one of: supervised, autonomous, semi, locked; got `{other}`"
+                ));
+            }
+        }
+        if self.autonomy.max_actions_per_hour == 0 {
+            return Err(anyhow!("autonomy.max_actions_per_hour must be > 0"));
+        }
+
         Ok(())
     }
 

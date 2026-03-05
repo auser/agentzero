@@ -1,3 +1,9 @@
+//! Platform integrations for AgentZero.
+//!
+//! Implements Telegram, Discord, and Slack channel adapters that bridge
+//! chat messages to the agent loop. Includes command parsing, reaction
+//! acknowledgement, and leak-guard middleware for sensitive data filtering.
+
 pub mod ack_reactions;
 mod channels;
 pub mod commands;

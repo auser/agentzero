@@ -1,3 +1,8 @@
+//! HTTP/WebSocket gateway server for AgentZero.
+//!
+//! Exposes the agent loop over HTTP and WebSocket endpoints with
+//! pairing-based authentication, streaming responses, and node control.
+
 mod auth;
 mod banner;
 mod handlers;

@@ -1,3 +1,9 @@
+//! AgentZero CLI application.
+//!
+//! Implements all CLI commands: `agent`, `gateway`, `daemon`, `config`,
+//! `plugin`, `cron`, `doctor`, and more. Each command is a separate module
+//! under `commands/` implementing the `AgentZeroCommand` trait.
+
 mod app;
 mod cli;
 mod command_core;

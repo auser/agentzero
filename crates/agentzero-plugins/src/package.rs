@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context};
-use fs2::FileExt;
+use fd_lock::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -11,9 +11,9 @@ const MANIFEST_FILE_NAME: &str = "manifest.json";
 const CURRENT_RUNTIME_API_VERSION: u32 = 2;
 const LOCK_FILE_NAME: &str = ".agentzero-plugins.lock";
 
-/// Acquire an exclusive file lock on the install root directory.
-/// Returns a guard that releases the lock when dropped.
-fn lock_install_root(install_root: &Path) -> anyhow::Result<fs::File> {
+/// Open a lock file for the install root directory. The caller must call
+/// `.write()` on the returned `RwLock` to acquire the exclusive lock.
+fn open_install_lock(install_root: &Path) -> anyhow::Result<RwLock<fs::File>> {
     fs::create_dir_all(install_root)
         .with_context(|| format!("failed to create install root {}", install_root.display()))?;
     let lock_path = install_root.join(LOCK_FILE_NAME);
@@ -23,10 +23,7 @@ fn lock_install_root(install_root: &Path) -> anyhow::Result<fs::File> {
         .truncate(true)
         .open(&lock_path)
         .with_context(|| format!("failed to open lock file {}", lock_path.display()))?;
-    lock_file
-        .lock_exclusive()
-        .with_context(|| format!("failed to acquire lock on {}", lock_path.display()))?;
-    Ok(lock_file)
+    Ok(RwLock::new(lock_file))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -189,7 +186,10 @@ pub fn install_packaged_plugin(
     let install_root = install_root.as_ref();
 
     // Acquire an exclusive lock so concurrent installs don't corrupt state.
-    let _lock = lock_install_root(install_root)?;
+    let mut lock = open_install_lock(install_root)?;
+    let _guard = lock
+        .write()
+        .map_err(|e| anyhow!("failed to acquire install lock: {e}"))?;
 
     let archive_file = fs::File::open(package_path)
         .with_context(|| format!("failed to open package {}", package_path.display()))?;
@@ -333,7 +333,10 @@ pub fn remove_installed_plugin(
     }
 
     // Acquire an exclusive lock so concurrent removes don't corrupt state.
-    let _lock = lock_install_root(install_root)?;
+    let mut lock = open_install_lock(install_root)?;
+    let _guard = lock
+        .write()
+        .map_err(|e| anyhow!("failed to acquire install lock: {e}"))?;
 
     let plugin_root = install_root.join(plugin_id);
     if !plugin_root.exists() {

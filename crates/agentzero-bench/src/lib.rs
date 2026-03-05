@@ -1,3 +1,8 @@
+//! Benchmarking harness for AgentZero.
+//!
+//! Provides fake providers, in-memory stores, and deterministic tool stubs
+//! for reproducible performance benchmarks of the agent loop.
+
 use agentzero_core::{
     Agent, AgentConfig, AgentError, AssistantMessage, ChatResult, MemoryEntry, MemoryStore,
     Provider, Tool, ToolContext, UserMessage,

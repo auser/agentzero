@@ -770,6 +770,46 @@ mod tests {
         assert_eq!(url, "unknown-provider-xyz");
     }
 
+    #[test]
+    fn parse_hook_mode_trims_whitespace() {
+        assert!(matches!(
+            parse_hook_mode("  block  ").expect("block with whitespace should parse"),
+            HookFailureMode::Block
+        ));
+        assert!(matches!(
+            parse_hook_mode("\twarn\n").expect("warn with tabs/newlines should parse"),
+            HookFailureMode::Warn
+        ));
+    }
+
+    #[test]
+    fn parse_hook_mode_rejects_wrong_case() {
+        assert!(
+            parse_hook_mode("Block").is_err(),
+            "uppercase should be rejected"
+        );
+        assert!(
+            parse_hook_mode("WARN").is_err(),
+            "all-caps should be rejected"
+        );
+        assert!(
+            parse_hook_mode("Ignore").is_err(),
+            "title-case should be rejected"
+        );
+    }
+
+    #[test]
+    fn parse_hook_mode_rejects_empty_string() {
+        let err = parse_hook_mode("").expect_err("empty string should fail");
+        assert!(err.to_string().contains("invalid hook error mode"));
+    }
+
+    #[test]
+    fn parse_hook_mode_rejects_whitespace_only() {
+        let err = parse_hook_mode("   ").expect_err("whitespace-only should fail");
+        assert!(err.to_string().contains("invalid hook error mode"));
+    }
+
     // --- Streaming runtime tests ---
 
     use agentzero_core::{

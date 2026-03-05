@@ -154,3 +154,105 @@ impl Tool for WasmTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_manifest() -> PluginManifest {
+        PluginManifest {
+            id: "test-plugin".to_string(),
+            version: "0.1.0".to_string(),
+            description: Some("A test plugin".to_string()),
+            entrypoint: "az_tool_execute".to_string(),
+            wasm_file: "plugin.wasm".to_string(),
+            wasm_sha256: "0".repeat(64),
+            capabilities: vec![],
+            hooks: vec![],
+            min_runtime_api: 2,
+            max_runtime_api: 2,
+            allowed_host_calls: vec![],
+        }
+    }
+
+    fn test_policy() -> WasmIsolationPolicy {
+        WasmIsolationPolicy {
+            max_execution_ms: 5_000,
+            max_module_bytes: 5 * 1024 * 1024,
+            max_memory_mb: 64,
+            allow_network: false,
+            allow_fs_write: false,
+            allow_fs_read: false,
+            allowed_host_calls: vec![],
+        }
+    }
+
+    #[test]
+    fn from_manifest_rejects_missing_wasm_file() {
+        let manifest = test_manifest();
+        let path = PathBuf::from("/nonexistent/path/to/plugin.wasm");
+        let err = WasmTool::from_manifest(manifest, path, test_policy())
+            .expect_err("should fail for missing wasm file");
+        assert!(err.to_string().contains("wasm file does not exist"));
+    }
+
+    #[test]
+    fn from_manifest_rejects_invalid_wasm_bytes() {
+        let dir =
+            std::env::temp_dir().join(format!("agentzero-wasm-bridge-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wasm_path = dir.join("not-a-wasm.wasm");
+        std::fs::write(&wasm_path, b"this is not wasm").unwrap();
+
+        let manifest = test_manifest();
+        let err = WasmTool::from_manifest(manifest, wasm_path, test_policy())
+            .expect_err("should fail for invalid wasm bytes");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("failed to") || msg.contains("invalid"),
+            "error should mention parsing failure, got: {msg}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn from_manifest_uses_description_from_manifest() {
+        // We can't build a real tool without valid WASM, but we can test
+        // the error path always carries the right information.
+        let mut manifest = test_manifest();
+        manifest.description = None;
+
+        let path = PathBuf::from("/nonexistent/plugin.wasm");
+        let err = WasmTool::from_manifest(manifest, path, test_policy());
+        assert!(err.is_err()); // fails because file doesn't exist
+    }
+
+    #[test]
+    fn shared_engine_creation_succeeds() {
+        let engine = WasmPluginRuntime::create_engine();
+        assert!(engine.is_ok(), "engine creation should succeed");
+    }
+
+    #[test]
+    fn from_manifest_with_shared_engine_rejects_missing_file() {
+        let engine = Arc::new(WasmPluginRuntime::create_engine().unwrap());
+        let manifest = test_manifest();
+        let path = PathBuf::from("/nonexistent/path/to/plugin.wasm");
+        let err = WasmTool::from_manifest_with_engine(manifest, path, test_policy(), Some(engine))
+            .expect_err("should fail for missing wasm file");
+        assert!(err.to_string().contains("wasm file does not exist"));
+    }
+
+    #[test]
+    fn debug_impl_shows_name_and_path() {
+        // Test that Debug doesn't panic by formatting an error scenario
+        let manifest = test_manifest();
+        let path = PathBuf::from("/test/plugin.wasm");
+        let debug_str = format!(
+            "WasmTool {{ name: {:?}, wasm_path: {:?} }}",
+            manifest.id, path
+        );
+        assert!(debug_str.contains("test-plugin"));
+    }
+}

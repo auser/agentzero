@@ -1,3 +1,8 @@
+//! Test utilities for AgentZero.
+//!
+//! Provides fake implementations of `Provider`, `MemoryStore`, and `Tool`
+//! for use in unit and integration tests across the workspace.
+
 use agentzero_core::{
     ChatResult, MemoryEntry, MemoryStore, Provider, Tool, ToolContext, ToolResult,
 };

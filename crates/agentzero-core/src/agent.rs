@@ -143,7 +143,10 @@ fn truncate_messages(messages: &mut Vec<ConversationMessage>, max_chars: usize) 
     }
 
     if keep_from_end == 0 {
-        let last = messages.pop().unwrap();
+        // messages.len() >= 2 is guaranteed by the early return above
+        let last = messages
+            .pop()
+            .expect("messages must have at least 2 entries");
         messages.truncate(1);
         messages.push(last);
         return;

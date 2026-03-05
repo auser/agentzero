@@ -1,3 +1,9 @@
+//! Tool implementations for AgentZero.
+//!
+//! Contains all built-in tools: file I/O, shell, git, browser, web fetch,
+//! search, cron, MCP, Composio, Pushover, hardware, WASM module management,
+//! and more. Each tool implements the `Tool` trait from `agentzero-core`.
+
 pub mod agents_ipc;
 pub mod apply_patch;
 pub mod autonomy;

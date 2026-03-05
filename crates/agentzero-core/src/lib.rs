@@ -1,3 +1,9 @@
+//! Core traits, types, and utilities for AgentZero.
+//!
+//! Defines the fundamental abstractions: `Tool`, `Provider`, `Agent`,
+//! `MemoryStore`, and all message/result types. Also contains shared
+//! utilities for URL policy enforcement, security, delegation, and routing.
+
 pub mod agent;
 pub mod common;
 pub mod delegation;

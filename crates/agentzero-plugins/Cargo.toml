@@ -15,7 +15,7 @@ plugin-dev = ["dep:notify", "dep:tracing"]
 
 [dependencies]
 anyhow.workspace = true
-fs2 = "0.4"
+fd-lock = "4"
 semver = "1"
 serde.workspace = true
 serde_json.workspace = true

@@ -1,3 +1,9 @@
+//! WASM plugin runtime for AgentZero.
+//!
+//! Provides the sandboxed WebAssembly execution environment for plugins.
+//! Includes module compilation, ABI v2 dispatch, capability-based isolation,
+//! and plugin packaging/discovery utilities.
+
 pub mod package;
 mod package_ref;
 pub mod wasm;

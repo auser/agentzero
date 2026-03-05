@@ -1,3 +1,8 @@
+//! Credential management for AgentZero.
+//!
+//! Handles API key storage and authentication profiles for multiple LLM
+//! providers. Credentials are persisted in an encrypted JSON store.
+
 use agentzero_storage::EncryptedJsonStore;
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
