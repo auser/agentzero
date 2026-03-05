@@ -1,3 +1,4 @@
+use crate::common::privacy_helpers::{is_network_tool, resolve_boundary};
 use crate::security::redaction::redact_text;
 use crate::types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ConversationMessage,
@@ -399,6 +400,25 @@ impl Agent {
         request_id: &str,
         iteration: usize,
     ) -> Result<crate::types::ToolResult, AgentError> {
+        // Privacy boundary enforcement: resolve tool-specific boundary against
+        // the agent's boundary, then check if the tool is allowed.
+        let tool_specific = self
+            .config
+            .tool_boundaries
+            .get(tool_name)
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        let resolved = resolve_boundary(tool_specific, &self.config.privacy_boundary);
+        if resolved == "local_only" && is_network_tool(tool_name) {
+            return Err(AgentError::Tool {
+                tool: tool_name.to_string(),
+                source: anyhow::anyhow!(
+                    "tool '{}' requires network access but privacy boundary is 'local_only'",
+                    tool_name
+                ),
+            });
+        }
+
         let is_plugin_call = tool_name.starts_with("plugin:");
         self.hook(
             "before_tool_call",

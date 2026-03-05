@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::time::sleep;
-use tracing::trace;
+use tracing::{info_span, trace, Instrument};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: u32 = 8192;
@@ -424,107 +424,117 @@ impl Provider for AnthropicProvider {
         prompt: &str,
         reasoning: &ReasoningConfig,
     ) -> anyhow::Result<ChatResult> {
-        // Check circuit breaker before sending.
-        self.circuit_breaker.check().await?;
+        let span = info_span!("anthropic_complete", provider = "anthropic", model = %self.model);
+        async {
+            // Check circuit breaker before sending.
+            self.circuit_breaker.check().await?;
 
-        let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
+            let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
 
-        let thinking = match reasoning.enabled {
-            Some(true) => {
-                let budget = reasoning
-                    .level
-                    .as_deref()
-                    .and_then(|l| l.parse::<u32>().ok())
-                    .unwrap_or(10000);
-                Some(ThinkingConfig {
-                    kind: "enabled".to_string(),
-                    budget_tokens: budget,
-                })
-            }
-            _ => None,
-        };
+            let thinking = match reasoning.enabled {
+                Some(true) => {
+                    let budget = reasoning
+                        .level
+                        .as_deref()
+                        .and_then(|l| l.parse::<u32>().ok())
+                        .unwrap_or(10000);
+                    Some(ThinkingConfig {
+                        kind: "enabled".to_string(),
+                        budget_tokens: budget,
+                    })
+                }
+                _ => None,
+            };
 
-        let max_tokens = if thinking.is_some() {
-            // Anthropic requires max_tokens > budget_tokens when thinking is enabled.
-            thinking
-                .as_ref()
-                .map(|t| t.budget_tokens.saturating_add(DEFAULT_MAX_TOKENS))
-                .unwrap_or(DEFAULT_MAX_TOKENS)
-        } else {
-            DEFAULT_MAX_TOKENS
-        };
+            let max_tokens = if thinking.is_some() {
+                // Anthropic requires max_tokens > budget_tokens when thinking is enabled.
+                thinking
+                    .as_ref()
+                    .map(|t| t.budget_tokens.saturating_add(DEFAULT_MAX_TOKENS))
+                    .unwrap_or(DEFAULT_MAX_TOKENS)
+            } else {
+                DEFAULT_MAX_TOKENS
+            };
 
-        // Extract system prompt if the user message starts with a system marker.
-        // Otherwise, pass the entire prompt as a user message.
-        let (system, user_text) = extract_system_prompt(prompt);
+            // Extract system prompt if the user message starts with a system marker.
+            // Otherwise, pass the entire prompt as a user message.
+            let (system, user_text) = extract_system_prompt(prompt);
 
-        let payload = MessagesRequest {
-            model: self.model.clone(),
-            max_tokens,
-            messages: vec![Message {
-                role: "user".to_string(),
-                content: MessageContent::Text(user_text.to_string()),
-            }],
-            system,
-            thinking,
-            stream: false,
-            tools: None,
-        };
+            let payload = MessagesRequest {
+                model: self.model.clone(),
+                max_tokens,
+                messages: vec![Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Text(user_text.to_string()),
+                }],
+                system,
+                thinking,
+                stream: false,
+                tools: None,
+            };
 
-        log_request("anthropic", &url, &self.model);
-        let start = Instant::now();
-        let max_retries = self.config.max_retries;
+            log_request("anthropic", &url, &self.model);
+            let start = Instant::now();
+            let max_retries = self.config.max_retries;
 
-        let mut last_error: Option<anyhow::Error> = None;
-        for attempt in 0..max_retries {
-            match self.transport.send(&url, &self.api_key, &payload).await {
-                Ok(response) => {
-                    log_response(
-                        "anthropic",
-                        response.status,
-                        response.body.len(),
-                        start.elapsed(),
-                    );
-                    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
-                    if !status.is_success() {
+            let mut last_error: Option<anyhow::Error> = None;
+            for attempt in 0..max_retries {
+                match self.transport.send(&url, &self.api_key, &payload).await {
+                    Ok(response) => {
+                        log_response(
+                            "anthropic",
+                            response.status,
+                            response.body.len(),
+                            start.elapsed(),
+                        );
+                        let status =
+                            StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
+                        if !status.is_success() {
+                            self.circuit_breaker.record_failure().await;
+                            let mapped = map_status_error(status, &response.body);
+                            if attempt + 1 < max_retries && should_retry_status(status) {
+                                log_retry(
+                                    "anthropic",
+                                    attempt,
+                                    &format!("status {}", response.status),
+                                );
+                                sleep(
+                                    parse_retry_after(&response.headers)
+                                        .unwrap_or_else(|| jittered_backoff(attempt)),
+                                )
+                                .await;
+                                last_error = Some(mapped);
+                                continue;
+                            }
+                            return Err(mapped);
+                        }
+
+                        self.circuit_breaker.record_success();
+                        let output_text = parse_output_text(&response.body)
+                            .with_context(|| "failed to parse Anthropic response".to_string())?;
+                        return Ok(ChatResult {
+                            output_text,
+                            ..Default::default()
+                        });
+                    }
+                    Err(error) => {
                         self.circuit_breaker.record_failure().await;
-                        let mapped = map_status_error(status, &response.body);
-                        if attempt + 1 < max_retries && should_retry_status(status) {
-                            log_retry("anthropic", attempt, &format!("status {}", response.status));
-                            sleep(
-                                parse_retry_after(&response.headers)
-                                    .unwrap_or_else(|| jittered_backoff(attempt)),
-                            )
-                            .await;
+                        let mapped = anyhow!("provider request failed: {}", error.message);
+                        if attempt + 1 < max_retries && should_retry_transport(error.kind) {
+                            log_retry("anthropic", attempt, &error.message);
+                            sleep(jittered_backoff(attempt)).await;
                             last_error = Some(mapped);
                             continue;
                         }
                         return Err(mapped);
                     }
-
-                    self.circuit_breaker.record_success();
-                    let output_text = parse_output_text(&response.body)
-                        .with_context(|| "failed to parse Anthropic response".to_string())?;
-                    return Ok(ChatResult {
-                        output_text,
-                        ..Default::default()
-                    });
-                }
-                Err(error) => {
-                    self.circuit_breaker.record_failure().await;
-                    let mapped = anyhow!("provider request failed: {}", error.message);
-                    if attempt + 1 < max_retries && should_retry_transport(error.kind) {
-                        log_retry("anthropic", attempt, &error.message);
-                        sleep(jittered_backoff(attempt)).await;
-                        last_error = Some(mapped);
-                        continue;
-                    }
-                    return Err(mapped);
                 }
             }
-        }
 
-        Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
+            Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
+        }
+        .instrument(span)
+        .await
     }
 
     async fn complete_streaming(
@@ -532,90 +542,95 @@ impl Provider for AnthropicProvider {
         prompt: &str,
         sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
     ) -> anyhow::Result<ChatResult> {
-        self.circuit_breaker.check().await?;
+        let span = info_span!("anthropic_stream", provider = "anthropic", model = %self.model);
+        async {
+            self.circuit_breaker.check().await?;
 
-        let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
-        let (system, user_text) = extract_system_prompt(prompt);
-        let payload = MessagesRequest {
-            model: self.model.clone(),
-            max_tokens: DEFAULT_MAX_TOKENS,
-            messages: vec![Message {
-                role: "user".to_string(),
-                content: MessageContent::Text(user_text.to_string()),
-            }],
-            system,
-            thinking: None,
-            stream: true,
-            tools: None,
-        };
+            let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
+            let (system, user_text) = extract_system_prompt(prompt);
+            let payload = MessagesRequest {
+                model: self.model.clone(),
+                max_tokens: DEFAULT_MAX_TOKENS,
+                messages: vec![Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Text(user_text.to_string()),
+                }],
+                system,
+                thinking: None,
+                stream: true,
+                tools: None,
+            };
 
-        log_request("anthropic", &url, &self.model);
-        let start = Instant::now();
+            log_request("anthropic", &url, &self.model);
+            let start = Instant::now();
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(self.config.timeout_ms))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_millis(self.config.timeout_ms))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
 
-        let response = match client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("content-type", "application/json")
-            .json(&payload)
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
+            let response = match client
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", ANTHROPIC_VERSION)
+                .header("content-type", "application/json")
+                .json(&payload)
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
+                Err(e) => {
+                    self.circuit_breaker.record_failure().await;
+                    return Err(anyhow!("streaming request failed: {e}"));
+                }
+            };
+
+            if !response.status().is_success() {
                 self.circuit_breaker.record_failure().await;
-                return Err(anyhow!("streaming request failed: {e}"));
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(map_status_error(status, &body));
             }
-        };
 
-        if !response.status().is_success() {
-            self.circuit_breaker.record_failure().await;
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(map_status_error(status, &body));
-        }
+            let mut byte_stream = response.bytes_stream();
+            let mut buffer = String::new();
+            let mut accumulated = String::new();
 
-        let mut byte_stream = response.bytes_stream();
-        let mut buffer = String::new();
-        let mut accumulated = String::new();
+            while let Some(chunk_result) = byte_stream.next().await {
+                let bytes = chunk_result.context("error reading SSE chunk")?;
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
 
-        while let Some(chunk_result) = byte_stream.next().await {
-            let bytes = chunk_result.context("error reading SSE chunk")?;
-            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                while let Some(event_end) = buffer.find("\n\n") {
+                    let event_block = buffer[..event_end].to_string();
+                    buffer = buffer[event_end + 2..].to_string();
 
-            while let Some(event_end) = buffer.find("\n\n") {
-                let event_block = buffer[..event_end].to_string();
-                buffer = buffer[event_end + 2..].to_string();
-
-                if let Some(delta) = parse_sse_text_delta(&event_block) {
-                    accumulated.push_str(&delta);
-                    let _ = sender.send(StreamChunk {
-                        delta,
-                        done: false,
-                        tool_call_delta: None,
-                    });
+                    if let Some(delta) = parse_sse_text_delta(&event_block) {
+                        accumulated.push_str(&delta);
+                        let _ = sender.send(StreamChunk {
+                            delta,
+                            done: false,
+                            tool_call_delta: None,
+                        });
+                    }
                 }
             }
+
+            self.circuit_breaker.record_success();
+            log_response("anthropic", 200, accumulated.len(), start.elapsed());
+
+            let _ = sender.send(StreamChunk {
+                delta: String::new(),
+                done: true,
+                tool_call_delta: None,
+            });
+
+            Ok(ChatResult {
+                output_text: accumulated,
+                ..Default::default()
+            })
         }
-
-        self.circuit_breaker.record_success();
-        log_response("anthropic", 200, accumulated.len(), start.elapsed());
-
-        let _ = sender.send(StreamChunk {
-            delta: String::new(),
-            done: true,
-            tool_call_delta: None,
-        });
-
-        Ok(ChatResult {
-            output_text: accumulated,
-            ..Default::default()
-        })
+        .instrument(span)
+        .await
     }
 
     async fn complete_with_tools(
@@ -624,101 +639,113 @@ impl Provider for AnthropicProvider {
         tools: &[ToolDefinition],
         reasoning: &ReasoningConfig,
     ) -> anyhow::Result<ChatResult> {
-        self.circuit_breaker.check().await?;
+        let span =
+            info_span!("anthropic_complete_tools", provider = "anthropic", model = %self.model);
+        async {
+            self.circuit_breaker.check().await?;
 
-        let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
+            let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
 
-        let thinking = match reasoning.enabled {
-            Some(true) => {
-                let budget = reasoning
-                    .level
-                    .as_deref()
-                    .and_then(|l| l.parse::<u32>().ok())
-                    .unwrap_or(10000);
-                Some(ThinkingConfig {
-                    kind: "enabled".to_string(),
-                    budget_tokens: budget,
-                })
-            }
-            _ => None,
-        };
+            let thinking = match reasoning.enabled {
+                Some(true) => {
+                    let budget = reasoning
+                        .level
+                        .as_deref()
+                        .and_then(|l| l.parse::<u32>().ok())
+                        .unwrap_or(10000);
+                    Some(ThinkingConfig {
+                        kind: "enabled".to_string(),
+                        budget_tokens: budget,
+                    })
+                }
+                _ => None,
+            };
 
-        let max_tokens = if thinking.is_some() {
-            thinking
-                .as_ref()
-                .map(|t| t.budget_tokens.saturating_add(DEFAULT_MAX_TOKENS))
-                .unwrap_or(DEFAULT_MAX_TOKENS)
-        } else {
-            DEFAULT_MAX_TOKENS
-        };
-
-        let anthropic_tools: Vec<AnthropicToolDef> = tools.iter().map(to_anthropic_tool).collect();
-        let system = extract_system_from_messages(messages);
-
-        let payload = MessagesRequest {
-            model: self.model.clone(),
-            max_tokens,
-            messages: to_anthropic_messages(messages),
-            system,
-            thinking,
-            stream: false,
-            tools: if anthropic_tools.is_empty() {
-                None
+            let max_tokens = if thinking.is_some() {
+                thinking
+                    .as_ref()
+                    .map(|t| t.budget_tokens.saturating_add(DEFAULT_MAX_TOKENS))
+                    .unwrap_or(DEFAULT_MAX_TOKENS)
             } else {
-                Some(anthropic_tools)
-            },
-        };
+                DEFAULT_MAX_TOKENS
+            };
 
-        log_request("anthropic", &url, &self.model);
-        let start = Instant::now();
-        let max_retries = self.config.max_retries;
+            let anthropic_tools: Vec<AnthropicToolDef> =
+                tools.iter().map(to_anthropic_tool).collect();
+            let system = extract_system_from_messages(messages);
 
-        let mut last_error: Option<anyhow::Error> = None;
-        for attempt in 0..max_retries {
-            match self.transport.send(&url, &self.api_key, &payload).await {
-                Ok(response) => {
-                    log_response(
-                        "anthropic",
-                        response.status,
-                        response.body.len(),
-                        start.elapsed(),
-                    );
-                    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
-                    if !status.is_success() {
+            let payload = MessagesRequest {
+                model: self.model.clone(),
+                max_tokens,
+                messages: to_anthropic_messages(messages),
+                system,
+                thinking,
+                stream: false,
+                tools: if anthropic_tools.is_empty() {
+                    None
+                } else {
+                    Some(anthropic_tools)
+                },
+            };
+
+            log_request("anthropic", &url, &self.model);
+            let start = Instant::now();
+            let max_retries = self.config.max_retries;
+
+            let mut last_error: Option<anyhow::Error> = None;
+            for attempt in 0..max_retries {
+                match self.transport.send(&url, &self.api_key, &payload).await {
+                    Ok(response) => {
+                        log_response(
+                            "anthropic",
+                            response.status,
+                            response.body.len(),
+                            start.elapsed(),
+                        );
+                        let status =
+                            StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
+                        if !status.is_success() {
+                            self.circuit_breaker.record_failure().await;
+                            let mapped = map_status_error(status, &response.body);
+                            if attempt + 1 < max_retries && should_retry_status(status) {
+                                log_retry(
+                                    "anthropic",
+                                    attempt,
+                                    &format!("status {}", response.status),
+                                );
+                                sleep(
+                                    parse_retry_after(&response.headers)
+                                        .unwrap_or_else(|| jittered_backoff(attempt)),
+                                )
+                                .await;
+                                last_error = Some(mapped);
+                                continue;
+                            }
+                            return Err(mapped);
+                        }
+
+                        self.circuit_breaker.record_success();
+                        return parse_tool_response(&response.body)
+                            .with_context(|| "failed to parse Anthropic tool response");
+                    }
+                    Err(error) => {
                         self.circuit_breaker.record_failure().await;
-                        let mapped = map_status_error(status, &response.body);
-                        if attempt + 1 < max_retries && should_retry_status(status) {
-                            log_retry("anthropic", attempt, &format!("status {}", response.status));
-                            sleep(
-                                parse_retry_after(&response.headers)
-                                    .unwrap_or_else(|| jittered_backoff(attempt)),
-                            )
-                            .await;
+                        let mapped = anyhow!("provider request failed: {}", error.message);
+                        if attempt + 1 < max_retries && should_retry_transport(error.kind) {
+                            log_retry("anthropic", attempt, &error.message);
+                            sleep(jittered_backoff(attempt)).await;
                             last_error = Some(mapped);
                             continue;
                         }
                         return Err(mapped);
                     }
-
-                    self.circuit_breaker.record_success();
-                    return parse_tool_response(&response.body)
-                        .with_context(|| "failed to parse Anthropic tool response");
-                }
-                Err(error) => {
-                    self.circuit_breaker.record_failure().await;
-                    let mapped = anyhow!("provider request failed: {}", error.message);
-                    if attempt + 1 < max_retries && should_retry_transport(error.kind) {
-                        log_retry("anthropic", attempt, &error.message);
-                        sleep(jittered_backoff(attempt)).await;
-                        last_error = Some(mapped);
-                        continue;
-                    }
-                    return Err(mapped);
                 }
             }
-        }
 
-        Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
+            Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
+        }
+        .instrument(span)
+        .await
     }
 
     async fn complete_streaming_with_tools(
@@ -728,188 +755,195 @@ impl Provider for AnthropicProvider {
         reasoning: &ReasoningConfig,
         sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
     ) -> anyhow::Result<ChatResult> {
-        self.circuit_breaker.check().await?;
+        let span =
+            info_span!("anthropic_stream_tools", provider = "anthropic", model = %self.model);
+        async {
+            self.circuit_breaker.check().await?;
 
-        let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
+            let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
 
-        let thinking = match reasoning.enabled {
-            Some(true) => {
-                let budget = reasoning
-                    .level
-                    .as_deref()
-                    .and_then(|l| l.parse::<u32>().ok())
-                    .unwrap_or(10000);
-                Some(ThinkingConfig {
-                    kind: "enabled".to_string(),
-                    budget_tokens: budget,
-                })
-            }
-            _ => None,
-        };
+            let thinking = match reasoning.enabled {
+                Some(true) => {
+                    let budget = reasoning
+                        .level
+                        .as_deref()
+                        .and_then(|l| l.parse::<u32>().ok())
+                        .unwrap_or(10000);
+                    Some(ThinkingConfig {
+                        kind: "enabled".to_string(),
+                        budget_tokens: budget,
+                    })
+                }
+                _ => None,
+            };
 
-        let max_tokens = if thinking.is_some() {
-            thinking
-                .as_ref()
-                .map(|t| t.budget_tokens.saturating_add(DEFAULT_MAX_TOKENS))
-                .unwrap_or(DEFAULT_MAX_TOKENS)
-        } else {
-            DEFAULT_MAX_TOKENS
-        };
-
-        let anthropic_tools: Vec<AnthropicToolDef> = tools.iter().map(to_anthropic_tool).collect();
-        let system = extract_system_from_messages(messages);
-
-        let payload = MessagesRequest {
-            model: self.model.clone(),
-            max_tokens,
-            messages: to_anthropic_messages(messages),
-            system,
-            thinking,
-            stream: true,
-            tools: if anthropic_tools.is_empty() {
-                None
+            let max_tokens = if thinking.is_some() {
+                thinking
+                    .as_ref()
+                    .map(|t| t.budget_tokens.saturating_add(DEFAULT_MAX_TOKENS))
+                    .unwrap_or(DEFAULT_MAX_TOKENS)
             } else {
-                Some(anthropic_tools)
-            },
-        };
+                DEFAULT_MAX_TOKENS
+            };
 
-        log_request("anthropic", &url, &self.model);
-        let start = Instant::now();
+            let anthropic_tools: Vec<AnthropicToolDef> =
+                tools.iter().map(to_anthropic_tool).collect();
+            let system = extract_system_from_messages(messages);
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(self.config.timeout_ms))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            let payload = MessagesRequest {
+                model: self.model.clone(),
+                max_tokens,
+                messages: to_anthropic_messages(messages),
+                system,
+                thinking,
+                stream: true,
+                tools: if anthropic_tools.is_empty() {
+                    None
+                } else {
+                    Some(anthropic_tools)
+                },
+            };
 
-        let response = match client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("content-type", "application/json")
-            .json(&payload)
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
+            log_request("anthropic", &url, &self.model);
+            let start = Instant::now();
+
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_millis(self.config.timeout_ms))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+
+            let response = match client
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", ANTHROPIC_VERSION)
+                .header("content-type", "application/json")
+                .json(&payload)
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
+                Err(e) => {
+                    self.circuit_breaker.record_failure().await;
+                    return Err(anyhow!("streaming request failed: {e}"));
+                }
+            };
+
+            if !response.status().is_success() {
                 self.circuit_breaker.record_failure().await;
-                return Err(anyhow!("streaming request failed: {e}"));
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(map_status_error(status, &body));
             }
-        };
 
-        if !response.status().is_success() {
-            self.circuit_breaker.record_failure().await;
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(map_status_error(status, &body));
-        }
+            let mut byte_stream = response.bytes_stream();
+            let mut buffer = String::new();
+            let mut accumulated_text = String::new();
 
-        let mut byte_stream = response.bytes_stream();
-        let mut buffer = String::new();
-        let mut accumulated_text = String::new();
+            // Track in-flight tool calls by index.
+            struct ToolCallAccum {
+                id: String,
+                name: String,
+                arguments_json: String,
+            }
+            let mut tool_accumulators: Vec<(usize, ToolCallAccum)> = Vec::new();
+            let mut final_stop_reason: Option<String> = None;
 
-        // Track in-flight tool calls by index.
-        struct ToolCallAccum {
-            id: String,
-            name: String,
-            arguments_json: String,
-        }
-        let mut tool_accumulators: Vec<(usize, ToolCallAccum)> = Vec::new();
-        let mut final_stop_reason: Option<String> = None;
+            while let Some(chunk_result) = byte_stream.next().await {
+                let bytes = chunk_result.context("error reading SSE chunk")?;
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
 
-        while let Some(chunk_result) = byte_stream.next().await {
-            let bytes = chunk_result.context("error reading SSE chunk")?;
-            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                while let Some(event_end) = buffer.find("\n\n") {
+                    let event_block = buffer[..event_end].to_string();
+                    buffer = buffer[event_end + 2..].to_string();
 
-            while let Some(event_end) = buffer.find("\n\n") {
-                let event_block = buffer[..event_end].to_string();
-                buffer = buffer[event_end + 2..].to_string();
-
-                match parse_sse_event(&event_block) {
-                    SseEvent::TextDelta(text) => {
-                        accumulated_text.push_str(&text);
-                        let _ = sender.send(StreamChunk {
-                            delta: text,
-                            done: false,
-                            tool_call_delta: None,
-                        });
-                    }
-                    SseEvent::ToolUseStart { index, id, name } => {
-                        let _ = sender.send(StreamChunk {
-                            delta: String::new(),
-                            done: false,
-                            tool_call_delta: Some(ToolCallDelta {
-                                index,
-                                id: Some(id.clone()),
-                                name: Some(name.clone()),
-                                arguments_delta: String::new(),
-                            }),
-                        });
-                        tool_accumulators.push((
-                            index,
-                            ToolCallAccum {
-                                id,
-                                name,
-                                arguments_json: String::new(),
-                            },
-                        ));
-                    }
-                    SseEvent::ToolUseInputDelta { index, delta } => {
-                        if let Some((_, accum)) =
-                            tool_accumulators.iter_mut().find(|(i, _)| *i == index)
-                        {
-                            accum.arguments_json.push_str(&delta);
+                    match parse_sse_event(&event_block) {
+                        SseEvent::TextDelta(text) => {
+                            accumulated_text.push_str(&text);
+                            let _ = sender.send(StreamChunk {
+                                delta: text,
+                                done: false,
+                                tool_call_delta: None,
+                            });
                         }
-                        let _ = sender.send(StreamChunk {
-                            delta: String::new(),
-                            done: false,
-                            tool_call_delta: Some(ToolCallDelta {
+                        SseEvent::ToolUseStart { index, id, name } => {
+                            let _ = sender.send(StreamChunk {
+                                delta: String::new(),
+                                done: false,
+                                tool_call_delta: Some(ToolCallDelta {
+                                    index,
+                                    id: Some(id.clone()),
+                                    name: Some(name.clone()),
+                                    arguments_delta: String::new(),
+                                }),
+                            });
+                            tool_accumulators.push((
                                 index,
-                                id: None,
-                                name: None,
-                                arguments_delta: delta,
-                            }),
-                        });
+                                ToolCallAccum {
+                                    id,
+                                    name,
+                                    arguments_json: String::new(),
+                                },
+                            ));
+                        }
+                        SseEvent::ToolUseInputDelta { index, delta } => {
+                            if let Some((_, accum)) =
+                                tool_accumulators.iter_mut().find(|(i, _)| *i == index)
+                            {
+                                accum.arguments_json.push_str(&delta);
+                            }
+                            let _ = sender.send(StreamChunk {
+                                delta: String::new(),
+                                done: false,
+                                tool_call_delta: Some(ToolCallDelta {
+                                    index,
+                                    id: None,
+                                    name: None,
+                                    arguments_delta: delta,
+                                }),
+                            });
+                        }
+                        SseEvent::ContentBlockStop { .. } => {}
+                        SseEvent::MessageDelta { stop_reason } => {
+                            final_stop_reason = stop_reason;
+                        }
+                        SseEvent::Other => {}
                     }
-                    SseEvent::ContentBlockStop { .. } => {}
-                    SseEvent::MessageDelta { stop_reason } => {
-                        final_stop_reason = stop_reason;
-                    }
-                    SseEvent::Other => {}
                 }
             }
-        }
 
-        self.circuit_breaker.record_success();
-        log_response("anthropic", 200, accumulated_text.len(), start.elapsed());
+            self.circuit_breaker.record_success();
+            log_response("anthropic", 200, accumulated_text.len(), start.elapsed());
 
-        // Build final tool calls from accumulators.
-        let tool_calls: Vec<ToolUseRequest> = tool_accumulators
-            .into_iter()
-            .map(|(_, accum)| {
-                let input = serde_json::from_str(&accum.arguments_json)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                ToolUseRequest {
-                    id: accum.id,
-                    name: accum.name,
-                    input,
-                }
+            // Build final tool calls from accumulators.
+            let tool_calls: Vec<ToolUseRequest> = tool_accumulators
+                .into_iter()
+                .map(|(_, accum)| {
+                    let input = serde_json::from_str(&accum.arguments_json)
+                        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                    ToolUseRequest {
+                        id: accum.id,
+                        name: accum.name,
+                        input,
+                    }
+                })
+                .collect();
+
+            let stop_reason = map_stop_reason(final_stop_reason.as_deref());
+
+            let _ = sender.send(StreamChunk {
+                delta: String::new(),
+                done: true,
+                tool_call_delta: None,
+            });
+
+            Ok(ChatResult {
+                output_text: accumulated_text,
+                tool_calls,
+                stop_reason,
             })
-            .collect();
-
-        let stop_reason = map_stop_reason(final_stop_reason.as_deref());
-
-        let _ = sender.send(StreamChunk {
-            delta: String::new(),
-            done: true,
-            tool_call_delta: None,
-        });
-
-        Ok(ChatResult {
-            output_text: accumulated_text,
-            tool_calls,
-            stop_reason,
-        })
+        }
+        .instrument(span)
+        .await
     }
 }
 

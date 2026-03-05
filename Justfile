@@ -109,6 +109,10 @@ build-server:
 build-jit:
     cargo build --release --features wasm-jit
 
+# Build with privacy features (Noise Protocol, sealed envelopes, key rotation)
+build-private:
+    cargo build --release --features privacy
+
 # Build with native TLS instead of rustls
 build-native-tls:
     cargo build -p agentzero --profile release-min --no-default-features --features memory-sqlite,plugins,tls-native

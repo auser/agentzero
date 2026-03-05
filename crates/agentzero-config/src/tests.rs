@@ -1827,3 +1827,313 @@ fn privacy_all_four_modes_accepted() {
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
 }
+
+#[test]
+fn privacy_local_only_rejects_non_localhost_base_url() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"ollama\"\nbase_url=\"http://remote-server.example.com:11434\"\nmodel=\"llama3\"\n\n[privacy]\nmode=\"local_only\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let result = load(&config_path);
+        assert!(result.is_err());
+        let err = result
+            .expect_err("non-localhost base_url in local_only should fail")
+            .to_string();
+        assert!(
+            err.contains("localhost"),
+            "error should mention localhost: {err}"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn privacy_local_only_network_tools_disabled() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"ollama\"\nbase_url=\"http://localhost:11434\"\nmodel=\"llama3\"\n\n[privacy]\nmode=\"local_only\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n\n[web_search]\nenabled=true\n\n[http_request]\nenabled=true\n\n[web_fetch]\nenabled=true\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy =
+            crate::load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        // local_only must override user's config and disable network tools.
+        assert!(
+            !policy.enable_http_request,
+            "http_request should be disabled"
+        );
+        assert!(!policy.enable_web_fetch, "web_fetch should be disabled");
+        assert!(!policy.enable_web_search, "web_search should be disabled");
+        assert!(
+            policy.url_access.enforce_domain_allowlist,
+            "domain allowlist should be enforced"
+        );
+        assert!(
+            policy
+                .url_access
+                .domain_allowlist
+                .contains(&"localhost".to_string()),
+            "localhost should be in domain allowlist"
+        );
+    });
+
+    fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+// --- Config validation: routing and classification (Sprint 23 Phase 5) ---
+
+#[test]
+fn query_classification_deserializes_with_rules() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[query_classification]\nenabled = true\n\n[[query_classification.rules]]\nhint = \"code\"\nkeywords = [\"implement\", \"fix\"]\npatterns = [\"(?i)refactor\"]\nmin_length = 5\nmax_length = 5000\npriority = 10\n",
+    )
+    .expect("write");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("should load");
+        assert!(cfg.query_classification.enabled);
+        assert_eq!(cfg.query_classification.rules.len(), 1);
+        let rule = &cfg.query_classification.rules[0];
+        assert_eq!(rule.hint, "code");
+        assert_eq!(rule.keywords, vec!["implement", "fix"]);
+        assert_eq!(rule.patterns, vec!["(?i)refactor"]);
+        assert_eq!(rule.min_length, Some(5));
+        assert_eq!(rule.max_length, Some(5000));
+        assert_eq!(rule.priority, 10);
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn query_classification_default_has_enabled_false() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n",
+    )
+    .expect("write");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("should load");
+        assert!(!cfg.query_classification.enabled);
+        assert!(cfg.query_classification.rules.is_empty());
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn embedding_route_deserializes_with_optional_fields() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[[embedding_routes]]\nhint = \"code\"\nprovider = \"openai\"\nmodel = \"text-embedding-3-large\"\n\n[[embedding_routes]]\nhint = \"search\"\nprovider = \"openai\"\nmodel = \"text-embedding-3-small\"\ndimensions = 512\n",
+    )
+    .expect("write");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("should load");
+        assert_eq!(cfg.embedding_routes.len(), 2);
+        // First route: no dimensions
+        assert_eq!(cfg.embedding_routes[0].hint, "code");
+        assert!(cfg.embedding_routes[0].dimensions.is_none());
+        // Second route: explicit dimensions
+        assert_eq!(cfg.embedding_routes[1].hint, "search");
+        assert_eq!(cfg.embedding_routes[1].dimensions, Some(512));
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn validation_warns_on_empty_classification_rules() {
+    // This test validates that the config is accepted (no error) even when
+    // classification is enabled with no rules. The warning is emitted at
+    // runtime via tracing, which is a no-op in tests.
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[query_classification]\nenabled = true\n",
+    )
+    .expect("write");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("should load even with empty rules");
+        assert!(cfg.query_classification.enabled);
+        assert!(cfg.query_classification.rules.is_empty());
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn validate_rejects_invalid_agent_privacy_boundary() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        r#"
+[provider]
+kind = "ollama"
+base_url = "http://localhost:11434"
+model = "llama3"
+
+[agents.researcher]
+provider = "openai"
+model = "gpt-4o"
+privacy_boundary = "bogus_value"
+"#,
+    )
+    .expect("write");
+
+    with_clean_agentzero_env(|| {
+        let err = load(&config_path).unwrap_err();
+        assert!(
+            err.to_string().contains("privacy_boundary"),
+            "error should mention privacy_boundary: {err}"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn validate_rejects_agent_boundary_more_permissive_than_global() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        r#"
+[provider]
+kind = "ollama"
+base_url = "http://localhost:11434"
+model = "llama3"
+
+[privacy]
+mode = "local_only"
+
+[agents.researcher]
+provider = "ollama"
+model = "llama3"
+privacy_boundary = "any"
+"#,
+    )
+    .expect("write");
+
+    with_clean_agentzero_env(|| {
+        let err = load(&config_path).unwrap_err();
+        assert!(
+            err.to_string().contains("more permissive"),
+            "error should mention more permissive: {err}"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn validate_rejects_invalid_tool_boundary() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        r#"
+[provider]
+kind = "ollama"
+base_url = "http://localhost:11434"
+model = "llama3"
+
+[security.tool_boundaries]
+shell = "invalid_boundary"
+"#,
+    )
+    .expect("write");
+
+    with_clean_agentzero_env(|| {
+        let err = load(&config_path).unwrap_err();
+        assert!(
+            err.to_string().contains("tool_boundaries"),
+            "error should mention tool_boundaries: {err}"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn validate_accepts_valid_privacy_boundaries() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        r#"
+[provider]
+kind = "ollama"
+base_url = "http://localhost:11434"
+model = "llama3"
+
+[privacy]
+mode = "encrypted"
+
+[agents.research]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+privacy_boundary = "encrypted_only"
+
+[agents.local]
+provider = "ollama"
+model = "llama3"
+privacy_boundary = "local_only"
+
+[security.tool_boundaries]
+shell = "local_only"
+web_search = "any"
+"#,
+    )
+    .expect("write");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("valid boundaries should load successfully");
+        // Double-check agents loaded correctly.
+        assert_eq!(
+            cfg.agents.get("research").unwrap().privacy_boundary,
+            "encrypted_only"
+        );
+        assert_eq!(
+            cfg.agents.get("local").unwrap().privacy_boundary,
+            "local_only"
+        );
+        assert_eq!(
+            cfg.security.tool_boundaries.get("shell").unwrap(),
+            "local_only"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}

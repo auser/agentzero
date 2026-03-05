@@ -24,7 +24,7 @@ pub fn load_tool_security_policy(
 
     let enable_git = config.security.allowed_commands.iter().any(|c| c == "git");
 
-    Ok(ToolSecurityPolicy {
+    let mut policy = ToolSecurityPolicy {
         read_file: ReadFilePolicy {
             allowed_root: allowed_root.clone(),
             max_read_bytes: config.security.read_file.max_read_bytes,
@@ -80,7 +80,26 @@ pub fn load_tool_security_policy(
         wasm_global_plugin_dir: config.security.plugin.global_plugin_dir.map(PathBuf::from),
         wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),
         wasm_dev_plugin_dir: config.security.plugin.dev_plugin_dir.map(PathBuf::from),
-    })
+    };
+
+    // Privacy enforcement: local_only mode disables outbound network tools.
+    if config.privacy.mode == "local_only" {
+        policy.enable_http_request = false;
+        policy.enable_web_fetch = false;
+        policy.enable_web_search = false;
+        policy.enable_composio = false;
+        // Restrict URL access to localhost only.
+        policy.url_access.allow_loopback = true;
+        policy.url_access.block_private_ip = false;
+        policy.url_access.enforce_domain_allowlist = true;
+        policy.url_access.domain_allowlist = vec![
+            "localhost".to_string(),
+            "127.0.0.1".to_string(),
+            "::1".to_string(),
+        ];
+    }
+
+    Ok(policy)
 }
 
 #[derive(Debug, Clone)]

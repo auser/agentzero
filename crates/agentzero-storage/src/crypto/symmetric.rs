@@ -79,4 +79,42 @@ mod tests {
             decrypt_json([2_u8; 32], &encrypted).expect_err("wrong key should fail decryption");
         assert!(err.to_string().contains("failed to decrypt"));
     }
+
+    #[test]
+    fn empty_plaintext_round_trip() {
+        let key = [42_u8; 32];
+        let encrypted = encrypt_json(key, b"").expect("encrypt empty");
+        let decrypted = decrypt_json(key, &encrypted).expect("decrypt empty");
+        assert!(decrypted.is_empty());
+    }
+
+    #[test]
+    fn truncated_ciphertext_fails() {
+        let key = [3_u8; 32];
+        let encrypted = encrypt_json(key, b"data").expect("encrypt");
+        // Truncate the JSON envelope.
+        let truncated = &encrypted[..encrypted.len() / 2];
+        assert!(decrypt_json(key, truncated).is_err());
+    }
+
+    #[test]
+    fn invalid_json_envelope_fails() {
+        let key = [4_u8; 32];
+        let err = decrypt_json(key, b"not-json").expect_err("should fail");
+        assert!(err.to_string().contains("failed to parse"));
+    }
+
+    #[test]
+    fn two_encryptions_produce_different_ciphertexts() {
+        let key = [5_u8; 32];
+        let plaintext = b"same data";
+        let a = encrypt_json(key, plaintext).expect("encrypt a");
+        let b = encrypt_json(key, plaintext).expect("encrypt b");
+        assert_ne!(a, b, "random nonce should produce different ciphertexts");
+        // Both should decrypt to the same plaintext.
+        assert_eq!(
+            decrypt_json(key, &a).unwrap(),
+            decrypt_json(key, &b).unwrap()
+        );
+    }
 }

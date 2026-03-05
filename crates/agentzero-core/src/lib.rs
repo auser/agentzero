@@ -8,6 +8,8 @@ pub mod agent;
 pub mod common;
 pub mod delegation;
 pub mod metrics;
+#[cfg(feature = "privacy")]
+pub mod privacy;
 pub mod routing;
 pub mod security;
 pub mod types;

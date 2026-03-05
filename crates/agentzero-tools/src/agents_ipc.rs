@@ -231,4 +231,54 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[tokio::test]
+    async fn agents_ipc_recv_missing_returns_no_messages() {
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        let tool = AgentsIpcTool;
+
+        let result = tool
+            .execute(r#"{"op":"recv","to":"nobody"}"#, &ctx)
+            .await
+            .expect("recv for empty mailbox should succeed");
+        assert!(
+            result.output.contains("\"message\": null")
+                || result.output.contains("\"remaining\": 0"),
+            "should indicate no messages, got: {}",
+            result.output
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn agents_ipc_message_round_trip() {
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        let tool = AgentsIpcTool;
+
+        // Send two messages.
+        tool.execute(
+            r#"{"op":"send","from":"alice","to":"bob","payload":"msg-1"}"#,
+            &ctx,
+        )
+        .await
+        .expect("send 1");
+        tool.execute(
+            r#"{"op":"send","from":"alice","to":"bob","payload":"msg-2"}"#,
+            &ctx,
+        )
+        .await
+        .expect("send 2");
+
+        // List messages for bob.
+        let list = tool
+            .execute(r#"{"op":"list","to":"bob"}"#, &ctx)
+            .await
+            .expect("list");
+        assert!(list.output.contains("msg-1"), "list should contain msg-1");
+        assert!(list.output.contains("msg-2"), "list should contain msg-2");
+
+        fs::remove_dir_all(dir).ok();
+    }
 }

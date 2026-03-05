@@ -347,4 +347,72 @@ mod tests {
 
         fs::remove_file(db_path).expect("test db should be removed");
     }
+
+    #[tokio::test]
+    async fn recent_zero_returns_empty_vec() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store should open");
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: "data".to_string(),
+            })
+            .await
+            .expect("append");
+        let recent = store.recent(0).await.expect("recent(0) should succeed");
+        assert!(recent.is_empty());
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn large_limit_returns_all_entries() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store should open");
+        for i in 0..5 {
+            store
+                .append(MemoryEntry {
+                    role: "user".to_string(),
+                    content: format!("msg-{i}"),
+                })
+                .await
+                .expect("append");
+        }
+        let recent = store.recent(1000).await.expect("large limit");
+        assert_eq!(recent.len(), 5);
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn large_content_round_trips() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store should open");
+        let big = "x".repeat(10_000);
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: big.clone(),
+            })
+            .await
+            .expect("append big");
+        let recent = store.recent(1).await.expect("recent");
+        assert_eq!(recent[0].content, big);
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn unicode_emoji_content_round_trips() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store should open");
+        let content = "日本語テスト 🎉🚀 ñ à ü ö";
+        store
+            .append(MemoryEntry {
+                role: "user".to_string(),
+                content: content.to_string(),
+            })
+            .await
+            .expect("append unicode");
+        let recent = store.recent(1).await.expect("recent");
+        assert_eq!(recent[0].content, content);
+        fs::remove_file(db_path).ok();
+    }
 }

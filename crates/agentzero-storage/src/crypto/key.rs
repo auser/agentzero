@@ -129,4 +129,60 @@ mod tests {
         assert!(err.to_string().contains("failed to parse key file"));
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[test]
+    fn valid_64_char_hex_accepted() {
+        let hex_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let dir = unique_temp_dir();
+        fs::write(key_file_path(&dir), hex_key).expect("write");
+        let key = StorageKey::from_config_dir(&dir).expect("hex key should be accepted");
+        assert_eq!(key.as_bytes()[0], 0x01);
+        assert_eq!(key.as_bytes()[1], 0x23);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn empty_key_string_rejected() {
+        let dir = unique_temp_dir();
+        fs::write(key_file_path(&dir), "").expect("write");
+        let err = StorageKey::from_config_dir(&dir).expect_err("empty should fail");
+        let chain = format!("{:#}", err);
+        assert!(
+            chain.contains("empty"),
+            "error chain should mention empty: {chain}"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn wrong_length_base64_rejected() {
+        let dir = unique_temp_dir();
+        // 16 bytes encoded as base64 (not 32 bytes).
+        let short = STANDARD.encode([1_u8; 16]);
+        fs::write(key_file_path(&dir), short).expect("write");
+        let err = StorageKey::from_config_dir(&dir).expect_err("wrong length should fail");
+        let chain = format!("{:#}", err);
+        assert!(
+            chain.contains("32 bytes"),
+            "error chain should mention 32 bytes: {chain}"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn from_config_dir_creates_key_file_if_missing() {
+        let dir = unique_temp_dir();
+        let kf = key_file_path(&dir);
+        assert!(!kf.exists());
+
+        let key = StorageKey::from_config_dir(&dir).expect("should create key");
+        assert!(kf.exists(), "key file should have been created");
+        // Key should be 32 bytes.
+        assert_eq!(key.as_bytes().len(), 32);
+
+        // Re-load should return the same key.
+        let key2 = StorageKey::from_config_dir(&dir).expect("reload");
+        assert_eq!(key.as_bytes(), key2.as_bytes());
+        fs::remove_dir_all(dir).ok();
+    }
 }

@@ -28,6 +28,7 @@ wasm-jit = ["agentzero-cli/wasm-jit"]
 tls-rustls = ["agentzero-cli/tls-rustls"]
 tls-native = ["agentzero-cli/tls-native"]
 vendored-openssl = ["agentzero-cli/vendored-openssl"]
+privacy = ["agentzero-cli/privacy"]
 
 [dependencies]
 anyhow.workspace = true

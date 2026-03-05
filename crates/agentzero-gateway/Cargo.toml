@@ -7,6 +7,10 @@ license.workspace = true
 description.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+privacy = ["agentzero-core/privacy", "dep:dashmap", "dep:base64"]
+
 [dependencies]
 anyhow.workspace = true
 agentzero-config = { workspace = true }
@@ -14,7 +18,12 @@ agentzero-core = { workspace = true }
 agentzero-infra = { workspace = true }
 agentzero-storage = { workspace = true }
 agentzero-channels = { workspace = true }
+agentzero-providers = { workspace = true }
+base64 = { version = "0.22", optional = true }
+dashmap = { workspace = true, optional = true }
 async-stream = "0.3"
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "ws"] }
 futures-util = "0.3"
 serde.workspace = true

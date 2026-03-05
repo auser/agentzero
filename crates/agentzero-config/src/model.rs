@@ -2,6 +2,7 @@ use agentzero_core::common::local_providers::is_local_provider;
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing::warn;
 use url::Url;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -56,6 +57,15 @@ impl AgentZeroConfig {
                 Some("localhost") | Some("127.0.0.1") | Some("0.0.0.0") | Some("::1")
             );
             if !is_localhost {
+                if self.privacy.mode == "local_only" || self.privacy.enforce_local_provider {
+                    return Err(anyhow!(
+                        "privacy mode '{}' requires localhost base_url for local provider '{}', \
+                         but got '{}'. Use http://localhost:<port> or change your provider.",
+                        self.privacy.mode,
+                        self.provider.kind,
+                        self.provider.base_url,
+                    ));
+                }
                 tracing::warn!(
                     "provider '{}' is a local provider but base_url '{}' is not localhost \
                      — did you mean to use a different provider?",
@@ -246,6 +256,64 @@ impl AgentZeroConfig {
                 return Err(anyhow!(
                     "privacy.noise.handshake_pattern must be XX or IK; got `{other}`"
                 ));
+            }
+        }
+
+        // Per-agent privacy boundary validation.
+        let valid_boundaries = ["", "inherit", "local_only", "encrypted_only", "any"];
+        for (name, agent) in &self.agents {
+            if !agent.privacy_boundary.is_empty()
+                && !valid_boundaries.contains(&agent.privacy_boundary.as_str())
+            {
+                return Err(anyhow!(
+                    "agents.{name}.privacy_boundary must be one of: inherit, local_only, \
+                     encrypted_only, any; got '{}'",
+                    agent.privacy_boundary
+                ));
+            }
+            // Agent boundary can't be more permissive than global privacy mode.
+            // Map global mode → boundary string for comparison.
+            let global_boundary = match self.privacy.mode.as_str() {
+                "local_only" => "local_only",
+                "encrypted" | "full" => "encrypted_only",
+                _ => "any",
+            };
+            if !agent.privacy_boundary.is_empty()
+                && agent.privacy_boundary != "inherit"
+                && global_boundary == "local_only"
+                && agent.privacy_boundary != "local_only"
+            {
+                return Err(anyhow!(
+                    "agents.{name}.privacy_boundary '{}' is more permissive than \
+                     global privacy mode '{}' (local_only)",
+                    agent.privacy_boundary,
+                    self.privacy.mode
+                ));
+            }
+        }
+
+        // Per-tool privacy boundary validation.
+        for (tool_name, boundary) in &self.security.tool_boundaries {
+            if !valid_boundaries.contains(&boundary.as_str()) {
+                return Err(anyhow!(
+                    "security.tool_boundaries.{tool_name} must be one of: inherit, local_only, \
+                     encrypted_only, any; got '{boundary}'"
+                ));
+            }
+        }
+
+        // Non-fatal validation warnings for routing config.
+        if self.query_classification.enabled && self.query_classification.rules.is_empty() {
+            warn!(
+                "query_classification is enabled but has no rules — classification will be a no-op"
+            );
+        }
+        for route in &self.embedding_routes {
+            if route.provider.trim().is_empty() {
+                warn!(hint = %route.hint, "embedding route has an empty provider field");
+            }
+            if route.model.trim().is_empty() {
+                warn!(hint = %route.hint, "embedding route has an empty model field");
             }
         }
 
@@ -451,6 +519,10 @@ pub struct SecurityConfig {
     pub outbound_leak_guard: OutboundLeakGuardConfig,
     pub perplexity_filter: PerplexityFilterConfig,
     pub syscall_anomaly: SyscallAnomalyConfig,
+    /// Per-tool privacy boundaries. Keys are tool names, values are boundary
+    /// strings: "inherit", "local_only", "encrypted_only", "any".
+    #[serde(default)]
+    pub tool_boundaries: std::collections::HashMap<String, String>,
 }
 
 impl Default for SecurityConfig {
@@ -506,6 +578,7 @@ impl Default for SecurityConfig {
             outbound_leak_guard: OutboundLeakGuardConfig::default(),
             perplexity_filter: PerplexityFilterConfig::default(),
             syscall_anomaly: SyscallAnomalyConfig::default(),
+            tool_boundaries: std::collections::HashMap::new(),
         }
     }
 }
@@ -1066,6 +1139,11 @@ pub struct GatewayConfig {
     pub require_pairing: bool,
     pub allow_public_bind: bool,
     pub node_control: NodeControlConfig,
+    /// When true, the gateway operates as a privacy relay only.
+    /// Normal agent endpoints return 503; only relay routes are active.
+    pub relay_mode: bool,
+    /// Relay-specific configuration.
+    pub relay: RelayConfig,
 }
 
 impl Default for GatewayConfig {
@@ -1076,6 +1154,8 @@ impl Default for GatewayConfig {
             require_pairing: true,
             allow_public_bind: false,
             node_control: NodeControlConfig::default(),
+            relay_mode: false,
+            relay: RelayConfig::default(),
         }
     }
 }
@@ -1235,6 +1315,15 @@ pub struct DelegateAgentConfig {
     pub agentic: bool,
     pub allowed_tools: Vec<String>,
     pub max_iterations: usize,
+    /// Per-agent privacy boundary: "inherit", "local_only", "encrypted_only", "any".
+    #[serde(default)]
+    pub privacy_boundary: String,
+    /// Restrict this agent to only use these provider kinds.
+    #[serde(default)]
+    pub allowed_providers: Vec<String>,
+    /// Block this agent from using these provider kinds.
+    #[serde(default)]
+    pub blocked_providers: Vec<String>,
 }
 
 impl Default for DelegateAgentConfig {
@@ -1249,6 +1338,9 @@ impl Default for DelegateAgentConfig {
             agentic: false,
             allowed_tools: Vec::new(),
             max_iterations: 10,
+            privacy_boundary: String::new(),
+            allowed_providers: Vec::new(),
+            blocked_providers: Vec::new(),
         }
     }
 }
@@ -1417,7 +1509,15 @@ impl Default for SyscallAnomalyConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct PrivacyConfig {
-    /// Privacy mode: "off", "local_only", "encrypted", or "full".
+    /// Privacy mode:
+    /// - `"off"` — no privacy features.
+    /// - `"local_only"` — all traffic stays on-device; cloud providers rejected.
+    /// - `"encrypted"` — cloud providers allowed through Noise-encrypted transport.
+    /// - `"full"` — all privacy features auto-enabled (noise, sealed envelopes,
+    ///   key rotation); cloud providers allowed through encrypted transport.
+    ///
+    /// Simple: just set `"encrypted"` or `"full"` and everything auto-configures.
+    /// Advanced: set individual `noise`, `sealed_envelopes`, `key_rotation` options.
     pub mode: String,
     /// When true, reject cloud providers — only local providers allowed.
     pub enforce_local_provider: bool,
@@ -1507,6 +1607,28 @@ impl Default for KeyRotationConfig {
             rotation_interval_secs: 604_800,
             overlap_secs: 86_400,
             key_store_path: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct RelayConfig {
+    /// Random timing jitter range in milliseconds (0-N) added to relay responses
+    /// to prevent timing analysis.
+    pub timing_jitter_ms: u64,
+    /// Maximum number of envelopes per routing_id mailbox.
+    pub max_mailbox_size: usize,
+    /// Garbage collection interval in seconds for expired envelopes.
+    pub gc_interval_secs: u64,
+}
+
+impl Default for RelayConfig {
+    fn default() -> Self {
+        Self {
+            timing_jitter_ms: 500,
+            max_mailbox_size: 1000,
+            gc_interval_secs: 60,
         }
     }
 }

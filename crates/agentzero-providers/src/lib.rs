@@ -10,6 +10,9 @@ mod models;
 mod openai;
 pub(crate) mod transport;
 
+#[cfg(feature = "privacy")]
+mod noise_transport;
+
 pub use anthropic::AnthropicProvider;
 pub use catalog::{find_provider, supported_providers, ProviderDescriptor};
 pub use models::{
@@ -17,7 +20,30 @@ pub use models::{
     ModelDescriptor,
 };
 pub use openai::OpenAiCompatibleProvider;
-pub use transport::{health_probe, CircuitBreaker, HealthProbeResult, TransportConfig};
+pub use transport::{
+    health_probe, CircuitBreaker, CircuitBreakerStatus, HealthProbeResult, TransportConfig,
+};
+
+#[cfg(feature = "privacy")]
+pub use noise_transport::perform_noise_handshake;
+
+/// Build an OpenAI-compatible provider with Noise-encrypted transport.
+///
+/// The provider sends all requests through the Noise session, adding
+/// `X-Noise-Session` header and encrypting/decrypting request/response bodies.
+/// Only works for OpenAI-compatible endpoints (gateways), not Anthropic.
+#[cfg(feature = "privacy")]
+pub fn build_provider_with_noise(
+    base_url: String,
+    api_key: String,
+    model: String,
+    session: agentzero_core::privacy::noise_client::NoiseClientSession,
+) -> Box<dyn agentzero_core::Provider> {
+    let transport = std::sync::Arc::new(noise_transport::NoiseHttpTransport::new(session));
+    Box::new(OpenAiCompatibleProvider::with_transport(
+        base_url, api_key, model, transport,
+    ))
+}
 
 /// Declarative macro that generates the `build_provider` factory from a
 /// list of `(kind-pattern => ProviderType)` entries. The last `_ =>` arm
@@ -42,8 +68,13 @@ register_providers! {
     _ => OpenAiCompatibleProvider,
 }
 
-/// Build a provider with privacy enforcement. When `privacy_mode` is
-/// `"local_only"` or `"full"`, rejects cloud providers with an error.
+/// Build a provider with privacy enforcement.
+///
+/// - `"local_only"` — rejects cloud providers entirely.
+/// - `"encrypted"` / `"full"` — allows cloud providers (traffic goes through
+///   Noise-encrypted transport). `"full"` auto-enables all privacy features
+///   but does NOT restrict provider choice.
+/// - `"off"` — no restrictions.
 pub fn build_provider_with_privacy(
     kind: &str,
     base_url: String,
@@ -52,11 +83,11 @@ pub fn build_provider_with_privacy(
     transport: TransportConfig,
     privacy_mode: &str,
 ) -> anyhow::Result<Box<dyn agentzero_core::Provider>> {
-    if matches!(privacy_mode, "local_only" | "full")
+    if privacy_mode == "local_only"
         && !agentzero_core::common::local_providers::is_local_provider(kind)
     {
         anyhow::bail!(
-            "privacy mode '{privacy_mode}' requires a local provider, \
+            "privacy mode 'local_only' requires a local provider, \
              but '{kind}' is a cloud provider"
         );
     }
@@ -122,7 +153,9 @@ mod tests {
     }
 
     #[test]
-    fn build_provider_with_privacy_rejects_cloud_in_full_mode() {
+    fn build_provider_with_privacy_allows_cloud_in_full_mode() {
+        // "full" enables all privacy features but routes cloud traffic through
+        // encrypted transport — it does NOT block cloud providers.
         let result = build_provider_with_privacy(
             "openai",
             "https://api.openai.com".to_string(),
@@ -131,7 +164,7 @@ mod tests {
             default_transport(),
             "full",
         );
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[test]

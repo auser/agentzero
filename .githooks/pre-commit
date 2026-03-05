@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Pre-commit hook for agentzero
-# - Formats code with cargo fmt
+# - Checks formatting with cargo fmt --check (fast, no rewrite)
 # - Runs clippy only on crates with staged changes (fast incremental)
 #
 # Full test suite runs in CI and can be triggered locally with:
@@ -16,19 +16,15 @@ set -e
 
 echo "Running pre-commit checks..."
 
-# Format code
-echo "Auto-formatting code..."
-if ! cargo fmt --all; then
-    echo "Formatting failed!"
+# Check formatting (fast — read-only check, no rewrite)
+echo "Checking code formatting..."
+if ! cargo fmt --all -- --check 2>/dev/null; then
+    echo ""
+    echo "Formatting check failed!"
+    echo "   Run 'cargo fmt --all' to fix formatting"
     exit 1
 fi
-
-# Stage any formatting changes automatically
-if ! git diff --quiet --exit-code; then
-    echo "Auto-staging formatted files..."
-    git add -u
-fi
-echo "Code formatting applied and staged"
+echo "Formatting OK"
 echo ""
 
 # Determine which crates have staged changes
@@ -41,17 +37,21 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -q '^bin/'; then
     CHANGED_CRATES=$(printf '%s\nagentzero' "$CHANGED_CRATES")
 fi
 
-# Check if workspace-level files changed (Cargo.toml, Cargo.lock)
-if git diff --cached --name-only --diff-filter=ACMR | grep -qE '^Cargo\.(toml|lock)$'; then
-    # Workspace manifest changed — check everything
-    echo "Workspace manifest changed — running full clippy..."
-    if ! cargo clippy --workspace -- -D warnings; then
-        echo "Clippy check failed!"
-        exit 1
+# Check if workspace-level Cargo.toml changed (not just Cargo.lock)
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '^Cargo\.toml$'; then
+    # Workspace manifest changed — run clippy on all changed crates
+    # (Cargo.lock-only changes are benign and don't need full workspace clippy)
+    if [ -z "$CHANGED_CRATES" ]; then
+        echo "Only workspace Cargo.toml changed — running full clippy..."
+        if ! cargo clippy --workspace -- -D warnings; then
+            echo "Clippy check failed!"
+            exit 1
+        fi
+        echo "Clippy passed"
+        echo "All pre-commit checks passed!"
+        exit 0
     fi
-    echo "Clippy passed"
-    echo "All pre-commit checks passed!"
-    exit 0
+    # else: fall through to per-crate clippy below
 fi
 
 if [ -z "$CHANGED_CRATES" ]; then

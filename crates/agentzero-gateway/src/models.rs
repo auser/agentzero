@@ -1,5 +1,10 @@
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct HealthResponse {
@@ -55,9 +60,9 @@ pub(crate) struct ModelsResponse {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ModelItem {
-    pub(crate) id: &'static str,
+    pub(crate) id: String,
     pub(crate) object: &'static str,
-    pub(crate) owned_by: &'static str,
+    pub(crate) owned_by: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,4 +97,90 @@ pub(crate) struct CompletionChoice {
 pub(crate) struct CompletionChoiceMessage {
     pub(crate) role: &'static str,
     pub(crate) content: String,
+}
+
+// ---------------------------------------------------------------------------
+// Structured error type
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub(crate) enum GatewayError {
+    AuthRequired,
+    AuthFailed,
+    NotFound { resource: String },
+    AgentUnavailable,
+    AgentExecutionFailed { message: String },
+    RateLimited,
+    PayloadTooLarge,
+    BadRequest { message: String },
+}
+
+impl GatewayError {
+    fn error_type(&self) -> &'static str {
+        match self {
+            Self::AuthRequired => "auth_required",
+            Self::AuthFailed => "auth_failed",
+            Self::NotFound { .. } => "not_found",
+            Self::AgentUnavailable => "agent_unavailable",
+            Self::AgentExecutionFailed { .. } => "agent_execution_failed",
+            Self::RateLimited => "rate_limited",
+            Self::PayloadTooLarge => "payload_too_large",
+            Self::BadRequest { .. } => "bad_request",
+        }
+    }
+
+    fn status_code(&self) -> StatusCode {
+        match self {
+            Self::AuthRequired => StatusCode::UNAUTHORIZED,
+            Self::AuthFailed => StatusCode::FORBIDDEN,
+            Self::NotFound { .. } => StatusCode::NOT_FOUND,
+            Self::AgentUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::AgentExecutionFailed { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::BadRequest { .. } => StatusCode::BAD_REQUEST,
+        }
+    }
+
+    fn message(&self) -> String {
+        match self {
+            Self::AuthRequired => "authentication required".to_string(),
+            Self::AuthFailed => "authentication failed".to_string(),
+            Self::NotFound { resource } => format!("not found: {resource}"),
+            Self::AgentUnavailable => "agent runtime not configured".to_string(),
+            Self::AgentExecutionFailed { message } => format!("agent execution failed: {message}"),
+            Self::RateLimited => "rate limit exceeded".to_string(),
+            Self::PayloadTooLarge => "request body too large".to_string(),
+            Self::BadRequest { message } => message.clone(),
+        }
+    }
+}
+
+impl IntoResponse for GatewayError {
+    fn into_response(self) -> Response {
+        crate::gateway_metrics::record_error(self.error_type());
+        let status = self.status_code();
+        let body = json!({
+            "error": {
+                "type": self.error_type(),
+                "message": self.message(),
+            }
+        });
+        (status, Json(body)).into_response()
+    }
+}
+
+impl From<StatusCode> for GatewayError {
+    fn from(status: StatusCode) -> Self {
+        match status {
+            StatusCode::UNAUTHORIZED => Self::AuthRequired,
+            StatusCode::FORBIDDEN => Self::AuthFailed,
+            StatusCode::SERVICE_UNAVAILABLE => Self::AgentUnavailable,
+            StatusCode::TOO_MANY_REQUESTS => Self::RateLimited,
+            StatusCode::PAYLOAD_TOO_LARGE => Self::PayloadTooLarge,
+            _ => Self::BadRequest {
+                message: status.to_string(),
+            },
+        }
+    }
 }

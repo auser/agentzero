@@ -30,7 +30,7 @@ impl Default for MiddlewareConfig {
     fn default() -> Self {
         Self {
             max_body_bytes: 1024 * 1024, // 1 MB
-            rate_limit_max: 0,           // unlimited
+            rate_limit_max: 600,         // 10 req/s over 60s window
             rate_limit_window_secs: 60,
             cors_allowed_origins: vec![],
         }
@@ -210,6 +210,27 @@ fn is_origin_allowed(allowed: &[String], origin: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Request metrics middleware
+// ---------------------------------------------------------------------------
+
+/// Middleware that records request count, status, and latency as Prometheus metrics.
+pub async fn request_metrics(request: Request<Body>, next: Next) -> Response {
+    let method = request.method().to_string();
+    let path = request.uri().path().to_string();
+    let start = Instant::now();
+    crate::gateway_metrics::inc_active_connections();
+
+    let response = next.run(request).await;
+
+    crate::gateway_metrics::dec_active_connections();
+    let status = response.status().as_u16();
+    let duration = start.elapsed().as_secs_f64();
+    crate::gateway_metrics::record_request(&method, &path, status, duration);
+
+    response
+}
+
+// ---------------------------------------------------------------------------
 // Graceful shutdown signal handler
 // ---------------------------------------------------------------------------
 
@@ -305,7 +326,7 @@ mod tests {
     fn middleware_config_defaults() {
         let config = MiddlewareConfig::default();
         assert_eq!(config.max_body_bytes, 1024 * 1024);
-        assert_eq!(config.rate_limit_max, 0);
+        assert_eq!(config.rate_limit_max, 600);
         assert_eq!(config.rate_limit_window_secs, 60);
         assert!(config.cors_allowed_origins.is_empty());
     }

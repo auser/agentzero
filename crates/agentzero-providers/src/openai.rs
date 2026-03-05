@@ -17,13 +17,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::time::sleep;
+use tracing::{info_span, Instrument};
 
 // ---------------------------------------------------------------------------
 // Transport abstraction (OpenAI-specific payload)
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-trait HttpTransport: Send + Sync {
+pub(crate) trait HttpTransport: Send + Sync {
     async fn send_chat(
         &self,
         url: &str,
@@ -32,12 +33,12 @@ trait HttpTransport: Send + Sync {
     ) -> Result<TransportResponse, TransportError>;
 }
 
-struct ReqwestTransport {
-    client: reqwest::Client,
+pub(crate) struct ReqwestTransport {
+    pub(crate) client: reqwest::Client,
 }
 
 impl ReqwestTransport {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
         }
@@ -105,8 +106,8 @@ impl OpenAiCompatibleProvider {
         }
     }
 
-    #[cfg(test)]
-    fn with_transport(
+    #[allow(dead_code)] // Used by integration tests and noise transport wrapping
+    pub(crate) fn with_transport(
         base_url: String,
         api_key: String,
         model: String,
@@ -126,7 +127,7 @@ impl OpenAiCompatibleProvider {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
-struct ChatRequest {
+pub(crate) struct ChatRequest {
     model: String,
     messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -275,80 +276,86 @@ impl Provider for OpenAiCompatibleProvider {
         prompt: &str,
         reasoning: &ReasoningConfig,
     ) -> anyhow::Result<ChatResult> {
-        let url = format!(
-            "{}/v1/chat/completions",
-            self.base_url.trim_end_matches('/')
-        );
-        let reasoning_effort = match reasoning.enabled {
-            Some(false) => None,
-            _ => reasoning.level.clone(),
-        };
-        let payload = ChatRequest {
-            model: self.model.clone(),
-            messages: vec![Message::user(prompt.to_string())],
-            reasoning_effort,
-            stream: false,
-            tools: None,
-        };
+        let span = info_span!("openai_complete", provider = "openai-compat", model = %self.model);
+        async {
+            let url = format!(
+                "{}/v1/chat/completions",
+                self.base_url.trim_end_matches('/')
+            );
+            let reasoning_effort = match reasoning.enabled {
+                Some(false) => None,
+                _ => reasoning.level.clone(),
+            };
+            let payload = ChatRequest {
+                model: self.model.clone(),
+                messages: vec![Message::user(prompt.to_string())],
+                reasoning_effort,
+                stream: false,
+                tools: None,
+            };
 
-        log_request("openai-compat", &url, &self.model);
-        let start = Instant::now();
+            log_request("openai-compat", &url, &self.model);
+            let start = Instant::now();
 
-        let mut last_error: Option<anyhow::Error> = None;
-        for attempt in 0..MAX_ATTEMPTS {
-            match self
-                .transport
-                .send_chat(&url, &self.api_key, &payload)
-                .await
-            {
-                Ok(response) => {
-                    log_response(
-                        "openai-compat",
-                        response.status,
-                        response.body.len(),
-                        start.elapsed(),
-                    );
-                    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
-                    if !status.is_success() {
-                        let mapped = map_status_error(status, &response.body);
-                        if attempt + 1 < MAX_ATTEMPTS && should_retry_status(status) {
-                            log_retry(
-                                "openai-compat",
-                                attempt,
-                                &format!("status {}", response.status),
-                            );
-                            sleep(
-                                parse_retry_after(&response.headers)
-                                    .unwrap_or_else(|| jittered_backoff(attempt)),
-                            )
-                            .await;
+            let mut last_error: Option<anyhow::Error> = None;
+            for attempt in 0..MAX_ATTEMPTS {
+                match self
+                    .transport
+                    .send_chat(&url, &self.api_key, &payload)
+                    .await
+                {
+                    Ok(response) => {
+                        log_response(
+                            "openai-compat",
+                            response.status,
+                            response.body.len(),
+                            start.elapsed(),
+                        );
+                        let status =
+                            StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
+                        if !status.is_success() {
+                            let mapped = map_status_error(status, &response.body);
+                            if attempt + 1 < MAX_ATTEMPTS && should_retry_status(status) {
+                                log_retry(
+                                    "openai-compat",
+                                    attempt,
+                                    &format!("status {}", response.status),
+                                );
+                                sleep(
+                                    parse_retry_after(&response.headers)
+                                        .unwrap_or_else(|| jittered_backoff(attempt)),
+                                )
+                                .await;
+                                last_error = Some(mapped);
+                                continue;
+                            }
+                            return Err(mapped);
+                        }
+
+                        let output_text = parse_output_text(&response.body)
+                            .with_context(|| "failed to parse provider response".to_string())?;
+                        return Ok(ChatResult {
+                            output_text,
+                            ..Default::default()
+                        });
+                    }
+                    Err(error) => {
+                        let mapped = anyhow!("provider request failed: {}", error.message);
+                        if attempt + 1 < MAX_ATTEMPTS && should_retry_transport(error.kind) {
+                            log_retry("openai-compat", attempt, &error.message);
+                            sleep(jittered_backoff(attempt)).await;
                             last_error = Some(mapped);
                             continue;
                         }
                         return Err(mapped);
                     }
-
-                    let output_text = parse_output_text(&response.body)
-                        .with_context(|| "failed to parse provider response".to_string())?;
-                    return Ok(ChatResult {
-                        output_text,
-                        ..Default::default()
-                    });
-                }
-                Err(error) => {
-                    let mapped = anyhow!("provider request failed: {}", error.message);
-                    if attempt + 1 < MAX_ATTEMPTS && should_retry_transport(error.kind) {
-                        log_retry("openai-compat", attempt, &error.message);
-                        sleep(jittered_backoff(attempt)).await;
-                        last_error = Some(mapped);
-                        continue;
-                    }
-                    return Err(mapped);
                 }
             }
-        }
 
-        Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
+            Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
+        }
+        .instrument(span)
+        .await
     }
 
     async fn complete_streaming(
@@ -356,73 +363,78 @@ impl Provider for OpenAiCompatibleProvider {
         prompt: &str,
         sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
     ) -> anyhow::Result<ChatResult> {
-        let url = format!(
-            "{}/v1/chat/completions",
-            self.base_url.trim_end_matches('/')
-        );
-        let payload = ChatRequest {
-            model: self.model.clone(),
-            messages: vec![Message::user(prompt.to_string())],
-            reasoning_effort: None,
-            stream: true,
-            tools: None,
-        };
+        let span = info_span!("openai_stream", provider = "openai-compat", model = %self.model);
+        async {
+            let url = format!(
+                "{}/v1/chat/completions",
+                self.base_url.trim_end_matches('/')
+            );
+            let payload = ChatRequest {
+                model: self.model.clone(),
+                messages: vec![Message::user(prompt.to_string())],
+                reasoning_effort: None,
+                stream: true,
+                tools: None,
+            };
 
-        log_request("openai-compat", &url, &self.model);
-        let start = Instant::now();
+            log_request("openai-compat", &url, &self.model);
+            let start = Instant::now();
 
-        let client = reqwest::Client::new();
-        let mut request = client.post(&url).json(&payload);
-        if !self.api_key.is_empty() {
-            request = request.bearer_auth(&self.api_key);
-        }
+            let client = reqwest::Client::new();
+            let mut request = client.post(&url).json(&payload);
+            if !self.api_key.is_empty() {
+                request = request.bearer_auth(&self.api_key);
+            }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| anyhow!("streaming request failed: {e}"))?;
+            let response = request
+                .send()
+                .await
+                .map_err(|e| anyhow!("streaming request failed: {e}"))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(map_status_error(status, &body));
-        }
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(map_status_error(status, &body));
+            }
 
-        let mut byte_stream = response.bytes_stream();
-        let mut buffer = String::new();
-        let mut accumulated = String::new();
+            let mut byte_stream = response.bytes_stream();
+            let mut buffer = String::new();
+            let mut accumulated = String::new();
 
-        while let Some(chunk_result) = byte_stream.next().await {
-            let bytes = chunk_result.context("error reading SSE chunk")?;
-            buffer.push_str(&String::from_utf8_lossy(&bytes));
+            while let Some(chunk_result) = byte_stream.next().await {
+                let bytes = chunk_result.context("error reading SSE chunk")?;
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
 
-            while let Some(event_end) = buffer.find("\n\n") {
-                let event_block = buffer[..event_end].to_string();
-                buffer = buffer[event_end + 2..].to_string();
+                while let Some(event_end) = buffer.find("\n\n") {
+                    let event_block = buffer[..event_end].to_string();
+                    buffer = buffer[event_end + 2..].to_string();
 
-                if let Some(delta) = parse_openai_sse_delta(&event_block) {
-                    accumulated.push_str(&delta);
-                    let _ = sender.send(StreamChunk {
-                        delta,
-                        done: false,
-                        tool_call_delta: None,
-                    });
+                    if let Some(delta) = parse_openai_sse_delta(&event_block) {
+                        accumulated.push_str(&delta);
+                        let _ = sender.send(StreamChunk {
+                            delta,
+                            done: false,
+                            tool_call_delta: None,
+                        });
+                    }
                 }
             }
+
+            log_response("openai-compat", 200, accumulated.len(), start.elapsed());
+
+            let _ = sender.send(StreamChunk {
+                delta: String::new(),
+                done: true,
+                tool_call_delta: None,
+            });
+
+            Ok(ChatResult {
+                output_text: accumulated,
+                ..Default::default()
+            })
         }
-
-        log_response("openai-compat", 200, accumulated.len(), start.elapsed());
-
-        let _ = sender.send(StreamChunk {
-            delta: String::new(),
-            done: true,
-            tool_call_delta: None,
-        });
-
-        Ok(ChatResult {
-            output_text: accumulated,
-            ..Default::default()
-        })
+        .instrument(span)
+        .await
     }
 
     async fn complete_with_tools(
@@ -431,83 +443,90 @@ impl Provider for OpenAiCompatibleProvider {
         tools: &[ToolDefinition],
         reasoning: &ReasoningConfig,
     ) -> anyhow::Result<ChatResult> {
-        let url = format!(
-            "{}/v1/chat/completions",
-            self.base_url.trim_end_matches('/')
-        );
-        let reasoning_effort = match reasoning.enabled {
-            Some(false) => None,
-            _ => reasoning.level.clone(),
-        };
+        let span =
+            info_span!("openai_complete_tools", provider = "openai-compat", model = %self.model);
+        async {
+            let url = format!(
+                "{}/v1/chat/completions",
+                self.base_url.trim_end_matches('/')
+            );
+            let reasoning_effort = match reasoning.enabled {
+                Some(false) => None,
+                _ => reasoning.level.clone(),
+            };
 
-        let openai_tools: Vec<OpenAiToolDef> = tools.iter().map(to_openai_tool).collect();
+            let openai_tools: Vec<OpenAiToolDef> = tools.iter().map(to_openai_tool).collect();
 
-        let payload = ChatRequest {
-            model: self.model.clone(),
-            messages: to_openai_messages(messages),
-            reasoning_effort,
-            stream: false,
-            tools: if openai_tools.is_empty() {
-                None
-            } else {
-                Some(openai_tools)
-            },
-        };
+            let payload = ChatRequest {
+                model: self.model.clone(),
+                messages: to_openai_messages(messages),
+                reasoning_effort,
+                stream: false,
+                tools: if openai_tools.is_empty() {
+                    None
+                } else {
+                    Some(openai_tools)
+                },
+            };
 
-        log_request("openai-compat", &url, &self.model);
-        let start = Instant::now();
+            log_request("openai-compat", &url, &self.model);
+            let start = Instant::now();
 
-        let mut last_error: Option<anyhow::Error> = None;
-        for attempt in 0..MAX_ATTEMPTS {
-            match self
-                .transport
-                .send_chat(&url, &self.api_key, &payload)
-                .await
-            {
-                Ok(response) => {
-                    log_response(
-                        "openai-compat",
-                        response.status,
-                        response.body.len(),
-                        start.elapsed(),
-                    );
-                    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
-                    if !status.is_success() {
-                        let mapped = map_status_error(status, &response.body);
-                        if attempt + 1 < MAX_ATTEMPTS && should_retry_status(status) {
-                            log_retry(
-                                "openai-compat",
-                                attempt,
-                                &format!("status {}", response.status),
-                            );
-                            sleep(
-                                parse_retry_after(&response.headers)
-                                    .unwrap_or_else(|| jittered_backoff(attempt)),
-                            )
-                            .await;
+            let mut last_error: Option<anyhow::Error> = None;
+            for attempt in 0..MAX_ATTEMPTS {
+                match self
+                    .transport
+                    .send_chat(&url, &self.api_key, &payload)
+                    .await
+                {
+                    Ok(response) => {
+                        log_response(
+                            "openai-compat",
+                            response.status,
+                            response.body.len(),
+                            start.elapsed(),
+                        );
+                        let status =
+                            StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
+                        if !status.is_success() {
+                            let mapped = map_status_error(status, &response.body);
+                            if attempt + 1 < MAX_ATTEMPTS && should_retry_status(status) {
+                                log_retry(
+                                    "openai-compat",
+                                    attempt,
+                                    &format!("status {}", response.status),
+                                );
+                                sleep(
+                                    parse_retry_after(&response.headers)
+                                        .unwrap_or_else(|| jittered_backoff(attempt)),
+                                )
+                                .await;
+                                last_error = Some(mapped);
+                                continue;
+                            }
+                            return Err(mapped);
+                        }
+
+                        return parse_tool_chat_response(&response.body)
+                            .with_context(|| "failed to parse provider tool response");
+                    }
+                    Err(error) => {
+                        let mapped = anyhow!("provider request failed: {}", error.message);
+                        if attempt + 1 < MAX_ATTEMPTS && should_retry_transport(error.kind) {
+                            log_retry("openai-compat", attempt, &error.message);
+                            sleep(jittered_backoff(attempt)).await;
                             last_error = Some(mapped);
                             continue;
                         }
                         return Err(mapped);
                     }
-
-                    return parse_tool_chat_response(&response.body)
-                        .with_context(|| "failed to parse provider tool response");
-                }
-                Err(error) => {
-                    let mapped = anyhow!("provider request failed: {}", error.message);
-                    if attempt + 1 < MAX_ATTEMPTS && should_retry_transport(error.kind) {
-                        log_retry("openai-compat", attempt, &error.message);
-                        sleep(jittered_backoff(attempt)).await;
-                        last_error = Some(mapped);
-                        continue;
-                    }
-                    return Err(mapped);
                 }
             }
-        }
 
-        Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
+            Err(last_error.unwrap_or_else(|| anyhow!("provider request failed after retries")))
+        }
+        .instrument(span)
+        .await
     }
 
     async fn complete_streaming_with_tools(
@@ -517,153 +536,159 @@ impl Provider for OpenAiCompatibleProvider {
         reasoning: &ReasoningConfig,
         sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
     ) -> anyhow::Result<ChatResult> {
-        let url = format!(
-            "{}/v1/chat/completions",
-            self.base_url.trim_end_matches('/')
-        );
-        let reasoning_effort = match reasoning.enabled {
-            Some(false) => None,
-            _ => reasoning.level.clone(),
-        };
-        let openai_tools: Vec<OpenAiToolDef> = tools.iter().map(to_openai_tool).collect();
+        let span =
+            info_span!("openai_stream_tools", provider = "openai-compat", model = %self.model);
+        async {
+            let url = format!(
+                "{}/v1/chat/completions",
+                self.base_url.trim_end_matches('/')
+            );
+            let reasoning_effort = match reasoning.enabled {
+                Some(false) => None,
+                _ => reasoning.level.clone(),
+            };
+            let openai_tools: Vec<OpenAiToolDef> = tools.iter().map(to_openai_tool).collect();
 
-        let payload = ChatRequest {
-            model: self.model.clone(),
-            messages: to_openai_messages(messages),
-            reasoning_effort,
-            stream: true,
-            tools: if openai_tools.is_empty() {
-                None
-            } else {
-                Some(openai_tools)
-            },
-        };
+            let payload = ChatRequest {
+                model: self.model.clone(),
+                messages: to_openai_messages(messages),
+                reasoning_effort,
+                stream: true,
+                tools: if openai_tools.is_empty() {
+                    None
+                } else {
+                    Some(openai_tools)
+                },
+            };
 
-        log_request("openai-compat", &url, &self.model);
-        let start = Instant::now();
+            log_request("openai-compat", &url, &self.model);
+            let start = Instant::now();
 
-        let client = reqwest::Client::new();
-        let mut request = client.post(&url).json(&payload);
-        if !self.api_key.is_empty() {
-            request = request.bearer_auth(&self.api_key);
-        }
+            let client = reqwest::Client::new();
+            let mut request = client.post(&url).json(&payload);
+            if !self.api_key.is_empty() {
+                request = request.bearer_auth(&self.api_key);
+            }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| anyhow!("streaming request failed: {e}"))?;
+            let response = request
+                .send()
+                .await
+                .map_err(|e| anyhow!("streaming request failed: {e}"))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(map_status_error(status, &body));
-        }
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(map_status_error(status, &body));
+            }
 
-        let mut byte_stream = response.bytes_stream();
-        let mut buffer = String::new();
-        let mut accumulated_text = String::new();
+            let mut byte_stream = response.bytes_stream();
+            let mut buffer = String::new();
+            let mut accumulated_text = String::new();
 
-        // Track in-flight tool calls by index.
-        struct ToolCallAccum {
-            id: String,
-            name: String,
-            arguments_json: String,
-        }
-        let mut tool_accumulators: Vec<(usize, ToolCallAccum)> = Vec::new();
-        let mut final_finish_reason: Option<String> = None;
+            // Track in-flight tool calls by index.
+            struct ToolCallAccum {
+                id: String,
+                name: String,
+                arguments_json: String,
+            }
+            let mut tool_accumulators: Vec<(usize, ToolCallAccum)> = Vec::new();
+            let mut final_finish_reason: Option<String> = None;
 
-        while let Some(chunk_result) = byte_stream.next().await {
-            let bytes = chunk_result.context("error reading SSE chunk")?;
-            buffer.push_str(&String::from_utf8_lossy(&bytes));
+            while let Some(chunk_result) = byte_stream.next().await {
+                let bytes = chunk_result.context("error reading SSE chunk")?;
+                buffer.push_str(&String::from_utf8_lossy(&bytes));
 
-            while let Some(event_end) = buffer.find("\n\n") {
-                let event_block = buffer[..event_end].to_string();
-                buffer = buffer[event_end + 2..].to_string();
+                while let Some(event_end) = buffer.find("\n\n") {
+                    let event_block = buffer[..event_end].to_string();
+                    buffer = buffer[event_end + 2..].to_string();
 
-                match parse_openai_sse_event(&event_block) {
-                    OpenAiSseEvent::ContentDelta(text) => {
-                        accumulated_text.push_str(&text);
-                        let _ = sender.send(StreamChunk {
-                            delta: text,
-                            done: false,
-                            tool_call_delta: None,
-                        });
-                    }
-                    OpenAiSseEvent::ToolCallDelta {
-                        index,
-                        id,
-                        name,
-                        arguments,
-                    } => {
-                        // Find or create accumulator for this index.
-                        if !tool_accumulators.iter().any(|(i, _)| *i == index) {
-                            tool_accumulators.push((
-                                index,
-                                ToolCallAccum {
-                                    id: id.clone().unwrap_or_default(),
-                                    name: name.clone().unwrap_or_default(),
-                                    arguments_json: String::new(),
-                                },
-                            ));
+                    match parse_openai_sse_event(&event_block) {
+                        OpenAiSseEvent::ContentDelta(text) => {
+                            accumulated_text.push_str(&text);
+                            let _ = sender.send(StreamChunk {
+                                delta: text,
+                                done: false,
+                                tool_call_delta: None,
+                            });
                         }
-                        if let Some((_, accum)) =
-                            tool_accumulators.iter_mut().find(|(i, _)| *i == index)
-                        {
-                            accum.arguments_json.push_str(&arguments);
+                        OpenAiSseEvent::ToolCallDelta {
+                            index,
+                            id,
+                            name,
+                            arguments,
+                        } => {
+                            // Find or create accumulator for this index.
+                            if !tool_accumulators.iter().any(|(i, _)| *i == index) {
+                                tool_accumulators.push((
+                                    index,
+                                    ToolCallAccum {
+                                        id: id.clone().unwrap_or_default(),
+                                        name: name.clone().unwrap_or_default(),
+                                        arguments_json: String::new(),
+                                    },
+                                ));
+                            }
+                            if let Some((_, accum)) =
+                                tool_accumulators.iter_mut().find(|(i, _)| *i == index)
+                            {
+                                accum.arguments_json.push_str(&arguments);
+                            }
+                            let _ = sender.send(StreamChunk {
+                                delta: String::new(),
+                                done: false,
+                                tool_call_delta: Some(ToolCallDelta {
+                                    index,
+                                    id,
+                                    name,
+                                    arguments_delta: arguments,
+                                }),
+                            });
                         }
-                        let _ = sender.send(StreamChunk {
-                            delta: String::new(),
-                            done: false,
-                            tool_call_delta: Some(ToolCallDelta {
-                                index,
-                                id,
-                                name,
-                                arguments_delta: arguments,
-                            }),
-                        });
+                        OpenAiSseEvent::Finished { finish_reason } => {
+                            final_finish_reason = finish_reason;
+                        }
+                        OpenAiSseEvent::Done | OpenAiSseEvent::Other => {}
                     }
-                    OpenAiSseEvent::Finished { finish_reason } => {
-                        final_finish_reason = finish_reason;
-                    }
-                    OpenAiSseEvent::Done | OpenAiSseEvent::Other => {}
                 }
             }
-        }
 
-        log_response(
-            "openai-compat",
-            200,
-            accumulated_text.len(),
-            start.elapsed(),
-        );
+            log_response(
+                "openai-compat",
+                200,
+                accumulated_text.len(),
+                start.elapsed(),
+            );
 
-        // Build final tool calls from accumulators.
-        let tool_calls: Vec<ToolUseRequest> = tool_accumulators
-            .into_iter()
-            .map(|(_, accum)| {
-                let input = serde_json::from_str(&accum.arguments_json)
-                    .unwrap_or(Value::Object(serde_json::Map::new()));
-                ToolUseRequest {
-                    id: accum.id,
-                    name: accum.name,
-                    input,
-                }
+            // Build final tool calls from accumulators.
+            let tool_calls: Vec<ToolUseRequest> = tool_accumulators
+                .into_iter()
+                .map(|(_, accum)| {
+                    let input = serde_json::from_str(&accum.arguments_json)
+                        .unwrap_or(Value::Object(serde_json::Map::new()));
+                    ToolUseRequest {
+                        id: accum.id,
+                        name: accum.name,
+                        input,
+                    }
+                })
+                .collect();
+
+            let stop_reason = map_openai_stop_reason(final_finish_reason.as_deref());
+
+            let _ = sender.send(StreamChunk {
+                delta: String::new(),
+                done: true,
+                tool_call_delta: None,
+            });
+
+            Ok(ChatResult {
+                output_text: accumulated_text,
+                tool_calls,
+                stop_reason,
             })
-            .collect();
-
-        let stop_reason = map_openai_stop_reason(final_finish_reason.as_deref());
-
-        let _ = sender.send(StreamChunk {
-            delta: String::new(),
-            done: true,
-            tool_call_delta: None,
-        });
-
-        Ok(ChatResult {
-            output_text: accumulated_text,
-            tool_calls,
-            stop_reason,
-        })
+        }
+        .instrument(span)
+        .await
     }
 }
 

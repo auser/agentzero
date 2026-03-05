@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use tracing::{debug, trace, warn};
+use tracing::{info, warn};
 
 pub(crate) const MAX_ATTEMPTS: usize = 3;
 const BASE_BACKOFF_MS: u64 = 100;
@@ -86,7 +86,7 @@ impl CircuitBreaker {
         match state {
             CB_CLOSED => Ok(()),
             CB_HALF_OPEN => {
-                trace!("circuit breaker half-open, allowing probe request");
+                info!("circuit breaker half-open, allowing probe request");
                 Ok(())
             }
             CB_OPEN => {
@@ -95,7 +95,7 @@ impl CircuitBreaker {
                     if instant.elapsed() >= self.reset_duration {
                         drop(last);
                         self.state.store(CB_HALF_OPEN, Ordering::SeqCst);
-                        trace!("circuit breaker transitioning open → half-open");
+                        info!("circuit breaker transitioning open → half-open");
                         return Ok(());
                     }
                 }
@@ -116,7 +116,7 @@ impl CircuitBreaker {
         let previous = self.state.swap(CB_CLOSED, Ordering::SeqCst);
         self.consecutive_failures.store(0, Ordering::SeqCst);
         if previous != CB_CLOSED {
-            debug!("circuit breaker closed after successful request");
+            info!("circuit breaker closed after successful request");
         }
     }
 
@@ -149,6 +149,23 @@ impl CircuitBreaker {
     /// Current consecutive failure count.
     pub fn failure_count(&self) -> u64 {
         self.consecutive_failures.load(Ordering::SeqCst)
+    }
+}
+
+/// Snapshot of circuit breaker state for monitoring and health checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CircuitBreakerStatus {
+    pub state: &'static str,
+    pub failure_count: u64,
+}
+
+impl CircuitBreaker {
+    /// Take a snapshot of the current circuit breaker state.
+    pub fn status(&self) -> CircuitBreakerStatus {
+        CircuitBreakerStatus {
+            state: self.state_label(),
+            failure_count: self.failure_count(),
+        }
     }
 }
 
@@ -324,7 +341,7 @@ pub(crate) fn map_status_error(status: StatusCode, body: &str) -> anyhow::Error 
 // ---------------------------------------------------------------------------
 
 pub(crate) fn log_request(provider: &str, url: &str, model: &str) {
-    trace!(
+    info!(
         provider = provider,
         url = url,
         model = model,
@@ -333,7 +350,7 @@ pub(crate) fn log_request(provider: &str, url: &str, model: &str) {
 }
 
 pub(crate) fn log_response(provider: &str, status: u16, body_len: usize, elapsed: Duration) {
-    trace!(
+    info!(
         provider = provider,
         status = status,
         body_bytes = body_len,
@@ -343,7 +360,7 @@ pub(crate) fn log_response(provider: &str, status: u16, body_len: usize, elapsed
 }
 
 pub(crate) fn log_retry(provider: &str, attempt: usize, reason: &str) {
-    debug!(
+    warn!(
         provider = provider,
         attempt = attempt + 1,
         reason = reason,
@@ -610,5 +627,66 @@ mod tests {
             unhealthy,
             HealthProbeResult::Unhealthy { status: 500, .. }
         ));
+    }
+
+    // --- Circuit breaker status snapshot ---
+
+    #[tokio::test]
+    async fn circuit_breaker_status_reflects_state() {
+        let cb = CircuitBreaker::new(2, Duration::from_secs(30));
+        let status = cb.status();
+        assert_eq!(status.state, "closed");
+        assert_eq!(status.failure_count, 0);
+
+        cb.record_failure().await;
+        let status = cb.status();
+        assert_eq!(status.state, "closed");
+        assert_eq!(status.failure_count, 1);
+
+        cb.record_failure().await;
+        let status = cb.status();
+        assert_eq!(status.state, "open");
+        assert_eq!(status.failure_count, 2);
+    }
+
+    #[tokio::test]
+    async fn circuit_breaker_status_after_recovery() {
+        let cb = CircuitBreaker::new(1, Duration::from_millis(10));
+        cb.record_failure().await;
+        assert_eq!(cb.status().state, "open");
+
+        cb.record_success();
+        let status = cb.status();
+        assert_eq!(status.state, "closed");
+        assert_eq!(status.failure_count, 0);
+    }
+
+    #[test]
+    fn state_label_correct_for_all_states() {
+        let cb = CircuitBreaker::new(100, Duration::from_secs(30));
+        assert_eq!(cb.state_label(), "closed");
+
+        // Manually set to open via atomic.
+        cb.state.store(CB_OPEN, Ordering::SeqCst);
+        assert_eq!(cb.state_label(), "open");
+
+        cb.state.store(CB_HALF_OPEN, Ordering::SeqCst);
+        assert_eq!(cb.state_label(), "half-open");
+
+        // Unknown state value.
+        cb.state.store(255, Ordering::SeqCst);
+        assert_eq!(cb.state_label(), "unknown");
+    }
+
+    #[test]
+    fn log_helpers_accept_expected_field_types() {
+        // Verify the logging helpers don't panic with representative values.
+        log_request(
+            "test-provider",
+            "http://localhost/v1/messages",
+            "test-model",
+        );
+        log_response("test-provider", 200, 1024, Duration::from_millis(42));
+        log_retry("test-provider", 0, "rate limited");
     }
 }

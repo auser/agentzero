@@ -1,3 +1,4 @@
+use crate::common::privacy_helpers::boundary_allows_provider;
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -19,6 +20,10 @@ pub struct DelegateConfig {
     pub agentic: bool,
     pub allowed_tools: HashSet<String>,
     pub max_iterations: usize,
+    /// Privacy boundary for this delegate agent (e.g. "local_only", "encrypted_only", "any").
+    /// Empty string means inherit from parent.
+    #[serde(default)]
+    pub privacy_boundary: String,
 }
 
 impl Default for DelegateConfig {
@@ -35,6 +40,7 @@ impl Default for DelegateConfig {
             agentic: false,
             allowed_tools: HashSet::new(),
             max_iterations: 10,
+            privacy_boundary: String::new(),
         }
     }
 }
@@ -88,6 +94,20 @@ pub fn validate_delegation(
         bail!(
             "delegate agent `{}` must not have `delegate` in allowed_tools",
             request.agent_name
+        );
+    }
+
+    // Privacy boundary enforcement: if the delegate has a boundary set,
+    // verify the provider kind is allowed.
+    if !config.privacy_boundary.is_empty()
+        && !boundary_allows_provider(&config.privacy_boundary, &config.provider_kind)
+    {
+        bail!(
+            "delegate agent `{}` has privacy_boundary '{}' which does not allow \
+             provider kind '{}' — use a local provider or change the boundary",
+            request.agent_name,
+            config.privacy_boundary,
+            config.provider_kind,
         );
     }
 
@@ -178,5 +198,59 @@ mod tests {
         allowed.insert("file_read".into());
         let result = filter_tools(&tools, &allowed);
         assert_eq!(result, vec!["file_read".to_string()]);
+    }
+
+    #[test]
+    fn validate_rejects_cloud_provider_with_local_only_boundary() {
+        let mut cfg = config();
+        cfg.privacy_boundary = "local_only".into();
+        // openrouter is a cloud provider → should be rejected
+        let req = DelegateRequest {
+            agent_name: "researcher".into(),
+            prompt: "search".into(),
+            current_depth: 0,
+        };
+        let err = validate_delegation(&req, &cfg).unwrap_err();
+        assert!(err.to_string().contains("local_only"));
+        assert!(err.to_string().contains("openrouter"));
+    }
+
+    #[test]
+    fn validate_allows_local_provider_with_local_only_boundary() {
+        let mut cfg = config();
+        cfg.privacy_boundary = "local_only".into();
+        cfg.provider_kind = "ollama".into();
+        cfg.provider = "http://localhost:11434".into();
+        let req = DelegateRequest {
+            agent_name: "local-agent".into(),
+            prompt: "draft".into(),
+            current_depth: 0,
+        };
+        assert!(validate_delegation(&req, &cfg).is_ok());
+    }
+
+    #[test]
+    fn validate_allows_cloud_provider_with_encrypted_boundary() {
+        let mut cfg = config();
+        cfg.privacy_boundary = "encrypted_only".into();
+        let req = DelegateRequest {
+            agent_name: "researcher".into(),
+            prompt: "search".into(),
+            current_depth: 0,
+        };
+        assert!(validate_delegation(&req, &cfg).is_ok());
+    }
+
+    #[test]
+    fn validate_allows_any_provider_with_empty_boundary() {
+        // Empty boundary = inherit = no restriction
+        let cfg = config();
+        assert!(cfg.privacy_boundary.is_empty());
+        let req = DelegateRequest {
+            agent_name: "researcher".into(),
+            prompt: "search".into(),
+            current_depth: 0,
+        };
+        assert!(validate_delegation(&req, &cfg).is_ok());
     }
 }

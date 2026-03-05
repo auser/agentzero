@@ -306,4 +306,74 @@ mod tests {
         assert!(err.to_string().contains("not found"));
         fs::remove_dir_all(dir).ok();
     }
+
+    #[tokio::test]
+    async fn task_plan_empty_create_succeeds() {
+        let dir = temp_dir();
+        let tool = TaskPlanTool::default();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        let result = tool
+            .execute(r#"{"action": "create", "tasks": []}"#, &ctx)
+            .await
+            .expect("create with empty tasks should succeed");
+        // Should acknowledge creation even if no tasks.
+        assert!(!result.output.is_empty());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn task_plan_status_transitions() {
+        let dir = temp_dir();
+        let tool = TaskPlanTool::default();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        tool.execute(
+            r#"{"action": "create", "tasks": [{"title": "My task"}]}"#,
+            &ctx,
+        )
+        .await
+        .expect("create");
+
+        // pending → in_progress
+        tool.execute(
+            r#"{"action": "update", "id": 1, "status": "in_progress"}"#,
+            &ctx,
+        )
+        .await
+        .expect("pending to in_progress");
+        let list = tool
+            .execute(r#"{"action": "list"}"#, &ctx)
+            .await
+            .expect("list");
+        assert!(list.output.contains("[~] 1. My task"));
+
+        // in_progress → completed
+        tool.execute(
+            r#"{"action": "update", "id": 1, "status": "completed"}"#,
+            &ctx,
+        )
+        .await
+        .expect("in_progress to completed");
+        let list = tool
+            .execute(r#"{"action": "list"}"#, &ctx)
+            .await
+            .expect("list");
+        assert!(list.output.contains("[x] 1. My task"));
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn task_plan_invalid_input_returns_error() {
+        let dir = temp_dir();
+        let tool = TaskPlanTool::default();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        let err = tool
+            .execute("not json at all", &ctx)
+            .await
+            .expect_err("invalid JSON should fail");
+        assert!(!err.to_string().is_empty());
+        fs::remove_dir_all(dir).ok();
+    }
 }

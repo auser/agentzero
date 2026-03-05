@@ -176,4 +176,37 @@ mod tests {
         assert!(err.to_string().contains("already exists"));
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[test]
+    fn persistence_round_trip() {
+        let dir = temp_dir();
+        {
+            let store = CronStore::new(&dir).expect("store");
+            store.add("job-a", "0 * * * *", "cmd-a").expect("add");
+            store.add("job-b", "*/5 * * * *", "cmd-b").expect("add");
+        }
+        // Reopen store from same dir — tasks should persist.
+        let store = CronStore::new(&dir).expect("reopen");
+        let tasks = store.list().expect("list");
+        assert_eq!(tasks.len(), 2);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn remove_nonexistent_fails() {
+        let dir = temp_dir();
+        let store = CronStore::new(&dir).expect("store");
+        let err = store.remove("ghost").expect_err("should fail");
+        assert!(err.to_string().contains("not found"));
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn list_empty_returns_empty() {
+        let dir = temp_dir();
+        let store = CronStore::new(&dir).expect("store");
+        let tasks = store.list().expect("list");
+        assert!(tasks.is_empty());
+        fs::remove_dir_all(dir).ok();
+    }
 }

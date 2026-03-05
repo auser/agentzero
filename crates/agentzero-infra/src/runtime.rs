@@ -110,9 +110,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
     // Look up model capabilities for the agent loop.
     let caps = model_capabilities(&config.provider.kind, &config.provider.model);
 
-    let provider = if config.privacy.block_cloud_providers
-        || matches!(config.privacy.mode.as_str(), "local_only" | "full")
-    {
+    let provider = if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
         agentzero_providers::build_provider_with_privacy(
             &config.provider.kind,
             config.provider.base_url.clone(),
@@ -200,6 +198,8 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             model_supports_tool_use: caps.is_some_and(|c| c.tool_use),
             model_supports_vision: caps.is_some_and(|c| c.vision),
             system_prompt: config.agent.system_prompt.clone(),
+            privacy_boundary: config.privacy.mode.clone(),
+            tool_boundaries: config.security.tool_boundaries.clone(),
         },
         provider,
         memory,
@@ -540,12 +540,20 @@ fn build_delegate_agents(
         return None;
     }
 
+    let global_boundary = &config.privacy.mode;
+
     let map: HashMap<String, DelegateConfig> = config
         .agents
         .iter()
         .map(|(name, agent)| {
             let provider_kind = agent.provider.clone();
             let base_url = resolve_delegate_base_url(&provider_kind);
+
+            // Resolve agent's privacy boundary against global mode.
+            let resolved_boundary = agentzero_core::common::privacy_helpers::resolve_boundary(
+                &agent.privacy_boundary,
+                global_boundary,
+            );
 
             (
                 name.clone(),
@@ -561,6 +569,7 @@ fn build_delegate_agents(
                     agentic: agent.agentic,
                     allowed_tools: agent.allowed_tools.iter().cloned().collect(),
                     max_iterations: agent.max_iterations,
+                    privacy_boundary: resolved_boundary,
                 },
             )
         })

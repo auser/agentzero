@@ -174,5 +174,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             commands::template::TemplateCommand::run(&ctx, command).await
         }
         Commands::Tools { command } => commands::tools::ToolsCommand::run(&ctx, command).await,
+        Commands::Privacy { command } => {
+            commands::privacy::PrivacyCommand::run(&ctx, command).await
+        }
     }
 }

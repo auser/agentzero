@@ -116,3 +116,38 @@ The plugin system (`agentzero-plugins` crate) introduces additional attack surfa
 
 ### Hot-Reload Watcher (Development)
 - **Rapid event flooding** — Mitigated: 200ms debounce window, only `.wasm` events processed.
+
+## Gateway Network Threats (Sprint 23)
+
+### WebSocket Abuse
+- **Binary frame injection** — Mitigated: binary WebSocket frames are rejected with an error JSON frame; only text frames are processed.
+- **Connection flooding** — Mitigated: rate limiting middleware (default 600 req/min) applies to upgrade requests. Idle connections are closed after 5 minutes.
+- **Zombie connections** — Mitigated: server sends ping every 30 seconds; connections with no pong response within 60 seconds are terminated.
+
+### Denial of Service
+- **Request flooding** — Mitigated: sliding window rate limiter (default: 600 requests per 60-second window). Configurable via `rate_limit_max`; set to `0` to disable.
+- **Large payload attacks** — Mitigated: request size limit middleware (default: 1 MB). Requests with `Content-Length` exceeding the limit are rejected with `413`.
+- **Monitoring** — Prometheus metrics (`gateway_requests_total`, `gateway_errors_total`, `gateway_active_connections`) enable alerting on traffic anomalies.
+
+## Privacy & Encryption Threats (Sprint 24)
+
+### Key Management
+- **Secret key leakage** — Mitigated: `IdentityKeyPair` does not implement `Serialize`; private keys cannot be accidentally serialized to JSON/TOML. Keys are only persisted via dedicated `KeyRingStore`.
+- **Stale keys** — Mitigated: automatic key rotation (default 24h interval). Manual rotation via `agentzero privacy rotate-keys --force`. Key epoch tracked in metrics.
+- **Key loss on restart** — Mitigated: keys persist to disk via `KeyRingStore`. Gateway reloads persisted keys on startup.
+
+### Transport Security
+- **Eavesdropping** — Mitigated: Noise Protocol XX handshake (X25519_ChaChaPoly_BLAKE2s) provides forward secrecy and mutual authentication. All provider traffic encrypted when `mode = "encrypted"` or `"full"`.
+- **Replay attacks (transport)** — Mitigated: Noise Protocol provides built-in nonce sequencing; replayed messages are rejected by the cipher state.
+- **Session hijacking** — Mitigated: session IDs are 32-byte SHA-256 hashes; sessions expire after configurable timeout (default 1h). Max session count is capped.
+
+### Sealed Envelope Security
+- **Envelope replay** — Mitigated: 24-byte nonces tracked in `DashMap`; duplicate nonces rejected with HTTP 409. Stale nonces garbage-collected alongside envelope TTL.
+- **Traffic analysis** — Partially mitigated: relay strips identifying headers (X-Forwarded-For, X-Real-IP, Via); User-Agent replaced with generic value. Timing jitter not yet implemented.
+- **Mailbox flooding** — Mitigated: per-routing-id mailbox size limit. Excess submissions rejected with HTTP 429.
+
+### Privacy Boundary Enforcement
+- **Provider leakage** — Mitigated: `local_only` mode validates provider kind at config load, rejects cloud providers at delegation validation, and blocks non-localhost base URLs.
+- **Tool network leakage** — Mitigated: `local_only` disables network tools (web_search, http_request, web_fetch, composio) at policy level and enforces localhost-only domain allowlist.
+- **Plugin network leakage** — Mitigated: WASM plugins have `allow_network = false` when network tools are disabled.
+- **Boundary escalation** — Mitigated: config validation rejects agent boundaries more permissive than global mode. Runtime resolution enforces child-can't-exceed-parent rule.

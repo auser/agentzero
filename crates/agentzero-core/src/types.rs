@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -27,6 +27,11 @@ pub struct AgentConfig {
     pub model_supports_vision: bool,
     /// Optional system prompt sent to the LLM at the start of each conversation.
     pub system_prompt: Option<String>,
+    /// Effective privacy boundary for this agent: "local_only", "encrypted_only", "any", or empty (inherit).
+    pub privacy_boundary: String,
+    /// Per-tool privacy boundaries. Keys are tool names, values are boundary
+    /// strings that override the agent-level boundary for that tool.
+    pub tool_boundaries: HashMap<String, String>,
 }
 
 impl Default for AgentConfig {
@@ -47,6 +52,8 @@ impl Default for AgentConfig {
             model_supports_tool_use: true,
             model_supports_vision: false,
             system_prompt: None,
+            privacy_boundary: String::new(),
+            tool_boundaries: HashMap::new(),
         }
     }
 }
@@ -181,6 +188,13 @@ pub struct ToolContext {
     pub allow_sensitive_file_reads: bool,
     #[serde(default)]
     pub allow_sensitive_file_writes: bool,
+    /// Effective privacy boundary for this execution context.
+    /// Empty string or "inherit" means no restriction.
+    #[serde(default)]
+    pub privacy_boundary: String,
+    /// Source channel that initiated this request (for channel-specific boundaries).
+    #[serde(default)]
+    pub source_channel: Option<String>,
 }
 
 impl ToolContext {
@@ -189,6 +203,8 @@ impl ToolContext {
             workspace_root,
             allow_sensitive_file_reads: false,
             allow_sensitive_file_writes: false,
+            privacy_boundary: String::new(),
+            source_channel: None,
         }
     }
 }

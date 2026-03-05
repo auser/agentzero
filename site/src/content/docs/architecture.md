@@ -89,6 +89,16 @@ sequenceDiagram
     CLI-->>User: stdout (or streaming token-by-token)
 ```
 
+## Observability
+
+AgentZero provides three layers of observability:
+
+**Tracing** — Provider calls are instrumented with `tracing` spans (`anthropic_complete`, `openai_stream`, etc.) that carry `provider` and `model` fields. Request/response/retry events are logged at `info!`/`warn!` level via `transport.rs` helpers.
+
+**Metrics** — The gateway exposes Prometheus counters (`requests_total`, `errors_total`, `ws_connections_total`), histograms (`request_duration_seconds`), and gauges (`active_connections`) at `/metrics`.
+
+**Circuit Breaker** — Each Anthropic provider instance has a circuit breaker that tracks consecutive failures and transitions through closed/open/half-open states. State transitions are logged at `info!` level. The `CircuitBreakerStatus` struct exposes `state_label()` and `failure_count()` for health checks.
+
 ## See Also
 
 - [Security Boundaries](/agentzero/security/boundaries/) — Layered defense-in-depth model

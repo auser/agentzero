@@ -221,10 +221,16 @@ Per-provider transport settings can be configured for timeout, retries, and circ
 ```toml
 [provider.transport]
 timeout_ms = 30000              # request timeout (default: 30s)
-max_retries = 2                 # retry count on failure
-circuit_breaker_threshold = 5   # failures before circuit opens
-circuit_breaker_reset_ms = 60000 # time before half-open retry
+max_retries = 3                 # retry count on failure (default: 3)
+circuit_breaker_threshold = 5   # failures before circuit opens (default: 5)
+circuit_breaker_reset_ms = 30000 # time before half-open retry (default: 30s)
 ```
+
+**Retry policy:** Retries on `429 Too Many Requests` and `5xx` server errors with exponential backoff and jitter. Honors `Retry-After` headers when present. Non-retryable errors (401, 403, 404) fail immediately.
+
+**Circuit breaker:** Tracks consecutive failures per provider. After reaching the threshold, the circuit opens and rejects requests for the reset duration. It then transitions to half-open, allowing a single probe request. A successful probe closes the circuit; a failed probe reopens it.
+
+**Observability:** Provider requests are instrumented with `tracing` spans (`anthropic_complete`, `openai_stream`, etc.). Request/response events log at `info!` level with provider, model, status, body size, and latency. Retries log at `warn!` level. Circuit breaker state transitions log at `info!`/`warn!` level.
 
 ---
 

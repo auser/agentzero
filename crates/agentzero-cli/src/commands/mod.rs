@@ -26,6 +26,7 @@ pub mod onboard;
 pub mod peripheral;
 #[cfg(feature = "plugins")]
 pub mod plugin;
+pub mod privacy;
 pub mod providers;
 pub mod rag;
 pub mod service;

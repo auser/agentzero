@@ -136,15 +136,84 @@ curl http://127.0.0.1:42617/v1/models \
   -H "Authorization: Bearer <token>"
 ```
 
+## Metrics
+
+The `/metrics` endpoint exposes Prometheus-compatible metrics for monitoring:
+
+- `gateway_requests_total{method, path, status}` — Request counter by method, path, and status code
+- `gateway_request_duration_seconds{method, path}` — Request latency histogram
+- `gateway_errors_total{error_type}` — Error counter by structured error type
+- `gateway_ws_connections_total` — WebSocket connection counter
+- `gateway_active_connections` — Current active connection gauge
+
+**Prometheus scrape config:**
+
+```yaml
+scrape_configs:
+  - job_name: agentzero-gateway
+    static_configs:
+      - targets: ['127.0.0.1:42617']
+    metrics_path: /metrics
+    scrape_interval: 15s
+```
+
+## Models
+
+The `/v1/models` endpoint dynamically returns all models from the provider catalog. The response follows the OpenAI format:
+
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "claude-sonnet-4-6", "object": "model", "owned_by": "anthropic" },
+    { "id": "gpt-4o", "object": "model", "owned_by": "openai" }
+  ]
+}
+```
+
+## Error Responses
+
+All error responses use a structured JSON format:
+
+```json
+{
+  "error": {
+    "type": "auth_required",
+    "message": "authentication required"
+  }
+}
+```
+
+| Error Type | HTTP Status | Description |
+|---|---|---|
+| `auth_required` | 401 | No bearer token provided |
+| `auth_failed` | 403 | Invalid token or pairing code |
+| `not_found` | 404 | Unknown endpoint or resource |
+| `agent_unavailable` | 503 | Gateway started without agent config |
+| `agent_execution_failed` | 500 | Agent runtime error |
+| `rate_limited` | 429 | Rate limit exceeded |
+| `payload_too_large` | 413 | Request body too large |
+| `bad_request` | 400 | Malformed request |
+
+## WebSocket Behavior
+
+The WebSocket endpoint (`/ws/chat`) includes production hardening:
+
+- **Heartbeat** — Server sends a ping every 30 seconds. If no pong is received within 60 seconds, the connection is closed.
+- **Idle timeout** — Connections with no messages for 5 minutes are automatically closed.
+- **Binary rejection** — Binary WebSocket frames are rejected with an error JSON frame.
+
 ## Middleware
 
 The gateway includes built-in middleware for production hardening:
 
-**Rate Limiting** — Sliding window counter that rejects excess requests with `429 Too Many Requests`.
+**Rate Limiting** — Sliding window counter that rejects excess requests with `429 Too Many Requests`. Default: 600 requests per 60-second window (10 req/s). Set `rate_limit_max = 0` in config to disable.
 
-**Request Size Limits** — Rejects requests with `Content-Length` exceeding the configured maximum (default: 10 MB) with `413 Payload Too Large`.
+**Request Size Limits** — Rejects requests with `Content-Length` exceeding the configured maximum (default: 1 MB) with `413 Payload Too Large`.
 
 **CORS** — Configurable origin allowlist for browser clients. Supports exact origin matching and wildcard (`*`). Handles preflight `OPTIONS` requests automatically.
+
+**Request Metrics** — All requests are automatically instrumented with Prometheus counters and histograms.
 
 **Graceful Shutdown** — On `SIGTERM` or `SIGINT`, the gateway drains active connections before exiting.
 

@@ -25,7 +25,8 @@ async fn pair_rejects_wrong_pairing_code_negative_path() {
         .oneshot(request)
         .await
         .expect("response should be returned");
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    // Wrong code → 403 (AuthFailed), not 401 (AuthRequired).
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -325,16 +326,28 @@ async fn metrics_returns_prometheus_format() {
         .expect("response should be returned");
     assert_eq!(response.status(), StatusCode::OK);
 
+    // Verify content-type is Prometheus text format.
+    let ct = response
+        .headers()
+        .get("content-type")
+        .expect("should have content-type")
+        .to_str()
+        .unwrap();
+    assert!(
+        ct.contains("text/plain"),
+        "content-type should be text/plain, got: {ct}"
+    );
+
+    // Test uses a non-global recorder so the handle renders empty or minimal
+    // output. The real metrics content is validated in the TCP integration test.
     let body = response
         .into_body()
         .collect()
         .await
         .expect("body should collect")
         .to_bytes();
-    let text = String::from_utf8_lossy(&body);
-    assert!(text.contains("# HELP"));
-    assert!(text.contains("# TYPE"));
-    assert!(text.contains("agentzero_gateway_requests_total"));
+    // Body should be valid UTF-8 (Prometheus text format).
+    let _text = std::str::from_utf8(&body).expect("metrics body should be valid utf-8");
 }
 
 // --- v1_models ---
@@ -652,4 +665,809 @@ async fn v1_chat_completions_stream_returns_service_unavailable_without_config()
         .await
         .expect("response should be returned");
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+// --- Phase 1.6: Sprint 23 new tests ---
+
+// --- Structured error response format ---
+
+#[tokio::test]
+async fn auth_required_returns_structured_json_error() {
+    let app = build_router(
+        GatewayState::test_with_bearer(Some("tok")),
+        &default_config(),
+    );
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/ping")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"message":"hi"}"#))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["error"]["type"], "auth_required");
+    assert!(json["error"]["message"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn agent_unavailable_returns_503_with_structured_json() {
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/chat")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"message":"world"}"#))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["error"]["type"], "agent_unavailable");
+    assert_eq!(json["error"]["message"], "agent runtime not configured");
+}
+
+#[tokio::test]
+async fn auth_failed_returns_403_with_structured_json() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+    let request = Request::builder()
+        .method("POST")
+        .uri("/pair")
+        .header("x-pairing-code", "000000")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["error"]["type"], "auth_failed");
+}
+
+#[tokio::test]
+async fn not_found_returns_404_with_structured_json() {
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/webhook/nonexistent-xyz")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"payload":"test"}"#))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["error"]["type"], "not_found");
+    assert!(json["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("nonexistent-xyz"));
+}
+
+// --- /v1/models dynamic catalog ---
+
+#[tokio::test]
+async fn v1_models_returns_known_providers() {
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/models")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    let data = json["data"].as_array().expect("data should be array");
+
+    let owners: std::collections::HashSet<&str> =
+        data.iter().filter_map(|m| m["owned_by"].as_str()).collect();
+    assert!(
+        owners.len() >= 2,
+        "should have models from at least 2 providers, got: {owners:?}"
+    );
+
+    for model in data {
+        assert_eq!(model["object"], "model");
+        assert!(model["id"].as_str().is_some_and(|id| !id.is_empty()));
+        assert!(model["owned_by"].as_str().is_some_and(|o| !o.is_empty()));
+    }
+}
+
+#[tokio::test]
+async fn v1_models_ids_match_provider_catalog() {
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/models")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    let data = json["data"].as_array().unwrap();
+
+    let mut catalog_count = 0usize;
+    for provider in agentzero_providers::supported_providers() {
+        if let Some((_pid, models)) = agentzero_providers::find_models_for_provider(provider.id) {
+            catalog_count += models.len();
+        }
+    }
+
+    assert_eq!(
+        data.len(),
+        catalog_count,
+        "model count from endpoint should match catalog"
+    );
+}
+
+// --- Default rate limit ---
+
+#[tokio::test]
+async fn default_rate_limit_is_600() {
+    let config = MiddlewareConfig::default();
+    assert_eq!(config.rate_limit_max, 600);
+    assert_eq!(config.rate_limit_window_secs, 60);
+}
+
+#[tokio::test]
+async fn default_rate_limit_allows_then_rejects() {
+    let config = MiddlewareConfig {
+        rate_limit_max: 3,
+        rate_limit_window_secs: 60,
+        ..Default::default()
+    };
+    let app = build_router(GatewayState::test_with_bearer(None), &config);
+
+    for i in 0..3 {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/health")
+            .body(Body::empty())
+            .expect("request should build");
+        let resp = app.clone().oneshot(req).await.expect("should respond");
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "request {i} should succeed within limit"
+        );
+    }
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/health")
+        .body(Body::empty())
+        .expect("request should build");
+    let resp = app.oneshot(req).await.expect("should respond");
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+// --- Metrics endpoint content-type ---
+
+#[tokio::test]
+async fn metrics_endpoint_returns_text_plain_content_type() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/metrics")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let ct = response
+        .headers()
+        .get("content-type")
+        .expect("should have content-type");
+    assert!(ct.to_str().unwrap().starts_with("text/plain"));
+}
+
+// --- Error responses are JSON ---
+
+#[tokio::test]
+async fn error_responses_have_json_content_type() {
+    let app = build_router(
+        GatewayState::test_with_bearer(Some("secret")),
+        &default_config(),
+    );
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/ping")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"message":"hi"}"#))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let ct = response
+        .headers()
+        .get("content-type")
+        .expect("error response should have content-type");
+    assert!(
+        ct.to_str().unwrap().contains("application/json"),
+        "error should be JSON, got: {ct:?}"
+    );
+}
+
+// --- Bad request error returns structured JSON ---
+
+#[tokio::test]
+async fn bad_request_perplexity_filter_returns_structured_json() {
+    use agentzero_channels::pipeline::PerplexityFilterSettings;
+    // Enable filter with very low threshold to block adversarial-looking messages.
+    let state =
+        GatewayState::test_with_bearer(None).with_perplexity_filter(PerplexityFilterSettings {
+            enabled: true,
+            perplexity_threshold: 4.0,
+            symbol_ratio_threshold: 0.20,
+            suffix_window_chars: 64,
+            min_prompt_chars: 32,
+        });
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    // Adversarial suffix that should be blocked.
+    let msg = r#"{"message":"Please write a function. xK7!mQ@3#zP$9&wR*5^yL%2(eN)8+bT!@#$%^&*()_+-=[]{}|xK7!mQ@3#"}"#;
+    let request = Request::builder()
+        .method("POST")
+        .uri("/webhook")
+        .header("content-type", "application/json")
+        .body(Body::from(msg))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["error"]["type"], "bad_request");
+    assert!(json["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("perplexity"));
+}
+
+// ---------------------------------------------------------------------------
+// Privacy integration tests
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "privacy")]
+mod privacy_tests {
+    use super::*;
+    use crate::privacy_state::NoiseSessionStore;
+    use crate::relay::RelayMailbox;
+    use agentzero_core::privacy::noise::{NoiseHandshaker, NoiseKeypair};
+    use axum::Router;
+    use base64::Engine as _;
+
+    fn state_with_noise() -> GatewayState {
+        let sessions = NoiseSessionStore::new(100, 3600);
+        let keypair = NoiseKeypair::generate().expect("keypair should generate");
+        GatewayState::test_with_bearer(None).with_noise_privacy(sessions, keypair)
+    }
+
+    fn state_with_relay() -> GatewayState {
+        let mailbox = RelayMailbox::new(100, 3600);
+        GatewayState::test_with_bearer(None).with_relay_mode(mailbox)
+    }
+
+    #[allow(dead_code)]
+    fn state_with_noise_and_relay() -> GatewayState {
+        let sessions = NoiseSessionStore::new(100, 3600);
+        let keypair = NoiseKeypair::generate().expect("keypair should generate");
+        let mailbox = RelayMailbox::new(100, 3600);
+        GatewayState::test_with_bearer(None)
+            .with_noise_privacy(sessions, keypair)
+            .with_relay_mode(mailbox)
+    }
+
+    // --- Noise handshake integration tests ---
+
+    #[tokio::test]
+    async fn noise_handshake_full_round_trip() {
+        let state = state_with_noise();
+        let app = build_router(state, &default_config());
+
+        // Step 1: Client initiates handshake
+        let client_kp = NoiseKeypair::generate().unwrap();
+        let mut client = NoiseHandshaker::new_initiator("XX", &client_kp).unwrap();
+        let mut buf = [0u8; 65535];
+        let len = client.write_message(b"", &mut buf).unwrap();
+        let client_msg = base64::engine::general_purpose::STANDARD.encode(&buf[..len]);
+
+        let step1_body = json!({
+            "handshake_id": "test-hs-001",
+            "message": client_msg,
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/noise/handshake/step1")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&step1_body).unwrap()))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let step1_resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let server_msg_b64 = step1_resp["message"].as_str().unwrap();
+        let server_msg = base64::engine::general_purpose::STANDARD
+            .decode(server_msg_b64)
+            .unwrap();
+
+        // Client processes server's ← e ee s es
+        client.read_message(&server_msg, &mut buf).unwrap();
+
+        // Step 2: Client sends → s se
+        let len2 = client.write_message(b"", &mut buf).unwrap();
+        let client_msg2 = base64::engine::general_purpose::STANDARD.encode(&buf[..len2]);
+
+        let step2_body = json!({
+            "handshake_id": "test-hs-001",
+            "message": client_msg2,
+        });
+
+        let request2 = Request::builder()
+            .method("POST")
+            .uri("/v1/noise/handshake/step2")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&step2_body).unwrap()))
+            .unwrap();
+
+        let response2 = app.oneshot(request2).await.unwrap();
+        assert_eq!(response2.status(), StatusCode::OK);
+
+        let body2 = response2.into_body().collect().await.unwrap().to_bytes();
+        let step2_resp: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+        let session_id = step2_resp["session_id"].as_str().unwrap();
+        assert!(!session_id.is_empty(), "session_id should be non-empty");
+        // Session ID is hex-encoded, should be 64 chars (32 bytes)
+        assert_eq!(session_id.len(), 64, "session_id should be 64 hex chars");
+    }
+
+    #[tokio::test]
+    async fn noise_handshake_step1_rejects_invalid_base64() {
+        let state = state_with_noise();
+        let app = build_router(state, &default_config());
+
+        let body = json!({
+            "handshake_id": "test-bad-b64",
+            "message": "not-valid-base64!!!",
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/noise/handshake/step1")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn noise_handshake_step2_rejects_unknown_handshake_id() {
+        let state = state_with_noise();
+        let app = build_router(state, &default_config());
+
+        let body = json!({
+            "handshake_id": "nonexistent-hs",
+            "message": base64::engine::general_purpose::STANDARD.encode(b"hello"),
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/noise/handshake/step2")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn noise_disabled_returns_service_unavailable() {
+        let state = GatewayState::test_with_bearer(None);
+        let app = build_router(state, &default_config());
+
+        let body = json!({
+            "handshake_id": "test",
+            "message": base64::engine::general_purpose::STANDARD.encode(b"hello"),
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/noise/handshake/step1")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // --- Privacy info endpoint ---
+
+    #[tokio::test]
+    async fn privacy_info_reports_noise_enabled() {
+        let state = state_with_noise();
+        let app = build_router(state, &default_config());
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/v1/privacy/info")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let info: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(info["noise_enabled"], true);
+        assert_eq!(info["handshake_pattern"], "XX");
+        assert!(info["public_key"].as_str().unwrap().len() > 0);
+    }
+
+    #[tokio::test]
+    async fn privacy_info_reports_noise_disabled() {
+        let state = GatewayState::test_with_bearer(None);
+        let app = build_router(state, &default_config());
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/v1/privacy/info")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let info: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(info["noise_enabled"], false);
+    }
+
+    // --- Relay integration tests ---
+
+    #[tokio::test]
+    async fn relay_submit_and_poll_round_trip() {
+        let state = state_with_relay();
+        let app = build_router(state, &default_config());
+
+        let routing_id = "aa".repeat(32);
+        let payload = base64::engine::general_purpose::STANDARD.encode(b"sealed-envelope-data");
+
+        // Submit
+        let submit_body = json!({
+            "routing_id": routing_id,
+            "payload": payload,
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/relay/submit")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&submit_body).unwrap()))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Poll
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/v1/relay/poll/{routing_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let poll_resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let envelopes = poll_resp["envelopes"].as_array().unwrap();
+        assert_eq!(envelopes.len(), 1);
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(envelopes[0].as_str().unwrap())
+            .unwrap();
+        assert_eq!(decoded, b"sealed-envelope-data");
+    }
+
+    #[tokio::test]
+    async fn relay_submit_rejects_duplicate_nonce() {
+        let state = state_with_relay();
+        let app = build_router(state, &default_config());
+
+        let routing_id = "bb".repeat(32);
+        let payload = base64::engine::general_purpose::STANDARD.encode(b"data");
+        let nonce = base64::engine::general_purpose::STANDARD.encode([42u8; 24]);
+
+        let submit_body = json!({
+            "routing_id": routing_id,
+            "payload": payload,
+            "nonce": nonce,
+        });
+
+        // First submit should succeed
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/relay/submit")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&submit_body).unwrap()))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Second submit with same nonce should fail with 409
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/relay/submit")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&submit_body).unwrap()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn relay_disabled_returns_not_found() {
+        // When relay mode is disabled, routes are not registered → 404.
+        let state = GatewayState::test_with_bearer(None);
+        let app = build_router(state, &default_config());
+
+        let submit_body = json!({
+            "routing_id": "cc".repeat(32),
+            "payload": base64::engine::general_purpose::STANDARD.encode(b"data"),
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/relay/submit")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&submit_body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // --- End-to-end Noise encrypted request/response ---
+
+    /// Helper: perform full XX handshake and return (app, server_session_id_hex, client_session).
+    async fn perform_handshake() -> (Router, String, agentzero_core::privacy::noise::NoiseSession) {
+        let state = state_with_noise();
+        let app = build_router(state, &default_config());
+
+        // Step 1: Client → e
+        let client_kp = NoiseKeypair::generate().unwrap();
+        let mut client = NoiseHandshaker::new_initiator("XX", &client_kp).unwrap();
+        let mut buf = [0u8; 65535];
+        let len = client.write_message(b"", &mut buf).unwrap();
+        let client_msg = base64::engine::general_purpose::STANDARD.encode(&buf[..len]);
+
+        let step1_body = json!({
+            "handshake_id": "e2e-test",
+            "message": client_msg,
+        });
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/noise/handshake/step1")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&step1_body).unwrap()))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let step1_resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let server_msg = base64::engine::general_purpose::STANDARD
+            .decode(step1_resp["message"].as_str().unwrap())
+            .unwrap();
+
+        // Client reads server's ← e ee s es
+        client.read_message(&server_msg, &mut buf).unwrap();
+
+        // Step 2: Client → s se
+        let len2 = client.write_message(b"", &mut buf).unwrap();
+        let client_msg2 = base64::engine::general_purpose::STANDARD.encode(&buf[..len2]);
+        let step2_body = json!({
+            "handshake_id": "e2e-test",
+            "message": client_msg2,
+        });
+        let request2 = Request::builder()
+            .method("POST")
+            .uri("/v1/noise/handshake/step2")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&step2_body).unwrap()))
+            .unwrap();
+        let response2 = app.clone().oneshot(request2).await.unwrap();
+        assert_eq!(response2.status(), StatusCode::OK);
+        let body2 = response2.into_body().collect().await.unwrap().to_bytes();
+        let step2_resp: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+        let session_id_hex = step2_resp["session_id"].as_str().unwrap().to_string();
+
+        // Client transitions to transport mode
+        assert!(client.is_finished());
+        let client_session = client.into_transport().unwrap();
+
+        (app, session_id_hex, client_session)
+    }
+
+    #[tokio::test]
+    async fn noise_e2e_encrypted_response_on_get() {
+        let (app, session_id, mut client_session) = perform_handshake().await;
+
+        // GET /health with X-Noise-Session header (empty body → middleware passes through)
+        let request = Request::builder()
+            .method("GET")
+            .uri("/health")
+            .header("x-noise-session", &session_id)
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Response body should be encrypted
+        let encrypted_body = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(
+            !encrypted_body.is_empty(),
+            "encrypted response should not be empty"
+        );
+
+        // Client decrypts the response
+        let decrypted = client_session.decrypt(&encrypted_body).unwrap();
+        let health: serde_json::Value = serde_json::from_slice(&decrypted).unwrap();
+        assert_eq!(health["status"], "ok");
+        assert_eq!(health["service"], "agentzero-gateway");
+    }
+
+    #[tokio::test]
+    async fn noise_e2e_request_without_session_passes_through() {
+        let state = state_with_noise();
+        let app = build_router(state, &default_config());
+
+        // GET /health WITHOUT X-Noise-Session header → plaintext passthrough
+        let request = Request::builder()
+            .method("GET")
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let health: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(health["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn noise_e2e_invalid_session_returns_unauthorized() {
+        let state = state_with_noise();
+        let app = build_router(state, &default_config());
+
+        // Send request with bogus session ID and a non-empty encrypted body
+        let request = Request::builder()
+            .method("POST")
+            .uri("/health")
+            .header("x-noise-session", "aa".repeat(32))
+            .body(Body::from(vec![1u8; 32])) // non-empty → triggers decrypt
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn relay_poll_empty_mailbox_returns_empty_array() {
+        let state = state_with_relay();
+        let app = build_router(state, &default_config());
+
+        let routing_id = "dd".repeat(32);
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/v1/relay/poll/{routing_id}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let poll_resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(poll_resp["envelopes"].as_array().unwrap().len(), 0);
+    }
 }

@@ -1,6 +1,7 @@
 use crate::token_store::save_paired_tokens;
 use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
+use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
     collections::HashSet,
     path::PathBuf,
@@ -30,6 +31,23 @@ pub(crate) struct GatewayState {
     pub(crate) config_path: Option<Arc<PathBuf>>,
     /// Workspace root directory.
     pub(crate) workspace_root: Option<Arc<PathBuf>>,
+    /// Prometheus metrics render handle.
+    pub(crate) prometheus_handle: Arc<PrometheusHandle>,
+    /// Noise session store for E2E encrypted communication.
+    #[cfg(feature = "privacy")]
+    pub(crate) noise_sessions: Option<Arc<crate::privacy_state::NoiseSessionStore>>,
+    /// Server's Noise static keypair.
+    #[cfg(feature = "privacy")]
+    pub(crate) noise_keypair: Option<agentzero_core::privacy::noise::NoiseKeypair>,
+    /// In-progress Noise handshakes.
+    #[cfg(feature = "privacy")]
+    pub(crate) noise_handshakes: Option<crate::noise_handshake::HandshakeMap>,
+    /// Relay mode: when true, only relay routes are active.
+    #[cfg(feature = "privacy")]
+    pub(crate) relay_mode: bool,
+    /// Relay mailbox for sealed envelopes.
+    #[cfg(feature = "privacy")]
+    pub(crate) relay_mailbox: Option<Arc<crate::relay::RelayMailbox>>,
 }
 
 impl GatewayState {
@@ -38,6 +56,7 @@ impl GatewayState {
         otp_secret: String,
         paired_tokens: HashSet<String>,
         token_store_path: Option<PathBuf>,
+        prometheus_handle: PrometheusHandle,
     ) -> Self {
         Self {
             service_name: Arc::new("agentzero-gateway".to_string()),
@@ -57,7 +76,39 @@ impl GatewayState {
             allow_public_bind: false,
             config_path: None,
             workspace_root: None,
+            prometheus_handle: Arc::new(prometheus_handle),
+            #[cfg(feature = "privacy")]
+            noise_sessions: None,
+            #[cfg(feature = "privacy")]
+            noise_keypair: None,
+            #[cfg(feature = "privacy")]
+            noise_handshakes: None,
+            #[cfg(feature = "privacy")]
+            relay_mode: false,
+            #[cfg(feature = "privacy")]
+            relay_mailbox: None,
         }
+    }
+
+    /// Configure Noise Protocol privacy for E2E encrypted communication.
+    #[cfg(feature = "privacy")]
+    pub(crate) fn with_noise_privacy(
+        mut self,
+        sessions: Arc<crate::privacy_state::NoiseSessionStore>,
+        keypair: agentzero_core::privacy::noise::NoiseKeypair,
+    ) -> Self {
+        self.noise_sessions = Some(sessions);
+        self.noise_keypair = Some(keypair);
+        self.noise_handshakes = Some(std::sync::Arc::new(dashmap::DashMap::new()));
+        self
+    }
+
+    /// Enable relay mode with a mailbox for sealed envelope routing.
+    #[cfg(feature = "privacy")]
+    pub(crate) fn with_relay_mode(mut self, mailbox: Arc<crate::relay::RelayMailbox>) -> Self {
+        self.relay_mode = true;
+        self.relay_mailbox = Some(mailbox);
+        self
     }
 
     /// Set the pairing code TTL. After `ttl_secs` seconds, `pairing_code_valid()`
@@ -115,6 +166,14 @@ impl GatewayState {
     }
 
     #[cfg(test)]
+    fn test_prometheus_handle() -> PrometheusHandle {
+        // Build without installing a global recorder — metrics macros become
+        // no-ops in tests, but the handle can still render (empty output).
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        recorder.handle()
+    }
+
+    #[cfg(test)]
     pub(crate) fn test_with_bearer(token: Option<&str>) -> Self {
         Self {
             service_name: Arc::new("agentzero-gateway".to_string()),
@@ -131,6 +190,17 @@ impl GatewayState {
             allow_public_bind: false,
             config_path: None,
             workspace_root: None,
+            prometheus_handle: Arc::new(Self::test_prometheus_handle()),
+            #[cfg(feature = "privacy")]
+            noise_sessions: None,
+            #[cfg(feature = "privacy")]
+            noise_keypair: None,
+            #[cfg(feature = "privacy")]
+            noise_handshakes: None,
+            #[cfg(feature = "privacy")]
+            relay_mode: false,
+            #[cfg(feature = "privacy")]
+            relay_mailbox: None,
         }
     }
 
@@ -153,6 +223,17 @@ impl GatewayState {
             allow_public_bind: false,
             config_path: None,
             workspace_root: None,
+            prometheus_handle: Arc::new(Self::test_prometheus_handle()),
+            #[cfg(feature = "privacy")]
+            noise_sessions: None,
+            #[cfg(feature = "privacy")]
+            noise_keypair: None,
+            #[cfg(feature = "privacy")]
+            noise_handshakes: None,
+            #[cfg(feature = "privacy")]
+            relay_mode: false,
+            #[cfg(feature = "privacy")]
+            relay_mailbox: None,
         }
     }
 }

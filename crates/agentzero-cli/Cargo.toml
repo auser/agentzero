@@ -23,6 +23,7 @@ vendored-openssl = ["agentzero-storage/vendored-openssl"]
 gateway = ["dep:agentzero-gateway"]
 tui = ["dep:ratatui", "dep:crossterm"]
 interactive = ["dep:inquire", "dep:console"]
+privacy = ["agentzero-core/privacy", "agentzero-gateway?/privacy"]
 
 [dependencies]
 anyhow.workspace = true

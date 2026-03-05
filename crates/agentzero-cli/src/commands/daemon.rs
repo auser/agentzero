@@ -92,6 +92,7 @@ async fn run_foreground(
         agentzero_gateway::GatewayRunOptions {
             token_store_path: Some(token_store_path),
             new_pairing: false,
+            data_dir: Some(ctx.data_dir.clone()),
             ..Default::default()
         },
     )

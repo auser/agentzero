@@ -258,4 +258,45 @@ mod tests {
 
         let _ = fs::remove_dir_all(&queue.dir);
     }
+
+    #[test]
+    fn dequeue_nonexistent_id_is_noop() {
+        let queue = test_queue();
+        queue.enqueue("real", &"data").expect("enqueue");
+        // Dequeue something that doesn't exist — should not error.
+        queue
+            .dequeue("ghost")
+            .expect("dequeue nonexistent should succeed");
+        assert_eq!(queue.len().unwrap(), 1);
+        let _ = fs::remove_dir_all(&queue.dir);
+    }
+
+    #[test]
+    fn len_correct_after_enqueue_dequeue() {
+        let queue = test_queue();
+        assert_eq!(queue.len().unwrap(), 0);
+        queue.enqueue("a", &1_u32).expect("enqueue");
+        assert_eq!(queue.len().unwrap(), 1);
+        queue.enqueue("b", &2_u32).expect("enqueue");
+        assert_eq!(queue.len().unwrap(), 2);
+        queue.dequeue("a").expect("dequeue");
+        assert_eq!(queue.len().unwrap(), 1);
+        let _ = fs::remove_dir_all(&queue.dir);
+    }
+
+    #[test]
+    fn complex_nested_payload_round_trips() {
+        use serde_json::json;
+        let queue = test_queue();
+        let payload = json!({
+            "nested": {"a": [1, 2, 3]},
+            "unicode": "日本語テスト 🎉",
+            "null_field": null,
+        });
+        queue.enqueue("complex", &payload).expect("enqueue complex");
+        let items: Vec<QueuedItem<serde_json::Value>> = queue.drain_all().expect("drain");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].payload, payload);
+        let _ = fs::remove_dir_all(&queue.dir);
+    }
 }

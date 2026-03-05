@@ -223,4 +223,85 @@ mod tests {
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
+
+    #[test]
+    fn save_creates_parent_directories() {
+        let dir = unique_temp_dir();
+        let key = StorageKey::from_config_dir(&dir).expect("key");
+        let nested = dir.join("deeply").join("nested").join("dir");
+        let store = EncryptedJsonStore::new(nested.join("data.json"), key);
+        let data = TestData {
+            value: "deep".to_string(),
+        };
+        store.save(&data).expect("save should create parents");
+        let loaded: TestData = store.load_optional().expect("load").expect("should exist");
+        assert_eq!(loaded, data);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn save_then_delete_makes_load_return_none() {
+        let dir = unique_temp_dir();
+        let store = EncryptedJsonStore::in_config_dir(&dir, "deletable.json").expect("store");
+        store
+            .save(&TestData {
+                value: "temp".to_string(),
+            })
+            .expect("save");
+        assert!(store.path().exists());
+        store.delete().expect("delete");
+        let loaded: Option<TestData> = store.load_optional().expect("load after delete");
+        assert!(loaded.is_none());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn load_or_default_returns_default_for_missing_file() {
+        let dir = unique_temp_dir();
+        let key = StorageKey::from_config_dir(&dir).expect("key");
+        let store = EncryptedJsonStore::new(dir.join("nope.json"), key);
+        let data: TestData = store.load_or_default().expect("should return default");
+        assert_eq!(data.value, "");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn corrupt_encrypted_file_returns_error() {
+        let dir = unique_temp_dir();
+        let store = EncryptedJsonStore::in_config_dir(&dir, "corrupt.json").expect("store");
+        // Write garbage that looks like an envelope but has bad ciphertext.
+        fs::write(
+            store.path(),
+            r#"{"v":1,"nonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==","ciphertext":"badstuFF"}"#,
+        )
+        .expect("write corrupt");
+        let result: anyhow::Result<Option<TestData>> = store.load_optional();
+        assert!(result.is_err(), "corrupt file should return error");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn concurrent_save_does_not_corrupt() {
+        use std::sync::Arc;
+        let dir = unique_temp_dir();
+        let store =
+            Arc::new(EncryptedJsonStore::in_config_dir(&dir, "concurrent.json").expect("store"));
+        let mut handles = vec![];
+        for i in 0..10 {
+            let s = store.clone();
+            handles.push(std::thread::spawn(move || {
+                s.save(&TestData {
+                    value: format!("v{i}"),
+                })
+                .expect("concurrent save should not fail");
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread should not panic");
+        }
+        // File should still be loadable.
+        let loaded: TestData = store.load_optional().expect("load").expect("should exist");
+        assert!(!loaded.value.is_empty());
+        fs::remove_dir_all(dir).ok();
+    }
 }

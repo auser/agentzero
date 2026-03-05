@@ -163,7 +163,12 @@ pub fn default_tools(
             discovered
         };
 
-        let isolation = WasmIsolationPolicy::default();
+        let mut isolation = WasmIsolationPolicy::default();
+        // Privacy enforcement: disable network for plugins when network tools
+        // are disabled (e.g., local_only mode).
+        if !policy.enable_http_request && !policy.enable_web_fetch {
+            isolation.allow_network = false;
+        }
         for plugin in discovered {
             match WasmTool::from_manifest(
                 plugin.manifest.clone(),

@@ -96,6 +96,14 @@ static PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
             "slack_token",
             Regex::new(r"xox[baprs]-[A-Za-z0-9\-]+").unwrap(),
         ),
+        // X25519 / Noise session keys (64-char hex strings that look like key material).
+        (
+            "x25519_key_material",
+            Regex::new(
+                r"(?i)(noise[_-]?session|x25519[_-]?key|privacy[_-]?key)[=:\s]+[a-fA-F0-9]{64}",
+            )
+            .unwrap(),
+        ),
     ]
 });
 

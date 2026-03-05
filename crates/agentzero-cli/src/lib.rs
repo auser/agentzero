@@ -153,6 +153,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::ProvidersQuota { .. } => "providers-quota",
         Commands::Template { .. } => "template",
         Commands::Tools { .. } => "tools",
+        Commands::Privacy { .. } => "privacy",
     }
 }
 

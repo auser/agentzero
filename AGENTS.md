@@ -5,12 +5,14 @@ Project-level operating rules for all contributors and coding agents working in 
 
 ## Project Values
 
-1. **Safe & secure** — security is non-negotiable; fail-closed by default, encrypted-at-rest, sandboxed execution.
-2. **Extensible** — plugin architecture (WASM), provider abstraction, trait-based interfaces.
-3. **Fast** — minimal allocations, async throughout, no unnecessary overhead.
-4. **Simple to use** — the CLI should be the most beautiful and helpful interface possible; clear commands, helpful errors, sensible defaults.
-5. **Slim binaries** — server and CI binaries stay as small as possible; feature-gate optional functionality, avoid bloating the dependency tree.
-6. **Idiomatic Rust** — always follow Rust best-practices; prefer generated code, builder patterns, trait-based dispatch, and macros over manual boilerplate.
+1. **A delight to use** — every interaction should feel like magic. Fast, responsive, beautiful CLI output, helpful errors, zero unnecessary friction. If it can be simpler, make it simpler.
+2. **Easy to use** — sensible defaults, zero-config happy path, progressive disclosure of complexity. A new user should be productive in under 60 seconds. Privacy, security, and encryption should "just work" without reading docs.
+3. **Safe & secure** — security is non-negotiable; fail-closed by default, encrypted at rest and in transit, sandboxed execution, privacy by default. Local-first AI as the strongest privacy guarantee; encrypted transport when cloud models are needed.
+4. **Easy to develop with** — clean APIs, great plugin SDK (WASM), simple extension points. Building a plugin should take minutes, not hours. Documentation that delights developers.
+5. **Extensible** — plugin architecture (WASM), provider abstraction, trait-based interfaces. Support local models, cloud models, or both with coordination.
+6. **Fast** — minimal allocations, async throughout, no unnecessary overhead.
+7. **Slim binaries** — server and CI binaries stay as small as possible; feature-gate optional functionality, avoid bloating the dependency tree.
+8. **Idiomatic Rust** — always follow Rust best-practices; prefer generated code, builder patterns, trait-based dispatch, and macros over manual boilerplate.
 
 ## Required Workflow Rules
 

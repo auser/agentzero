@@ -65,7 +65,14 @@ toml = "0.8"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+chacha20poly1305 = "0.10"
+crypto_box = "0.9"
 sha2 = "0.10"
+snow = "0.9"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+dashmap = "6"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", default-features = false }
 wasmi = "1"
 wasmi_wasi = "1"
 

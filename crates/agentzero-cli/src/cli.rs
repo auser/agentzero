@@ -289,6 +289,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ToolsCommands,
     },
+    /// Privacy mode status and key management.
+    Privacy {
+        #[command(subcommand)]
+        command: PrivacyCommands,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1366,6 +1371,31 @@ pub enum MemoryCommands {
         /// Skip confirmation for bulk clear.
         #[arg(long)]
         yes: bool,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PrivacyCommands {
+    /// Show current privacy mode, key epoch, and session count.
+    Status {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Rotate identity keys (checks interval, or use --force to rotate immediately).
+    RotateKeys {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+        /// Force immediate rotation regardless of interval timing.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Generate a new identity keypair (does not activate — use rotate-keys to switch).
+    GenerateKeypair {
         /// Emit machine-readable JSON output.
         #[arg(long)]
         json: bool,
