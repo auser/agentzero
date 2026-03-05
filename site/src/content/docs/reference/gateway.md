@@ -21,21 +21,28 @@ The gateway binds to `127.0.0.1` (localhost only) by default. Setting `allow_pub
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
+| `GET` | `/` | None | Dashboard HTML page |
 | `GET` | `/health` | None | Service health probe |
+| `GET` | `/metrics` | None | Prometheus-compatible metrics |
+| `POST` | `/pair` | Pairing code | Exchange pairing code for bearer token |
 | `POST` | `/v1/ping` | Bearer | Echo test endpoint |
 | `POST` | `/v1/webhook/:channel` | Bearer | Channel message dispatch |
+| `POST` | `/api/chat` | Bearer | Chat with agent (JSON response) |
+| `POST` | `/v1/chat/completions` | Bearer | OpenAI-compatible chat completions (supports SSE streaming) |
+| `GET` | `/v1/models` | Bearer | List available models (OpenAI-compatible) |
+| `GET` | `/ws/chat` | Bearer | WebSocket chat with streaming agent responses |
+| `POST` | `/webhook` | Bearer | Legacy webhook endpoint |
 
 ## Authentication
 
 The gateway uses a pairing flow:
 
 1. On first start, the gateway prints a one-time pairing code to the terminal
-2. POST the pairing code to get a bearer token
+2. POST the pairing code to `/pair` to get a bearer token
 3. Use the bearer token in subsequent requests
 
 ```bash
-# Step 1: Note the pairing code from gateway startup output
-# Step 2: Health check (no auth required)
+# Health check (no auth required)
 curl http://127.0.0.1:42617/health
 ```
 
@@ -44,10 +51,89 @@ curl http://127.0.0.1:42617/health
 ```
 
 ```bash
-# Step 3: Authenticated request
+# Exchange pairing code for token
+curl -X POST http://127.0.0.1:42617/pair \
+  -H "X-Pairing-Code: <code-from-terminal>"
+```
+
+```bash
+# Authenticated request
 curl -X POST http://127.0.0.1:42617/v1/ping \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json"
+```
+
+## Chat Endpoints
+
+### Agent Chat (`POST /api/chat`)
+
+Send a message to the agent and receive a complete JSON response.
+
+```bash
+curl -X POST http://127.0.0.1:42617/api/chat \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is the weather?", "context": ""}'
+```
+
+```json
+{ "message": "I can help with that...", "tokens_used_estimate": 42 }
+```
+
+Returns `503 Service Unavailable` if the gateway was started without agent configuration.
+
+### OpenAI-Compatible Completions (`POST /v1/chat/completions`)
+
+Accepts the standard OpenAI chat completions format. Set `stream: true` for SSE streaming.
+
+```bash
+# Non-streaming
+curl -X POST http://127.0.0.1:42617/v1/chat/completions \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hello"}]}'
+```
+
+```bash
+# Streaming (SSE)
+curl -X POST http://127.0.0.1:42617/v1/chat/completions \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hello"}], "stream": true}'
+```
+
+SSE events follow the OpenAI format:
+
+```
+data: {"id":"chatcmpl-...","choices":[{"index":0,"delta":{"content":"token"},"finish_reason":null}]}
+
+data: [DONE]
+```
+
+The `model` field is passed through to the agent, allowing model override per request.
+
+### WebSocket Chat (`GET /ws/chat`)
+
+Upgrade to a WebSocket connection for bidirectional streaming chat. Send a text message and receive streaming delta frames:
+
+```json
+// Incoming delta
+{"type": "delta", "delta": "partial response text"}
+
+// Stream complete
+{"type": "done"}
+
+// Error
+{"type": "error", "message": "description"}
+```
+
+### Models (`GET /v1/models`)
+
+List available models in OpenAI-compatible format.
+
+```bash
+curl http://127.0.0.1:42617/v1/models \
+  -H "Authorization: Bearer <token>"
 ```
 
 ## Middleware

@@ -130,6 +130,11 @@ impl ToolOutput {
 
     /// Create an error result.
     pub fn error(msg: impl Into<String>) -> Self;
+
+    /// Create a successful result with a non-fatal warning.
+    /// Use for idempotent operations where the outcome is correct
+    /// but the caller should know about an edge condition.
+    pub fn with_warning(output: impl Into<String>, warning: impl Into<String>) -> Self;
 }
 ```
 
@@ -145,6 +150,77 @@ This macro generates all required WASM ABI v2 exports:
 - `az_tool_execute` — entry point: receives JSON input, returns JSON output
 
 You only write the handler function.
+
+### Host Calls
+
+The runtime provides host functions in the `"az"` WASM import module. Declare them as `extern "C"` imports in your plugin:
+
+```rust
+#[link(wasm_import_module = "az")]
+extern "C" {
+    fn az_log(level: i32, msg_ptr: *const u8, msg_len: i32);
+}
+
+fn log(level: i32, msg: &str) {
+    unsafe { az_log(level, msg.as_ptr(), msg.len() as i32) }
+}
+
+const LOG_ERROR: i32 = 0;
+const LOG_WARN:  i32 = 1;
+const LOG_INFO:  i32 = 2;
+const LOG_DEBUG: i32 = 3;
+```
+
+`az_log` is always available. Other host calls like `az_env_get` require `"az::az_env_get"` in the manifest's `allowed_host_calls`.
+
+### Typed Input (Recommended)
+
+Instead of manually indexing into `serde_json::Value`, define a typed request struct:
+
+```rust
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct Request {
+    action: String,
+    #[serde(default)]
+    note_id: Option<String>,
+}
+
+fn execute(input: ToolInput) -> ToolOutput {
+    let req: Request = match serde_json::from_str(&input.input) {
+        Ok(r) => r,
+        Err(e) => return ToolOutput::error(format!("invalid input: {e}")),
+    };
+    // ...
+}
+```
+
+This gives compile-time field checking and self-documenting code.
+
+---
+
+## Reference Plugin
+
+The **notepad** plugin at `plugins/agentzero-plugin-reference/notepad/` is the canonical example for plugin authors. It demonstrates every SDK pattern in ~180 lines:
+
+| Pattern | How |
+|---------|-----|
+| Typed `#[derive(Deserialize)]` input | Flat request struct with optional fields |
+| `az_log` host call | `extern "C"` import + safe wrapper |
+| `ToolOutput::with_warning` | Idempotent delete of non-existent note |
+| WASI filesystem | Flat `.md` files in `.agentzero/notepad/` |
+| Path security | Validates note IDs against `/`, `\`, `..` |
+| Action dispatch | `write`, `read`, `list`, `delete` |
+
+Build and test:
+
+```bash
+cd plugins/agentzero-plugin-reference/notepad
+cargo build --target wasm32-wasip1 --release
+# Integration tests (from repo root):
+cargo test -p agentzero-plugins --test reference_plugin_integration --features wasm-runtime
+```
 
 ---
 

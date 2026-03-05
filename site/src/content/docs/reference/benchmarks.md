@@ -11,8 +11,8 @@ AgentZero ships two build variants:
 
 | Variant | Profile | Features | Binary Size (macOS arm64) | Crate Count |
 |---|---|---|---|---|
-| **default** | `release` | All (TUI, WASM plugins, gateway, interactive) | ~18 MB | ~625 |
-| **minimal** | `release-min` | Core only (memory-sqlite) | ~5.2 MB | ~262 |
+| **default** | `release` | All (TUI, WASM plugins, gateway, interactive) | ~18 MB | ~625 deps |
+| **minimal** | `release-min` | Core only (memory-sqlite) | ~5.2 MB | ~262 deps |
 
 Build commands:
 

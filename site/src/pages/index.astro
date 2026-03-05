@@ -7,6 +7,7 @@ const base = import.meta.env.BASE_URL;
 const commands = [
   { cmd: "agentzero onboard --interactive", hint: "Generate config and credentials" },
   { cmd: 'agentzero agent -m "hello"', hint: "Run the agent loop" },
+  { cmd: 'agentzero agent --stream -m "hello"', hint: "Stream output in real-time" },
   { cmd: "agentzero gateway", hint: "Start the HTTP gateway" },
   { cmd: "agentzero doctor", hint: "Validate environment health" },
 ];
@@ -15,7 +16,7 @@ const features = [
   { title: "Secure by Default", desc: "Allowlists, policy gates, encrypted storage, and audit logging are baseline." },
   { title: "Trait-Driven Core", desc: "Providers, memory, tools, and channels are swappable through interfaces." },
   { title: "No Lock-In", desc: "OpenAI-compatible providers, SQLite or Turso memory, pluggable everything." },
-  { title: "Lean Runtime", desc: "Single-process CLI with minimal dependencies and fast cold starts." },
+  { title: "Lean Runtime", desc: "Single-process CLI with streaming output, minimal dependencies, and fast cold starts." },
   { title: "Plugin Sandbox", desc: "WASM plugins run in a bounded sandbox with integrity verification." },
   { title: "Deploy Anywhere", desc: "Native binary, no container required. Linux, macOS, Windows." },
 ];
@@ -24,16 +25,16 @@ const steps = [
   { num: "01", title: "Install", cmd: "cargo install agentzero", desc: "Single binary, no runtime dependencies." },
   { num: "02", title: "Onboard", cmd: "agentzero onboard --interactive", desc: "Interactive wizard writes agentzero.toml." },
   { num: "03", title: "Run Agent", cmd: 'agentzero agent -m "hello"', desc: "Send a message through the agent loop." },
-  { num: "04", title: "Start Gateway", cmd: "agentzero gateway", desc: "HTTP gateway with health, webhook, and pairing." },
+  { num: "04", title: "Start Gateway", cmd: "agentzero gateway", desc: "HTTP/WebSocket gateway with chat, SSE streaming, and pairing." },
 ];
 
 const metrics = [
   { value: "~5MB", label: "Minimal Binary" },
   { value: "~19ms", label: "Cold Start" },
   { value: "35+", label: "LLM Providers" },
-  { value: "45+", label: "Built-in Tools" },
+  { value: "50+", label: "Built-in Tools" },
   { value: "8", label: "Platform Targets" },
-  { value: "44", label: "Workspace Crates" },
+  { value: "16", label: "Workspace Crates" },
 ];
 
 const differentiators = [

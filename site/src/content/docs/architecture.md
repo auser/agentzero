@@ -21,65 +21,45 @@ flowchart TD
 
     CLI --> CFG[agentzero-config]
     CLI --> CORE[agentzero-core]
-    CLI --> RT[agentzero-runtime]
-    CLI --> GW[agentzero-gateway]
     CLI --> INFRA[agentzero-infra]
+    CLI --> GW[agentzero-gateway]
 
     CORE --> PROV[agentzero-providers]
-    CORE --> MEM[agentzero-memory]
-    CORE --> TOOLS[agentzero-tools]
-    CORE --> SEC[agentzero-security]
 
     INFRA --> PROV
-    INFRA --> MEM
-    INFRA --> TOOLS
+    INFRA --> STORAGE[agentzero-storage]
+    INFRA --> TOOLS[agentzero-tools]
     INFRA --> WASM[agentzero-plugins]
 
-    RT --> CORE
-    RT --> CFG
-    RT --> INFRA
+    GW --> INFRA
+    GW --> CHANNELS[agentzero-channels]
+
+    FFI[agentzero-ffi] --> INFRA
+    FFI --> CORE
 ```
 
-## Workspace Crates (34)
+## Workspace Crates (16)
+
+The workspace was consolidated from 46 to 16 crates. Each remaining crate corresponds to a real deployment or consumption boundary.
 
 | Crate | Purpose |
 |---|---|
 | `bin/agentzero` | Thin binary entrypoint |
-| `agentzero-cli` | Command parsing, dispatch, and UX |
-| `agentzero-core` | Agent traits, orchestrator, and domain types |
+| `agentzero-cli` | Command parsing, dispatch, UX (absorbed 18 modules: daemon, doctor, health, hooks, service, etc.) |
+| `agentzero-core` | Agent traits, orchestrator, domain types, security, delegation, routing |
 | `agentzero-config` | Typed config model and policy validation |
-| `agentzero-runtime` | Runtime orchestration for agent flows |
-| `agentzero-providers` | OpenAI-compatible provider implementation |
-| `agentzero-memory` | SQLite + Turso memory backends |
-| `agentzero-tools` | Built-in tool implementations |
-| `agentzero-security` | Policy enforcement, redaction, audit |
-| `agentzero-infra` | Wiring layer (connects traits to implementations) |
-| `agentzero-gateway` | HTTP gateway (Axum) |
-| `agentzero-channels` | Channel trait + messaging implementations |
-| `agentzero-plugins` | WASM plugin host + packaging |
-| `agentzero-skills` | Skillforge + SOP engine |
-| `agentzero-daemon` | Daemon runtime state + lifecycle |
-| `agentzero-service` | OS service lifecycle (systemd/OpenRC) |
-| `agentzero-health` | Health/freshness assessment |
-| `agentzero-heartbeat` | Encrypted heartbeat persistence |
-| `agentzero-doctor` | Diagnostics collection |
-| `agentzero-cron` | Scheduled task engine |
-| `agentzero-hooks` | Lifecycle hooks |
-| `agentzero-cost` | Cost tracking primitives |
-| `agentzero-coordination` | Runtime coordination |
-| `agentzero-goals` | Goals management |
-| `agentzero-rag` | Local retrieval index |
-| `agentzero-multimodal` | Media-kind inference |
-| `agentzero-hardware` | Hardware discovery (feature-gated) |
-| `agentzero-peripherals` | Peripheral registry (feature-gated) |
-| `agentzero-integrations` | External integration catalog |
-| `agentzero-crypto` | Cryptographic primitives |
-| `agentzero-storage` | Persistent key-value store |
-| `agentzero-update` | Self-update and migration |
-| `agentzero-common` | Shared helpers and types |
-| `agentzero-auth` | Subscription auth profiles |
-| `agentzero-testkit` | Test doubles and mocks |
-| `agentzero-bench` | Criterion benchmark suite |
+| `agentzero-providers` | OpenAI-compatible provider implementation (Anthropic, OpenAI, OpenRouter, Ollama, etc.) |
+| `agentzero-auth` | Credential management (OAuth, API keys, profiles) |
+| `agentzero-storage` | Encrypted KV store + conversation memory (SQLite, Turso, SQLCipher) |
+| `agentzero-tools` | 50+ built-in tool implementations (includes autonomy, hardware, cron, skills) |
+| `agentzero-infra` | Agent orchestration, audit, runtime execution, tool wiring |
+| `agentzero-channels` | Platform integrations (Telegram, Discord, Slack) + leak guard |
+| `agentzero-plugins` | WASM plugin host runtime (wasmi default, wasmtime optional) |
+| `agentzero-plugin-sdk` | Plugin SDK (ABI v2, WASI) |
+| `agentzero-gateway` | HTTP/WebSocket server (Axum) with SSE streaming |
+| `agentzero-ffi` | FFI bindings (Swift/Kotlin/Python via UniFFI, Node via napi-rs) |
+| `agentzero-testkit` | Test doubles and mocks (dev-only) |
+| `agentzero-bench` | Criterion benchmark suite (dev-only) |
 
 ## Command Execution Flow
 
@@ -89,23 +69,24 @@ sequenceDiagram
     participant Bin as bin/agentzero
     participant CLI as agentzero-cli
     participant Config as agentzero-config
-    participant Core as agentzero-core
+    participant Infra as agentzero-infra
+    participant Agent as Agent (core)
     participant Provider as Provider trait
     participant Memory as MemoryStore trait
     participant Tools as Tool trait
 
-    User->>Bin: agentzero agent -m "hello"
+    User->>Bin: agentzero agent -m "hello" [--stream]
     Bin->>CLI: parse + execute
     CLI->>Config: load config + validate policy
-    CLI->>Core: Agent::respond(message)
-    Core->>Memory: recent(window_size)
-    Core->>Provider: complete(prompt + history)
-    Provider-->>Core: response (may contain tool calls)
-    Core->>Tools: execute(tool_name, params)
-    Tools-->>Core: tool result
-    Core->>Memory: append(exchange)
-    Core-->>CLI: response text
-    CLI-->>User: stdout
+    CLI->>Infra: build_runtime_execution()
+    Infra->>Agent: respond() or respond_streaming()
+    Agent->>Provider: complete(system_prompt + history)
+    Provider-->>Agent: response / stream chunks
+    Agent->>Tools: execute(tool_name, params)
+    Tools-->>Agent: tool result
+    Agent->>Memory: append(exchange)
+    Agent-->>CLI: response text / StreamChunk stream
+    CLI-->>User: stdout (or streaming token-by-token)
 ```
 
 ## See Also

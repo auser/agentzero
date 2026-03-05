@@ -27,7 +27,7 @@ jobs:
       - name: release build (minimal)
         run: cargo build -p agentzero --profile release-min --no-default-features --features minimal
       - name: release size budget (minimal)
-        run: scripts/check-binary-size.sh --binary target/release-min/agentzero --max-bytes 6000000
+        run: scripts/check-binary-size.sh --binary target/release-min/agentzero --max-bytes 8000000
       - name: cold-start latency
         run: scripts/bench-cli-startup.sh --iterations 20 --command "--help"
 

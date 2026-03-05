@@ -3,23 +3,76 @@ title: Tools & Plugins
 description: Built-in tools, security policy, WASM plugin system, and skills.
 ---
 
-AgentZero ships with a set of built-in tools and supports extension via WASM plugins and skills. Every tool enforces **fail-closed security** — capabilities are denied unless explicitly enabled.
+AgentZero ships with 50+ built-in tools and supports extension via WASM plugins, process plugins, MCP servers, and skills. Every tool enforces **fail-closed security** — capabilities are denied unless explicitly enabled. All tools implement `input_schema()` for structured tool-use APIs (Anthropic `tool_use`, OpenAI function calling).
 
 ## Built-in Tools
 
-| Tool | Description | Default | Config |
-|---|---|---|---|
-| `read_file` | Read file contents within allowed root | Enabled | `[security.read_file]` |
-| `write_file` | Write file contents within allowed root | **Disabled** | `[security.write_file]` |
-| `shell` | Execute allowlisted shell commands | Enabled (allowlist) | `[security.shell]` |
-| `http_request` | Make HTTP requests to allowed domains | **Disabled** | `[http_request]` |
-| `web_fetch` | Fetch and convert web pages to markdown | **Disabled** | `[web_fetch]` |
-| `web_search` | Search the web via DuckDuckGo/Brave/etc | **Disabled** | `[web_search]` |
-| `browser` | Browser automation and screenshot | **Disabled** | `[browser]` |
-| `memory` | Query and manage agent memory | Enabled | `[memory]` |
-| `delegate` | Spawn sub-agent with scoped tools | Enabled | `[agents.*]` |
-| `apply_patch` | Validate and apply structured patches | **Disabled** | `[apply_patch]` |
-| `model_routing` | Query model routing configuration | Enabled | `[routing]` |
+### Always Enabled
+
+| Tool | Description |
+|---|---|
+| `read_file` | Read file contents within allowed root |
+| `shell` | Execute allowlisted shell commands |
+| `glob_search` | Find files by glob pattern |
+| `content_search` | Search file contents with regex |
+| `memory_store` | Store entries in agent memory |
+| `memory_recall` | Recall entries from agent memory |
+| `memory_forget` | Remove entries from agent memory |
+| `image_info` | Extract image metadata |
+| `docx_read` | Read DOCX file contents |
+| `pdf_read` | Read PDF file contents |
+| `screenshot` | Capture screen screenshots |
+| `task_plan` | Create and manage task plans |
+| `process_tool` | Execute external processes |
+| `subagent_spawn` | Spawn background sub-agents |
+| `subagent_list` | List running sub-agents |
+| `subagent_manage` | Manage sub-agent lifecycle |
+| `cli_discovery` | Discover CLI capabilities |
+| `proxy_config` | Query proxy configuration |
+| `delegate_coordination_status` | Check delegate coordination status |
+| `sop_list` | List Standard Operating Procedures |
+| `sop_status` | Check SOP execution status |
+| `sop_advance` | Advance SOP to next step |
+| `sop_approve` | Approve SOP step |
+| `sop_execute` | Execute an SOP |
+| `hardware_board_info` | Query hardware board information |
+| `hardware_memory_map` | Read hardware memory map |
+| `hardware_memory_read` | Read hardware memory |
+| `wasm_module` | Load WASM modules |
+| `wasm_tool_exec` | Execute WASM tool |
+
+### Policy-Gated (Disabled by Default)
+
+| Tool | Description | Config |
+|---|---|---|
+| `write_file` | Write file contents within allowed root | `[security.write_file]` |
+| `file_edit` | Edit files with search/replace | Enabled with `write_file` |
+| `apply_patch` | Validate and apply structured patches | Enabled with `write_file` |
+| `git_operations` | Git operations (status, diff, log, etc.) | `enable_git` |
+| `http_request` | Make HTTP requests to allowed domains | `[http_request]` |
+| `web_fetch` | Fetch and convert web pages to markdown | `[web_fetch]` |
+| `url_validation` | Validate URLs against access policy | `[url_access]` |
+| `web_search` | Search the web via DuckDuckGo/Brave/etc | `[web_search]` |
+| `browser` | Browser automation and screenshot | `[browser]` |
+| `browser_open` | Open URLs in system browser | `[browser]` |
+| `cron_add` | Add a cron schedule | `[cron]` |
+| `cron_list` | List cron schedules | `[cron]` |
+| `cron_remove` | Remove a cron schedule | `[cron]` |
+| `cron_update` | Update a cron schedule | `[cron]` |
+| `cron_pause` | Pause a cron schedule | `[cron]` |
+| `cron_resume` | Resume a cron schedule | `[cron]` |
+| `schedule` | Schedule one-time tasks | `[cron]` |
+| `composio` | Composio integration | `enable_composio` |
+| `pushover` | Pushover notifications | `enable_pushover` |
+
+### Conditionally Registered
+
+| Tool | Description | Condition |
+|---|---|---|
+| `agents_ipc` | Inter-process communication between agents | `enable_agents_ipc` (default: true) |
+| `mcp` | Model Context Protocol bridge | `[security.mcp]` |
+| `model_routing_config` | Query model routing configuration | When router is configured |
+| `delegate` | Spawn sub-agent with scoped tools | When `[agents.*]` configured |
 
 ## Tool Trait
 
@@ -29,9 +82,13 @@ All tools implement the core `Tool` trait:
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
+    fn description(&self) -> &'static str { "" }
+    fn input_schema(&self) -> Option<serde_json::Value> { None }
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult>;
 }
 ```
+
+The `input_schema()` method returns a JSON Schema describing expected input parameters. When provided, this enables structured tool-use APIs (Anthropic `tool_use`, OpenAI function calling) and input validation before execution. All 50+ built-in tools implement this method.
 
 The `ToolContext` carries workspace-scoped security state:
 
@@ -369,6 +426,8 @@ fn execute(input: ToolInput) -> ToolOutput {
 
 Build: `cargo build --target wasm32-wasip1 --release`
 
+For a complete example with typed input, `az_log` host calls, `ToolOutput::with_warning`, and WASI filesystem access, see the **reference notepad plugin** at `plugins/agentzero-plugin-reference/notepad/`.
+
 See the [Plugin Authoring Guide](/agentzero/guides/plugins/) for the full walkthrough.
 
 ### Plugin Discovery
@@ -457,6 +516,12 @@ MCP tool servers can be integrated when enabled. Servers must be explicitly allo
 enabled = true
 allowed_servers = ["filesystem", "github"]
 ```
+
+### Connection Caching
+
+MCP server connections are cached in an `McpSession` for the lifetime of the tool instance. The first call to a server spawns the subprocess and caches the stdin/stdout handles. Subsequent calls reuse the existing connection, avoiding process startup overhead on every tool invocation.
+
+Tool schemas from each server's `tools/list` response are also cached and used for structured tool definitions. If a connection error occurs, the session is cleared and retried once automatically.
 
 ---
 

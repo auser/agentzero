@@ -11,7 +11,7 @@ AgentZero's core principle is that **every subsystem is a trait**. This means yo
 |---|---|---|---|
 | **AI Models** | `Provider` | OpenAI-compatible (OpenRouter, OpenAI, Anthropic, Ollama) | Implement `Provider` trait |
 | **Memory** | `MemoryStore` | SQLite, Turso/libsql | Implement `MemoryStore` trait |
-| **Tools** | `Tool` | `read_file`, `write_file`, `shell`, `http_request`, `web_fetch`, `web_search`, `browser`, `delegate`, `memory` | Implement `Tool` trait or WASM plugin |
+| **Tools** | `Tool` | 50+ built-in (file I/O, shell, networking, browser, delegation, memory, git, SOP, cron, hardware) | Implement `Tool` trait, WASM plugin, or process plugin |
 | **Channels** | `Channel` | Telegram, Discord, Slack, Mattermost | Implement `Channel` trait |
 | **Security** | Policy config | Allowlists, OTP, audit, estop, leak guard, syscall anomaly | Config-driven (`[security.*]`) |
 | **Observability** | Config-driven | Runtime traces, OpenTelemetry export | `[observability]` config |
@@ -60,27 +60,27 @@ The `Tool` trait abstracts agent capabilities:
 ```rust
 #[async_trait]
 pub trait Tool: Send + Sync {
-    fn name(&self) -> &str;
-    fn description(&self) -> &str;
-    fn parameters_schema(&self) -> Value;
-    async fn execute(&self, params: Value) -> Result<String>;
+    fn name(&self) -> &'static str;
+    fn description(&self) -> &'static str { "" }
+    fn input_schema(&self) -> Option<serde_json::Value> { None }
+    async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult>;
 }
 ```
 
-All built-in tools implement this trait. WASM plugins are wrapped in a `Tool` adapter.
+All 50+ built-in tools implement this trait with `input_schema()` for structured tool-use APIs. WASM plugins, process plugins, and MCP servers are wrapped in `Tool` adapters.
 
 ## Crate Boundaries
 
 Each trait lives in `agentzero-core`. Implementations live in their own crates:
 
 ```
-agentzero-core          # Traits + orchestrator (no implementations)
+agentzero-core          # Traits, types, security, delegation, routing
 ├── agentzero-providers # Provider implementations
-├── agentzero-memory    # MemoryStore implementations
-├── agentzero-tools     # Tool implementations
-├── agentzero-channels  # Channel implementations
-├── agentzero-plugins   # WASM plugin host
-└── agentzero-infra     # Wiring layer (connects traits to implementations)
+├── agentzero-storage   # MemoryStore + encrypted KV (absorbed crypto, memory)
+├── agentzero-tools     # 50+ tool implementations (absorbed autonomy, hardware, cron, skills)
+├── agentzero-channels  # Channel implementations (absorbed leak-guard)
+├── agentzero-plugins   # WASM plugin host (wasmi default, wasmtime optional)
+└── agentzero-infra     # Orchestration + runtime (absorbed runtime)
 ```
 
 This ensures the core never depends on infrastructure — only the reverse.

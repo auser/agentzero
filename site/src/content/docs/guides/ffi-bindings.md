@@ -75,11 +75,14 @@ All language bindings expose the same core API through the `AgentZeroController`
 | `new(config)`       | Create a controller with full configuration         |
 | `with_defaults(config_path, workspace_root)` | Create with minimal config |
 | `send_message(msg)` | Send a message and get the agent's response         |
+| `send_message_async(msg)` | Send a message asynchronously (Node.js only) |
 | `status()`          | Get the current agent status                        |
 | `get_history()`     | Retrieve conversation history                       |
 | `clear_history()`   | Clear conversation history                          |
 | `get_config()`      | Read the current configuration                      |
 | `update_config(c)`  | Update configuration for subsequent calls           |
+| `register_tool(name, description)` | Register a custom tool from the host language |
+| `registered_tool_names()` | List names of all registered FFI tools        |
 | `version()`         | Return the crate version string                     |
 
 ## Usage examples
@@ -169,6 +172,25 @@ const response = controller.sendMessage("Hello from TypeScript!");
 console.log(response.text);
 ```
 
+### Node.js: Async and Tool Registration
+
+The Node.js bindings include additional methods not available in UniFFI bindings:
+
+```typescript
+// Register a custom tool
+controller.registerTool("my_tool", "Description of what this tool does");
+
+// List registered tools
+const tools = controller.registeredToolNames();
+console.log(tools); // ["my_tool"]
+
+// Async message sending (non-blocking)
+const response = await controller.sendMessageAsync("Hello!");
+console.log(response.text);
+```
+
+`sendMessageAsync()` runs the agent on a separate thread via `spawn_blocking`, keeping the Node.js event loop free.
+
 ## Architecture
 
 The crate uses a single-crate, dual-backend design:
@@ -191,7 +213,7 @@ agentzero-ffi/
 
 Both backends share the same Rust implementation — the controller manages a
 global Tokio runtime and bridges synchronous FFI calls to the async
-`agentzero-runtime` crate.
+`agentzero-infra` runtime module.
 
 ## Cross-compilation
 

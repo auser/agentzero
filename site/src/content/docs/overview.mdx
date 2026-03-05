@@ -5,7 +5,7 @@ description: AgentZero is a lightweight, security-first agent runtime and CLI bu
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-AgentZero is a **lightweight, security-first agent runtime and CLI** built entirely in Rust. It provides a single-binary runtime with trait-driven extensibility, encrypted storage, and fail-closed security defaults.
+AgentZero is a **lightweight, security-first agent runtime and CLI** built entirely in Rust. It provides a single-binary runtime with streaming output, trait-driven extensibility, encrypted storage, and fail-closed security defaults.
 
 :::note
 AgentZero is under active development. The architecture is stable but individual features may change between releases.
@@ -33,6 +33,12 @@ AgentZero is under active development. The architecture is stable but individual
   <Card title="Fast Cold Starts" icon="star">
     Native Rust binary starts in milliseconds. No JIT warmup, no interpreter overhead, no container boot.
   </Card>
+  <Card title="Streaming Output" icon="open-book">
+    Stream agent responses token-by-token via CLI, SSE, or WebSocket. Real-time feedback for long-running tasks.
+  </Card>
+  <Card title="System Prompts" icon="setting">
+    Configure a system prompt per agent or delegate to control personality, constraints, and behavior.
+  </Card>
 </CardGrid>
 
 ## At a Glance
@@ -40,11 +46,11 @@ AgentZero is under active development. The architecture is stable but individual
 | | |
 |---|---|
 | **Language** | 100% Rust |
-| **Crates** | 34 workspace crates |
+| **Crates** | 16 workspace crates |
 | **CLI Commands** | 37+ subcommands |
 | **Providers** | OpenAI-compatible (OpenRouter, OpenAI, Anthropic, Ollama, local) |
 | **Memory** | SQLite (default), Turso/libsql (optional) |
-| **Tools** | `read_file`, `write_file`, `shell`, `http_request`, `web_fetch`, `web_search`, `browser`, `delegate`, `memory` |
+| **Tools** | 50+ built-in (file I/O, shell, networking, browser, delegation, memory, git, SOP, cron, hardware, MCP, and more) |
 | **Plugins** | WASM sandbox with integrity verification |
 | **Security** | Allowlists, OTP gates, audit trail, secret redaction, estop |
 | **License** | MIT / Apache-2.0 |

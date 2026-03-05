@@ -1,58 +1,82 @@
 ---
 title: Roadmap
-description: AgentZero 6-week development roadmap from foundation through stabilization.
+description: AgentZero development roadmap — completed milestones and future direction.
 ---
 
-## Week 1: Foundation (Phase 0)
-1. Set up workspace, linting, formatting, tests, CI.
-2. Add CLI shell with `onboard`, `agent`, `status` commands.
-3. Create ADR process and scope guardrails.
-4. Exit criteria:
-- `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` all pass.
+## Completed
 
-## Week 2: Core Contracts (Phase 1)
-1. Define core domain types and traits:
-- `Provider`
-- `MemoryStore`
-- `Tool`
-2. Add a tiny `Agent` orchestrator that depends only on traits.
-3. Exit criteria:
-- No infra types imported by core crate.
-- Unit tests for trait-based orchestration.
+### Foundation & Core (Phases 0-4)
 
-## Week 3: Infra Implementations (Phase 1)
-1. Add OpenAI-compatible provider client.
-2. Add SQLite memory store.
-3. Add `read_file` and `shell` tools with explicit allowlists.
-4. Exit criteria:
-- Integration tests with mock provider response.
-- Tool execution denied when allowlists fail.
+- Workspace setup, CI, CLI shell with `onboard`, `agent`, `status` commands
+- Core domain types and traits: `Provider`, `MemoryStore`, `Tool`, `Channel`
+- OpenAI-compatible provider, SQLite memory, `read_file` and `shell` tools
+- Agent loop hardening (max iterations, timeouts, event logging)
+- TOML config, env overrides, secret redaction, security defaults
 
-## Week 4: Agent Loop Hardening (Phase 2)
-1. Add max-iterations and timeout guards.
-2. Add structured event logging.
-3. Add deterministic transcript tests.
-4. Exit criteria:
-- Agent cannot loop forever.
-- Tool and provider errors are surfaced clearly.
+### Runtime Expansion
 
-## Week 5: Config + Security Baseline (Phase 3)
-1. TOML config + env overrides.
-2. Secret redaction in logs.
-3. Safe defaults for path/command allowlists.
-4. Exit criteria:
-- Config validation rejects dangerous defaults.
-- Security tests for redaction and blocked operations.
+- Gateway HTTP server (Axum) with pairing auth, rate limiting, CORS
+- WASM plugin sandbox with integrity verification
+- Channel integrations (Telegram, Discord, Slack)
+- FFI bindings (Swift, Kotlin, Python via UniFFI; Node.js via napi-rs)
+- 35+ LLM provider support via OpenAI-compatible interface
+- Autonomy levels, OTP approval, audit trails
+- Hardware discovery, cron scheduling, skills/SOP engine
 
-## Week 6: Stabilize and Measure (Phase 4)
-1. Add latency/error metrics.
-2. Add failure-injection tests (timeouts, malformed output, sqlite lock).
-3. Add minimal benchmark harness.
-4. Exit criteria:
-- Stable behavior under common failures.
-- Baseline performance report checked into `docs/benchmarks.md`.
+### Workspace Consolidation (Sprint 20)
+
+- Workspace consolidated from 46 to 16 crates
+- Encrypted SQLite with SQLCipher
+- Plugin security hardening (path traversal fix, semver, debouncing, file locking)
+- Replaced wasmtime with wasmi as default WASM runtime
+- Build variant tooling (default, server, minimal)
+- 1,400+ tests passing, 0 clippy warnings
+
+### Structured Tool Use (Sprint 21)
+
+- Provider tool definitions (`ToolDefinition`, `ToolUseRequest`, `ToolResultMessage`)
+- Structured tool dispatch in agent loop with text-based fallback
+- Conversation message history with `Vec<ConversationMessage>`
+- Streaming tool use with `ToolCallDelta` and SSE parsing
+- JSON Schema validation and `agentzero tools list/info/schema` CLI commands
+- All 50+ tools implement `input_schema()`
+
+### Streaming & Agent Wiring (Sprint 22)
+
+- **Streaming agent loop** — `Agent::respond_streaming()` with `StreamSink` / `StreamChunk`
+- **Runtime streaming channel** — `run_agent_streaming()` returning receiver + join handle
+- **CLI `--stream` flag** — `agentzero agent --stream -m "hello"`
+- **System prompt support** — `system_prompt` in AgentConfig, wired through all providers
+- **Gateway agent wiring** — Real agent calls on `/api/chat`, `/v1/chat/completions`, `/ws/chat`
+- **SSE streaming** — OpenAI-compatible SSE on `/v1/chat/completions?stream=true`
+- **WebSocket streaming** — Bidirectional streaming on `/ws/chat`
+- **MCP connection caching** — `McpSession` with cached subprocess connections and tool schemas
+- **FFI Node.js parity** — `register_tool()`, `send_message_async()`, `registered_tool_names()`
+
+## Planned
+
+### Near-Term
+
+- Conversation branching and forking
+- Multi-modal input (image, audio) across all providers
+- Plugin registry and marketplace
+- Enhanced RAG with vector search
+
+### Medium-Term
+
+- iOS XCFramework packaging for Swift FFI
+- Android AAR packaging for Kotlin FFI
+- Agent-to-agent collaboration protocols
+- Cost tracking dashboard
+
+### Long-Term
+
+- Distributed agent coordination
+- Self-hosted model fine-tuning integration
+- Enterprise audit and compliance features
 
 ## Work Rules
-- Add one capability per PR.
-- Every feature needs: tests, docs, and one explicit non-goal.
-- Do not add daemon/channels/hardware until Phase 4 is complete.
+
+- Add one capability per PR
+- Every feature needs: tests, docs, and one explicit non-goal
+- All tools must implement `input_schema()` for structured tool-use compatibility
