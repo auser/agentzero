@@ -36,8 +36,8 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 ### Backlog (candidates for Sprint 26)
 
 - [x] **Remaining unchecked tools** — All 17 tools verified complete: each implements `input_schema()`, has tests, and is registered in `default_tools()`
-- [ ] **FFI bindings update** — Expose privacy types through UniFFI (Swift/Kotlin) and napi-rs (Node)
-- [ ] **Benchmarks** — Noise handshake latency, encrypt/decrypt throughput, relay mailbox performance
+- [x] **FFI bindings update** — Expose privacy types through UniFFI (Swift/Kotlin) and napi-rs (Node)
+- [x] **Benchmarks** — Noise handshake latency, encrypt/decrypt throughput, relay mailbox performance
 - [x] **Timing jitter** — Configurable randomized delays on sealed envelope relay submit/poll responses (10–100ms / 20–200ms defaults), config fields in `SealedEnvelopeConfig`, 7 new tests
 
 ---
@@ -52,10 +52,10 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 
 - [x] **Timing jitter for sealed envelope relay** — `JitterConfig` struct with configurable min/max delays for submit (10–100 ms) and poll (20–200 ms). Config wired through `SealedEnvelopeConfig` → `RelayMailbox::with_jitter()`. 7 new tests. Docs updated (threat model, config reference, privacy guide).
 - [x] **Stale backlog cleanup** — Verified all 17 "unchecked" tools are fully implemented with `input_schema()`, tests, and registration.
+- [x] **Privacy benchmarks** — Criterion 0.5 benchmarks for Noise keypair generation, XX/IK handshakes, encrypt/decrypt at 64B/1KB/64KB, sealed envelope seal+open, routing ID computation. 11 benchmark functions in `agentzero-bench` behind `privacy` feature flag.
+- [x] **FFI privacy bindings** — `PrivacyBoundary`, `PrivacyInfo`, `PrivacyStatus` types exposed through UniFFI (Swift/Kotlin) and napi-rs (Node). Read-only query types for inspecting privacy state from mobile/Node apps. 6 tests.
 
 ### Backlog (candidates for Sprint 27)
 
-- [ ] **FFI bindings update** — Expose privacy types through UniFFI (Swift/Kotlin) and napi-rs (Node)
-- [ ] **Benchmarks** — Noise handshake latency, encrypt/decrypt throughput, relay mailbox performance
 - [ ] **Conversation branching** — Forking and branching conversation histories
 - [ ] **Multi-modal input** — Image and audio across all providers

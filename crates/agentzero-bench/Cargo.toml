@@ -8,6 +8,10 @@ description.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+privacy = ["agentzero-core/privacy"]
+
 [dependencies]
 agentzero-core = { workspace = true }
 anyhow.workspace = true
@@ -20,3 +24,8 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 [[bench]]
 name = "core_loop"
 harness = false
+
+[[bench]]
+name = "privacy"
+harness = false
+required-features = ["privacy"]

@@ -17,6 +17,7 @@ default = ["uniffi"]
 uniffi = ["dep:uniffi"]
 uniffi-cli = ["uniffi", "uniffi/cli"]
 node = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
+privacy = ["agentzero-core/privacy"]
 
 [dependencies]
 agentzero-core = { workspace = true }

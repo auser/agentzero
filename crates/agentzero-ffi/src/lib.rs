@@ -13,6 +13,9 @@ uniffi::setup_scaffolding!();
 #[allow(dead_code)]
 mod node_bindings;
 
+#[cfg(feature = "privacy")]
+pub mod privacy_types;
+
 use agentzero_core::{Tool, ToolContext, ToolResult};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex, OnceLock};

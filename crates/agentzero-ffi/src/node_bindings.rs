@@ -184,6 +184,93 @@ impl AgentZeroController {
     }
 }
 
+// ── Privacy types for Node.js ────────────────────────────────────────────
+
+#[cfg(feature = "privacy")]
+mod privacy_node {
+    use napi_derive::napi;
+
+    use crate::privacy_types::{
+        PrivacyBoundary as FfiBoundary, PrivacyInfo as FfiInfo, PrivacyStatus as FfiStatus,
+    };
+
+    #[napi(object)]
+    pub struct NodePrivacyBoundary {
+        pub value: String,
+    }
+
+    impl From<FfiBoundary> for NodePrivacyBoundary {
+        fn from(b: FfiBoundary) -> Self {
+            Self {
+                value: b.to_str().to_string(),
+            }
+        }
+    }
+
+    impl From<NodePrivacyBoundary> for FfiBoundary {
+        fn from(n: NodePrivacyBoundary) -> Self {
+            FfiBoundary::from_string(&n.value)
+        }
+    }
+
+    #[napi(object)]
+    pub struct NodePrivacyInfo {
+        pub noise_enabled: bool,
+        pub handshake_pattern: String,
+        pub public_key: Option<String>,
+        pub key_fingerprint: Option<String>,
+        pub sealed_envelopes_enabled: bool,
+        pub relay_mode: bool,
+        pub supported_patterns: Vec<String>,
+    }
+
+    impl From<FfiInfo> for NodePrivacyInfo {
+        fn from(i: FfiInfo) -> Self {
+            Self {
+                noise_enabled: i.noise_enabled,
+                handshake_pattern: i.handshake_pattern,
+                public_key: i.public_key,
+                key_fingerprint: i.key_fingerprint,
+                sealed_envelopes_enabled: i.sealed_envelopes_enabled,
+                relay_mode: i.relay_mode,
+                supported_patterns: i.supported_patterns,
+            }
+        }
+    }
+
+    #[napi(object)]
+    pub struct NodePrivacyStatus {
+        pub mode: String,
+        pub effective_boundary: String,
+        pub noise_active: bool,
+        pub key_epoch: Option<u32>,
+        pub key_fingerprint: Option<String>,
+    }
+
+    impl From<FfiStatus> for NodePrivacyStatus {
+        fn from(s: FfiStatus) -> Self {
+            Self {
+                mode: s.mode,
+                effective_boundary: s.effective_boundary,
+                noise_active: s.noise_active,
+                key_epoch: s.key_epoch,
+                key_fingerprint: s.key_fingerprint,
+            }
+        }
+    }
+
+    #[napi]
+    pub fn privacy_boundary_from_string(s: String) -> NodePrivacyBoundary {
+        FfiBoundary::from_string(&s).into()
+    }
+
+    #[napi]
+    pub fn privacy_boundary_to_string(boundary: NodePrivacyBoundary) -> String {
+        let ffi: FfiBoundary = boundary.into();
+        ffi.to_str().to_string()
+    }
+}
+
 /// Stub callback for tools registered from Node.js via `register_tool`.
 ///
 /// Provides the tool name and description to the agent's tool list.
