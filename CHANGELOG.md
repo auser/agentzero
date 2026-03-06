@@ -17,6 +17,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Per-component privacy boundaries for agents, tools, and channels with child-can't-exceed-parent enforcement
 - Config validation: rejects `encrypted` mode without `noise.enabled`, boundary escalation, non-localhost URLs in `local_only`
 - Responsive mobile navigation with hamburger menu for documentation site
+- **Timing jitter for sealed envelope relay (Sprint 26)** — `JitterConfig` with configurable min/max delays for submit (10–100 ms) and poll (20–200 ms) to mitigate traffic analysis; wired through `SealedEnvelopeConfig` → `RelayMailbox::with_jitter()`
+- **Privacy benchmarks (Sprint 26)** — Criterion 0.5 benchmarks for Noise keypair generation, XX/IK handshakes, encrypt/decrypt at 64B/1KB/64KB, sealed envelope seal+open, routing ID computation (11 functions behind `privacy` feature)
+- **FFI privacy bindings (Sprint 26)** — `PrivacyBoundary`, `PrivacyInfo`, `PrivacyStatus` types exposed through UniFFI (Swift/Kotlin) and napi-rs (Node) for inspecting privacy state from mobile/Node apps
 
 ### Fixed
 - Resolve clippy `double_ended_iterator_last` lint for Rust 1.93
