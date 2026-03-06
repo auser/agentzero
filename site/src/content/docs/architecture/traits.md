@@ -21,6 +21,7 @@ AgentZero's core principle is that **every subsystem is a trait**. This means yo
 | **Identity** | Config-driven | OpenClaw markdown, AIEOS JSON | `[identity]` config |
 | **Gateway** | HTTP service | Axum-based REST API | Endpoint handlers |
 | **Cost** | Tracker | Token + USD tracking with limits | `[cost]` config |
+| **Privacy** | Config-driven | Noise Protocol E2E encryption, sealed envelopes, key rotation, privacy boundaries | `[privacy]` config |
 
 ## Core Traits
 

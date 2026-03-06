@@ -155,7 +155,7 @@ agentzero providers-quota --provider openrouter --json
 Start the HTTP gateway server in the foreground. Blocks until stopped. Exposes REST, WebSocket, and webhook endpoints for programmatic access.
 
 ```bash
-agentzero gateway                                # Defaults: 127.0.0.1:8080
+agentzero gateway                                # Defaults: 127.0.0.1:42617
 agentzero gateway --host 0.0.0.0 --port 8081    # Custom bind address
 agentzero gateway --new-pairing                  # Clear paired tokens, fresh pairing code
 ```
@@ -163,7 +163,7 @@ agentzero gateway --new-pairing                  # Clear paired tokens, fresh pa
 | Flag | Description |
 |---|---|
 | `--host <HOST>` | Interface to bind (default: `127.0.0.1`) |
-| `-p, --port <PORT>` | Port to bind (default: `8080`) |
+| `-p, --port <PORT>` | Port to bind (default: `42617`) |
 | `--new-pairing` | Clear all paired tokens and generate a fresh pairing code |
 
 **Endpoints:**
@@ -189,7 +189,7 @@ Manage the background daemon process. The daemon runs the gateway server as a de
 Start the daemon. By default spawns a background process and returns immediately. Logs to `{data_dir}/daemon.log`.
 
 ```bash
-agentzero daemon start                           # Background, default 127.0.0.1:8080
+agentzero daemon start                           # Background, default 127.0.0.1:42617
 agentzero daemon start --port 9000               # Custom port
 agentzero daemon start --foreground              # Foreground (for systemd/debugging)
 ```
@@ -197,7 +197,7 @@ agentzero daemon start --foreground              # Foreground (for systemd/debug
 | Flag | Description |
 |---|---|
 | `--host <HOST>` | Interface to bind (default: `127.0.0.1`) |
-| `-p, --port <PORT>` | Port to bind (default: `8080`) |
+| `-p, --port <PORT>` | Port to bind (default: `42617`) |
 | `--foreground` | Run in foreground instead of daemonizing |
 
 #### `daemon stop`

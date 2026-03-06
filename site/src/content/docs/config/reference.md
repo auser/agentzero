@@ -125,11 +125,17 @@ host = "127.0.0.1"
 port = 42617
 require_pairing = true
 allow_public_bind = false
+# relay_mode = false                              # when true, only relay routes active (agent endpoints → 503)
 
 [gateway.node_control]
 enabled = false
 # auth_token = "****"
 allowed_node_ids = []
+
+[gateway.relay]
+# timing_jitter_ms = 500                          # random jitter range added to relay responses (ms)
+# max_mailbox_size = 1000                         # max envelopes per routing_id mailbox
+# gc_interval_secs = 60                           # expired envelope garbage collection interval
 
 # ─── Observability ───────────────────────────────────────
 [observability]
@@ -251,6 +257,7 @@ max_sessions = 1000                               # max concurrent Noise session
 
 [privacy.sealed_envelopes]
 enabled = false                                   # auto-enabled by mode = "full"
+default_ttl_secs = 86400                          # default envelope TTL (seconds)
 max_envelope_bytes = 65536                        # max sealed envelope payload size
 timing_jitter_enabled = false                     # randomized delays on relay responses
 submit_jitter_min_ms = 10                         # min delay on submit (ms)
@@ -260,8 +267,9 @@ poll_jitter_max_ms = 200                          # max delay on poll (ms)
 
 [privacy.key_rotation]
 enabled = false                                   # auto-enabled by mode = "encrypted" or "full"
-interval_hours = 24                               # hours between automatic rotations
-persist_path = "keys/"                            # key persistence directory (relative to data dir)
+rotation_interval_secs = 604800                   # seconds between rotations (default: 7 days)
+overlap_secs = 86400                              # overlap where both old and new keys are valid
+key_store_path = ""                               # key persistence directory (empty = data dir)
 
 # [security.tool_boundaries]                      # per-tool privacy boundaries
 # shell = "local_only"

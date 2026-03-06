@@ -9,7 +9,7 @@ The AgentZero gateway exposes a localhost HTTP API for programmatic access to th
 
 ```bash
 agentzero gateway
-agentzero gateway --host 127.0.0.1 --port 8080
+agentzero gateway --host 127.0.0.1 --port 42617
 agentzero gateway --new-pairing
 ```
 
@@ -299,7 +299,7 @@ Run the gateway as a background process with automatic local AI service discover
 
 ```bash
 # Start in background
-agentzero daemon start --host 127.0.0.1 --port 8080
+agentzero daemon start --host 127.0.0.1 --port 42617
 
 # Check status (includes PID, uptime, address)
 agentzero daemon status

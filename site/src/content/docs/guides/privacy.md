@@ -216,8 +216,9 @@ Keys rotate automatically in `encrypted` and `full` modes:
 ```toml
 [privacy.key_rotation]
 enabled = true
-interval_hours = 24        # Rotate every 24 hours
-persist_path = "keys/"     # Store keys on disk for restart recovery
+rotation_interval_secs = 86400   # Rotate every 24 hours (in seconds)
+overlap_secs = 3600              # 1-hour overlap where both keys are valid
+key_store_path = "keys/"         # Store keys on disk for restart recovery
 ```
 
 ### Manual Rotation

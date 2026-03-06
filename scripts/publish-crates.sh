@@ -2,8 +2,8 @@
 # Publish all workspace crates to crates.io in topological order.
 # Used by the release workflow — assumes CARGO_REGISTRY_TOKEN is set.
 #
-# Post-consolidation workspace (16 members, 13 publishable).
-# Skipped: agentzero-bench, agentzero-testkit, agentzero-ffi (publish = false)
+# Post-consolidation workspace (16 members).
+# Skipped: agentzero-bench, agentzero-ffi, agentzero-cli, agentzero (publish = false)
 set -euo pipefail
 
 # Seconds to wait after each publish for crates.io index propagation.
@@ -46,6 +46,7 @@ publish agentzero-plugins
 # ── Tier 2: depend on core ────────────────────────────────────────────────────
 publish agentzero-providers    # -> core
 publish agentzero-storage      # -> core
+publish agentzero-testkit      # -> core (test utility crate)
 
 # ── Tier 3: depend on tier 2 ─────────────────────────────────────────────────
 publish agentzero-tools        # -> core, providers, storage
@@ -61,11 +62,7 @@ publish agentzero-infra        # -> core, auth, config, tools, storage, provider
 # ── Tier 6: depend on tier 5 ─────────────────────────────────────────────────
 publish agentzero-gateway      # -> core, config, infra, storage, channels
 
-# ── Tier 7: depends on nearly everything ──────────────────────────────────────
-publish agentzero-cli          # -> core, auth, channels, config, infra, providers,
-                               #    storage, tools, gateway, plugins
-
-# ── Final: top-level binary ──────────────────────────────────────────────────
-publish agentzero              # -> cli, core
+# agentzero-cli and agentzero (binary) have publish = false;
+# they are distributed via GitHub Releases, not crates.io.
 
 echo "==> All crates published successfully."

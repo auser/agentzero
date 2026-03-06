@@ -67,6 +67,9 @@ All language bindings expose the same core API through the `AgentZeroController`
 | `ChatMessage`        | History entry: `role`, `content`, `timestamp_ms`    |
 | `AgentStatus`        | Enum: `Idle`, `Running`, `Error { message }`        |
 | `AgentZeroError`     | Enum: `ConfigError`, `RuntimeError`, `ProviderError`, `TimeoutError` |
+| `PrivacyBoundary`   | Enum: `Inherit`, `LocalOnly`, `EncryptedOnly`, `Any` |
+| `PrivacyInfo`       | Privacy capabilities: `mode`, `noise_enabled`, `sealed_envelopes_enabled` |
+| `PrivacyStatus`     | Runtime privacy state: `mode`, `active_sessions`, `key_epoch` |
 
 ### Controller methods
 

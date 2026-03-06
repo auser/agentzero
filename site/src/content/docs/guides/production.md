@@ -12,7 +12,7 @@ This guide walks through setting up a **private, production-ready, secure, and e
 - Observability via OpenTelemetry and Prometheus metrics
 - Cost guardrails and action-rate limits
 
-For basic gateway deployment patterns (standalone, Docker, daemon lifecycle), see the [Gateway Deployment Guide](/guides/deployment/).
+For basic gateway deployment patterns (standalone, Docker, daemon lifecycle), see the [Gateway Deployment Guide](/guides/deployment/). For end-to-end encrypted transport and privacy modes, see the [Privacy Guide](/guides/privacy/).
 
 ---
 

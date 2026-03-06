@@ -9,6 +9,7 @@ repository = "https://github.com/auser/agentzero"
 homepage = "https://github.com/auser/agentzero"
 keywords = ["agent", "cli", "ai", "runtime", "llm"]
 categories = ["command-line-utilities", "development-tools"]
+publish = false
 autobins = false
 
 [features]

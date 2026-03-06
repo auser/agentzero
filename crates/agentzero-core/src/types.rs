@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use thiserror::Error;
+
+use crate::event_bus::EventBus;
 
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
@@ -181,7 +184,7 @@ pub struct StreamChunk {
 /// Convenience alias for the sender half of a streaming channel.
 pub type StreamSink = tokio::sync::mpsc::UnboundedSender<StreamChunk>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ToolContext {
     pub workspace_root: String,
     #[serde(default)]
@@ -195,6 +198,32 @@ pub struct ToolContext {
     /// Source channel that initiated this request (for channel-specific boundaries).
     #[serde(default)]
     pub source_channel: Option<String>,
+    /// Event bus for inter-agent communication. Available when swarm mode is active.
+    #[serde(skip)]
+    pub event_bus: Option<Arc<dyn EventBus>>,
+    /// Identifier for the agent executing this tool (set in swarm mode).
+    #[serde(skip)]
+    pub agent_id: Option<String>,
+}
+
+impl std::fmt::Debug for ToolContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolContext")
+            .field("workspace_root", &self.workspace_root)
+            .field(
+                "allow_sensitive_file_reads",
+                &self.allow_sensitive_file_reads,
+            )
+            .field(
+                "allow_sensitive_file_writes",
+                &self.allow_sensitive_file_writes,
+            )
+            .field("privacy_boundary", &self.privacy_boundary)
+            .field("source_channel", &self.source_channel)
+            .field("event_bus", &self.event_bus.as_ref().map(|_| "..."))
+            .field("agent_id", &self.agent_id)
+            .finish()
+    }
 }
 
 impl ToolContext {
@@ -205,6 +234,8 @@ impl ToolContext {
             allow_sensitive_file_writes: false,
             privacy_boundary: String::new(),
             source_channel: None,
+            event_bus: None,
+            agent_id: None,
         }
     }
 }

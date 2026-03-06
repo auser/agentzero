@@ -13,6 +13,8 @@ AgentZero reads several environment variables for API keys, backend selection, a
 | `AGENTZERO_DATA_DIR` | Override data/config directory | `~/.agentzero` |
 | `AGENTZERO_CONFIG` | Override config file path | `$DATA_DIR/agentzero.toml` |
 | `AGENTZERO_MEMORY_BACKEND` | Memory backend (`sqlite` or `turso`) | `sqlite` |
+| `AGENTZERO_DATA_KEY` | Encryption key for storage (base64 or 64-char hex) | auto-generated key file |
+| `AGENTZERO_GATEWAY_BEARER_TOKEN` | Static bearer token for gateway auth | — |
 | `RUST_LOG` | Logging level (also set via `-v` flags) | — |
 
 ## Provider Keys

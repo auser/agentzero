@@ -48,7 +48,7 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 
 **Baseline:** 16-crate workspace, 1,731+ tests passing, 0 clippy warnings, timing jitter shipped, all tools verified complete.
 
-### Completed
+### Completed   
 
 - [x] **Timing jitter for sealed envelope relay** — `JitterConfig` struct with configurable min/max delays for submit (10–100 ms) and poll (20–200 ms). Config wired through `SealedEnvelopeConfig` → `RelayMailbox::with_jitter()`. 7 new tests. Docs updated (threat model, config reference, privacy guide).
 - [x] **Stale backlog cleanup** — Verified all 17 "unchecked" tools are fully implemented with `input_schema()`, tests, and registration.
@@ -59,3 +59,49 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 
 - [ ] **Conversation branching** — Forking and branching conversation histories
 - [ ] **Multi-modal input** — Image and audio across all providers
+
+---
+
+## Sprint 27: Event-Driven Multi-Agent Platform
+
+**Goal:** Transform AgentZero into a full autonomous multi-agent platform where AI agents communicate via an event bus. Agents subscribe to topics, produce outputs that go back on the bus, and other agents react. The gateway orchestrates routing, chaining, and channel dispatch.
+
+**Baseline:** 16-crate workspace, 1,731+ tests passing, 0 clippy warnings, privacy stack complete.
+
+### Phase A: Foundation (always-on, improves single-agent mode)
+
+- [x] **Publishing simplification** — Added `publish = false` to 14 internal crates. Only `agentzero-core` and `agentzero-plugin-sdk` are publishable. Removed `version` from internal path deps in workspace `Cargo.toml`.
+- [x] **EventBus trait + InMemoryBus** — `Event` struct with `correlation_id` for chain tracing, `EventBus`/`EventSubscriber` traits, `InMemoryBus` backed by `tokio::sync::broadcast`. Privacy boundary helpers (`is_boundary_compatible`, `topic_matches`). Always-on (not feature-gated).
+- [x] **ToolContext bus fields** — Added `event_bus: Option<Arc<dyn EventBus>>` and `agent_id: Option<String>` to `ToolContext` (serde-skipped).
+- [ ] **IPC rewrite to use bus** — Replace file-based `EncryptedJsonStore` IPC in `agents_ipc.rs` with event bus pub/sub.
+
+### Phase B: Gateway Coordinator (feature-gated: `swarm`)
+
+- [ ] **SwarmConfig + AgentDescriptor** — Config model for swarm settings, agent descriptors with `subscribes_to`/`produces` topics, pipeline definitions.
+- [ ] **AI AgentRouter** — LLM-based message classification to pick the best agent by name/description. Keyword fallback when AI router fails.
+- [ ] **Coordinator** — Three concurrent loops: channel ingestion (publishes channel messages to bus), AI router (routes to agents), response/chain handler (chains agent outputs or dispatches to channels). Dynamic number of agent workers.
+- [ ] **Agent worker loop** — Each agent runs in `tokio::spawn`, receives tasks via `mpsc`, outputs go back on the bus.
+- [ ] **Response/chain handler** — Subscribes to agent output events. Routes to subscribing agents (chaining) or dispatches to originating channel (terminal detection via `correlation_id`).
+- [ ] **Pipeline executor** — Optional explicit sequential pipelines for common workflows. Checked before topic-based routing.
+
+### Phase C: Tool Wiring
+
+- [ ] **SubAgent tool wiring** — Wire `SubAgentSpawnTool`, `SubAgentListTool`, `SubAgentManageTool` to coordinator via event bus.
+- [ ] **Runtime integration** — `build_swarm()` in runtime creates bus, router, agent workers, and coordinator.
+
+### Phase D: Tests & Verification
+
+- [ ] **Unit tests** — EventBus pub/sub, filtered recv, correlation_id propagation, topic matching, boundary compatibility, AI routing with mock provider.
+- [ ] **Integration tests** — Agent chain (A→B→C→channel), privacy routing, graceful shutdown, error propagation.
+
+### Acceptance Criteria
+
+- [ ] Event bus pub/sub works with multiple subscribers, filtered recv, and lagged consumer handling
+- [ ] Agent chaining: Agent A output triggers Agent B which triggers Agent C (via topic subscriptions)
+- [ ] AI router classifies messages and picks best agent by description; falls back to keywords
+- [ ] Privacy boundaries enforced: `local_only` events only route to `local_only` agents
+- [ ] `correlation_id` traces full chain back to original channel message
+- [ ] Terminal detection: when no agent subscribes to an output and correlation traces to channel, response is dispatched
+- [ ] Explicit pipelines execute sequential steps with error strategies (abort/skip/retry)
+- [ ] Graceful shutdown: in-flight chains complete within grace period
+- [ ] All quality gates pass: `cargo fmt`, `cargo clippy`, `cargo test --workspace`
