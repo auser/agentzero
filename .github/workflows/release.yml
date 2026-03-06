@@ -63,18 +63,21 @@ jobs:
             bin_path: target/aarch64-unknown-linux-gnu/release/agentzero
             ext: ""
             cross: true
+            extra_features: vendored-openssl
           - os: ubuntu-latest
             target_name: linux-armv7
             rust_target: armv7-unknown-linux-gnueabihf
             bin_path: target/armv7-unknown-linux-gnueabihf/release/agentzero
             ext: ""
             cross: true
+            extra_features: vendored-openssl
           - os: ubuntu-latest
             target_name: linux-x86_64-musl
             rust_target: x86_64-unknown-linux-musl
             bin_path: target/x86_64-unknown-linux-musl/release/agentzero
             ext: ""
             cross: false
+            extra_features: vendored-openssl
           - os: ubuntu-latest
             target_name: linux-aarch64-musl
             rust_target: aarch64-unknown-linux-musl
@@ -82,6 +85,7 @@ jobs:
             ext: ""
             cross: true
             use_zigbuild: true
+            extra_features: vendored-openssl
           - os: macos-latest
             target_name: macos-aarch64
             rust_target: aarch64-apple-darwin
