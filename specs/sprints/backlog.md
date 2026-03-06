@@ -4,6 +4,16 @@ Items moved here from active sprint plans. These are not currently planned and s
 
 ---
 
+## E2E Testing with Local LLM
+
+Added Sprint 28. CI-integrated end-to-end tests using a real local LLM server.
+
+- [ ] CI-integrated e2e tests using Ollama + tinyllama
+- [ ] Real provider completion, streaming, tool use, multi-turn tests
+- [ ] Orchestrator routing test with real LLM classification
+
+---
+
 ## Multi-Agent Stack (formerly Phase E)
 
 Deferred: adds significant distributed-systems complexity with no immediate use case. The single-process architecture handles current requirements. Can be revisited if horizontal scaling becomes necessary.
@@ -26,7 +36,9 @@ Deferred: adds significant distributed-systems complexity with no immediate use 
 - [ ] Add auth via X-Node-Control-Token header
 
 ### Multi-Node Orchestration
-- [ ] Create `crates/agentzero-orchestrator/`
+
+> **Note:** `crates/agentzero-orchestrator/` now exists for single-process agent coordination (coordinator, agent router, swarm builder). The items below are for extending it to multi-node distributed orchestration.
+
 - [ ] Implement node registry (capabilities, health status)
 - [ ] Implement task routing to best-fit node
 - [ ] Implement result aggregation from distributed sub-agents
@@ -42,8 +54,3 @@ Deferred: adds significant distributed-systems complexity with no immediate use 
 - [ ] IPC messages route correctly by agent name
 - [ ] node_control endpoint accepts describe/invoke operations
 - [ ] Remote delegation falls back to local gracefully
-
-### New Crates (if implemented)
-| Crate | Purpose |
-|---|---|
-| `crates/agentzero-orchestrator/` | Multi-node orchestration, node registry, distributed task routing |

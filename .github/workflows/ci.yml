@@ -61,6 +61,27 @@ jobs:
           name: coverage
           path: coverage
 
+  e2e-tests:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    needs: [checks]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+      - name: start ollama and pull model
+        run: |
+          ollama serve &
+          sleep 5
+          ollama pull tinyllama
+      - name: run e2e tests
+        env:
+          LOCAL_LLM_URL: http://localhost:11434
+          LOCAL_LLM_MODEL: tinyllama
+        run: cargo test --workspace -- --ignored
+
   build-artifacts:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [checks, security]

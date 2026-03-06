@@ -247,6 +247,7 @@ dependencies = [
  "agentzero-auth",
  "agentzero-config",
  "agentzero-core",
+ "agentzero-orchestrator",
  "agentzero-plugins",
  "agentzero-providers",
  "agentzero-storage",
@@ -269,7 +270,9 @@ dependencies = [
  "agentzero-config",
  "agentzero-core",
  "agentzero-infra",
+ "agentzero-testkit",
  "anyhow",
+ "async-trait",
  "regex",
  "serde",
  "serde_json",
@@ -346,8 +349,10 @@ name = "agentzero-testkit"
 version = "0.3.0"
 dependencies = [
  "agentzero-core",
+ "agentzero-providers",
  "anyhow",
  "async-trait",
+ "reqwest",
  "tokio",
 ]
 

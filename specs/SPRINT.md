@@ -64,44 +64,96 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 
 ## Sprint 27: Event-Driven Multi-Agent Platform
 
-**Goal:** Transform AgentZero into a full autonomous multi-agent platform where AI agents communicate via an event bus. Agents subscribe to topics, produce outputs that go back on the bus, and other agents react. The gateway orchestrates routing, chaining, and channel dispatch.
+**Goal:** Transform AgentZero into a full autonomous multi-agent platform where AI agents communicate via an event bus. Agents subscribe to topics, produce outputs that go back on the bus, and other agents react. The orchestrator handles routing, chaining, and channel dispatch.
 
 **Baseline:** 16-crate workspace, 1,731+ tests passing, 0 clippy warnings, privacy stack complete.
+
+**Outcome:** Orchestrator extracted to `agentzero-orchestrator` crate (17 workspace members). All implementation complete; integration tests carried to Sprint 28.
 
 ### Phase A: Foundation (always-on, improves single-agent mode)
 
 - [x] **Publishing simplification** — Added `publish = false` to 14 internal crates. Only `agentzero-core` and `agentzero-plugin-sdk` are publishable. Removed `version` from internal path deps in workspace `Cargo.toml`.
 - [x] **EventBus trait + InMemoryBus** — `Event` struct with `correlation_id` for chain tracing, `EventBus`/`EventSubscriber` traits, `InMemoryBus` backed by `tokio::sync::broadcast`. Privacy boundary helpers (`is_boundary_compatible`, `topic_matches`). Always-on (not feature-gated).
 - [x] **ToolContext bus fields** — Added `event_bus: Option<Arc<dyn EventBus>>` and `agent_id: Option<String>` to `ToolContext` (serde-skipped).
-- [ ] **IPC rewrite to use bus** — Replace file-based `EncryptedJsonStore` IPC in `agents_ipc.rs` with event bus pub/sub.
+- [x] **IPC rewrite to use bus** — `agents_ipc.rs` uses EventBus pub/sub when available (`ipc.message.{to}` topics), falls back to `EncryptedJsonStore` for backward compatibility. 8 tests (4 file-based + 4 bus-based).
 
-### Phase B: Gateway Coordinator (feature-gated: `swarm`)
+### Phase B: Orchestrator (extracted to `agentzero-orchestrator`)
 
-- [ ] **SwarmConfig + AgentDescriptor** — Config model for swarm settings, agent descriptors with `subscribes_to`/`produces` topics, pipeline definitions.
-- [ ] **AI AgentRouter** — LLM-based message classification to pick the best agent by name/description. Keyword fallback when AI router fails.
-- [ ] **Coordinator** — Three concurrent loops: channel ingestion (publishes channel messages to bus), AI router (routes to agents), response/chain handler (chains agent outputs or dispatches to channels). Dynamic number of agent workers.
-- [ ] **Agent worker loop** — Each agent runs in `tokio::spawn`, receives tasks via `mpsc`, outputs go back on the bus.
-- [ ] **Response/chain handler** — Subscribes to agent output events. Routes to subscribing agents (chaining) or dispatches to originating channel (terminal detection via `correlation_id`).
-- [ ] **Pipeline executor** — Optional explicit sequential pipelines for common workflows. Checked before topic-based routing.
+- [x] **SwarmConfig + AgentDescriptor** — Config model in `agentzero-config` for swarm settings. `AgentDescriptor` with `subscribes_to`/`produces` topics, `privacy_boundary`. Pipeline definitions with trigger (keywords, regex), step timeout, error strategy.
+- [x] **AI AgentRouter** — LLM-based message classification via `Provider::complete()`. Keyword fallback when AI unavailable. 5 unit tests.
+- [x] **Coordinator** — Three concurrent loops: channel ingestion (publishes to bus), AI router (classifies and dispatches), response/chain handler (chains or dispatches to channel). Shutdown signal via `watch::Receiver<bool>`.
+- [x] **Agent worker loop** — Each agent runs in `tokio::spawn`, receives `TaskMessage` via `mpsc`, outputs published on bus per `produces` topics.
+- [x] **Response/chain handler** — Subscribes to agent output events. Routes to subscribing agents (chaining) or dispatches to originating channel (terminal detection via `correlation_id`). Privacy boundary check on each chain hop.
+- [x] **Pipeline executor** — Sequential pipelines with `ErrorStrategy` (Abort/Skip/Retry). Step timeout with `tokio::time::timeout`. `channel_reply` sends final result to originating channel. 3 unit tests.
 
 ### Phase C: Tool Wiring
 
-- [ ] **SubAgent tool wiring** — Wire `SubAgentSpawnTool`, `SubAgentListTool`, `SubAgentManageTool` to coordinator via event bus.
-- [ ] **Runtime integration** — `build_swarm()` in runtime creates bus, router, agent workers, and coordinator.
+- [x] **SubAgent tool wiring** — `SubAgentSpawnTool`, `SubAgentListTool`, `SubAgentManageTool` implemented in `agentzero-tools` and registered in `default_tools()`. 4 tests.
+- [x] **Runtime integration** — `build_swarm()` in `agentzero-orchestrator` creates `InMemoryBus`, `AgentRouter`, agent workers, and `Coordinator`. Gateway calls `agentzero_orchestrator::build_swarm()`.
 
 ### Phase D: Tests & Verification
 
-- [ ] **Unit tests** — EventBus pub/sub, filtered recv, correlation_id propagation, topic matching, boundary compatibility, AI routing with mock provider.
-- [ ] **Integration tests** — Agent chain (A→B→C→channel), privacy routing, graceful shutdown, error propagation.
+- [x] **Unit tests** — 29 tests across EventBus (9), AgentRouter (5), Coordinator (3), IPC (8), SubAgent tools (4). Covers pub/sub, filtered recv, topic matching, boundary compatibility, keyword routing, error strategies.
+- [ ] **Integration tests** — Agent chain (A→B→C→channel), privacy routing, graceful shutdown, error propagation. *(Carried to Sprint 28 Phase A.)*
 
 ### Acceptance Criteria
 
-- [ ] Event bus pub/sub works with multiple subscribers, filtered recv, and lagged consumer handling
-- [ ] Agent chaining: Agent A output triggers Agent B which triggers Agent C (via topic subscriptions)
-- [ ] AI router classifies messages and picks best agent by description; falls back to keywords
-- [ ] Privacy boundaries enforced: `local_only` events only route to `local_only` agents
-- [ ] `correlation_id` traces full chain back to original channel message
-- [ ] Terminal detection: when no agent subscribes to an output and correlation traces to channel, response is dispatched
-- [ ] Explicit pipelines execute sequential steps with error strategies (abort/skip/retry)
-- [ ] Graceful shutdown: in-flight chains complete within grace period
-- [ ] All quality gates pass: `cargo fmt`, `cargo clippy`, `cargo test --workspace`
+- [x] Event bus pub/sub works with multiple subscribers, filtered recv, and lagged consumer handling
+- [ ] Agent chaining: Agent A output triggers Agent B which triggers Agent C (via topic subscriptions) *(needs integration test)*
+- [x] AI router classifies messages and picks best agent by description; falls back to keywords
+- [ ] Privacy boundaries enforced: `local_only` events only route to `local_only` agents *(needs integration test)*
+- [ ] `correlation_id` traces full chain back to original channel message *(needs integration test)*
+- [ ] Terminal detection: when no agent subscribes to an output and correlation traces to channel, response is dispatched *(needs integration test)*
+- [x] Explicit pipelines execute sequential steps with error strategies (abort/skip/retry)
+- [ ] Graceful shutdown: in-flight chains complete within grace period *(needs integration test)*
+- [x] All quality gates pass: `cargo fmt`, `cargo clippy`, `cargo test --workspace`
+
+---
+
+## Sprint 28: Integration & E2E Tests
+
+**Goal:** Close Sprint 27's testing gaps with orchestrator integration tests, then add e2e tests against a real local LLM (Ollama) in CI. Validates the full stack: provider → agent → tools → orchestrator → channels.
+
+**Baseline:** 17-crate workspace, ~1,730+ tests passing, 0 clippy warnings, orchestrator extracted.
+
+### Phase A: Orchestrator Integration Tests (Sprint 27 carry-over)
+
+Using `StaticProvider` from testkit (no real LLM needed):
+
+- [ ] **Agent chain test** — A→B→C via topic subscriptions, terminal dispatches to channel
+- [ ] **Privacy routing test** — `local_only` events only route to `local_only` agents
+- [ ] **Pipeline execution test** — 3-step pipeline with abort/skip/retry error strategies
+- [ ] **Graceful shutdown test** — Dispatch work, send shutdown, verify in-flight completes within grace period
+- [ ] **Correlation tracking test** — `correlation_id` traces full chain from channel message to terminal response
+
+### Phase B: Local LLM Test Infrastructure
+
+- [ ] **Testkit helpers** — `LocalLlmProvider::from_env()`, `skip_without_local_llm()`, `wait_for_server(url, timeout)` in `crates/agentzero-testkit/src/lib.rs`
+- [ ] **Test pattern** — `#[ignore]` tests, CI runs with `cargo test -- --ignored`
+
+### Phase C: E2E Tests with Real LLM
+
+All `#[ignore]` in `crates/agentzero-infra/tests/e2e_local_llm.rs`:
+
+- [ ] **Basic completion** — Prompt → non-empty coherent response
+- [ ] **Tool use** — Agent + EchoTool, verify tool call round-trip
+- [ ] **Streaming** — `run_agent_streaming()`, collect chunks, verify reassembly
+- [ ] **Multi-turn memory** — Two `respond()` calls, second references first
+- [ ] **Orchestrator routing** — AgentRouter with real LLM classification
+
+### Phase D: CI Workflow
+
+- [ ] **e2e-tests job** in `.github/workflows/ci.yml` — `ubuntu-latest`, Ollama + `tinyllama` (cached), `cargo test -- --ignored`, `continue-on-error: true`
+
+### Acceptance Criteria
+
+- [ ] Orchestrator integration tests prove: agent chaining, privacy routing, pipeline execution, graceful shutdown, correlation tracking
+- [ ] E2e tests pass locally with `ollama serve` + `tinyllama`
+- [ ] E2e tests run in CI (non-blocking initially)
+- [ ] `cargo test --workspace` passes without Ollama (ignored tests skip)
+- [ ] All quality gates: fmt, clippy, test
+
+### Backlog (candidates for Sprint 29)
+
+- [ ] **Conversation branching** — Forking and branching conversation histories
+- [ ] **Multi-modal input** — Image and audio across all providers

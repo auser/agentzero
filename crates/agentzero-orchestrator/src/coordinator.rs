@@ -405,6 +405,10 @@ impl Coordinator {
             if event.topic.starts_with("ipc.") {
                 continue;
             }
+            // Skip pipeline step events (internal observability, handled by executor).
+            if event.topic.starts_with("pipeline.") {
+                continue;
+            }
 
             // 1. Check if any agent subscribes to this topic → CHAIN
             let mut routed = false;

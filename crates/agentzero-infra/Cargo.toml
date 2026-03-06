@@ -31,5 +31,6 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+agentzero-orchestrator = { workspace = true }
 agentzero-testkit = { workspace = true }
 temp-env = "0.3"

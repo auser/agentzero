@@ -9,8 +9,11 @@ repository.workspace = true
 
 [dependencies]
 agentzero-core = { workspace = true }
+agentzero-providers = { workspace = true }
 anyhow.workspace = true
 async-trait.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
