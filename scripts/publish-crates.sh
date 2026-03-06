@@ -20,7 +20,7 @@ publish() {
       break
     fi
     # Already published — not an error.
-    if echo "$output" | grep -q "already uploaded"; then
+    if echo "$output" | grep -qE "already uploaded|already exists"; then
       echo "    Already published, skipping."
       return 0
     fi
