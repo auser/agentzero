@@ -3,10 +3,8 @@
 //! Exposes the agent loop over HTTP and WebSocket endpoints with
 //! pairing-based authentication, streaming responses, and node control.
 
-pub mod agent_router;
 mod auth;
 mod banner;
-pub mod coordinator;
 mod gateway_metrics;
 mod handlers;
 #[cfg(feature = "privacy")]
@@ -23,7 +21,6 @@ pub mod privacy_state;
 pub(crate) mod relay;
 mod router;
 mod state;
-pub mod swarm;
 #[cfg(test)]
 mod tests;
 mod token_store;
@@ -256,8 +253,13 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
                 .map(|p| p.as_ref().clone())
                 .unwrap_or_default();
 
-            match swarm::build_swarm(cfg, state.channels.clone(), &config_path, &workspace_root)
-                .await
+            match agentzero_orchestrator::build_swarm(
+                cfg,
+                state.channels.clone(),
+                &config_path,
+                &workspace_root,
+            )
+            .await
             {
                 Ok(Some((coord, shutdown_tx))) => {
                     tracing::info!("swarm coordinator built, spawning");

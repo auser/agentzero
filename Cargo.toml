@@ -12,6 +12,7 @@ members = [
   "crates/agentzero-providers",
   "crates/agentzero-plugins",
   "crates/agentzero-gateway",
+  "crates/agentzero-orchestrator",
   "crates/agentzero-channels",
   "crates/agentzero-storage",
   "crates/agentzero-ffi",
@@ -41,6 +42,7 @@ agentzero-cli = { path = "crates/agentzero-cli", default-features = false }
 agentzero-config = { path = "crates/agentzero-config" }
 agentzero-core = { path = "crates/agentzero-core", version = "0.3.0" }
 agentzero-gateway = { path = "crates/agentzero-gateway" }
+agentzero-orchestrator = { path = "crates/agentzero-orchestrator" }
 agentzero-infra = { path = "crates/agentzero-infra" }
 agentzero-plugins = { path = "crates/agentzero-plugins", default-features = false }
 agentzero-providers = { path = "crates/agentzero-providers" }

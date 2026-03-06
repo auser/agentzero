@@ -218,6 +218,7 @@ dependencies = [
  "agentzero-config",
  "agentzero-core",
  "agentzero-infra",
+ "agentzero-orchestrator",
  "agentzero-providers",
  "agentzero-storage",
  "anyhow",
@@ -231,7 +232,6 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "rand 0.8.5",
- "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -257,6 +257,22 @@ dependencies = [
  "serde",
  "serde_json",
  "temp-env",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "agentzero-orchestrator"
+version = "0.3.0"
+dependencies = [
+ "agentzero-channels",
+ "agentzero-config",
+ "agentzero-core",
+ "agentzero-infra",
+ "anyhow",
+ "regex",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]
