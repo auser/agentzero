@@ -2,8 +2,10 @@ use crate::command_core::{AgentZeroCommand, CommandContext};
 #[cfg(feature = "interactive")]
 use crate::commands::ux;
 #[cfg(feature = "interactive")]
+use agentzero_providers::find_models_for_provider;
+use agentzero_providers::find_provider;
+#[cfg(feature = "interactive")]
 use agentzero_providers::supported_providers;
-use agentzero_providers::{find_models_for_provider, find_provider};
 use anyhow::Context;
 use async_trait::async_trait;
 #[cfg(feature = "interactive")]
