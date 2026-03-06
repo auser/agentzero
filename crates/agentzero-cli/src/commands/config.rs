@@ -302,10 +302,16 @@ mod tests {
 
     #[test]
     fn set_config_value_creates_nested_keys() {
-        let dir = std::env::temp_dir().join("agentzero-config-test");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = std::env::temp_dir().join(format!(
+            "agentzero-config-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir should be created");
         let path = dir.join("test-set.toml");
-        let _ = std::fs::remove_file(&path);
 
         set_config_value(&path, "provider.model", "gpt-4o").unwrap();
 
@@ -316,6 +322,6 @@ mod tests {
             toml::Value::String("gpt-4o".to_string())
         );
 
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_dir_all(dir).ok();
     }
 }
