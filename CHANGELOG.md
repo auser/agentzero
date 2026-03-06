@@ -22,6 +22,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - **FFI privacy bindings (Sprint 26)** — `PrivacyBoundary`, `PrivacyInfo`, `PrivacyStatus` types exposed through UniFFI (Swift/Kotlin) and napi-rs (Node) for inspecting privacy state from mobile/Node apps
 
 ### Fixed
+- Fix flaky `keyring_data_is_encrypted_on_disk` test — replace brittle 2-char substring check with longer plaintext field name assertions
 - Resolve clippy `double_ended_iterator_last` lint for Rust 1.93
 - Use vendored-openssl only on Windows, system OpenSSL elsewhere
 - Noise middleware: empty-body requests with session header now get encrypted responses
