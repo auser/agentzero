@@ -252,7 +252,14 @@ mod tests {
         // Read raw file — should NOT contain plaintext JSON keys.
         let raw = fs::read_to_string(dir.join(KEYRING_FILE)).expect("file should exist");
         assert!(!raw.contains("\"epoch\""), "raw file should be encrypted");
-        assert!(!raw.contains("42"), "epoch value should not be visible");
+        assert!(
+            !raw.contains("\"keypairs\""),
+            "keypairs key should not be visible in encrypted output"
+        );
+        assert!(
+            !raw.contains("\"public_key\""),
+            "public_key key should not be visible in encrypted output"
+        );
 
         fs::remove_dir_all(dir).ok();
     }
