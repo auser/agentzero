@@ -17,11 +17,11 @@ pub use model::{
     DelegateAgentConfig, EmbeddingRoute, EstopConfig, GatewayConfig, HookSettings,
     HttpRequestConfig, IdentityConfig, McpConfig, MemoryConfig, ModelProviderProfile, ModelRoute,
     MultimodalConfig, NodeControlConfig, ObservabilityConfig, OtpConfig, OutboundLeakGuardConfig,
-    PerplexityFilterConfig, PluginConfig, ProviderConfig, ProviderOptionsConfig,
-    QueryClassificationConfig, QueryClassificationRule, ReadFileConfig, ResearchConfig,
-    RuntimeConfig, SecurityConfig, ShellConfig, SkillsConfig, SyscallAnomalyConfig,
-    UrlAccessConfig, WasmRuntimeConfig, WasmSecurityConfig, WebFetchConfig, WebSearchConfig,
-    WriteFileConfig,
+    PerplexityFilterConfig, PipelineConfig, PipelineTriggerConfig, PluginConfig, ProviderConfig,
+    ProviderOptionsConfig, QueryClassificationConfig, QueryClassificationRule, ReadFileConfig,
+    ResearchConfig, RuntimeConfig, SecurityConfig, ShellConfig, SkillsConfig, SwarmAgentConfig,
+    SwarmConfig, SwarmRouterConfig, SyscallAnomalyConfig, UrlAccessConfig, WasmRuntimeConfig,
+    WasmSecurityConfig, WebFetchConfig, WebSearchConfig, WriteFileConfig,
 };
 pub use policy::{load_audit_policy, load_tool_security_policy, AuditPolicy};
 pub use templates::{

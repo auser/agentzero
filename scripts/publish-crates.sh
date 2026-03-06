@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Publish all workspace crates to crates.io in topological order.
+# Publish publishable workspace crates to crates.io in topological order.
 # Used by the release workflow — assumes CARGO_REGISTRY_TOKEN is set.
 #
-# Post-consolidation workspace (16 members).
-# Skipped: agentzero-bench, agentzero-ffi, agentzero-cli, agentzero (publish = false)
+# Most crates have publish = false (distributed via GitHub Releases only).
+# Only library crates intended for external consumption are published here.
 set -euo pipefail
 
 # Seconds to wait after each publish for crates.io index propagation.
@@ -24,6 +24,11 @@ publish() {
       echo "    Already published, skipping."
       return 0
     fi
+    # Cannot publish — skip gracefully (publish = false).
+    if echo "$output" | grep -qE "cannot be published"; then
+      echo "    Not publishable, skipping."
+      return 0
+    fi
     if [[ $attempt -ge $MAX_RETRIES ]]; then
       echo "$output" >&2
       echo "    FAILED after ${MAX_RETRIES} attempts" >&2
@@ -38,31 +43,11 @@ publish() {
   sleep "${PUBLISH_WAIT}"
 }
 
-# ── Tier 1: leaf crates (no internal deps) ───────────────────────────────────
+# ── Tier 1: leaf crate (no internal deps) ────────────────────────────────────
 publish agentzero-core
-publish agentzero-plugin-sdk
-publish agentzero-plugins
 
-# ── Tier 2: depend on core ────────────────────────────────────────────────────
-publish agentzero-providers    # -> core
-publish agentzero-storage      # -> core
+# ── Tier 2: depend on core ───────────────────────────────────────────────────
+publish agentzero-plugin-sdk   # -> core
 publish agentzero-testkit      # -> core (test utility crate)
-
-# ── Tier 3: depend on tier 2 ─────────────────────────────────────────────────
-publish agentzero-tools        # -> core, providers, storage
-publish agentzero-auth         # -> storage
-
-# ── Tier 4: depend on tier 3 ─────────────────────────────────────────────────
-publish agentzero-config       # -> core, tools
-
-# ── Tier 5: depend on tier 4 ─────────────────────────────────────────────────
-publish agentzero-channels     # -> core, config, storage
-publish agentzero-infra        # -> core, auth, config, tools, storage, providers, plugins
-
-# ── Tier 6: depend on tier 5 ─────────────────────────────────────────────────
-publish agentzero-gateway      # -> core, config, infra, storage, channels
-
-# agentzero-cli and agentzero (binary) have publish = false;
-# they are distributed via GitHub Releases, not crates.io.
 
 echo "==> All crates published successfully."

@@ -36,6 +36,7 @@ pub struct AgentZeroConfig {
     pub embedding_routes: Vec<EmbeddingRoute>,
     pub agents: HashMap<String, DelegateAgentConfig>,
     pub privacy: PrivacyConfig,
+    pub swarm: SwarmConfig,
 }
 
 impl AgentZeroConfig {
@@ -1659,4 +1660,168 @@ impl Default for RelayConfig {
             gc_interval_secs: 60,
         }
     }
+}
+
+// ─── Swarm (multi-agent) configuration ───────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SwarmConfig {
+    pub enabled: bool,
+    pub max_agents: usize,
+    /// Grace period (ms) for in-flight chains on shutdown.
+    pub shutdown_grace_ms: u64,
+    /// Capacity of the event bus broadcast channel.
+    pub event_bus_capacity: usize,
+    pub router: SwarmRouterConfig,
+    /// Named agent definitions keyed by agent id.
+    #[serde(default)]
+    pub agents: HashMap<String, SwarmAgentConfig>,
+    /// Explicit sequential pipelines for common workflows.
+    #[serde(default)]
+    pub pipelines: Vec<PipelineConfig>,
+}
+
+impl Default for SwarmConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_agents: 10,
+            shutdown_grace_ms: 5_000,
+            event_bus_capacity: 256,
+            router: SwarmRouterConfig::default(),
+            agents: HashMap::new(),
+            pipelines: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SwarmRouterConfig {
+    /// Provider kind for the routing LLM (e.g. "anthropic", "ollama").
+    pub provider: String,
+    /// Model to use for classification (fast + cheap, e.g. "claude-haiku-4.5").
+    pub model: String,
+    /// Base URL override for the router provider.
+    pub base_url: String,
+    /// API key override for the router provider.
+    pub api_key: String,
+    /// Fall back to keyword matching if the AI router fails.
+    pub fallback_to_keywords: bool,
+}
+
+impl Default for SwarmRouterConfig {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            model: String::new(),
+            base_url: String::new(),
+            api_key: String::new(),
+            fallback_to_keywords: true,
+        }
+    }
+}
+
+/// Configuration for a single agent in the swarm.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SwarmAgentConfig {
+    /// Human-readable agent name (e.g. "Image Generator").
+    pub name: String,
+    /// What this agent does — used by the AI router for classification.
+    pub description: String,
+    /// Keywords for fallback keyword-based routing.
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    /// LLM provider kind (e.g. "anthropic", "openai", "ollama").
+    pub provider: String,
+    /// Model identifier.
+    pub model: String,
+    /// Base URL override.
+    pub base_url: String,
+    /// API key override.
+    pub api_key: String,
+    /// Privacy boundary: "local_only", "encrypted_only", "any", or "" (inherit).
+    #[serde(default)]
+    pub privacy_boundary: String,
+    /// Tools this agent is allowed to use.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    /// Topic patterns this agent reacts to (e.g. ["channel.*.message", "task.image.*"]).
+    #[serde(default)]
+    pub subscribes_to: Vec<String>,
+    /// Topics this agent publishes when it produces output.
+    #[serde(default)]
+    pub produces: Vec<String>,
+    /// Optional system prompt for this agent.
+    pub system_prompt: Option<String>,
+    /// Maximum tool iterations per request.
+    pub max_iterations: usize,
+}
+
+impl Default for SwarmAgentConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            description: String::new(),
+            keywords: Vec::new(),
+            provider: String::new(),
+            model: String::new(),
+            base_url: String::new(),
+            api_key: String::new(),
+            privacy_boundary: String::new(),
+            allowed_tools: Vec::new(),
+            subscribes_to: Vec::new(),
+            produces: Vec::new(),
+            system_prompt: None,
+            max_iterations: 20,
+        }
+    }
+}
+
+/// An explicit sequential pipeline of agents.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PipelineConfig {
+    pub name: String,
+    pub trigger: PipelineTriggerConfig,
+    /// Ordered list of agent ids to execute sequentially.
+    pub steps: Vec<String>,
+    /// Send the final output back to the originating channel.
+    pub channel_reply: bool,
+    /// What to do when a step fails: "abort", "skip", or "retry".
+    pub on_step_error: String,
+    /// Max retry attempts (only used when on_step_error = "retry").
+    pub max_retries: u8,
+    /// Per-step timeout in seconds.
+    pub step_timeout_secs: u64,
+}
+
+impl Default for PipelineConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            trigger: PipelineTriggerConfig::default(),
+            steps: Vec::new(),
+            channel_reply: true,
+            on_step_error: "abort".to_string(),
+            max_retries: 3,
+            step_timeout_secs: 120,
+        }
+    }
+}
+
+/// How a pipeline is triggered.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct PipelineTriggerConfig {
+    /// Trigger when the message contains any of these keywords.
+    pub keywords: Vec<String>,
+    /// Trigger when the message matches this regex.
+    pub regex: String,
+    /// Trigger when an event matches this topic.
+    pub topic: String,
+    /// Trigger when the AI router classifies the message with this label.
+    pub ai_classified: String,
 }

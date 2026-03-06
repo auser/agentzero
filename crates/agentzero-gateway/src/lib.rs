@@ -3,8 +3,10 @@
 //! Exposes the agent loop over HTTP and WebSocket endpoints with
 //! pairing-based authentication, streaming responses, and node control.
 
+pub mod agent_router;
 mod auth;
 mod banner;
+pub mod coordinator;
 mod gateway_metrics;
 mod handlers;
 #[cfg(feature = "privacy")]
@@ -21,6 +23,7 @@ pub mod privacy_state;
 pub(crate) mod relay;
 mod router;
 mod state;
+pub mod swarm;
 #[cfg(test)]
 mod tests;
 mod token_store;
@@ -239,6 +242,45 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         rotation_handle
     };
 
+    // --- Swarm coordinator ---
+    let swarm_handle = if let Some(ref cfg) = full_config {
+        if cfg.swarm.enabled {
+            let config_path = state
+                .config_path
+                .as_ref()
+                .map(|p| p.as_ref().clone())
+                .unwrap_or_default();
+            let workspace_root = state
+                .workspace_root
+                .as_ref()
+                .map(|p| p.as_ref().clone())
+                .unwrap_or_default();
+
+            match swarm::build_swarm(cfg, state.channels.clone(), &config_path, &workspace_root)
+                .await
+            {
+                Ok(Some((coord, shutdown_tx))) => {
+                    tracing::info!("swarm coordinator built, spawning");
+                    let shutdown_rx = shutdown_tx.subscribe();
+                    Some(tokio::spawn(async move {
+                        if let Err(e) = coord.run(shutdown_rx).await {
+                            tracing::error!(error = %e, "swarm coordinator exited with error");
+                        }
+                    }))
+                }
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to build swarm coordinator");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let app = build_router(state, &options.middleware);
 
     let addr: SocketAddr = format!("{host}:{port}")
@@ -258,6 +300,12 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         .with_graceful_shutdown(middleware::shutdown_signal())
         .await
         .context("gateway server failed")?;
+
+    // Abort swarm coordinator on gateway shutdown.
+    if let Some(handle) = swarm_handle {
+        handle.abort();
+        let _ = handle.await;
+    }
 
     tracing::info!("gateway shut down gracefully");
     Ok(())
