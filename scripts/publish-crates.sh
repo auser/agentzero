@@ -8,11 +8,25 @@ set -euo pipefail
 
 # Seconds to wait after each publish for crates.io index propagation.
 PUBLISH_WAIT="${PUBLISH_WAIT:-20}"
+MAX_RETRIES="${MAX_RETRIES:-3}"
 
 publish() {
   local crate="$1"
+  local attempt=1
   echo "==> Publishing ${crate}..."
-  cargo publish -p "${crate}" --no-verify
+  while true; do
+    if cargo publish -p "${crate}" --no-verify 2>&1; then
+      break
+    fi
+    if [[ $attempt -ge $MAX_RETRIES ]]; then
+      echo "    FAILED after ${MAX_RETRIES} attempts" >&2
+      return 1
+    fi
+    local wait=$((60 * attempt))
+    echo "    Rate-limited; retrying in ${wait}s (attempt ${attempt}/${MAX_RETRIES})..."
+    sleep "${wait}"
+    attempt=$((attempt + 1))
+  done
   echo "    Waiting ${PUBLISH_WAIT}s for crates.io to index..."
   sleep "${PUBLISH_WAIT}"
 }
