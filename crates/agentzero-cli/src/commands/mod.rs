@@ -36,4 +36,5 @@ pub mod template;
 pub mod tools;
 pub mod tunnel;
 pub mod update;
+#[cfg(feature = "interactive")]
 pub mod ux;

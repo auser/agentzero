@@ -1,6 +1,9 @@
 use crate::command_core::{AgentZeroCommand, CommandContext};
+#[cfg(feature = "interactive")]
 use crate::commands::ux;
-use agentzero_providers::{find_models_for_provider, find_provider, supported_providers};
+#[cfg(feature = "interactive")]
+use agentzero_providers::supported_providers;
+use agentzero_providers::{find_models_for_provider, find_provider};
 use anyhow::Context;
 use async_trait::async_trait;
 #[cfg(feature = "interactive")]
@@ -711,6 +714,7 @@ fn default_base_url(provider: &str) -> &str {
     }
 }
 
+#[cfg(feature = "interactive")]
 fn model_options(provider: &str) -> Vec<String> {
     let mut options: Vec<String> = find_models_for_provider(provider)
         .map(|(_, models)| models.iter().map(|m| m.id.to_string()).collect())
@@ -729,6 +733,7 @@ fn model_start_cursor(provider: &str, current_model: &str) -> usize {
         .unwrap_or(0)
 }
 
+#[cfg(feature = "interactive")]
 fn base_url_options(provider: &str, current_url: &str) -> Vec<String> {
     unique_options(vec![
         default_base_url(provider).to_string(),
@@ -754,6 +759,7 @@ fn base_url_start_cursor(provider: &str, current_url: &str) -> usize {
         .unwrap_or(0)
 }
 
+#[cfg(feature = "interactive")]
 fn memory_path_options(current_path: &str) -> Vec<String> {
     let default_path = default_memory_path();
     unique_options(vec![
@@ -774,6 +780,7 @@ fn memory_path_start_cursor(current_path: &str) -> usize {
         .unwrap_or(0)
 }
 
+#[cfg(feature = "interactive")]
 fn allowed_root_options(current_root: &str) -> Vec<String> {
     unique_options(vec![
         ".".to_string(),
@@ -792,6 +799,7 @@ fn allowed_root_start_cursor(current_root: &str) -> usize {
         .unwrap_or(0)
 }
 
+#[cfg(feature = "interactive")]
 fn allowed_commands_options(current_commands: &str) -> Vec<String> {
     unique_options(vec![
         "ls,pwd,cat,echo".to_string(),
@@ -811,6 +819,7 @@ fn allowed_commands_start_cursor(current_commands: &str) -> usize {
         .unwrap_or(0)
 }
 
+#[cfg(feature = "interactive")]
 fn unique_options(options: Vec<String>) -> Vec<String> {
     let mut unique = Vec::new();
     for option in options {

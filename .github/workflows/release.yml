@@ -112,12 +112,13 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
       - uses: Swatinem/rust-cache@v2
-      - name: Install Strawberry Perl (Windows)
+      - name: Setup Strawberry Perl (Windows)
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@v1
-        with:
-          perl-version: '5.38'
-          distribution: strawberry
+        shell: bash
+        run: |
+          echo "C:/Strawberry/c/bin" >> "$GITHUB_PATH"
+          echo "C:/Strawberry/perl/site/bin" >> "$GITHUB_PATH"
+          echo "C:/Strawberry/perl/bin" >> "$GITHUB_PATH"
       - name: Install NASM (Windows)
         if: matrix.os == 'windows-latest'
         uses: ilammy/setup-nasm@v1
