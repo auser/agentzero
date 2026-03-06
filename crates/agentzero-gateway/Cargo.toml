@@ -21,6 +21,7 @@ agentzero-channels = { workspace = true }
 agentzero-providers = { workspace = true }
 base64 = { version = "0.22", optional = true }
 dashmap = { workspace = true, optional = true }
+rand = "0.8"
 async-stream = "0.3"
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true

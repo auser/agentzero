@@ -130,6 +130,16 @@ impl SealedEnvelope {
     }
 }
 
+/// Generate an X25519 keypair for sealed envelope operations.
+///
+/// Returns `(public_key, secret_key)` as raw 32-byte arrays.
+pub fn generate_keypair() -> ([u8; 32], [u8; 32]) {
+    let secret = SecretKey::generate(&mut OsRng);
+    let public: [u8; 32] = *secret.public_key().as_bytes();
+    let secret_bytes: [u8; 32] = secret.to_bytes();
+    (public, secret_bytes)
+}
+
 /// Compute the routing ID for a public key (SHA-256 hash).
 pub fn compute_routing_id(pubkey: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Sha256::new();

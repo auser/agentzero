@@ -35,7 +35,27 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 
 ### Backlog (candidates for Sprint 26)
 
-- [ ] **Remaining unchecked tools** — cli_discovery, composio, delegate_coordination_status, hardware_*, model_routing_config, proxy_config, pushover, schedule, sop_* (5), wasm_module, wasm_tool
+- [x] **Remaining unchecked tools** — All 17 tools verified complete: each implements `input_schema()`, has tests, and is registered in `default_tools()`
 - [ ] **FFI bindings update** — Expose privacy types through UniFFI (Swift/Kotlin) and napi-rs (Node)
 - [ ] **Benchmarks** — Noise handshake latency, encrypt/decrypt throughput, relay mailbox performance
-- [ ] **Timing jitter** — Add randomized delays to sealed envelope relay to mitigate traffic analysis
+- [x] **Timing jitter** — Configurable randomized delays on sealed envelope relay submit/poll responses (10–100ms / 20–200ms defaults), config fields in `SealedEnvelopeConfig`, 7 new tests
+
+---
+
+## Sprint 26: Hardening & Polish
+
+**Goal:** Close remaining backlog items from Sprint 25 and harden the relay and privacy stack.
+
+**Baseline:** 16-crate workspace, 1,731+ tests passing, 0 clippy warnings, timing jitter shipped, all tools verified complete.
+
+### Completed
+
+- [x] **Timing jitter for sealed envelope relay** — `JitterConfig` struct with configurable min/max delays for submit (10–100 ms) and poll (20–200 ms). Config wired through `SealedEnvelopeConfig` → `RelayMailbox::with_jitter()`. 7 new tests. Docs updated (threat model, config reference, privacy guide).
+- [x] **Stale backlog cleanup** — Verified all 17 "unchecked" tools are fully implemented with `input_schema()`, tests, and registration.
+
+### Backlog (candidates for Sprint 27)
+
+- [ ] **FFI bindings update** — Expose privacy types through UniFFI (Swift/Kotlin) and napi-rs (Node)
+- [ ] **Benchmarks** — Noise handshake latency, encrypt/decrypt throughput, relay mailbox performance
+- [ ] **Conversation branching** — Forking and branching conversation histories
+- [ ] **Multi-modal input** — Image and audio across all providers

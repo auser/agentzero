@@ -143,7 +143,7 @@ The plugin system (`agentzero-plugins` crate) introduces additional attack surfa
 
 ### Sealed Envelope Security
 - **Envelope replay** — Mitigated: 24-byte nonces tracked in `DashMap`; duplicate nonces rejected with HTTP 409. Stale nonces garbage-collected alongside envelope TTL.
-- **Traffic analysis** — Partially mitigated: relay strips identifying headers (X-Forwarded-For, X-Real-IP, Via); User-Agent replaced with generic value. Timing jitter not yet implemented.
+- **Traffic analysis** — Mitigated: relay strips identifying headers (X-Forwarded-For, X-Real-IP, Via); User-Agent replaced with generic value. Configurable timing jitter adds randomized delays to submit (10–100 ms) and poll (20–200 ms) responses to prevent timing side-channels.
 - **Mailbox flooding** — Mitigated: per-routing-id mailbox size limit. Excess submissions rejected with HTTP 429.
 
 ### Privacy Boundary Enforcement

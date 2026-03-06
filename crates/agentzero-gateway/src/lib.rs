@@ -183,12 +183,24 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
                 .cloned()
                 .unwrap_or_default();
 
-            let mailbox = relay::RelayMailbox::new(
+            let jitter = relay::JitterConfig {
+                enabled: sealed_cfg.timing_jitter_enabled,
+                submit_min_ms: sealed_cfg.submit_jitter_min_ms,
+                submit_max_ms: sealed_cfg.submit_jitter_max_ms,
+                poll_min_ms: sealed_cfg.poll_jitter_min_ms,
+                poll_max_ms: sealed_cfg.poll_jitter_max_ms,
+            };
+
+            let mailbox = relay::RelayMailbox::with_jitter(
                 sealed_cfg.max_envelope_bytes / 1024, // mailbox slots
                 sealed_cfg.default_ttl_secs,
+                jitter,
             );
 
-            tracing::info!("sealed envelope relay enabled");
+            tracing::info!(
+                timing_jitter = sealed_cfg.timing_jitter_enabled,
+                "sealed envelope relay enabled"
+            );
             state = state.with_relay_mode(mailbox);
         }
 

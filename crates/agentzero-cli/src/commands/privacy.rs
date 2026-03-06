@@ -258,11 +258,12 @@ async fn run_privacy_tests(ctx: &CommandContext, json_output: bool) -> anyhow::R
     // Check 4: Sealed envelope round-trip (privacy feature only)
     #[cfg(feature = "privacy")]
     {
-        use agentzero_core::privacy::envelope::SealedEnvelope;
+        use agentzero_core::privacy::envelope::{self, SealedEnvelope};
 
         let test_data = b"privacy test payload";
-        let (envelope, key) = SealedEnvelope::seal(test_data);
-        match envelope.open(&key) {
+        let (pubkey, secret_bytes) = envelope::generate_keypair();
+        let env = SealedEnvelope::seal(&pubkey, test_data, 300);
+        match env.open(&secret_bytes) {
             Ok(plaintext) if plaintext == test_data => {
                 results.push(CheckResult {
                     name: "sealed_envelope_roundtrip",

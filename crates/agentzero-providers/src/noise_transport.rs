@@ -74,6 +74,7 @@ pub async fn perform_noise_handshake(gateway_base_url: &str) -> anyhow::Result<N
 /// 1. POST `/v1/noise/handshake/ik` — sends `→ e, es, s, ss`
 /// 2. Receives server's `← e, ee, se` + session ID
 /// 3. Returns a `NoiseClientSession` ready for encrypt/decrypt.
+#[allow(dead_code)] // Public API for consumers; not yet called within workspace
 pub async fn perform_noise_handshake_ik(
     gateway_base_url: &str,
     server_public_key: &[u8; 32],
@@ -112,6 +113,7 @@ pub async fn perform_noise_handshake_ik(
 ///
 /// Uses IK when the server's public key is cached (1 round-trip), otherwise
 /// falls back to XX (2 round-trips).
+#[allow(dead_code)] // Public API for consumers; not yet called within workspace
 pub async fn auto_noise_handshake(
     gateway_base_url: &str,
     cached_server_key: Option<&[u8; 32]>,

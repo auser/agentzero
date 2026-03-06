@@ -1588,6 +1588,17 @@ pub struct SealedEnvelopeConfig {
     pub default_ttl_secs: u32,
     /// Maximum envelope size in bytes.
     pub max_envelope_bytes: usize,
+    /// Enable randomized timing jitter on relay submit/poll responses
+    /// to mitigate traffic-analysis side-channels.
+    pub timing_jitter_enabled: bool,
+    /// Minimum jitter delay on submit responses (milliseconds).
+    pub submit_jitter_min_ms: u32,
+    /// Maximum jitter delay on submit responses (milliseconds).
+    pub submit_jitter_max_ms: u32,
+    /// Minimum jitter delay on poll responses (milliseconds).
+    pub poll_jitter_min_ms: u32,
+    /// Maximum jitter delay on poll responses (milliseconds).
+    pub poll_jitter_max_ms: u32,
 }
 
 impl Default for SealedEnvelopeConfig {
@@ -1596,6 +1607,11 @@ impl Default for SealedEnvelopeConfig {
             enabled: false,
             default_ttl_secs: 86400,
             max_envelope_bytes: 1_048_576,
+            timing_jitter_enabled: false,
+            submit_jitter_min_ms: 10,
+            submit_jitter_max_ms: 100,
+            poll_jitter_min_ms: 20,
+            poll_jitter_max_ms: 200,
         }
     }
 }

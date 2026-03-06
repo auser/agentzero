@@ -13,12 +13,35 @@ use axum::{
 };
 use base64::Engine as _;
 use dashmap::DashMap;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::state::GatewayState;
+
+/// Timing jitter configuration for relay responses.
+#[derive(Debug, Clone)]
+pub struct JitterConfig {
+    pub enabled: bool,
+    pub submit_min_ms: u32,
+    pub submit_max_ms: u32,
+    pub poll_min_ms: u32,
+    pub poll_max_ms: u32,
+}
+
+impl Default for JitterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            submit_min_ms: 10,
+            submit_max_ms: 100,
+            poll_min_ms: 20,
+            poll_max_ms: 200,
+        }
+    }
+}
 
 /// In-memory mailbox for sealed envelopes, keyed by routing_id.
 pub struct RelayMailbox {
@@ -28,6 +51,7 @@ pub struct RelayMailbox {
     seen_nonces: DashMap<[u8; 24], u64>,
     max_mailbox_size: usize,
     default_ttl_secs: u32,
+    jitter: JitterConfig,
 }
 
 /// An envelope stored in the relay mailbox with metadata for GC.
@@ -51,13 +75,48 @@ impl StoredEnvelope {
 }
 
 impl RelayMailbox {
+    #[allow(dead_code)] // Used by tests and external consumers without jitter config
     pub fn new(max_mailbox_size: usize, default_ttl_secs: u32) -> Arc<Self> {
         Arc::new(Self {
             mailboxes: DashMap::new(),
             seen_nonces: DashMap::new(),
             max_mailbox_size,
             default_ttl_secs,
+            jitter: JitterConfig::default(),
         })
+    }
+
+    pub fn with_jitter(
+        max_mailbox_size: usize,
+        default_ttl_secs: u32,
+        jitter: JitterConfig,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            mailboxes: DashMap::new(),
+            seen_nonces: DashMap::new(),
+            max_mailbox_size,
+            default_ttl_secs,
+            jitter,
+        })
+    }
+
+    /// Compute a random jitter delay for submit responses.
+    fn submit_jitter(&self) -> Option<Duration> {
+        if !self.jitter.enabled || self.jitter.submit_max_ms == 0 {
+            return None;
+        }
+        let ms =
+            rand::thread_rng().gen_range(self.jitter.submit_min_ms..=self.jitter.submit_max_ms);
+        Some(Duration::from_millis(ms as u64))
+    }
+
+    /// Compute a random jitter delay for poll responses.
+    fn poll_jitter(&self) -> Option<Duration> {
+        if !self.jitter.enabled || self.jitter.poll_max_ms == 0 {
+            return None;
+        }
+        let ms = rand::thread_rng().gen_range(self.jitter.poll_min_ms..=self.jitter.poll_max_ms);
+        Some(Duration::from_millis(ms as u64))
     }
 
     /// Submit an envelope to a routing_id mailbox.
@@ -214,6 +273,9 @@ pub(crate) async fn relay_submit(
         Ok(()) => {
             crate::gateway_metrics::record_relay_submit();
             crate::gateway_metrics::set_relay_envelopes(mailbox.total_envelopes() as f64);
+            if let Some(delay) = mailbox.submit_jitter() {
+                tokio::time::sleep(delay).await;
+            }
             Json(SubmitResponse { ok: true }).into_response()
         }
         Err("duplicate nonce") => {
@@ -244,6 +306,9 @@ pub(crate) async fn relay_poll(
         .map(|p| base64::engine::general_purpose::STANDARD.encode(p))
         .collect();
 
+    if let Some(delay) = mailbox.poll_jitter() {
+        tokio::time::sleep(delay).await;
+    }
     Json(PollResponse { envelopes }).into_response()
 }
 
@@ -426,5 +491,88 @@ mod tests {
         let mb = RelayMailbox::new(10, 3600);
         let polled = mb.poll(&[99u8; 32]);
         assert!(polled.is_empty());
+    }
+
+    #[test]
+    fn jitter_config_default_disabled() {
+        let cfg = JitterConfig::default();
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.submit_min_ms, 10);
+        assert_eq!(cfg.submit_max_ms, 100);
+        assert_eq!(cfg.poll_min_ms, 20);
+        assert_eq!(cfg.poll_max_ms, 200);
+    }
+
+    #[test]
+    fn submit_jitter_returns_none_when_disabled() {
+        let mb = RelayMailbox::new(10, 3600);
+        assert!(mb.submit_jitter().is_none());
+    }
+
+    #[test]
+    fn poll_jitter_returns_none_when_disabled() {
+        let mb = RelayMailbox::new(10, 3600);
+        assert!(mb.poll_jitter().is_none());
+    }
+
+    #[test]
+    fn submit_jitter_returns_delay_when_enabled() {
+        let jitter = JitterConfig {
+            enabled: true,
+            submit_min_ms: 10,
+            submit_max_ms: 50,
+            poll_min_ms: 20,
+            poll_max_ms: 100,
+        };
+        let mb = RelayMailbox::with_jitter(10, 3600, jitter);
+        let delay = mb.submit_jitter().expect("should return a delay");
+        assert!(delay.as_millis() >= 10);
+        assert!(delay.as_millis() <= 50);
+    }
+
+    #[test]
+    fn poll_jitter_returns_delay_when_enabled() {
+        let jitter = JitterConfig {
+            enabled: true,
+            submit_min_ms: 10,
+            submit_max_ms: 50,
+            poll_min_ms: 20,
+            poll_max_ms: 100,
+        };
+        let mb = RelayMailbox::with_jitter(10, 3600, jitter);
+        let delay = mb.poll_jitter().expect("should return a delay");
+        assert!(delay.as_millis() >= 20);
+        assert!(delay.as_millis() <= 100);
+    }
+
+    #[test]
+    fn jitter_returns_none_when_max_is_zero() {
+        let jitter = JitterConfig {
+            enabled: true,
+            submit_min_ms: 0,
+            submit_max_ms: 0,
+            poll_min_ms: 0,
+            poll_max_ms: 0,
+        };
+        let mb = RelayMailbox::with_jitter(10, 3600, jitter);
+        assert!(mb.submit_jitter().is_none());
+        assert!(mb.poll_jitter().is_none());
+    }
+
+    #[test]
+    fn with_jitter_constructor_stores_config() {
+        let jitter = JitterConfig {
+            enabled: true,
+            submit_min_ms: 5,
+            submit_max_ms: 25,
+            poll_min_ms: 10,
+            poll_max_ms: 50,
+        };
+        let mb = RelayMailbox::with_jitter(10, 3600, jitter);
+        assert!(mb.jitter.enabled);
+        assert_eq!(mb.jitter.submit_min_ms, 5);
+        assert_eq!(mb.jitter.submit_max_ms, 25);
+        assert_eq!(mb.jitter.poll_min_ms, 10);
+        assert_eq!(mb.jitter.poll_max_ms, 50);
     }
 }

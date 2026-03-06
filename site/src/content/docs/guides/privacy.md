@@ -178,6 +178,21 @@ Sealed envelopes are encrypted packets that the relay routes by `routing_id` wit
 - **Replay protection** — Each envelope carries a nonce; duplicates are rejected (HTTP 409)
 - **TTL-based expiry** — Envelopes expire after a configurable TTL
 - **Metadata stripping** — The relay strips identifying headers (X-Forwarded-For, X-Real-IP, Via)
+- **Timing jitter** — Optional randomized delays on submit/poll responses to prevent traffic-analysis side-channels
+
+### Timing Jitter
+
+Enable timing jitter to add randomized delays to relay responses, making it harder for network observers to correlate submit and poll requests:
+
+```toml
+[privacy.sealed_envelopes]
+enabled = true
+timing_jitter_enabled = true
+submit_jitter_min_ms = 10    # 10–100ms random delay on submit
+submit_jitter_max_ms = 100
+poll_jitter_min_ms = 20      # 20–200ms random delay on poll
+poll_jitter_max_ms = 200
+```
 
 ### API
 

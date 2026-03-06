@@ -252,6 +252,11 @@ max_sessions = 1000                               # max concurrent Noise session
 [privacy.sealed_envelopes]
 enabled = false                                   # auto-enabled by mode = "full"
 max_envelope_bytes = 65536                        # max sealed envelope payload size
+timing_jitter_enabled = false                     # randomized delays on relay responses
+submit_jitter_min_ms = 10                         # min delay on submit (ms)
+submit_jitter_max_ms = 100                        # max delay on submit (ms)
+poll_jitter_min_ms = 20                           # min delay on poll (ms)
+poll_jitter_max_ms = 200                          # max delay on poll (ms)
 
 [privacy.key_rotation]
 enabled = false                                   # auto-enabled by mode = "encrypted" or "full"
