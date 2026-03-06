@@ -23,6 +23,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 - Fix flaky `keyring_data_is_encrypted_on_disk` test — replace brittle 2-char substring check with longer plaintext field name assertions
+- Fix flaky `set_config_value_creates_nested_keys` test — use unique temp dir to prevent parallel test collisions
 - Resolve clippy `double_ended_iterator_last` lint for Rust 1.93
 - Use vendored-openssl only on Windows, system OpenSSL elsewhere
 - Noise middleware: empty-body requests with session header now get encrypted responses
