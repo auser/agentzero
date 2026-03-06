@@ -15,10 +15,17 @@ publish() {
   local attempt=1
   echo "==> Publishing ${crate}..."
   while true; do
-    if cargo publish -p "${crate}" --no-verify 2>&1; then
+    local output
+    if output=$(cargo publish -p "${crate}" --no-verify 2>&1); then
       break
     fi
+    # Already published — not an error.
+    if echo "$output" | grep -q "already uploaded"; then
+      echo "    Already published, skipping."
+      return 0
+    fi
     if [[ $attempt -ge $MAX_RETRIES ]]; then
+      echo "$output" >&2
       echo "    FAILED after ${MAX_RETRIES} attempts" >&2
       return 1
     fi
