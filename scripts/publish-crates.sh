@@ -48,6 +48,5 @@ publish agentzero-core
 
 # ── Tier 2: depend on core ───────────────────────────────────────────────────
 publish agentzero-plugin-sdk   # -> core
-publish agentzero-testkit      # -> core (test utility crate)
 
 echo "==> All crates published successfully."
