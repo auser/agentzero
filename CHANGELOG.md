@@ -8,7 +8,30 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [0.4.1] - 2026-03-06
 
+### Added
+- **Per-project .env overrides** — Dotenv chain now scans both `~/.agentzero/` and CWD for `.env`, `.env.local`, and `.env.{AGENTZERO_ENV}` files; CWD files take priority over config-dir files for per-project overrides; duplicate loading avoided when CWD matches the config directory
+
+### Fixed
+- Add missing version specifiers to all workspace dependencies — 14 of 16 internal deps lacked versions, causing crates.io publish failures; `bump-versions` recipe now inserts versions into deps that lack them
+- Push branch before tag in release recipe — version bump and changelog commits were stranded on local branch
+
 ## [0.4.0] - 2026-03-06
+
+### Added
+- **Orchestrator crate extraction** — Moves coordinator, agent_router, and swarm modules from `agentzero-gateway` to new `agentzero-orchestrator` crate, separating agent coordination logic from HTTP/WS transport for dependency-free reuse
+- **Integration tests and e2e local LLM testing (Sprint 28)** — StaticProvider-based integration tests for agent chaining, privacy routing, pipeline execution, graceful shutdown, and correlation tracking; testkit helpers (`local_llm_provider`, `local_llm_available`, `wait_for_server`); 4 e2e tests against Ollama/tinyllama (`#[ignore]`); `e2e-tests` CI job; 1,750 tests passing
+- **Conversation branching, multi-modal input, plugin registry refresh (Sprint 29)** — `MemoryEntry.conversation_id` and `ToolContext.conversation_id` fields; `MemoryStore` trait gains `recent_for_conversation`, `fork_conversation`, `list_conversations` with SQLite migration; `ContentPart` enum (`Text`/`Image`) on `ConversationMessage::User`; Anthropic `InputContentBlock::Image` and OpenAI `image_url` data URI support; `load_image_refs()` and `build_user_message()` wiring; CLI `conversation list/fork/switch` commands; `az plugin refresh --registry-url` command
+- **HTTP registry fetch, plugin dependencies, audio input (Sprint 30)** — `load_registry_index()` and `refresh_registry_index()` accept `http(s)://` URLs; `install_from_url()` streams remote WASM packages; `PluginDependency { id, version_req }` with transitive resolution and cycle detection; `[AUDIO:path]` markers transcribed via Whisper-compatible API; `AudioConfig { api_url, api_key, language, model }`; graceful degradation when no API key configured; 13 unit tests for audio processing
+
+### Fixed
+- Clippy `len_zero` lint in test code; add `--all-targets` to pre-commit hook so test-only lints are caught
+- Release recipe auto-fixes fmt/clippy in place instead of running read-only checks that hard-fail
+- Bump plugin/fixture `Cargo.toml` versions missed by release recipe; extend recipe to handle standalone version lines
+
+### Changed
+- Pre-commit hook runs `cargo fmt --all` and `cargo clippy --fix --allow-staged` in place, re-stages with `git add -u`, then verifies with a clean clippy check
+- `bump-versions` extracted as standalone recipe (`just bump-versions X.Y.Z`) from the release recipe for independent use
+- Site documentation updated for Sprint 30 commands, architecture, and env vars
 
 ## [0.3.0] - 2026-03-05
 

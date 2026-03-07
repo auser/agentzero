@@ -134,6 +134,10 @@ build-sizes:
 
 # ── Release ───────────────────────────────────────
 
+# Preview changelog draft for next release (dry run, stdout only)
+changelog VERSION:
+    git-cliff --tag "v{{VERSION}}" --unreleased --strip header
+
 # Bump every Cargo.toml version across the workspace: just bump-versions 0.4.0
 bump-versions VERSION:
     #!/usr/bin/env bash
@@ -169,10 +173,9 @@ release VERSION:
         git add -u
         git commit -m "chore: bump workspace version to {{VERSION}}"
     fi
-    # 4. Add changelog entry if not already present (moves [Unreleased] → [VERSION] - DATE)
-    today=$(date +%Y-%m-%d)
+    # 4. Generate changelog entry from conventional commits (via git-cliff)
     if ! grep -q "^## \[{{VERSION}}\]" CHANGELOG.md; then
-        sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [{{VERSION}}] - $today/" CHANGELOG.md
+        git-cliff --tag "v{{VERSION}}" --unreleased --prepend CHANGELOG.md
         git add CHANGELOG.md
         git commit -m "chore: add changelog entry for v{{VERSION}}"
     fi
