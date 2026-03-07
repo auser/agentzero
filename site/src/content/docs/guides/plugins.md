@@ -83,11 +83,91 @@ agentzero plugin package --manifest manifest.json \
 agentzero plugin install --package my-tool-0.1.0.tar
 ```
 
+You can also install directly from an `https://` or `http://` URL without downloading manually:
+
+```bash
+agentzero plugin install --url https://example.com/releases/my-tool-0.1.0.tar
+```
+
+The CLI fetches the archive, verifies its SHA-256 hash against the manifest, and installs it in a single step. This works with any URL that serves a valid plugin tarball — GitHub Releases, self-hosted artifact servers, or a private registry.
+
 ### 6. Publish
 
 ```bash
 agentzero plugin publish --registry github.com/agentzero-project/plugins
 ```
+
+---
+
+## Plugin Dependencies
+
+A plugin can declare that it depends on other plugins. AgentZero resolves and installs those dependencies automatically when you install the plugin.
+
+### Declaring Dependencies in the Manifest
+
+Add an optional `dependencies` array to `manifest.json`:
+
+```json
+{
+  "id": "my-advanced-tool",
+  "version": "0.2.0",
+  "entrypoint": "az_tool_execute",
+  "wasm_file": "plugin.wasm",
+  "wasm_sha256": "",
+  "capabilities": ["host:az_log"],
+  "allowed_host_calls": ["az_log"],
+  "min_runtime_api": 2,
+  "max_runtime_api": 2,
+  "dependencies": [
+    { "id": "base-utils", "version_req": ">=0.1.0, <1.0.0" },
+    { "id": "http-helpers", "version_req": "^0.3.0" }
+  ]
+}
+```
+
+Each entry in `dependencies` has:
+
+| Field | Description |
+|---|---|
+| `id` | Plugin ID of the dependency (must exist in the registry) |
+| `version_req` | Semver requirement string (e.g., `"^1.0"`, `">=0.2.0, <1.0.0"`) |
+
+The `dependencies` field is optional and defaults to an empty list. Existing manifests without it continue to work without changes.
+
+### Installing with Dependency Resolution
+
+When you install a plugin that has dependencies, pass `--registry-url` so the CLI knows where to look up dependency download URLs:
+
+```bash
+agentzero plugin install --url https://example.com/releases/my-advanced-tool-0.2.0.tar \
+    --registry-url https://example.com/registry/index.json
+```
+
+Or when installing by plugin ID from the default registry:
+
+```bash
+agentzero plugin install my-advanced-tool --registry-url https://example.com/registry/index.json
+```
+
+The resolver:
+
+1. Fetches and parses the manifest of the plugin being installed.
+2. Looks up each dependency in the registry index.
+3. Picks the highest version that satisfies the `version_req`.
+4. Recursively resolves transitive dependencies.
+5. Installs all missing dependencies before the top-level plugin.
+
+Circular dependencies are detected automatically — the CLI reports an error and aborts instead of looping.
+
+### Refreshing the Registry Index
+
+To pull the latest plugin metadata from a remote registry:
+
+```bash
+agentzero plugin refresh --registry-url https://example.com/registry/index.json
+```
+
+Both `https://` and `http://` registry URLs are supported. The index is cached locally for subsequent `install` and `search` commands.
 
 ---
 

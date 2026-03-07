@@ -701,7 +701,7 @@ pub enum PluginCommands {
         /// Path to a local .tar package file.
         #[arg(long)]
         package: Option<String>,
-        /// URL to download a plugin package from (supports file:// for local paths).
+        /// URL to download a plugin package from (supports https:// or file://).
         #[arg(long)]
         url: Option<String>,
         /// Expected SHA256 checksum for URL-based installs.
@@ -709,6 +709,9 @@ pub enum PluginCommands {
         sha256: Option<String>,
         #[arg(long)]
         install_dir: Option<String>,
+        /// Registry URL for resolving dependencies (supports https:// or file://).
+        #[arg(long)]
+        registry_url: Option<String>,
     },
     /// List installed plugins.
     List {

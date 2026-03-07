@@ -22,7 +22,7 @@ default-members = ["bin/agentzero"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"
@@ -40,7 +40,7 @@ agentzero-bench = { path = "crates/agentzero-bench" }
 agentzero-channels = { path = "crates/agentzero-channels" }
 agentzero-cli = { path = "crates/agentzero-cli", default-features = false }
 agentzero-config = { path = "crates/agentzero-config" }
-agentzero-core = { path = "crates/agentzero-core", version = "0.3.0" }
+agentzero-core = { path = "crates/agentzero-core", version = "0.4.0" }
 agentzero-gateway = { path = "crates/agentzero-gateway" }
 agentzero-orchestrator = { path = "crates/agentzero-orchestrator" }
 agentzero-infra = { path = "crates/agentzero-infra" }
@@ -50,9 +50,9 @@ agentzero-storage = { path = "crates/agentzero-storage" }
 agentzero-testkit = { path = "crates/agentzero-testkit" }
 agentzero-tools = { path = "crates/agentzero-tools" }
 agentzero-ffi = { path = "crates/agentzero-ffi" }
-agentzero-plugin-sdk = { path = "crates/agentzero-plugin-sdk", version = "0.3.0" }
+agentzero-plugin-sdk = { path = "crates/agentzero-plugin-sdk", version = "0.4.0" }
 futures-util = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart"] }
 rusqlite = { version = "0.31", features = ["bundled-sqlcipher"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

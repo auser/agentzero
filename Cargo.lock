@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-cli",
  "agentzero-core",
@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-auth"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-bench"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-channels"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-config",
  "agentzero-core",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-auth",
  "agentzero-channels",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-config"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-core",
  "agentzero-tools",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-ffi"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-core",
  "agentzero-infra",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-gateway"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-channels",
  "agentzero-config",
@@ -243,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-infra"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-auth",
  "agentzero-config",
@@ -256,6 +256,7 @@ dependencies = [
  "agentzero-tools",
  "anyhow",
  "async-trait",
+ "reqwest",
  "serde",
  "serde_json",
  "temp-env",
@@ -265,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-orchestrator"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-channels",
  "agentzero-config",
@@ -283,7 +284,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-plugin-sdk"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -291,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-plugins"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "fd-lock",
@@ -304,6 +305,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+ "ureq",
  "wasmi",
  "wasmi_wasi",
  "wasmtime",
@@ -313,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-providers"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -329,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-storage"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -347,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-testkit"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-core",
  "agentzero-providers",
@@ -359,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-tools"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agentzero-core",
  "agentzero-providers",
@@ -4106,6 +4108,7 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime_guess",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
@@ -4242,6 +4245,7 @@ version = "0.23.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "758025cb5fccfd3bc2fd74708fd4682be41d99e5dff73c377c0646c6012c73a4"
 dependencies = [
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -5564,6 +5568,24 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "ureq"
+version = "2.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
+dependencies = [
+ "base64 0.22.1",
+ "flate2",
+ "log",
+ "once_cell",
+ "rustls 0.23.37",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "url",
+ "webpki-roots 0.26.11",
+]
 
 [[package]]
 name = "url"

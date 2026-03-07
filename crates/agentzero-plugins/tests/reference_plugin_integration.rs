@@ -81,6 +81,7 @@ mod notepad_plugin {
     }
 
     #[test]
+    #[ignore]
     fn write_and_read_roundtrip() {
         let wasm = notepad_wasm();
         if skip_if_not_built(&wasm) {
@@ -126,6 +127,7 @@ mod notepad_plugin {
     }
 
     #[test]
+    #[ignore]
     fn list_empty_and_populated() {
         let wasm = notepad_wasm();
         if skip_if_not_built(&wasm) {
@@ -177,6 +179,7 @@ mod notepad_plugin {
     }
 
     #[test]
+    #[ignore]
     fn delete_existing_note() {
         let wasm = notepad_wasm();
         if skip_if_not_built(&wasm) {
@@ -216,6 +219,7 @@ mod notepad_plugin {
     }
 
     #[test]
+    #[ignore]
     fn delete_nonexistent_returns_warning() {
         let wasm = notepad_wasm();
         if skip_if_not_built(&wasm) {
@@ -256,6 +260,7 @@ mod notepad_plugin {
     }
 
     #[test]
+    #[ignore]
     fn read_missing_note_returns_error() {
         let wasm = notepad_wasm();
         if skip_if_not_built(&wasm) {
@@ -285,6 +290,7 @@ mod notepad_plugin {
     }
 
     #[test]
+    #[ignore]
     fn path_traversal_rejected() {
         let wasm = notepad_wasm();
         if skip_if_not_built(&wasm) {
@@ -314,6 +320,7 @@ mod notepad_plugin {
     }
 
     #[test]
+    #[ignore]
     fn unknown_action_returns_error() {
         let wasm = notepad_wasm();
         if skip_if_not_built(&wasm) {

@@ -196,6 +196,28 @@ WASI filesystem access is sandboxed to the workspace root directory. Plugins can
 | `min_runtime_api` | integer | Yes | Minimum compatible runtime API version. |
 | `max_runtime_api` | integer | Yes | Maximum compatible runtime API version. |
 
+### `PluginDependency`
+
+An optional `dependencies` array in the manifest declares other plugins that must be present for this plugin to function. The install command resolves and installs all declared dependencies transitively before installing the plugin itself.
+
+```json
+{
+  "dependencies": [
+    { "id": "base-utils", "version_req": ">=0.1.0, <1.0.0" },
+    { "id": "http-helpers", "version_req": "^0.3.0" }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | Yes | Plugin ID of the required dependency. Must exist in the registry. |
+| `version_req` | string | Yes | Semver version requirement (e.g., `"^1.0"`, `">=0.2.0, <1.0.0"`). Uses standard semver range syntax. |
+
+The `dependencies` field itself is optional (`#[serde(default)]`) and defaults to an empty list. Manifests without a `dependencies` key remain fully valid.
+
+Circular dependency chains are detected at resolution time — the installer aborts with an error rather than looping indefinitely.
+
 ### Capability Validation
 
 At load time, the runtime:

@@ -25,6 +25,7 @@ agentzero-tools = { workspace = true }
 agentzero-storage = { workspace = true }
 agentzero-plugins = { workspace = true, features = ["wasm-runtime"], optional = true }
 agentzero-providers = { workspace = true }
+reqwest = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

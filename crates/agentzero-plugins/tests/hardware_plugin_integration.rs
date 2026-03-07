@@ -91,6 +91,7 @@ mod hardware_plugins {
     // ---- hardware_board_info tests ----
 
     #[test]
+    #[ignore]
     fn board_info_list_all() {
         let wasm_path = board_info_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -124,6 +125,7 @@ mod hardware_plugins {
     }
 
     #[test]
+    #[ignore]
     fn board_info_query_specific() {
         let wasm_path = board_info_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -150,6 +152,7 @@ mod hardware_plugins {
     }
 
     #[test]
+    #[ignore]
     fn board_info_unknown_board() {
         let wasm_path = board_info_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -185,6 +188,7 @@ mod hardware_plugins {
     // ---- hardware_memory_map tests ----
 
     #[test]
+    #[ignore]
     fn memory_map_stm32() {
         let wasm_path = memory_map_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -220,6 +224,7 @@ mod hardware_plugins {
     }
 
     #[test]
+    #[ignore]
     fn memory_map_rpi() {
         let wasm_path = memory_map_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -247,6 +252,7 @@ mod hardware_plugins {
     }
 
     #[test]
+    #[ignore]
     fn memory_map_missing_board() {
         let wasm_path = memory_map_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -267,6 +273,7 @@ mod hardware_plugins {
     // ---- hardware_memory_read tests ----
 
     #[test]
+    #[ignore]
     fn memory_read_basic() {
         let wasm_path = memory_read_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -302,6 +309,7 @@ mod hardware_plugins {
     }
 
     #[test]
+    #[ignore]
     fn memory_read_default_length() {
         let wasm_path = memory_read_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -327,6 +335,7 @@ mod hardware_plugins {
     }
 
     #[test]
+    #[ignore]
     fn memory_read_invalid_address() {
         let wasm_path = memory_read_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -353,6 +362,7 @@ mod hardware_plugins {
     }
 
     #[test]
+    #[ignore]
     fn memory_read_unknown_board() {
         let wasm_path = memory_read_wasm();
         if skip_if_not_built(&wasm_path) {

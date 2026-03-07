@@ -12,7 +12,7 @@ pub mod watcher;
 
 pub use loader::{load, load_env_var, update_auto_approve};
 pub use model::{
-    AgentSettings, AgentZeroConfig, AuditConfig, AutonomyConfig, BrowserConfig,
+    AgentSettings, AgentZeroConfig, AudioConfig, AuditConfig, AutonomyConfig, BrowserConfig,
     ChannelsGlobalConfig, ComposioConfig, ComputerUseConfig, CostConfig, CredentialProfile,
     DelegateAgentConfig, EmbeddingRoute, EstopConfig, GatewayConfig, HookSettings,
     HttpRequestConfig, IdentityConfig, McpConfig, MemoryConfig, ModelProviderProfile, ModelRoute,

@@ -90,14 +90,21 @@ description: AgentZero development roadmap — completed milestones and future d
 - Integration wiring: `ToolContext.privacy_boundary`, leak guard `check_boundary()`, config validation for encrypted-without-noise
 - 1,724 tests passing, 0 clippy warnings
 
+### Plugin Registry & Audio Input (Sprint 30)
+
+- **HTTP registry fetch** — `az plugin install --url <https://...>` and `az plugin refresh --registry-url` accept `https://` and `http://` URLs
+- **Plugin dependency resolution** — `PluginManifest` gains `dependencies: Vec<PluginDependency>` with semver `version_req`; `az plugin install --registry-url` resolves and installs transitive deps; circular deps detected
+- **Audio input** — `[AUDIO:/path]` markers in user messages are transcribed before reaching the LLM via a configurable OpenAI-compatible endpoint (default: Groq Whisper); new `[audio]` config section
+- Workspace version bumped to 0.4.0
+
 ## Planned
 
-### Near-Term
+### Registry Repo, Audio Streaming & Image Generation (Sprint 31)
 
-- Conversation branching and forking
-- Multi-modal input (image, audio) across all providers
-- Plugin registry and marketplace
-- Enhanced RAG with vector search
+- Hosted plugin registry repository with automated PR-based publishing workflow
+- Streaming audio transcription for low-latency voice input
+- Image generation tool (via OpenAI-compatible `/v1/images/generations` endpoint)
+- `[IMAGE:...]` output markers rendered in supported frontends
 
 ### Medium-Term
 

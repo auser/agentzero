@@ -194,6 +194,51 @@ All `#[ignore]` in `crates/agentzero-infra/tests/e2e_local_llm.rs`:
 
 ### Backlog (candidates for Sprint 30)
 
-- [ ] **Audio input** — Whisper integration for audio across providers
-- [ ] **HTTP registry fetch** — Full HTTP support in `load_registry_index()` / `refresh_registry_index()`
-- [ ] **Plugin dependency resolution** — Plugins declare dependencies on other plugins
+- [x] **Audio input** — Whisper integration for audio across providers *(Sprint 30)*
+- [x] **HTTP registry fetch** — Full HTTP support in `load_registry_index()` / `refresh_registry_index()` *(Sprint 30)*
+- [x] **Plugin dependency resolution** — Plugins declare dependencies on other plugins *(Sprint 30)*
+
+---
+
+## Sprint 30: Audio Input, HTTP Registry Fetch, Plugin Dependency Resolution → v0.4.0
+
+**Goal:** Ship the three Sprint 29 backlog items and cut a 0.4.0 minor release.
+
+**Baseline:** 17-crate workspace, ~1,800+ tests passing, 0 clippy warnings, Sprint 29 complete.
+
+### Phase A: HTTP Registry Fetch
+
+- [x] **ureq HTTP fetch** — `install_from_url()` handles `https://` and `http://` URLs via `ureq`. `fetch_registry_from_url()` private helper used by `load_registry_index()` and `refresh_registry_index()`. `ureq` chosen over `reqwest::blocking` to avoid panicking inside async CLI context.
+
+### Phase B: Plugin Dependency Resolution
+
+- [x] **`PluginDependency` type** — `{ id: String, version_req: String }` with `semver::VersionReq` validation in `PluginManifest::validate()`.
+- [x] **`dependencies` field** — Added with `#[serde(default)]` to `PluginManifest` and `RegistryVersionEntry`.
+- [x] **`install_with_dependencies()`** — Resolves and installs transitive deps from registry. Cycle detection via `HashSet<String>`. Missing deps return a clear error.
+- [x] **CLI wiring** — `az plugin install --registry-url <url>` loads registry, calls `install_with_dependencies()`. Prints all installed plugins including deps.
+
+### Phase C: Audio Input (Whisper)
+
+- [x] **`AudioConfig`** — `{ api_url, api_key, language, model }` in `AgentZeroConfig`. Defaults to Groq `/audio/transcriptions` + `whisper-large-v3`.
+- [x] **`audio_markers.rs`** in `agentzero-infra` — `parse_audio_markers()`, `strip_audio_markers()`, `process_audio_markers()`. Transcribe-first pattern: `[AUDIO:path]` markers replaced with `[Transcription of audio]: <text>` before the LLM sees the message.
+- [x] **HTTP transcription** — `transcribe_audio_async()` uses `reqwest` async multipart POST to Whisper endpoint. No marker config or no API key → markers stripped with a warning.
+- [x] **Runtime wiring** — `RuntimeExecution.audio_config` populated from config in `build_runtime_execution()`. `process_audio_markers()` called at the top of `run_agent_with_runtime()`.
+
+### Phase D: Release
+
+- [x] **Version bump** — Workspace version `0.3.0` → `0.4.0`
+- [x] **SPRINT.md** — Sprint 30 section added; Sprint 29 backlog items marked complete
+
+### Acceptance Criteria
+
+- [x] `az plugin install https://…` downloads and installs plugin with deps resolved
+- [x] `az plugin refresh --registry-url https://…` fetches registry over HTTP
+- [x] `[AUDIO:path.wav]` in user message → transcript text in LLM message; markers stripped when no API key
+- [x] No provider changes needed for audio (transcribe-first)
+- [x] All quality gates pass: `cargo fmt`, `cargo clippy`, `cargo test --workspace`
+
+### Backlog (candidates for Sprint 31)
+
+- [ ] **Plugin registry repo** — New `agentzero-plugins` git repo with example plugins, manifest schema, and CI publishing
+- [ ] **Audio streaming** — Real-time transcription in `TranscriptionChannel::listen()` (hardware mic input → agent)
+- [ ] **Image generation** — `[IMAGE_GEN:prompt]` markers that call a DALL-E / Stable Diffusion compatible endpoint

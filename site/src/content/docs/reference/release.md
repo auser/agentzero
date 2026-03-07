@@ -5,6 +5,23 @@ description: Versioning and changelog process used for tagged releases.
 
 This document defines the versioning and changelog process used for tagged releases.
 
+## Release History
+
+### [0.4.0] — 2026-03-06
+
+#### Added
+
+- **HTTP registry fetch** — `az plugin install --url <https://...>` and `az plugin refresh --registry-url <https://...>` now accept `https://` and `http://` URLs in addition to `file://`. The registry index loader and refresher both support remote URLs.
+- **Plugin dependency resolution** — `PluginManifest` has an optional `dependencies: Vec<PluginDependency>` field (defaults to empty). Each `PluginDependency` carries an `id` and a `version_req` semver string. Running `az plugin install --registry-url <url>` resolves and installs all transitive dependencies before the top-level plugin. Circular dependency chains are detected and reported as errors.
+- **Audio input** — User messages may contain `[AUDIO:/path/to/file.wav]` markers. The agent transcribes each marker via a configurable OpenAI-compatible endpoint before forwarding the message to the LLM. Supported formats: `flac`, `mp3`, `mp4`, `m4a`, `ogg`, `opus`, `wav`, `webm` (max 25 MB). If `[audio] api_key` is not set, markers are stripped silently with a warning. Default endpoint: Groq Whisper (`whisper-large-v3`).
+- **`[audio]` config section** — New `agentzero.toml` section with `api_url`, `api_key`, `language`, and `model` fields.
+
+#### Changed
+
+- Workspace version bumped to `0.4.0` across all publishable crates.
+
+---
+
 ## Versioning Policy
 
 - Use Semantic Versioning: `MAJOR.MINOR.PATCH`.
