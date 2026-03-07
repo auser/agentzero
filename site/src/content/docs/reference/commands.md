@@ -37,6 +37,7 @@ agentzero agent -m "hello"
 agentzero agent -m "List files in the current directory"
 agentzero agent -m "Summarize this repo" --provider openai --model gpt-4o-mini
 agentzero agent -m "hello" --profile my-anthropic-profile
+agentzero agent -m "explain this function" --stream
 ```
 
 | Flag | Description |
@@ -45,6 +46,7 @@ agentzero agent -m "hello" --profile my-anthropic-profile
 | `-p, --provider <NAME>` | Override the configured provider (e.g., `openrouter`, `openai`, `ollama`) |
 | `--model <ID>` | Override the configured model (e.g., `gpt-4o-mini`, `llama3.1:8b`) |
 | `--profile <NAME>` | Use a specific auth profile by name (from `auth list`) |
+| `--stream` | Stream tokens incrementally as they arrive |
 
 ### `onboard`
 
@@ -749,6 +751,82 @@ agentzero plugin remove --id my-plugin --version 0.1.0    # Specific version
 | `--version <VER>` | Specific version to remove (default: all versions) |
 | `--install-dir <DIR>` | Installation directory (default: `{data_dir}/plugins`) |
 
+#### `plugin enable`
+
+Enable a disabled plugin without reinstalling.
+
+```bash
+agentzero plugin enable --id my-plugin
+```
+
+| Flag | Description |
+|---|---|
+| `--id <ID>` | **(Required)** Plugin identifier |
+
+#### `plugin disable`
+
+Disable a plugin without removing it.
+
+```bash
+agentzero plugin disable --id my-plugin
+```
+
+| Flag | Description |
+|---|---|
+| `--id <ID>` | **(Required)** Plugin identifier |
+
+#### `plugin search`
+
+Search the plugin registry.
+
+```bash
+agentzero plugin search "web scraping"
+```
+
+| Flag | Description |
+|---|---|
+| `--registry-url <URL>` | Registry URL (default: configured `registry_url`) |
+
+#### `plugin outdated`
+
+Check for available plugin updates.
+
+```bash
+agentzero plugin outdated
+```
+
+| Flag | Description |
+|---|---|
+| `--registry-url <URL>` | Registry URL (default: configured `registry_url`) |
+
+#### `plugin update`
+
+Update installed plugins to latest versions.
+
+```bash
+agentzero plugin update                      # all plugins
+agentzero plugin update --id my-plugin       # specific plugin
+```
+
+| Flag | Description |
+|---|---|
+| `--id <ID>` | Update only this plugin (default: all) |
+| `--registry-url <URL>` | Registry URL |
+| `--install-dir <DIR>` | Installation directory |
+
+#### `plugin refresh`
+
+Force-refresh the cached registry index.
+
+```bash
+agentzero plugin refresh
+agentzero plugin refresh --registry-url https://custom-registry.example.com/index.json
+```
+
+| Flag | Description |
+|---|---|
+| `--registry-url <URL>` | Registry URL to fetch (default: configured `registry_url`) |
+
 ### Plugin Manifest Format
 
 ```json
@@ -890,6 +968,56 @@ agentzero memory clear --key "old-session"       # Delete by key prefix
 | `--category <CAT>` | Filter by category (reserved) |
 | `--yes` | Skip confirmation prompt |
 | `--json` | Emit machine-readable JSON output |
+
+### `conversation`
+
+Manage conversation branches. Conversations allow you to fork and switch between parallel conversation threads.
+
+#### `conversation list`
+
+List all named conversations.
+
+```bash
+agentzero conversation list
+agentzero conversation list --json
+```
+
+| Flag | Description |
+|---|---|
+| `--json` | Emit machine-readable JSON output |
+
+#### `conversation fork`
+
+Fork an existing conversation into a new branch.
+
+```bash
+agentzero conversation fork main experiment-1
+agentzero conversation fork main experiment-1 --json
+```
+
+| Argument | Description |
+|---|---|
+| `<FROM>` | **(Required)** Source conversation ID to fork from |
+| `<TO>` | **(Required)** New conversation ID for the fork |
+
+| Flag | Description |
+|---|---|
+| `--json` | Emit machine-readable JSON output |
+
+#### `conversation switch`
+
+Switch the active conversation. Use an empty string to switch back to the global conversation.
+
+```bash
+agentzero conversation switch experiment-1
+agentzero conversation switch ""              # back to global
+```
+
+| Argument | Description |
+|---|---|
+| `<ID>` | **(Required)** Conversation ID to switch to |
+
+---
 
 ### `rag`
 

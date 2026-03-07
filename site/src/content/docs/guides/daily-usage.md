@@ -101,6 +101,17 @@ agentzero memory get --key "project"    # by prefix match
 agentzero memory stats
 ```
 
+### Conversation branching
+
+```bash
+agentzero conversation list                  # list all conversations
+agentzero conversation fork                  # fork current conversation into a new branch
+agentzero conversation fork --name "explore" # fork with a custom name
+agentzero conversation switch <id>           # switch to a different conversation
+```
+
+Forking is useful when you want to explore an alternative direction without losing the current thread.
+
 ### Clear old conversations
 
 ```bash

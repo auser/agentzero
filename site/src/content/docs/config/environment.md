@@ -28,6 +28,7 @@ AgentZero reads several environment variables for API keys, backend selection, a
 | `EXA_API_KEY` | Exa Search API |
 | `JINA_API_KEY` | Jina Reader/Search API |
 | `COMPOSIO_API_KEY` | Composio integration API |
+| `GROQ_API_KEY` | Groq API (used for audio transcription via `[audio]` config) |
 
 ## Memory Backend
 
