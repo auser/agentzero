@@ -267,3 +267,38 @@ All `#[ignore]` in `crates/agentzero-infra/tests/e2e_local_llm.rs`:
 - [x] `agentzero auth paste-redirect --provider anthropic` handles manual code paste
 - [x] Existing OpenAI Codex and Gemini auth flows unaffected
 - [x] All auth tests pass; no clippy warnings
+
+### Backlog (candidates for Sprint 32)
+
+- [ ] **Structured JSON logging** — `[logging] format = "json"` config + env var for container log aggregation
+- [ ] **Container image CI** — `ghcr.io` multi-arch (amd64/arm64) image build in release workflow
+- [ ] **OpenTelemetry wiring** — Wire dead `[observability]` config to real OTLP exporter
+- [ ] **Database connection pooling** — Replace `Mutex<Connection>` with r2d2 pool + migration framework
+- [ ] **API polish** — OpenAPI spec, constant-time auth, liveness/readiness probes
+- [ ] **Multi-tenancy & RBAC** — User identity, API keys, org isolation
+- [ ] **Distributed event bus** — Redis-backed `EventBus` for horizontal scaling
+
+---
+
+## Sprint 32: Structured Logging & Container CI
+
+**Goal:** Add structured JSON log output for container deployments and automated container image publishing in the release workflow. These are the highest-impact, lowest-risk production readiness improvements.
+
+**Baseline:** 17-crate workspace, v0.4.2, 0 clippy warnings, Sprint 31 complete.
+
+### Completed
+
+- [x] **LoggingConfig** — `LogFormat` enum (`Text`/`Json`), `LoggingConfig` struct with `format`, `level`, and `modules` fields in `agentzero-config`. TOML: `[logging] format = "json"`. Env: `AGENTZERO__LOGGING__FORMAT=json`.
+- [x] **JSON tracing subscriber** — `init_tracing_with_options()` in `agentzero-core` uses `tracing_subscriber::fmt::layer().json()` when format is `Json`. `tracing-subscriber` `json` feature enabled in workspace.
+- [x] **Environment variable support** — `init_tracing()` checks `AGENTZERO__LOGGING__FORMAT` and `AGENTZERO__LOGGING__LEVEL` env vars so container deployments work without config files.
+- [x] **Per-module log levels** — `[logging.modules]` HashMap allows overrides like `agentzero_gateway = "debug"`. `build_env_filter()` composes directives; `RUST_LOG` takes precedence.
+- [x] **Container image CI** — New `container` job in `.github/workflows/release.yml`. Builds and pushes multi-arch (`linux/amd64`, `linux/arm64`) images to `ghcr.io` with `latest`, version tag, and semver tags. Uses GitHub Actions cache for Docker layers.
+
+### Acceptance Criteria
+
+- [x] `AGENTZERO__LOGGING__FORMAT=json agentzero gateway` outputs JSON-structured log lines
+- [x] Default format remains `text` (backward compatible)
+- [x] Per-module overrides work: `[logging.modules] agentzero_gateway = "debug"`
+- [x] `RUST_LOG` env var still overrides all config
+- [x] Release workflow builds and pushes container images to ghcr.io
+- [x] All quality gates pass: `cargo fmt`, `cargo clippy`, `cargo test --workspace`
