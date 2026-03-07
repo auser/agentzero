@@ -134,30 +134,36 @@ build-sizes:
 
 # ── Release ───────────────────────────────────────
 
-# Cut a release: just release 0.3.0
+# Bump every Cargo.toml version across the workspace: just bump-versions 0.4.0
+bump-versions VERSION:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Root workspace manifest: [workspace.package] version and inline dep versions
+    sed -i '' 's/^version = ".*"/version = "{{VERSION}}"/' Cargo.toml
+    perl -i -pe 's|(agentzero-[a-z-]+ = \{ path = "crates/[^"]+", version = )"[^"]+"|${1}"{{VERSION}}"|g' Cargo.toml
+    echo "    Cargo.toml [workspace.package] → {{VERSION}}"
+    # Standalone Cargo.toml files (plugins, fixtures) that don't use version.workspace
+    rg --files -g 'Cargo.toml' | grep -v '^Cargo\.toml$' | while IFS= read -r f; do
+        if grep -q '^version = ' "$f" && ! grep -q 'version\.workspace' "$f"; then
+            sed -i '' 's/^version = ".*"/version = "{{VERSION}}"/' "$f"
+            echo "    $f → {{VERSION}}"
+        fi
+    done
+
+# Cut a release: just release 0.4.0
 release VERSION:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "==> Releasing v{{VERSION}}"
-    # 1. Bump workspace version in root Cargo.toml
-    sed -i '' 's/^version = ".*"/version = "{{VERSION}}"/' Cargo.toml
-    # Bump inline version on internal workspace dep entries (path = "crates/…", version = "…")
-    perl -i -pe 's|(agentzero-[a-z-]+ = \{ path = "crates/[^"]+", version = )"[^"]+"|${1}"{{VERSION}}"|g' Cargo.toml
-    echo "    Cargo.toml [workspace.package] version set to {{VERSION}}"
-    # Bump standalone Cargo.toml files (plugins, fixtures) that don't use version.workspace
-    rg --files -g 'Cargo.toml' | grep -v '^Cargo\.toml$' | while IFS= read -r f; do
-        if grep -q '^version = ' "$f" && ! grep -q 'version\.workspace' "$f"; then
-            sed -i '' 's/^version = ".*"/version = "{{VERSION}}"/' "$f"
-        fi
-    done
-    echo "    Plugin and fixture Cargo.toml versions set to {{VERSION}}"
+    # 1. Bump all versions
+    just bump-versions {{VERSION}}
     # 2. Quality gates — auto-fix fmt and clippy, then test
     cargo fmt --all
     cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets -- -D warnings
     cargo nextest run --workspace
     # 3. Commit the version bump + any fmt/clippy fixes + updated Cargo.lock
-    if ! git diff --quiet Cargo.toml Cargo.lock; then
+    if ! git diff --quiet; then
         git add -u
         git commit -m "chore: bump workspace version to {{VERSION}}"
     fi
