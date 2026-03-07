@@ -43,6 +43,7 @@ fn static_execution(response: &str) -> RuntimeExecution {
         tools: vec![Box::new(EchoTool) as Box<dyn Tool>],
         audit_sink: None,
         hook_sink: None,
+        conversation_id: None,
     }
 }
 
@@ -59,6 +60,7 @@ fn streaming_execution(response: &str) -> RuntimeExecution {
         tools: vec![],
         audit_sink: None,
         hook_sink: None,
+        conversation_id: None,
     }
 }
 
@@ -152,6 +154,7 @@ async fn run_agent_once_records_audit_events() {
         tools: vec![],
         audit_sink: Some(Box::new(audit.clone())),
         hook_sink: None,
+        conversation_id: None,
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "test".to_string())
@@ -176,6 +179,7 @@ async fn run_agent_once_provider_error_propagates() {
         tools: vec![],
         audit_sink: None,
         hook_sink: None,
+        conversation_id: None,
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hello".to_string())
@@ -371,6 +375,7 @@ async fn full_loop_agent_with_tool_call_round_trip() {
         tools: vec![Box::new(SchemaEchoTool) as Box<dyn Tool>],
         audit_sink: None,
         hook_sink: None,
+        conversation_id: None,
     };
 
     let output = run_agent_with_runtime(

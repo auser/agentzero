@@ -142,7 +142,7 @@ pub(crate) struct ChatRequest {
 struct Message {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -153,7 +153,38 @@ impl Message {
     fn user(content: String) -> Self {
         Self {
             role: "user".to_string(),
-            content: Some(content),
+            content: Some(Value::String(content)),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    fn user_with_parts(content: String, parts: &[agentzero_core::ContentPart]) -> Self {
+        let mut content_array = vec![serde_json::json!({
+            "type": "text",
+            "text": content,
+        })];
+        for part in parts {
+            match part {
+                agentzero_core::ContentPart::Text { text } => {
+                    content_array.push(serde_json::json!({
+                        "type": "text",
+                        "text": text,
+                    }));
+                }
+                agentzero_core::ContentPart::Image { media_type, data } => {
+                    content_array.push(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:{media_type};base64,{data}"),
+                        },
+                    }));
+                }
+            }
+        }
+        Self {
+            role: "user".to_string(),
+            content: Some(Value::Array(content_array)),
             tool_calls: None,
             tool_call_id: None,
         }
@@ -709,11 +740,17 @@ fn to_openai_messages(messages: &[ConversationMessage]) -> Vec<Message> {
         .map(|msg| match msg {
             ConversationMessage::System { content } => Message {
                 role: "system".to_string(),
-                content: Some(content.clone()),
+                content: Some(Value::String(content.clone())),
                 tool_calls: None,
                 tool_call_id: None,
             },
-            ConversationMessage::User { content } => Message::user(content.clone()),
+            ConversationMessage::User { content, parts } => {
+                if parts.is_empty() {
+                    Message::user(content.clone())
+                } else {
+                    Message::user_with_parts(content.clone(), parts)
+                }
+            }
             ConversationMessage::Assistant {
                 content,
                 tool_calls,
@@ -739,14 +776,14 @@ fn to_openai_messages(messages: &[ConversationMessage]) -> Vec<Message> {
                 };
                 Message {
                     role: "assistant".to_string(),
-                    content: content.clone(),
+                    content: content.as_ref().map(|s| Value::String(s.clone())),
                     tool_calls: tc,
                     tool_call_id: None,
                 }
             }
             ConversationMessage::ToolResult(result) => Message {
                 role: "tool".to_string(),
-                content: Some(result.content.clone()),
+                content: Some(Value::String(result.content.clone())),
                 tool_calls: None,
                 tool_call_id: Some(result.tool_use_id.clone()),
             },
@@ -1382,9 +1419,7 @@ mod tests {
         use agentzero_core::{ConversationMessage, ToolResultMessage, ToolUseRequest};
 
         let messages = vec![
-            ConversationMessage::User {
-                content: "Use the tool.".to_string(),
-            },
+            ConversationMessage::user("Use the tool.".to_string()),
             ConversationMessage::Assistant {
                 content: Some("Calling tool.".to_string()),
                 tool_calls: vec![ToolUseRequest {
@@ -1403,7 +1438,10 @@ mod tests {
         let result = to_openai_messages(&messages);
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].role, "user");
-        assert_eq!(result[0].content.as_deref(), Some("Use the tool."));
+        assert_eq!(
+            result[0].content,
+            Some(Value::String("Use the tool.".to_string()))
+        );
         assert_eq!(result[1].role, "assistant");
         assert!(result[1].tool_calls.is_some());
         assert_eq!(result[2].role, "tool");
@@ -1418,17 +1456,15 @@ mod tests {
             ConversationMessage::System {
                 content: "You are a helpful assistant.".to_string(),
             },
-            ConversationMessage::User {
-                content: "Hello".to_string(),
-            },
+            ConversationMessage::user("Hello".to_string()),
         ];
 
         let result = to_openai_messages(&messages);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].role, "system");
         assert_eq!(
-            result[0].content.as_deref(),
-            Some("You are a helpful assistant.")
+            result[0].content,
+            Some(Value::String("You are a helpful assistant.".to_string()))
         );
         assert!(result[0].tool_calls.is_none());
         assert!(result[0].tool_call_id.is_none());
@@ -1566,9 +1602,7 @@ mod tests {
             transport.clone(),
         );
 
-        let messages = vec![ConversationMessage::User {
-            content: "Search for rust".to_string(),
-        }];
+        let messages = vec![ConversationMessage::user("Search for rust".to_string())];
         let tools = vec![ToolDefinition {
             name: "web_search".to_string(),
             description: "Search the web".to_string(),
@@ -1598,9 +1632,7 @@ mod tests {
             transport.clone(),
         );
 
-        let messages = vec![ConversationMessage::User {
-            content: "Hello".to_string(),
-        }];
+        let messages = vec![ConversationMessage::user("Hello".to_string())];
 
         let result = provider
             .complete_with_tools(&messages, &[], &ReasoningConfig::default())

@@ -6,8 +6,8 @@ use crate::transport::{
     should_retry_transport, CircuitBreaker, TransportConfig, TransportError, TransportResponse,
 };
 use agentzero_core::{
-    ChatResult, ConversationMessage, Provider, ReasoningConfig, StopReason, StreamChunk,
-    ToolCallDelta, ToolDefinition, ToolUseRequest,
+    ChatResult, ContentPart, ConversationMessage, Provider, ReasoningConfig, StopReason,
+    StreamChunk, ToolCallDelta, ToolDefinition, ToolUseRequest,
 };
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
@@ -347,10 +347,36 @@ fn to_anthropic_messages(messages: &[ConversationMessage]) -> Vec<Message> {
         .filter_map(|msg| match msg {
             // System messages are extracted separately for the Anthropic API payload.
             ConversationMessage::System { .. } => None,
-            ConversationMessage::User { content } => Some(Message {
-                role: "user".to_string(),
-                content: MessageContent::Text(content.clone()),
-            }),
+            ConversationMessage::User { content, parts } => {
+                let msg_content = if parts.is_empty() {
+                    MessageContent::Text(content.clone())
+                } else {
+                    let mut blocks = vec![InputContentBlock::Text {
+                        text: content.clone(),
+                    }];
+                    for part in parts {
+                        match part {
+                            ContentPart::Text { text } => {
+                                blocks.push(InputContentBlock::Text { text: text.clone() });
+                            }
+                            ContentPart::Image { media_type, data } => {
+                                blocks.push(InputContentBlock::Image {
+                                    source: ImageSource {
+                                        kind: "base64".to_string(),
+                                        media_type: media_type.clone(),
+                                        data: data.clone(),
+                                    },
+                                });
+                            }
+                        }
+                    }
+                    MessageContent::Blocks(blocks)
+                };
+                Some(Message {
+                    role: "user".to_string(),
+                    content: msg_content,
+                })
+            }
             ConversationMessage::Assistant {
                 content,
                 tool_calls,
@@ -1615,9 +1641,7 @@ mod tests {
         use agentzero_core::{ConversationMessage, ToolResultMessage, ToolUseRequest};
 
         let messages = vec![
-            ConversationMessage::User {
-                content: "Use the tool.".to_string(),
-            },
+            ConversationMessage::user("Use the tool.".to_string()),
             ConversationMessage::Assistant {
                 content: Some("Sure, calling read_file.".to_string()),
                 tool_calls: vec![ToolUseRequest {
@@ -1648,9 +1672,7 @@ mod tests {
             ConversationMessage::System {
                 content: "You are a helpful assistant.".to_string(),
             },
-            ConversationMessage::User {
-                content: "Hello".to_string(),
-            },
+            ConversationMessage::user("Hello".to_string()),
         ];
 
         let result = to_anthropic_messages(&messages);
@@ -1667,9 +1689,7 @@ mod tests {
             ConversationMessage::System {
                 content: "Be concise.".to_string(),
             },
-            ConversationMessage::User {
-                content: "Hi".to_string(),
-            },
+            ConversationMessage::user("Hi".to_string()),
         ];
         let system = extract_system_from_messages(&messages);
         assert_eq!(system, Some("Be concise.".to_string()));
@@ -1679,9 +1699,7 @@ mod tests {
     fn extract_system_from_messages_returns_none_when_absent() {
         use agentzero_core::ConversationMessage;
 
-        let messages = vec![ConversationMessage::User {
-            content: "Hi".to_string(),
-        }];
+        let messages = vec![ConversationMessage::user("Hi".to_string())];
         let system = extract_system_from_messages(&messages);
         assert!(system.is_none());
     }
@@ -1814,9 +1832,7 @@ mod tests {
             transport.clone(),
         );
 
-        let messages = vec![ConversationMessage::User {
-            content: "Search for rust".to_string(),
-        }];
+        let messages = vec![ConversationMessage::user("Search for rust".to_string())];
         let tools = vec![ToolDefinition {
             name: "web_search".to_string(),
             description: "Search the web".to_string(),
@@ -1849,9 +1865,7 @@ mod tests {
             transport.clone(),
         );
 
-        let messages = vec![ConversationMessage::User {
-            content: "Just chat".to_string(),
-        }];
+        let messages = vec![ConversationMessage::user("Just chat".to_string())];
 
         let result = provider
             .complete_with_tools(&messages, &[], &ReasoningConfig::default())

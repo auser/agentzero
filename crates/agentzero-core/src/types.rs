@@ -204,6 +204,9 @@ pub struct ToolContext {
     /// Identifier for the agent executing this tool (set in swarm mode).
     #[serde(skip)]
     pub agent_id: Option<String>,
+    /// Active conversation identifier. When set, memory queries are scoped to this conversation.
+    #[serde(default)]
+    pub conversation_id: Option<String>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -222,6 +225,7 @@ impl std::fmt::Debug for ToolContext {
             .field("source_channel", &self.source_channel)
             .field("event_bus", &self.event_bus.as_ref().map(|_| "..."))
             .field("agent_id", &self.agent_id)
+            .field("conversation_id", &self.conversation_id)
             .finish()
     }
 }
@@ -236,6 +240,7 @@ impl ToolContext {
             source_channel: None,
             event_bus: None,
             agent_id: None,
+            conversation_id: None,
         }
     }
 }
@@ -282,6 +287,19 @@ pub struct ToolResultMessage {
     pub is_error: bool,
 }
 
+/// A content part within a multi-modal user message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image {
+        media_type: String,
+        data: String, // base64-encoded
+    },
+}
+
 /// A message in a multi-turn conversation (for structured tool use).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "role")]
@@ -289,7 +307,12 @@ pub enum ConversationMessage {
     #[serde(rename = "system")]
     System { content: String },
     #[serde(rename = "user")]
-    User { content: String },
+    User {
+        content: String,
+        /// Multi-modal content parts (images, etc.). Empty for text-only messages.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        parts: Vec<ContentPart>,
+    },
     #[serde(rename = "assistant")]
     Assistant {
         content: Option<String>,
@@ -302,10 +325,33 @@ pub enum ConversationMessage {
 
 impl ConversationMessage {
     /// Estimate the character count of this message for truncation budgeting.
+    /// Create a text-only user message.
+    pub fn user(content: String) -> Self {
+        Self::User {
+            content,
+            parts: Vec::new(),
+        }
+    }
+
+    /// Create a multi-modal user message with content parts.
+    pub fn user_with_parts(content: String, parts: Vec<ContentPart>) -> Self {
+        Self::User { content, parts }
+    }
+
+    /// Estimate the character count of this message for truncation budgeting.
     pub fn char_count(&self) -> usize {
         match self {
             Self::System { content } => content.len(),
-            Self::User { content } => content.len(),
+            Self::User { content, parts } => {
+                content.len()
+                    + parts
+                        .iter()
+                        .map(|p| match p {
+                            ContentPart::Text { text } => text.len(),
+                            ContentPart::Image { .. } => 100, // placeholder estimate for images
+                        })
+                        .sum::<usize>()
+            }
             Self::Assistant {
                 content,
                 tool_calls,
@@ -345,6 +391,9 @@ pub struct MemoryEntry {
     /// Channel that originated this entry (e.g. "telegram", "cli").
     #[serde(default)]
     pub source_channel: Option<String>,
+    /// Conversation this entry belongs to. Empty string means global (legacy behavior).
+    #[serde(default)]
+    pub conversation_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -424,7 +473,7 @@ pub trait Provider: Send + Sync {
         let prompt = messages
             .iter()
             .filter_map(|m| match m {
-                ConversationMessage::User { content } => Some(content.as_str()),
+                ConversationMessage::User { content, .. } => Some(content.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -479,6 +528,30 @@ pub trait MemoryStore: Send + Sync {
             })
             .take(limit)
             .collect())
+    }
+
+    /// Query recent entries scoped to a specific conversation.
+    async fn recent_for_conversation(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let all = self.recent(limit * 2).await?;
+        Ok(all
+            .into_iter()
+            .filter(|e| e.conversation_id == conversation_id)
+            .take(limit)
+            .collect())
+    }
+
+    /// Fork a conversation: copy all entries from `from_id` into `new_id`.
+    async fn fork_conversation(&self, _from_id: &str, _new_id: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// List all distinct conversation IDs in the store.
+    async fn list_conversations(&self) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
     }
 }
 
@@ -600,16 +673,68 @@ mod tests {
 
     #[test]
     fn conversation_message_user_serde() {
-        let msg = ConversationMessage::User {
-            content: "hello".to_string(),
-        };
+        let msg = ConversationMessage::user("hello".to_string());
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"role\":\"user\""));
+        assert!(!json.contains("parts")); // empty parts omitted
         let parsed: ConversationMessage = serde_json::from_str(&json).unwrap();
         match parsed {
-            ConversationMessage::User { content } => assert_eq!(content, "hello"),
+            ConversationMessage::User { content, parts } => {
+                assert_eq!(content, "hello");
+                assert!(parts.is_empty());
+            }
             _ => panic!("expected User variant"),
         }
+    }
+
+    #[test]
+    fn conversation_message_user_backward_compat_no_parts() {
+        // Old serialized format without `parts` field should deserialize fine.
+        let json = r#"{"role":"user","content":"legacy message"}"#;
+        let parsed: ConversationMessage = serde_json::from_str(json).unwrap();
+        match parsed {
+            ConversationMessage::User { content, parts } => {
+                assert_eq!(content, "legacy message");
+                assert!(parts.is_empty());
+            }
+            _ => panic!("expected User variant"),
+        }
+    }
+
+    #[test]
+    fn content_part_serde_round_trip() {
+        let text = ContentPart::Text {
+            text: "hello".to_string(),
+        };
+        let json = serde_json::to_string(&text).unwrap();
+        assert!(json.contains("\"type\":\"text\""));
+        let parsed: ContentPart = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ContentPart::Text { text } => assert_eq!(text, "hello"),
+            _ => panic!("expected Text variant"),
+        }
+
+        let img = ContentPart::Image {
+            media_type: "image/png".to_string(),
+            data: "base64data".to_string(),
+        };
+        let json = serde_json::to_string(&img).unwrap();
+        assert!(json.contains("\"type\":\"image\""));
+        let parsed: ContentPart = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ContentPart::Image { media_type, data } => {
+                assert_eq!(media_type, "image/png");
+                assert_eq!(data, "base64data");
+            }
+            _ => panic!("expected Image variant"),
+        }
+    }
+
+    #[test]
+    fn memory_entry_backward_compat_no_conversation_id() {
+        let json = r#"{"role":"user","content":"hello"}"#;
+        let parsed: MemoryEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.conversation_id, "");
     }
 
     #[test]

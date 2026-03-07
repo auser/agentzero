@@ -24,7 +24,7 @@ pub use agent::Agent;
 pub use event_bus::{Event, EventBus, EventSubscriber, InMemoryBus};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{
-    AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ChatResult,
+    AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ChatResult, ContentPart,
     ConversationMessage, HookEvent, HookFailureMode, HookPolicy, HookRiskTier, HookSink,
     MemoryEntry, MemoryStore, MetricsSink, Provider, ReasoningConfig, ResearchPolicy,
     ResearchTrigger, StopReason, StreamChunk, StreamSink, Tool, ToolCallDelta, ToolContext,

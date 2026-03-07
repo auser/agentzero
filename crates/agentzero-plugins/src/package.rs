@@ -864,6 +864,32 @@ pub fn load_registry_index(
     ))
 }
 
+/// Force-refresh the registry index, bypassing the cache.
+///
+/// Reads from the given URL (file:// only for now) and saves to cache.
+pub fn refresh_registry_index(
+    data_dir: &Path,
+    registry_url: Option<&str>,
+) -> anyhow::Result<RegistryIndex> {
+    if let Some(url) = registry_url {
+        if let Some(file_path) = url.strip_prefix("file://") {
+            let data = fs::read_to_string(file_path)
+                .with_context(|| format!("failed to read registry index: {file_path}"))?;
+            let index: RegistryIndex =
+                serde_json::from_str(&data).with_context(|| "failed to parse registry index")?;
+            index.save_cache(data_dir)?;
+            return Ok(index);
+        }
+        return Err(anyhow!(
+            "HTTP registry fetch not yet supported. Use 'file://<path>' for local registries."
+        ));
+    }
+
+    Err(anyhow!(
+        "No registry URL provided. Pass --registry-url or set 'plugins.registry_url' in config."
+    ))
+}
+
 /// Check which installed plugins have updates available in the registry.
 pub fn check_outdated(state: &PluginState, index: &RegistryIndex) -> Vec<(String, String, String)> {
     // Returns vec of (id, installed_version, latest_version)

@@ -14,6 +14,7 @@ async fn runtime_exec_uses_testkit_components_success_path() {
         tools: vec![Box::new(EchoTool) as Box<dyn Tool>],
         audit_sink: None,
         hook_sink: None,
+        conversation_id: None,
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("."), "hello".to_string())
@@ -32,6 +33,7 @@ async fn runtime_exec_uses_testkit_components_negative_path() {
         tools: vec![],
         audit_sink: None,
         hook_sink: None,
+        conversation_id: None,
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("."), "hello".to_string())

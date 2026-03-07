@@ -2,8 +2,8 @@ use crate::cli::PluginCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_plugins::package::{
     check_outdated, generate_registry_entry, install_from_url, install_packaged_plugin,
-    list_installed_plugins, load_registry_index, package_plugin, remove_installed_plugin,
-    PluginManifest, PluginState, RegistryEntryParams,
+    list_installed_plugins, load_registry_index, package_plugin, refresh_registry_index,
+    remove_installed_plugin, PluginManifest, PluginState, RegistryEntryParams,
 };
 use agentzero_plugins::wasm::{
     WasmExecutionRequest, WasmIsolationPolicy, WasmPluginContainer, WasmPluginRuntime,
@@ -424,6 +424,13 @@ impl AgentZeroCommand for PluginCommand {
                         }
                     }
                 }
+            }
+            PluginCommands::Refresh { registry_url } => {
+                let index = refresh_registry_index(&ctx.data_dir, registry_url.as_deref())?;
+                println!(
+                    "Registry cache refreshed ({} plugin(s))",
+                    index.plugins.len()
+                );
             }
             PluginCommands::Publish {
                 manifest,

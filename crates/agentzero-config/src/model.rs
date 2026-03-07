@@ -669,6 +669,8 @@ pub struct PluginConfig {
     /// Override for the development plugin directory (CWD hot-reload).
     /// Defaults to `{cwd}/plugins/`.
     pub dev_plugin_dir: Option<String>,
+    /// URL to a plugin registry index (JSON manifest).
+    pub registry_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

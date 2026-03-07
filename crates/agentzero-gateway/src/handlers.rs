@@ -159,6 +159,7 @@ fn build_agent_request(
         model_override,
         profile_override: None,
         extra_tools: vec![],
+        conversation_id: None,
     })
 }
 
@@ -454,6 +455,7 @@ async fn handle_text_message(
         model_override: None,
         profile_override: None,
         extra_tools: vec![],
+        conversation_id: None,
     };
     let execution = match build_runtime_execution(req).await {
         Ok(exec) => exec,

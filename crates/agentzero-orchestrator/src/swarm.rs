@@ -60,6 +60,7 @@ pub async fn build_swarm(
             },
             profile_override: None,
             extra_tools: Vec::new(),
+            conversation_id: None,
         };
         match build_runtime_execution(router_req).await {
             Ok(exec) => AgentRouter::new(
@@ -123,6 +124,7 @@ pub async fn build_swarm(
             },
             profile_override: None,
             extra_tools: Vec::new(),
+            conversation_id: None,
         };
 
         match build_runtime_execution(req).await {

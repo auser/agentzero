@@ -33,6 +33,8 @@ pub struct RunAgentRequest {
     /// Additional tools injected by the caller (e.g. FFI-registered tools).
     /// These are appended to the tools built from the security policy.
     pub extra_tools: Vec<Box<dyn Tool>>,
+    /// Active conversation ID for memory scoping.
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +50,7 @@ pub struct RuntimeExecution {
     pub tools: Vec<Box<dyn Tool>>,
     pub audit_sink: Option<Box<dyn AuditSink>>,
     pub hook_sink: Option<Box<dyn HookSink>>,
+    pub conversation_id: Option<String>,
 }
 
 struct AuditHookSink {
@@ -216,6 +219,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         } else {
             None
         },
+        conversation_id: req.conversation_id,
     })
 }
 
@@ -268,6 +272,7 @@ pub fn run_agent_streaming(
 
         let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
         ctx.privacy_boundary = privacy_boundary;
+        ctx.conversation_id = execution.conversation_id.clone();
 
         let response = agent
             .respond_streaming(UserMessage { text: message }, &ctx, tx)
@@ -927,6 +932,7 @@ mod tests {
             tools: vec![],
             audit_sink: None,
             hook_sink: None,
+            conversation_id: None,
         }
     }
 

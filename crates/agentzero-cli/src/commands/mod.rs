@@ -4,6 +4,7 @@ pub mod auth;
 pub mod channel;
 pub mod completions;
 pub mod config;
+pub mod conversation;
 pub mod coordination;
 pub mod cost;
 pub mod cron;
