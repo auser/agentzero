@@ -1,8 +1,9 @@
 #!/bin/bash
 #
 # Pre-commit hook for agentzero
-# - Checks formatting with cargo fmt --check (fast, no rewrite)
-# - Runs clippy only on crates with staged changes (fast incremental)
+# - Auto-fixes formatting with cargo fmt --all and re-stages the changes
+# - Auto-fixes clippy warnings with cargo clippy --fix --allow-staged and re-stages
+# - Errors if any clippy warnings remain after auto-fix (require manual resolution)
 #
 # Full test suite runs in CI and can be triggered locally with:
 #   just test
@@ -16,61 +17,62 @@ set -e
 
 echo "Running pre-commit checks..."
 
-# Check formatting (fast — read-only check, no rewrite)
-echo "Checking code formatting..."
-if ! cargo fmt --all -- --check 2>/dev/null; then
-    echo ""
-    echo "Formatting check failed!"
-    echo "   Run 'cargo fmt --all' to fix formatting"
-    exit 1
-fi
+# ── Formatting ────────────────────────────────────────────────────────────────
+echo "Fixing code formatting..."
+cargo fmt --all 2>/dev/null
+# Re-stage any files reformatted by cargo fmt
+git add -u
 echo "Formatting OK"
 echo ""
 
-# Determine which crates have staged changes
+# ── Determine changed crates ──────────────────────────────────────────────────
 CHANGED_CRATES=$(git diff --cached --name-only --diff-filter=ACMR \
     | sed -n 's|^crates/\([^/]*\)/.*|\1|p' \
     | sort -u)
 
-# Check if bin/ has changes too
 if git diff --cached --name-only --diff-filter=ACMR | grep -q '^bin/'; then
     CHANGED_CRATES=$(printf '%s\nagentzero' "$CHANGED_CRATES")
 fi
 
-# Check if workspace-level Cargo.toml changed (not just Cargo.lock)
+WORKSPACE_MANIFEST_CHANGED=false
 if git diff --cached --name-only --diff-filter=ACMR | grep -q '^Cargo\.toml$'; then
-    # Workspace manifest changed — run clippy on all changed crates
-    # (Cargo.lock-only changes are benign and don't need full workspace clippy)
-    if [ -z "$CHANGED_CRATES" ]; then
-        echo "Only workspace Cargo.toml changed — running full clippy..."
-        if ! cargo clippy --workspace -- -D warnings; then
-            echo "Clippy check failed!"
-            exit 1
-        fi
-        echo "Clippy passed"
-        echo "All pre-commit checks passed!"
-        exit 0
-    fi
-    # else: fall through to per-crate clippy below
+    WORKSPACE_MANIFEST_CHANGED=true
 fi
 
-if [ -z "$CHANGED_CRATES" ]; then
+if [ -z "$CHANGED_CRATES" ] && [ "$WORKSPACE_MANIFEST_CHANGED" = false ]; then
     echo "No crate changes staged — skipping clippy"
     echo "All pre-commit checks passed!"
     exit 0
 fi
 
-# Build clippy args: -p <crate> for each changed crate
-CLIPPY_ARGS=""
-for crate in $CHANGED_CRATES; do
-    CLIPPY_ARGS="$CLIPPY_ARGS -p $crate"
-done
+# ── Build clippy scope ────────────────────────────────────────────────────────
+if [ "$WORKSPACE_MANIFEST_CHANGED" = true ] && [ -z "$CHANGED_CRATES" ]; then
+    CLIPPY_SCOPE="--workspace"
+    SCOPE_DESC="workspace"
+else
+    CLIPPY_SCOPE=""
+    for crate in $CHANGED_CRATES; do
+        CLIPPY_SCOPE="$CLIPPY_SCOPE -p $crate"
+    done
+    SCOPE_DESC=$(echo "$CHANGED_CRATES" | tr '\n' ' ')
+fi
 
-CRATE_LIST=$(echo $CHANGED_CRATES | tr '\n' ' ')
-echo "Running clippy on changed crates: $CRATE_LIST..."
-if ! cargo clippy $CLIPPY_ARGS -- -D warnings; then
-    echo "Clippy check failed!"
-    echo "   Run 'cargo clippy --fix --allow-dirty' to auto-fix"
+# ── Clippy auto-fix ───────────────────────────────────────────────────────────
+echo "Auto-fixing clippy warnings in: $SCOPE_DESC..."
+# --allow-staged: permit fixing files that are partially staged.
+# Ignore exit code — auto-fix may not resolve everything; we verify below.
+# shellcheck disable=SC2086
+cargo clippy --fix --allow-staged $CLIPPY_SCOPE -- -D warnings 2>/dev/null || true
+# Re-stage any files modified by clippy --fix
+git add -u
+
+# ── Clippy verify ─────────────────────────────────────────────────────────────
+echo "Verifying no remaining clippy warnings..."
+# shellcheck disable=SC2086
+if ! cargo clippy $CLIPPY_SCOPE -- -D warnings; then
+    echo ""
+    echo "Clippy check failed — some warnings require manual fixes."
+    echo "   Run: cargo clippy --fix --allow-dirty -- -D warnings"
     exit 1
 fi
 echo "Clippy passed"
