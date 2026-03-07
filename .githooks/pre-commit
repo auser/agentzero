@@ -62,14 +62,14 @@ echo "Auto-fixing clippy warnings in: $SCOPE_DESC..."
 # --allow-staged: permit fixing files that are partially staged.
 # Ignore exit code — auto-fix may not resolve everything; we verify below.
 # shellcheck disable=SC2086
-cargo clippy --fix --allow-staged $CLIPPY_SCOPE -- -D warnings 2>/dev/null || true
+cargo clippy --fix --allow-staged --all-targets $CLIPPY_SCOPE -- -D warnings 2>/dev/null || true
 # Re-stage any files modified by clippy --fix
 git add -u
 
 # ── Clippy verify ─────────────────────────────────────────────────────────────
 echo "Verifying no remaining clippy warnings..."
 # shellcheck disable=SC2086
-if ! cargo clippy $CLIPPY_SCOPE -- -D warnings; then
+if ! cargo clippy --all-targets $CLIPPY_SCOPE -- -D warnings; then
     echo ""
     echo "Clippy check failed — some warnings require manual fixes."
     echo "   Run: cargo clippy --fix --allow-dirty -- -D warnings"

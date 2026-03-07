@@ -2207,7 +2207,7 @@ mod tests {
         let installed = install_with_dependencies(&url, &install_root, None, &registry)
             .expect("circular deps should resolve without loop");
         // plugin-a is installed; plugin-b is also installed as dep; plugin-a is skipped (seen)
-        assert!(installed.len() >= 1);
+        assert!(!installed.is_empty());
         assert!(installed.iter().any(|p| p.manifest.id == "plugin-a"));
     }
 
