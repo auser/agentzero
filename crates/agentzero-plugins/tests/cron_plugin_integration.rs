@@ -78,8 +78,11 @@ mod cron_plugins {
     }
 
     // ---- cron_manager tests ----
+    // These tests require pre-built WASM plugins and are excluded from workspace test runs.
+    // Run with: cargo test -p agentzero-plugins -- --ignored
 
     #[test]
+    #[ignore]
     fn cron_manager_add_and_list() {
         let wasm_path = cron_manager_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -121,6 +124,7 @@ mod cron_plugins {
     }
 
     #[test]
+    #[ignore]
     fn cron_manager_remove() {
         let wasm_path = cron_manager_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -167,6 +171,7 @@ mod cron_plugins {
     }
 
     #[test]
+    #[ignore]
     fn cron_manager_update() {
         let wasm_path = cron_manager_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -209,6 +214,7 @@ mod cron_plugins {
     }
 
     #[test]
+    #[ignore]
     fn cron_manager_pause_resume() {
         let wasm_path = cron_manager_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -264,6 +270,7 @@ mod cron_plugins {
     }
 
     #[test]
+    #[ignore]
     fn cron_manager_duplicate_id() {
         let wasm_path = cron_manager_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -302,6 +309,7 @@ mod cron_plugins {
     }
 
     #[test]
+    #[ignore]
     fn cron_manager_missing_action() {
         let wasm_path = cron_manager_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -328,6 +336,7 @@ mod cron_plugins {
     // ---- schedule plugin tests ----
 
     #[test]
+    #[ignore]
     fn schedule_parse_every_5_minutes() {
         let wasm_path = schedule_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -359,6 +368,7 @@ mod cron_plugins {
     }
 
     #[test]
+    #[ignore]
     fn schedule_parse_daily_at_9am() {
         let wasm_path = schedule_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -389,6 +399,7 @@ mod cron_plugins {
     }
 
     #[test]
+    #[ignore]
     fn schedule_parse_weekly_on_monday() {
         let wasm_path = schedule_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -419,6 +430,7 @@ mod cron_plugins {
     }
 
     #[test]
+    #[ignore]
     fn schedule_parse_passthrough_cron() {
         let wasm_path = schedule_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -450,6 +462,7 @@ mod cron_plugins {
     }
 
     #[test]
+    #[ignore]
     fn schedule_create_delegates() {
         let wasm_path = schedule_wasm();
         if skip_if_not_built(&wasm_path) {

@@ -49,6 +49,7 @@ impl SqliteMemoryStore {
                 conn.execute(MEMORY_SCHEMA, [])
                     .context("failed to create memory table after migration")?;
                 migrate_privacy_columns(&conn)?;
+                migrate_conversation_column(&conn)?;
                 return Ok(Self {
                     conn: Mutex::new(conn),
                 });
@@ -58,6 +59,7 @@ impl SqliteMemoryStore {
         conn.execute(MEMORY_SCHEMA, [])
             .context("failed to create memory table")?;
         migrate_privacy_columns(&conn)?;
+        migrate_conversation_column(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -77,6 +79,18 @@ fn migrate_privacy_columns(conn: &Connection) -> anyhow::Result<()> {
             Err(e) if e.to_string().contains("duplicate column") => {}
             Err(e) => return Err(e).context("failed to migrate memory table"),
         }
+    }
+    Ok(())
+}
+
+/// Add conversation_id column if it doesn't exist yet.
+fn migrate_conversation_column(conn: &Connection) -> anyhow::Result<()> {
+    match conn
+        .execute_batch("ALTER TABLE memory ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''")
+    {
+        Ok(()) => {}
+        Err(e) if e.to_string().contains("duplicate column") => {}
+        Err(e) => return Err(e).context("failed to add conversation_id column"),
     }
     Ok(())
 }
@@ -112,8 +126,8 @@ impl MemoryStore for SqliteMemoryStore {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel) VALUES(?1, ?2, ?3, ?4)",
-            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel],
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id) VALUES(?1, ?2, ?3, ?4, ?5)",
+            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id],
         )?;
         Ok(())
     }
@@ -121,7 +135,7 @@ impl MemoryStore for SqliteMemoryStore {
     async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
-            "SELECT role, content, privacy_boundary, source_channel
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id
              FROM memory
              ORDER BY id DESC
              LIMIT ?1",
@@ -132,6 +146,7 @@ impl MemoryStore for SqliteMemoryStore {
                 content: row.get(1)?,
                 privacy_boundary: row.get::<_, String>(2).unwrap_or_default(),
                 source_channel: row.get::<_, Option<String>>(3).unwrap_or_default(),
+                conversation_id: row.get::<_, String>(4).unwrap_or_default(),
             })
         })?;
 
@@ -151,7 +166,7 @@ impl MemoryStore for SqliteMemoryStore {
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
-            "SELECT role, content, privacy_boundary, source_channel
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id
              FROM memory
              WHERE (privacy_boundary = '' OR privacy_boundary = ?1
                     OR privacy_boundary IN ('any', 'inherit')
@@ -168,6 +183,7 @@ impl MemoryStore for SqliteMemoryStore {
                 content: row.get(1)?,
                 privacy_boundary: row.get::<_, String>(2).unwrap_or_default(),
                 source_channel: row.get::<_, Option<String>>(3).unwrap_or_default(),
+                conversation_id: row.get::<_, String>(4).unwrap_or_default(),
             })
         })?;
 
@@ -176,6 +192,63 @@ impl MemoryStore for SqliteMemoryStore {
             out.push(row?);
         }
         out.reverse();
+        Ok(out)
+    }
+
+    async fn recent_for_conversation(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id
+             FROM memory
+             WHERE conversation_id = ?1
+             ORDER BY id DESC
+             LIMIT ?2",
+        )?;
+        let cid = conversation_id.to_string();
+        let rows = stmt.query_map(params![cid, limit as i64], |row| {
+            Ok(MemoryEntry {
+                role: row.get(0)?,
+                content: row.get(1)?,
+                privacy_boundary: row.get::<_, String>(2).unwrap_or_default(),
+                source_channel: row.get::<_, Option<String>>(3).unwrap_or_default(),
+                conversation_id: row.get::<_, String>(4).unwrap_or_default(),
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        out.reverse();
+        Ok(out)
+    }
+
+    async fn fork_conversation(&self, from_id: &str, new_id: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        conn.execute(
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id)
+             SELECT role, content, privacy_boundary, source_channel, ?2
+             FROM memory
+             WHERE conversation_id = ?1
+             ORDER BY id",
+            params![from_id, new_id],
+        )?;
+        Ok(())
+    }
+
+    async fn list_conversations(&self) -> anyhow::Result<Vec<String>> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT conversation_id FROM memory WHERE conversation_id != '' ORDER BY conversation_id",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
         Ok(out)
     }
 }
@@ -497,6 +570,7 @@ mod tests {
                 content: "local msg".to_string(),
                 privacy_boundary: "local_only".to_string(),
                 source_channel: Some("cli".to_string()),
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -518,6 +592,7 @@ mod tests {
                 content: "local secret".to_string(),
                 privacy_boundary: "local_only".to_string(),
                 source_channel: None,
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -527,6 +602,7 @@ mod tests {
                 content: "public msg".to_string(),
                 privacy_boundary: "any".to_string(),
                 source_channel: None,
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -556,6 +632,7 @@ mod tests {
                 content: "pre-migration entry".to_string(),
                 privacy_boundary: String::new(),
                 source_channel: None,
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -581,6 +658,7 @@ mod tests {
                 content: "from telegram".to_string(),
                 privacy_boundary: String::new(),
                 source_channel: Some("telegram".to_string()),
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -590,6 +668,7 @@ mod tests {
                 content: "from cli".to_string(),
                 privacy_boundary: String::new(),
                 source_channel: Some("cli".to_string()),
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -619,6 +698,7 @@ mod tests {
                 content: "before re-migration".to_string(),
                 privacy_boundary: "encrypted_only".to_string(),
                 source_channel: None,
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -675,6 +755,7 @@ mod tests {
                 content: "enc msg".to_string(),
                 privacy_boundary: "encrypted_only".to_string(),
                 source_channel: None,
+                ..Default::default()
             })
             .await
             .unwrap();

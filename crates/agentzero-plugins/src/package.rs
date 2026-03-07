@@ -2,10 +2,13 @@ use anyhow::{anyhow, Context};
 use fd_lock::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static DOWNLOAD_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 const CURRENT_RUNTIME_API_VERSION: u32 = 2;
@@ -26,6 +29,14 @@ fn open_install_lock(install_root: &Path) -> anyhow::Result<RwLock<fs::File>> {
     Ok(RwLock::new(lock_file))
 }
 
+/// A dependency declared by a plugin on another plugin.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginDependency {
+    pub id: String,
+    /// semver version requirement, e.g. `">=1.0.0, <2.0.0"`.
+    pub version_req: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginManifest {
     pub id: String,
@@ -44,6 +55,8 @@ pub struct PluginManifest {
     #[serde(default = "default_runtime_api_version")]
     pub max_runtime_api: u32,
     pub allowed_host_calls: Vec<String>,
+    #[serde(default)]
+    pub dependencies: Vec<PluginDependency>,
 }
 
 impl PluginManifest {
@@ -79,6 +92,19 @@ impl PluginManifest {
             ));
         }
         self.validate_runtime_compatibility(CURRENT_RUNTIME_API_VERSION)?;
+        for dep in &self.dependencies {
+            if dep.id.trim().is_empty() {
+                return Err(anyhow!("dependency id cannot be empty"));
+            }
+            dep.version_req
+                .parse::<semver::VersionReq>()
+                .with_context(|| {
+                    format!(
+                        "dependency '{}' has invalid version requirement '{}'",
+                        dep.id, dep.version_req
+                    )
+                })?;
+        }
         Ok(())
     }
 
@@ -694,10 +720,18 @@ pub fn install_from_url(
     // is a file:// URL first.
     let bytes = if let Some(file_path) = url.strip_prefix("file://") {
         fs::read(file_path).with_context(|| format!("failed to read local package: {file_path}"))?
+    } else if url.starts_with("https://") || url.starts_with("http://") {
+        let mut buf = Vec::new();
+        ureq::get(url)
+            .call()
+            .with_context(|| format!("failed to download plugin from {url}"))?
+            .into_reader()
+            .read_to_end(&mut buf)
+            .with_context(|| "failed to read plugin download response")?;
+        buf
     } else {
         return Err(anyhow!(
-            "URL-based install requires HTTP support. Use 'file://<path>' for local archives \
-             or download the package manually and use '--package <path>'."
+            "unsupported URL scheme for '{url}'. Use 'https://', 'http://', or 'file://'"
         ));
     };
 
@@ -712,8 +746,11 @@ pub fn install_from_url(
     }
 
     // Write to a temp file and install
-    let tmp_dir =
-        std::env::temp_dir().join(format!("agentzero-plugin-download-{}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "agentzero-plugin-download-{}-{}",
+        std::process::id(),
+        DOWNLOAD_COUNTER.fetch_add(1, Ordering::Relaxed),
+    ));
     fs::create_dir_all(&tmp_dir)?;
     let tmp_path = tmp_dir.join("package.tar");
     fs::write(&tmp_path, &bytes)?;
@@ -726,6 +763,102 @@ pub fn install_from_url(
     result
 }
 
+// ── Dependency resolution ─────────────────────────────────────────────────
+
+/// Install a plugin from a URL and then install any missing dependencies
+/// declared in its manifest, resolved against the provided registry.
+///
+/// Prints progress to stdout for each dependency installed.
+/// Returns the main plugin plus all newly installed dependencies.
+pub fn install_with_dependencies(
+    url: &str,
+    install_root: &Path,
+    expected_sha256: Option<&str>,
+    registry: &RegistryIndex,
+) -> anyhow::Result<Vec<InstalledPlugin>> {
+    let main = install_from_url(url, install_root, expected_sha256)?;
+    let mut installed = vec![main];
+    let mut seen: HashSet<String> = installed.iter().map(|p| p.manifest.id.clone()).collect();
+    install_deps_recursive(
+        &installed[0].manifest.dependencies.clone(),
+        install_root,
+        registry,
+        &mut seen,
+        &mut installed,
+    )?;
+    Ok(installed)
+}
+
+fn install_deps_recursive(
+    deps: &[PluginDependency],
+    install_root: &Path,
+    registry: &RegistryIndex,
+    seen: &mut HashSet<String>,
+    installed: &mut Vec<InstalledPlugin>,
+) -> anyhow::Result<()> {
+    let already_installed = list_installed_plugins(install_root).unwrap_or_default();
+
+    for dep in deps {
+        if seen.contains(&dep.id) {
+            continue;
+        }
+        seen.insert(dep.id.clone());
+
+        // Skip if already installed at a satisfying version
+        let req = dep
+            .version_req
+            .parse::<semver::VersionReq>()
+            .with_context(|| format!("invalid version_req for dependency '{}'", dep.id))?;
+        let satisfied = already_installed.iter().any(|p| {
+            p.id == dep.id
+                && semver::Version::parse(&p.version)
+                    .map(|v| req.matches(&v))
+                    .unwrap_or(false)
+        });
+        if satisfied {
+            continue;
+        }
+
+        // Find in registry
+        let entry = registry.get(&dep.id).ok_or_else(|| {
+            anyhow!(
+                "dependency '{}' not found in registry; install it manually or refresh the registry",
+                dep.id
+            )
+        })?;
+        let version_entry = entry
+            .versions
+            .iter()
+            .find(|v| {
+                semver::Version::parse(&v.version)
+                    .map(|sv| req.matches(&sv))
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| {
+                anyhow!(
+                    "no registry version of '{}' satisfies '{}'",
+                    dep.id,
+                    dep.version_req
+                )
+            })?;
+
+        println!(
+            "  Installing dependency: {}@{}",
+            dep.id, version_entry.version
+        );
+        let dep_plugin = install_from_url(
+            &version_entry.download_url,
+            install_root,
+            Some(&version_entry.sha256),
+        )?;
+        // Recurse into this dependency's own deps
+        let sub_deps = dep_plugin.manifest.dependencies.clone();
+        installed.push(dep_plugin);
+        install_deps_recursive(&sub_deps, install_root, registry, seen, installed)?;
+    }
+    Ok(())
+}
+
 // ── Plugin Registry ───────────────────────────────────────────────────────
 
 /// A single version entry in the registry index for a plugin.
@@ -736,6 +869,8 @@ pub struct RegistryVersionEntry {
     pub sha256: String,
     pub min_runtime_api: u32,
     pub max_runtime_api: u32,
+    #[serde(default)]
+    pub dependencies: Vec<PluginDependency>,
 }
 
 /// An entry in the registry index representing one plugin.
@@ -842,25 +977,50 @@ pub fn load_registry_index(
         return Ok(cached);
     }
 
-    // Try fetching from URL (file:// for now)
+    // Try fetching from URL
     if let Some(url) = registry_url {
-        if let Some(file_path) = url.strip_prefix("file://") {
-            let data = fs::read_to_string(file_path)
-                .with_context(|| format!("failed to read registry index: {file_path}"))?;
-            let index: RegistryIndex =
-                serde_json::from_str(&data).with_context(|| "failed to parse registry index")?;
-            index.save_cache(data_dir)?;
-            return Ok(index);
-        }
-        return Err(anyhow!(
-            "HTTP registry fetch not yet supported. Use 'file://<path>' for local registries \
-             or run 'plugin refresh' after manually downloading the index."
-        ));
+        let index = fetch_registry_from_url(url)?;
+        index.save_cache(data_dir)?;
+        return Ok(index);
     }
 
     Err(anyhow!(
         "No registry cache found and no registry URL configured. \
          Set 'plugins.registry_url' in config or run 'plugin refresh --url <url>'."
+    ))
+}
+
+/// Force-refresh the registry index, bypassing the cache.
+///
+/// Reads from the given URL (file:// only for now) and saves to cache.
+pub fn refresh_registry_index(
+    data_dir: &Path,
+    registry_url: Option<&str>,
+) -> anyhow::Result<RegistryIndex> {
+    let url = registry_url.ok_or_else(|| {
+        anyhow!("No registry URL provided. Pass --registry-url or set 'plugins.registry_url' in config.")
+    })?;
+    let index = fetch_registry_from_url(url)?;
+    index.save_cache(data_dir)?;
+    Ok(index)
+}
+
+/// Fetch a registry index from a URL (file://, https://, or http://).
+fn fetch_registry_from_url(url: &str) -> anyhow::Result<RegistryIndex> {
+    if let Some(file_path) = url.strip_prefix("file://") {
+        let data = fs::read_to_string(file_path)
+            .with_context(|| format!("failed to read registry index: {file_path}"))?;
+        return serde_json::from_str(&data).with_context(|| "failed to parse registry index");
+    }
+    if url.starts_with("https://") || url.starts_with("http://") {
+        return ureq::get(url)
+            .call()
+            .with_context(|| format!("failed to fetch registry index from {url}"))?
+            .into_json::<RegistryIndex>()
+            .with_context(|| "failed to parse registry index response");
+    }
+    Err(anyhow!(
+        "unsupported URL scheme for '{url}'. Use 'https://', 'http://', or 'file://'"
     ))
 }
 
@@ -907,6 +1067,7 @@ pub fn generate_registry_entry(params: &RegistryEntryParams<'_>) -> RegistryEntr
             sha256: params.wasm_sha256.to_string(),
             min_runtime_api: params.manifest.min_runtime_api,
             max_runtime_api: params.manifest.max_runtime_api,
+            dependencies: params.manifest.dependencies.clone(),
         }],
     }
 }
@@ -935,6 +1096,7 @@ mod tests {
             min_runtime_api: 1,
             max_runtime_api: 2,
             allowed_host_calls: vec![],
+            dependencies: vec![],
         }
     }
 
@@ -1096,6 +1258,7 @@ mod tests {
             min_runtime_api: 1,
             max_runtime_api: 2,
             allowed_host_calls: vec![],
+            dependencies: vec![],
         };
         fs::write(
             dir.join("manifest.json"),
@@ -1197,6 +1360,7 @@ mod tests {
             min_runtime_api: 1,
             max_runtime_api: 2,
             allowed_host_calls: vec![],
+            dependencies: vec![],
         };
         fs::write(
             dir.join("manifest.json"),
@@ -1306,6 +1470,7 @@ mod tests {
                     min_runtime_api: 1,
                     max_runtime_api: 2,
                     allowed_host_calls: vec![],
+                    dependencies: vec![],
                 },
                 wasm_path: PathBuf::from("/tmp/a.wasm"),
                 dev_mode: false,
@@ -1323,6 +1488,7 @@ mod tests {
                     min_runtime_api: 1,
                     max_runtime_api: 2,
                     allowed_host_calls: vec![],
+                    dependencies: vec![],
                 },
                 wasm_path: PathBuf::from("/tmp/b.wasm"),
                 dev_mode: false,
@@ -1358,6 +1524,7 @@ mod tests {
                             sha256: "a".repeat(64),
                             min_runtime_api: 2,
                             max_runtime_api: 2,
+                            dependencies: vec![],
                         },
                         RegistryVersionEntry {
                             version: "1.2.0".to_string(),
@@ -1365,6 +1532,7 @@ mod tests {
                             sha256: "b".repeat(64),
                             min_runtime_api: 2,
                             max_runtime_api: 2,
+                            dependencies: vec![],
                         },
                     ],
                 },
@@ -1381,6 +1549,7 @@ mod tests {
                         sha256: "c".repeat(64),
                         min_runtime_api: 2,
                         max_runtime_api: 2,
+                        dependencies: vec![],
                     }],
                 },
             ],
@@ -1764,6 +1933,308 @@ mod tests {
         // Lock file should have been created (and released after install)
         let lock_path = install_root.join(super::LOCK_FILE_NAME);
         assert!(lock_path.exists(), "lock file should exist after install");
+    }
+
+    // ── install_from_url / fetch_registry tests ───────────────────────
+
+    #[test]
+    fn install_from_url_unsupported_scheme_fails() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let err = super::install_from_url("ftp://example.com/plugin.tar", tmp.path(), None)
+            .expect_err("unsupported scheme should fail");
+        assert!(
+            err.to_string().contains("unsupported URL scheme"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn install_from_file_url_success_path() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let wasm_bytes =
+            wat::parse_str(r#"(module (func (export "run") (result i32) i32.const 1))"#)
+                .expect("wat should compile");
+        let wasm_path = tmp.path().join("plugin.wasm");
+        fs::write(&wasm_path, &wasm_bytes).expect("wasm should write");
+        let pkg_path = tmp.path().join("pkg.tar");
+        package_plugin(&wasm_path, sample_manifest(), &pkg_path).expect("package should succeed");
+
+        let install_root = tmp.path().join("installed");
+        let url = format!("file://{}", pkg_path.display());
+        let installed = super::install_from_url(&url, &install_root, None)
+            .expect("file:// install should succeed");
+        assert_eq!(installed.manifest.id, "sample-plugin");
+    }
+
+    #[test]
+    fn refresh_registry_no_url_fails() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let err = super::refresh_registry_index(tmp.path(), None).expect_err("should fail");
+        assert!(err.to_string().contains("No registry URL"));
+    }
+
+    #[test]
+    fn refresh_registry_unsupported_scheme_fails() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let err = super::refresh_registry_index(tmp.path(), Some("ftp://example.com/index.json"))
+            .expect_err("unsupported scheme should fail");
+        assert!(
+            err.to_string().contains("unsupported URL scheme"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // ── Dependency resolution tests ───────────────────────────────────
+
+    use super::{install_with_dependencies, PluginDependency};
+
+    fn make_plugin_package(
+        dir: &std::path::Path,
+        id: &str,
+        version: &str,
+        deps: Vec<PluginDependency>,
+    ) -> PathBuf {
+        let wasm_bytes =
+            wat::parse_str(r#"(module (func (export "run") (result i32) i32.const 1))"#)
+                .expect("wat should compile");
+        let wasm_path = dir.join(format!("{id}.wasm"));
+        let sha = super::sha256_hex(&wasm_bytes);
+        fs::write(&wasm_path, &wasm_bytes).expect("wasm write");
+        let manifest = PluginManifest {
+            id: id.to_string(),
+            version: version.to_string(),
+            description: None,
+            entrypoint: "run".to_string(),
+            wasm_file: format!("{id}.wasm"),
+            wasm_sha256: sha,
+            capabilities: vec![],
+            hooks: vec![],
+            min_runtime_api: 1,
+            max_runtime_api: 2,
+            allowed_host_calls: vec![],
+            dependencies: deps,
+        };
+        let pkg_path = dir.join(format!("{id}-{version}.tar"));
+        package_plugin(&wasm_path, manifest, &pkg_path).expect("package");
+        pkg_path
+    }
+
+    #[test]
+    fn dependency_resolution_no_deps_installs_main_only() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let pkg = make_plugin_package(tmp.path(), "main-plugin", "1.0.0", vec![]);
+        let install_root = tmp.path().join("installed");
+        let registry = RegistryIndex { plugins: vec![] };
+        let url = format!("file://{}", pkg.display());
+        let installed = install_with_dependencies(&url, &install_root, None, &registry)
+            .expect("install should succeed");
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].manifest.id, "main-plugin");
+    }
+
+    #[test]
+    fn dependency_resolution_installs_missing_dep_from_registry() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        // Build the dependency package
+        let dep_pkg = make_plugin_package(tmp.path(), "dep-plugin", "1.0.0", vec![]);
+        let dep_sha = super::sha256_hex(&fs::read(&dep_pkg).unwrap());
+        // Build the main package that depends on dep-plugin
+        let main_pkg = make_plugin_package(
+            tmp.path(),
+            "main-plugin",
+            "1.0.0",
+            vec![PluginDependency {
+                id: "dep-plugin".to_string(),
+                version_req: ">=1.0.0".to_string(),
+            }],
+        );
+        let registry = RegistryIndex {
+            plugins: vec![RegistryEntry {
+                id: "dep-plugin".to_string(),
+                description: "A dependency".to_string(),
+                category: "test".to_string(),
+                author: "test".to_string(),
+                repository: "".to_string(),
+                latest: "1.0.0".to_string(),
+                versions: vec![RegistryVersionEntry {
+                    version: "1.0.0".to_string(),
+                    download_url: format!("file://{}", dep_pkg.display()),
+                    sha256: dep_sha,
+                    min_runtime_api: 1,
+                    max_runtime_api: 2,
+                    dependencies: vec![],
+                }],
+            }],
+        };
+        let install_root = tmp.path().join("installed");
+        let url = format!("file://{}", main_pkg.display());
+        let installed = install_with_dependencies(&url, &install_root, None, &registry)
+            .expect("install should succeed");
+        assert_eq!(installed.len(), 2);
+        assert!(installed.iter().any(|p| p.manifest.id == "main-plugin"));
+        assert!(installed.iter().any(|p| p.manifest.id == "dep-plugin"));
+    }
+
+    #[test]
+    fn dependency_resolution_missing_dep_not_in_registry_fails() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let main_pkg = make_plugin_package(
+            tmp.path(),
+            "main-plugin",
+            "1.0.0",
+            vec![PluginDependency {
+                id: "missing-dep".to_string(),
+                version_req: ">=1.0.0".to_string(),
+            }],
+        );
+        let registry = RegistryIndex { plugins: vec![] };
+        let install_root = tmp.path().join("installed");
+        let url = format!("file://{}", main_pkg.display());
+        let err = install_with_dependencies(&url, &install_root, None, &registry)
+            .expect_err("missing dep should fail");
+        assert!(
+            err.to_string().contains("missing-dep"),
+            "error should mention the missing dep: {err}"
+        );
+    }
+
+    #[test]
+    fn dependency_resolution_already_installed_dep_is_skipped() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let dep_pkg = make_plugin_package(tmp.path(), "dep-plugin", "1.0.0", vec![]);
+        let install_root = tmp.path().join("installed");
+        // Pre-install the dep
+        install_packaged_plugin(&dep_pkg, &install_root).expect("pre-install dep");
+        let dep_sha = super::sha256_hex(&fs::read(&dep_pkg).unwrap());
+        let main_pkg = make_plugin_package(
+            tmp.path(),
+            "main-plugin",
+            "1.0.0",
+            vec![PluginDependency {
+                id: "dep-plugin".to_string(),
+                version_req: ">=1.0.0".to_string(),
+            }],
+        );
+        let registry = RegistryIndex {
+            plugins: vec![RegistryEntry {
+                id: "dep-plugin".to_string(),
+                description: "".to_string(),
+                category: "".to_string(),
+                author: "".to_string(),
+                repository: "".to_string(),
+                latest: "1.0.0".to_string(),
+                versions: vec![RegistryVersionEntry {
+                    version: "1.0.0".to_string(),
+                    download_url: format!("file://{}", dep_pkg.display()),
+                    sha256: dep_sha,
+                    min_runtime_api: 1,
+                    max_runtime_api: 2,
+                    dependencies: vec![],
+                }],
+            }],
+        };
+        let url = format!("file://{}", main_pkg.display());
+        let installed = install_with_dependencies(&url, &install_root, None, &registry)
+            .expect("install should succeed");
+        // Only main plugin should be in the returned list; dep was already installed
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].manifest.id, "main-plugin");
+    }
+
+    #[test]
+    fn dependency_resolution_circular_deps_do_not_loop() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        // A depends on B, B depends on A — circular
+        let b_pkg = make_plugin_package(
+            tmp.path(),
+            "plugin-b",
+            "1.0.0",
+            vec![PluginDependency {
+                id: "plugin-a".to_string(),
+                version_req: ">=1.0.0".to_string(),
+            }],
+        );
+        let b_sha = super::sha256_hex(&fs::read(&b_pkg).unwrap());
+        let a_pkg = make_plugin_package(
+            tmp.path(),
+            "plugin-a",
+            "1.0.0",
+            vec![PluginDependency {
+                id: "plugin-b".to_string(),
+                version_req: ">=1.0.0".to_string(),
+            }],
+        );
+        let a_sha = super::sha256_hex(&fs::read(&a_pkg).unwrap());
+        let registry = RegistryIndex {
+            plugins: vec![
+                RegistryEntry {
+                    id: "plugin-a".to_string(),
+                    description: "".to_string(),
+                    category: "".to_string(),
+                    author: "".to_string(),
+                    repository: "".to_string(),
+                    latest: "1.0.0".to_string(),
+                    versions: vec![RegistryVersionEntry {
+                        version: "1.0.0".to_string(),
+                        download_url: format!("file://{}", a_pkg.display()),
+                        sha256: a_sha,
+                        min_runtime_api: 1,
+                        max_runtime_api: 2,
+                        dependencies: vec![],
+                    }],
+                },
+                RegistryEntry {
+                    id: "plugin-b".to_string(),
+                    description: "".to_string(),
+                    category: "".to_string(),
+                    author: "".to_string(),
+                    repository: "".to_string(),
+                    latest: "1.0.0".to_string(),
+                    versions: vec![RegistryVersionEntry {
+                        version: "1.0.0".to_string(),
+                        download_url: format!("file://{}", b_pkg.display()),
+                        sha256: b_sha,
+                        min_runtime_api: 1,
+                        max_runtime_api: 2,
+                        dependencies: vec![],
+                    }],
+                },
+            ],
+        };
+        let install_root = tmp.path().join("installed");
+        let url = format!("file://{}", a_pkg.display());
+        // Should complete without infinite recursion
+        let installed = install_with_dependencies(&url, &install_root, None, &registry)
+            .expect("circular deps should resolve without loop");
+        // plugin-a is installed; plugin-b is also installed as dep; plugin-a is skipped (seen)
+        assert!(installed.len() >= 1);
+        assert!(installed.iter().any(|p| p.manifest.id == "plugin-a"));
+    }
+
+    #[test]
+    fn manifest_validate_rejects_invalid_dep_version_req() {
+        let mut manifest = sample_manifest();
+        manifest.dependencies = vec![PluginDependency {
+            id: "some-dep".to_string(),
+            version_req: "not-a-semver-req!!!".to_string(),
+        }];
+        let err = manifest
+            .validate()
+            .expect_err("invalid version_req should fail");
+        assert!(
+            err.to_string().contains("some-dep") || err.to_string().contains("version requirement"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn manifest_validate_accepts_valid_dep_version_req() {
+        let mut manifest = sample_manifest();
+        manifest.dependencies = vec![PluginDependency {
+            id: "some-dep".to_string(),
+            version_req: ">=1.0.0, <2.0.0".to_string(),
+        }];
+        manifest.validate().expect("valid version_req should pass");
     }
 
     #[test]

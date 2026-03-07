@@ -147,6 +147,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Completions { .. } => "completions",
         Commands::Config { .. } => "config",
         Commands::Memory { .. } => "memory",
+        Commands::Conversation { .. } => "conversation",
         Commands::Rag { .. } => "rag",
         Commands::Hardware { .. } => "hardware",
         Commands::Peripheral { .. } => "peripheral",

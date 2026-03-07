@@ -34,6 +34,7 @@ mod sdk_integration {
     }
 
     #[test]
+    #[ignore]
     fn sdk_plugin_executes_successfully() {
         let wasm_path = sample_wasm_path();
         if !wasm_path.exists() {
@@ -80,6 +81,7 @@ mod sdk_integration {
     }
 
     #[test]
+    #[ignore]
     fn sdk_plugin_handles_empty_input() {
         let wasm_path = sample_wasm_path();
         if !wasm_path.exists() {
@@ -115,6 +117,7 @@ mod sdk_integration {
     }
 
     #[test]
+    #[ignore]
     fn sdk_plugin_handles_invalid_json_input() {
         let wasm_path = sample_wasm_path();
         if !wasm_path.exists() {

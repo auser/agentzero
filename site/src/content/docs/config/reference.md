@@ -215,6 +215,13 @@ max_images = 4
 max_image_size_mb = 5
 allow_remote_fetch = false
 
+# ─── Audio Input ─────────────────────────────────────────
+[audio]
+api_url = "https://api.groq.com/openai/v1/audio/transcriptions"  # transcription endpoint
+api_key = ""                                                      # API key (e.g. Groq, OpenAI)
+language = "en"                                                   # ISO-639-1 language hint
+model = "whisper-large-v3"                                        # transcription model
+
 # ─── Research Mode ───────────────────────────────────────
 [research]
 enabled = false
@@ -278,6 +285,23 @@ key_store_path = ""                               # key persistence directory (e
 # [channels_config]
 # default_privacy_boundary = "encrypted_only"     # global default for all channels
 ```
+
+## [audio]
+
+Configures speech-to-text transcription for audio input markers in user messages.
+
+When a user message contains an `[AUDIO:/path/to/file.wav]` marker, AgentZero transcribes the file before passing the message to the LLM. If `api_key` is not set, audio markers are stripped silently with a warning rather than causing an error.
+
+| Field | Default | Description |
+|---|---|---|
+| `api_url` | `https://api.groq.com/openai/v1/audio/transcriptions` | OpenAI-compatible transcription endpoint |
+| `api_key` | `""` | API key for the transcription service |
+| `language` | `"en"` | ISO-639-1 language hint passed to the model |
+| `model` | `"whisper-large-v3"` | Transcription model identifier |
+
+Supported audio formats: `flac`, `mp3`, `mp4`, `m4a`, `ogg`, `opus`, `wav`, `webm` (max 25 MB per file).
+
+The default endpoint is compatible with the Groq audio API. To use OpenAI directly, set `api_url = "https://api.openai.com/v1/audio/transcriptions"` and `model = "whisper-1"`.
 
 ## Config Inspection Commands
 

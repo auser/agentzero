@@ -57,8 +57,8 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 
 ### Backlog (candidates for Sprint 27)
 
-- [ ] **Conversation branching** — Forking and branching conversation histories
-- [ ] **Multi-modal input** — Image and audio across all providers
+- [x] **Conversation branching** — Forking and branching conversation histories *(Sprint 29)*
+- [x] **Multi-modal input** — Image (not audio) across Anthropic and OpenAI providers *(Sprint 29)*
 
 ---
 
@@ -94,18 +94,18 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 ### Phase D: Tests & Verification
 
 - [x] **Unit tests** — 29 tests across EventBus (9), AgentRouter (5), Coordinator (3), IPC (8), SubAgent tools (4). Covers pub/sub, filtered recv, topic matching, boundary compatibility, keyword routing, error strategies.
-- [ ] **Integration tests** — Agent chain (A→B→C→channel), privacy routing, graceful shutdown, error propagation. *(Carried to Sprint 28 Phase A.)*
+- [x] **Integration tests** — Agent chain (A→B→C→channel), privacy routing, graceful shutdown, error propagation. *(Completed in Sprint 28 Phase A.)*
 
 ### Acceptance Criteria
 
 - [x] Event bus pub/sub works with multiple subscribers, filtered recv, and lagged consumer handling
-- [ ] Agent chaining: Agent A output triggers Agent B which triggers Agent C (via topic subscriptions) *(needs integration test)*
+- [x] Agent chaining: Agent A output triggers Agent B which triggers Agent C (via topic subscriptions) *(Sprint 28)*
 - [x] AI router classifies messages and picks best agent by description; falls back to keywords
-- [ ] Privacy boundaries enforced: `local_only` events only route to `local_only` agents *(needs integration test)*
-- [ ] `correlation_id` traces full chain back to original channel message *(needs integration test)*
-- [ ] Terminal detection: when no agent subscribes to an output and correlation traces to channel, response is dispatched *(needs integration test)*
+- [x] Privacy boundaries enforced: `local_only` events only route to `local_only` agents *(Sprint 28)*
+- [x] `correlation_id` traces full chain back to original channel message *(Sprint 28)*
+- [x] Terminal detection: when no agent subscribes to an output and correlation traces to channel, response is dispatched *(Sprint 28)*
 - [x] Explicit pipelines execute sequential steps with error strategies (abort/skip/retry)
-- [ ] Graceful shutdown: in-flight chains complete within grace period *(needs integration test)*
+- [x] Graceful shutdown: in-flight chains complete within grace period *(Sprint 28)*
 - [x] All quality gates pass: `cargo fmt`, `cargo clippy`, `cargo test --workspace`
 
 ---
@@ -120,40 +120,125 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 
 Using `StaticProvider` from testkit (no real LLM needed):
 
-- [ ] **Agent chain test** — A→B→C via topic subscriptions, terminal dispatches to channel
-- [ ] **Privacy routing test** — `local_only` events only route to `local_only` agents
-- [ ] **Pipeline execution test** — 3-step pipeline with abort/skip/retry error strategies
-- [ ] **Graceful shutdown test** — Dispatch work, send shutdown, verify in-flight completes within grace period
-- [ ] **Correlation tracking test** — `correlation_id` traces full chain from channel message to terminal response
+- [x] **Agent chain test** — A→B→C via topic subscriptions, terminal dispatches to channel
+- [x] **Privacy routing test** — `local_only` events only route to `local_only` agents
+- [x] **Pipeline execution test** — 3-step pipeline with abort/skip/retry error strategies
+- [x] **Graceful shutdown test** — Dispatch work, send shutdown, verify in-flight completes within grace period
+- [x] **Correlation tracking test** — `correlation_id` traces full chain from channel message to terminal response
 
 ### Phase B: Local LLM Test Infrastructure
 
-- [ ] **Testkit helpers** — `LocalLlmProvider::from_env()`, `skip_without_local_llm()`, `wait_for_server(url, timeout)` in `crates/agentzero-testkit/src/lib.rs`
-- [ ] **Test pattern** — `#[ignore]` tests, CI runs with `cargo test -- --ignored`
+- [x] **Testkit helpers** — `LocalLlmProvider::from_env()`, `skip_without_local_llm()`, `wait_for_server(url, timeout)` in `crates/agentzero-testkit/src/lib.rs`
+- [x] **Test pattern** — `#[ignore]` tests, CI runs with `cargo test -- --ignored`
 
 ### Phase C: E2E Tests with Real LLM
 
 All `#[ignore]` in `crates/agentzero-infra/tests/e2e_local_llm.rs`:
 
-- [ ] **Basic completion** — Prompt → non-empty coherent response
-- [ ] **Tool use** — Agent + EchoTool, verify tool call round-trip
-- [ ] **Streaming** — `run_agent_streaming()`, collect chunks, verify reassembly
-- [ ] **Multi-turn memory** — Two `respond()` calls, second references first
-- [ ] **Orchestrator routing** — AgentRouter with real LLM classification
+- [x] **Basic completion** — Prompt → non-empty coherent response
+- [x] **Tool use** — Agent + EchoTool, verify tool call round-trip
+- [x] **Streaming** — `run_agent_streaming()`, collect chunks, verify reassembly
+- [x] **Multi-turn memory** — Two `respond()` calls, second references first
+- [x] **Orchestrator routing** — AgentRouter with real LLM classification
 
 ### Phase D: CI Workflow
 
-- [ ] **e2e-tests job** in `.github/workflows/ci.yml` — `ubuntu-latest`, Ollama + `tinyllama` (cached), `cargo test -- --ignored`, `continue-on-error: true`
+- [x] **e2e-tests job** in `.github/workflows/ci.yml` — `ubuntu-latest`, Ollama + `tinyllama` (cached), `cargo test -- --ignored`, `continue-on-error: true`
 
 ### Acceptance Criteria
 
-- [ ] Orchestrator integration tests prove: agent chaining, privacy routing, pipeline execution, graceful shutdown, correlation tracking
-- [ ] E2e tests pass locally with `ollama serve` + `tinyllama`
-- [ ] E2e tests run in CI (non-blocking initially)
-- [ ] `cargo test --workspace` passes without Ollama (ignored tests skip)
-- [ ] All quality gates: fmt, clippy, test
+- [x] Orchestrator integration tests prove: agent chaining, privacy routing, pipeline execution, graceful shutdown, correlation tracking
+- [x] E2e tests pass locally with `ollama serve` + `tinyllama`
+- [x] E2e tests run in CI (non-blocking initially)
+- [x] `cargo test --workspace` passes without Ollama (ignored tests skip)
+- [x] All quality gates: fmt, clippy, test
 
-### Backlog (candidates for Sprint 29)
+---
 
-- [ ] **Conversation branching** — Forking and branching conversation histories
-- [ ] **Multi-modal input** — Image and audio across all providers
+## Sprint 29: Conversation Branching, Multi-Modal Input, Plugin Registry Refresh
+
+**Goal:** Add conversation identity so memory entries belong to named conversations that can be listed, switched, and forked. Enable image content in user messages across Anthropic and OpenAI providers. Add plugin registry refresh command.
+
+**Baseline:** 17-crate workspace, ~1,750 tests passing, 0 clippy warnings, orchestrator + e2e tests complete.
+
+### Phase A: Conversation Branching
+
+- [x] **Core types** — `MemoryEntry.conversation_id` (String, serde default), `ToolContext.conversation_id` (Option<String>, serde default). `MemoryStore` trait gains `recent_for_conversation()`, `fork_conversation()`, `list_conversations()` with default implementations.
+- [x] **SQLite storage** — `migrate_conversation_column()` following existing migration pattern. `append()` stores conversation_id. Optimized SQL overrides for all three new trait methods. `fork_conversation()` uses `INSERT...SELECT`.
+- [x] **Agent loop** — `respond_inner()` uses `recent_for_conversation()` when conversation_id set. `write_to_memory()` threads conversation_id.
+- [x] **Runtime wiring** — `RuntimeExecution.conversation_id` and `RunAgentRequest.conversation_id` fields. Populated into `ToolContext` at both construction sites.
+- [x] **CLI commands** — `az conversation list`, `az conversation fork`, `az conversation switch`. Active conversation stored in `{data_dir}/active_conversation`. Agent command reads and passes conversation_id.
+
+### Phase B: Multi-Modal Input (Image)
+
+- [x] **Core types** — `ContentPart` enum (`Text { text }`, `Image { media_type, data }`). `ConversationMessage::User` gains `parts: Vec<ContentPart>` (serde skip_serializing_if empty). Constructors: `user()`, `user_with_parts()`.
+- [x] **Anthropic provider** — Maps `ContentPart::Image` to existing `InputContentBlock::Image` + `ImageSource`. Uses `MessageContent::Blocks` when parts non-empty.
+- [x] **OpenAI provider** — `Message.content` changed to `Option<Value>` for content array format. `image_url` entries with `data:{media_type};base64,{data}` URLs.
+- [x] **Image markers wiring** — `load_image_refs()` reads local files/data URIs/remote URLs to `Vec<ContentPart>`. `build_user_message()` parses markers, builds multi-modal message or strips markers when vision disabled.
+
+### Phase C: Plugin Registry Refresh
+
+- [x] **Config** — `registry_url: Option<String>` added to `PluginConfig`.
+- [x] **Refresh command** — `refresh_registry_index()` function bypasses cache, reads from URL, saves to cache. `az plugin refresh --registry-url <url>` CLI command.
+
+### Acceptance Criteria
+
+- [x] Memory entries tagged with `conversation_id`; `recent_for_conversation()` filters correctly
+- [x] `fork_conversation()` copies entries to new conversation; `list_conversations()` returns distinct IDs
+- [x] `az conversation list/fork/switch` round-trip works
+- [x] Existing databases seamlessly migrated (new column with default)
+- [x] `ContentPart` serde backward compatible (empty parts = text-only)
+- [x] Anthropic maps images to `InputContentBlock::Image`; OpenAI maps to content array
+- [x] `az plugin refresh` force-refreshes cached registry index
+- [x] All quality gates pass: `cargo fmt`, `cargo clippy`, `cargo test --workspace`
+
+### Backlog (candidates for Sprint 30)
+
+- [x] **Audio input** — Whisper integration for audio across providers *(Sprint 30)*
+- [x] **HTTP registry fetch** — Full HTTP support in `load_registry_index()` / `refresh_registry_index()` *(Sprint 30)*
+- [x] **Plugin dependency resolution** — Plugins declare dependencies on other plugins *(Sprint 30)*
+
+---
+
+## Sprint 30: Audio Input, HTTP Registry Fetch, Plugin Dependency Resolution → v0.4.0
+
+**Goal:** Ship the three Sprint 29 backlog items and cut a 0.4.0 minor release.
+
+**Baseline:** 17-crate workspace, ~1,800+ tests passing, 0 clippy warnings, Sprint 29 complete.
+
+### Phase A: HTTP Registry Fetch
+
+- [x] **ureq HTTP fetch** — `install_from_url()` handles `https://` and `http://` URLs via `ureq`. `fetch_registry_from_url()` private helper used by `load_registry_index()` and `refresh_registry_index()`. `ureq` chosen over `reqwest::blocking` to avoid panicking inside async CLI context.
+
+### Phase B: Plugin Dependency Resolution
+
+- [x] **`PluginDependency` type** — `{ id: String, version_req: String }` with `semver::VersionReq` validation in `PluginManifest::validate()`.
+- [x] **`dependencies` field** — Added with `#[serde(default)]` to `PluginManifest` and `RegistryVersionEntry`.
+- [x] **`install_with_dependencies()`** — Resolves and installs transitive deps from registry. Cycle detection via `HashSet<String>`. Missing deps return a clear error.
+- [x] **CLI wiring** — `az plugin install --registry-url <url>` loads registry, calls `install_with_dependencies()`. Prints all installed plugins including deps.
+
+### Phase C: Audio Input (Whisper)
+
+- [x] **`AudioConfig`** — `{ api_url, api_key, language, model }` in `AgentZeroConfig`. Defaults to Groq `/audio/transcriptions` + `whisper-large-v3`.
+- [x] **`audio_markers.rs`** in `agentzero-infra` — `parse_audio_markers()`, `strip_audio_markers()`, `process_audio_markers()`. Transcribe-first pattern: `[AUDIO:path]` markers replaced with `[Transcription of audio]: <text>` before the LLM sees the message.
+- [x] **HTTP transcription** — `transcribe_audio_async()` uses `reqwest` async multipart POST to Whisper endpoint. No marker config or no API key → markers stripped with a warning.
+- [x] **Runtime wiring** — `RuntimeExecution.audio_config` populated from config in `build_runtime_execution()`. `process_audio_markers()` called at the top of `run_agent_with_runtime()`.
+
+### Phase D: Release
+
+- [x] **Version bump** — Workspace version `0.3.0` → `0.4.0`
+- [x] **SPRINT.md** — Sprint 30 section added; Sprint 29 backlog items marked complete
+
+### Acceptance Criteria
+
+- [x] `az plugin install https://…` downloads and installs plugin with deps resolved
+- [x] `az plugin refresh --registry-url https://…` fetches registry over HTTP
+- [x] `[AUDIO:path.wav]` in user message → transcript text in LLM message; markers stripped when no API key
+- [x] No provider changes needed for audio (transcribe-first)
+- [x] All quality gates pass: `cargo fmt`, `cargo clippy`, `cargo test --workspace`
+
+### Backlog (candidates for Sprint 31)
+
+- [ ] **Plugin registry repo** — New `agentzero-plugins` git repo with example plugins, manifest schema, and CI publishing
+- [ ] **Audio streaming** — Real-time transcription in `TranscriptionChannel::listen()` (hardware mic input → agent)
+- [ ] **Image generation** — `[IMAGE_GEN:prompt]` markers that call a DALL-E / Stable Diffusion compatible endpoint

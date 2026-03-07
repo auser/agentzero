@@ -25,6 +25,7 @@ tar = "0.4"
 thiserror.workspace = true
 notify = { version = "7", optional = true }
 tracing = { version = "0.1", optional = true }
+ureq = { version = "2", features = ["json"] }
 wasmi = { workspace = true, optional = true }
 wasmi_wasi = { workspace = true, optional = true }
 wasmtime = { version = "42", optional = true }

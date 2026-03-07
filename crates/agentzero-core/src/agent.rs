@@ -174,9 +174,7 @@ fn memory_to_messages(entries: &[MemoryEntry]) -> Vec<ConversationMessage> {
                     tool_calls: vec![],
                 }
             } else {
-                ConversationMessage::User {
-                    content: entry.content.clone(),
-                }
+                ConversationMessage::user(entry.content.clone())
             }
         })
         .collect()
@@ -596,6 +594,7 @@ impl Agent {
         content: &str,
         request_id: &str,
         source_channel: Option<&str>,
+        conversation_id: &str,
     ) -> Result<(), AgentError> {
         self.hook(
             "before_memory_write",
@@ -608,6 +607,7 @@ impl Agent {
                 content: content.to_string(),
                 privacy_boundary: self.config.privacy_boundary.clone(),
                 source_channel: source_channel.map(String::from),
+                conversation_id: conversation_id.to_string(),
             })
             .await
             .map_err(|source| AgentError::Memory { source })?;
@@ -760,15 +760,21 @@ impl Agent {
         let tool_definitions = self.build_tool_definitions();
 
         // Load recent memory and convert to conversation messages.
-        let recent_memory = self
-            .memory
-            .recent_for_boundary(
-                self.config.memory_window_size,
-                &self.config.privacy_boundary,
-                ctx.source_channel.as_deref(),
-            )
-            .await
-            .map_err(|source| AgentError::Memory { source })?;
+        let recent_memory = if let Some(ref cid) = ctx.conversation_id {
+            self.memory
+                .recent_for_conversation(cid, self.config.memory_window_size)
+                .await
+                .map_err(|source| AgentError::Memory { source })?
+        } else {
+            self.memory
+                .recent_for_boundary(
+                    self.config.memory_window_size,
+                    &self.config.privacy_boundary,
+                    ctx.source_channel.as_deref(),
+                )
+                .await
+                .map_err(|source| AgentError::Memory { source })?
+        };
         self.audit(
             "memory_recent_loaded",
             json!({"request_id": request_id, "items": recent_memory.len()}),
@@ -787,14 +793,12 @@ impl Agent {
         messages.extend(memory_to_messages(&recent_memory));
 
         if !research_context.is_empty() {
-            messages.push(ConversationMessage::User {
-                content: format!("Research findings:\n{research_context}"),
-            });
+            messages.push(ConversationMessage::user(format!(
+                "Research findings:\n{research_context}",
+            )));
         }
 
-        messages.push(ConversationMessage::User {
-            content: user_text.to_string(),
-        });
+        messages.push(ConversationMessage::user(user_text.to_string()));
 
         let mut tool_history: Vec<(String, String, String)> = Vec::new();
         let mut failure_streak: usize = 0;
@@ -881,6 +885,7 @@ impl Agent {
                     &response_text,
                     request_id,
                     ctx.source_channel.as_deref(),
+                    ctx.conversation_id.as_deref().unwrap_or(""),
                 )
                 .await?;
                 self.audit("respond_success", json!({"request_id": request_id}))
@@ -1100,15 +1105,13 @@ impl Agent {
                             }),
                         )
                         .await;
-                        messages.push(ConversationMessage::User {
-                            content: format!(
+                        messages.push(ConversationMessage::user(format!(
                                 "SYSTEM NOTICE: Loop detected — the tool `{}` was called \
                                  {} times with identical arguments and output. You are stuck \
                                  in a loop. Stop calling this tool and try a different approach, \
                                  or provide your best answer with the information you already have.",
                                 recent[0].0, threshold
-                            ),
-                        });
+                        )));
                     }
                 }
             }
@@ -1138,15 +1141,13 @@ impl Agent {
                             }),
                         )
                         .await;
-                        messages.push(ConversationMessage::User {
-                            content: format!(
-                                "SYSTEM NOTICE: Loop detected — tools `{}` and `{}` have been \
+                        messages.push(ConversationMessage::user(format!(
+                            "SYSTEM NOTICE: Loop detected — tools `{}` and `{}` have been \
                                  alternating for {} cycles in a ping-pong pattern. Stop this \
                                  alternation and try a different approach, or provide your best \
                                  answer with the information you already have.",
-                                recent[0].0, recent[1].0, cycles
-                            ),
-                        });
+                            recent[0].0, recent[1].0, cycles
+                        )));
                     }
                 }
             }
@@ -1167,14 +1168,12 @@ impl Agent {
                     }),
                 )
                 .await;
-                messages.push(ConversationMessage::User {
-                    content: format!(
-                        "SYSTEM NOTICE: {} consecutive tool calls have failed. \
+                messages.push(ConversationMessage::user(format!(
+                    "SYSTEM NOTICE: {} consecutive tool calls have failed. \
                          Stop calling tools and provide your best answer with \
                          the information you already have.",
-                        failure_streak
-                    ),
-                });
+                    failure_streak
+                )));
             }
         }
 
@@ -1188,11 +1187,11 @@ impl Agent {
         )
         .await;
 
-        messages.push(ConversationMessage::User {
-            content: "You have reached the maximum number of tool call iterations. \
+        messages.push(ConversationMessage::user(
+            "You have reached the maximum number of tool call iterations. \
                       Please provide your best answer now without calling any more tools."
                 .to_string(),
-        });
+        ));
         truncate_messages(&mut messages, self.config.max_prompt_chars);
 
         let final_result = if let Some(ref sink) = stream_sink {
@@ -1213,6 +1212,7 @@ impl Agent {
             &response_text,
             request_id,
             ctx.source_channel.as_deref(),
+            ctx.conversation_id.as_deref().unwrap_or(""),
         )
         .await?;
         self.audit("respond_success", json!({"request_id": request_id}))
@@ -1349,6 +1349,7 @@ impl Agent {
             &user.text,
             request_id,
             ctx.source_channel.as_deref(),
+            ctx.conversation_id.as_deref().unwrap_or(""),
         )
         .await?;
 
@@ -1564,6 +1565,7 @@ impl Agent {
             &response_text,
             request_id,
             ctx.source_channel.as_deref(),
+            ctx.conversation_id.as_deref().unwrap_or(""),
         )
         .await?;
         self.audit("respond_success", json!({"request_id": request_id}))
@@ -3810,7 +3812,7 @@ mod tests {
         // First message should be the oldest memory entry.
         assert!(matches!(
             &msgs[0][0],
-            ConversationMessage::User { content } if content == "old question"
+            ConversationMessage::User { content, .. } if content == "old question"
         ));
     }
 
@@ -3937,9 +3939,7 @@ mod tests {
     #[test]
     fn truncate_messages_preserves_small_conversation() {
         let mut msgs = vec![
-            ConversationMessage::User {
-                content: "hello".to_string(),
-            },
+            ConversationMessage::user("hello".to_string()),
             ConversationMessage::Assistant {
                 content: Some("world".to_string()),
                 tool_calls: vec![],
@@ -3952,16 +3952,12 @@ mod tests {
     #[test]
     fn truncate_messages_drops_middle() {
         let mut msgs = vec![
-            ConversationMessage::User {
-                content: "A".repeat(100),
-            },
+            ConversationMessage::user("A".repeat(100)),
             ConversationMessage::Assistant {
                 content: Some("B".repeat(100)),
                 tool_calls: vec![],
             },
-            ConversationMessage::User {
-                content: "C".repeat(100),
-            },
+            ConversationMessage::user("C".repeat(100)),
             ConversationMessage::Assistant {
                 content: Some("D".repeat(100)),
                 tool_calls: vec![],
@@ -3974,7 +3970,7 @@ mod tests {
         // First message preserved.
         assert!(matches!(
             &msgs[0],
-            ConversationMessage::User { content } if content.starts_with("AAA")
+            ConversationMessage::User { content, .. } if content.starts_with("AAA")
         ));
     }
 
@@ -3996,7 +3992,7 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert!(matches!(
             &msgs[0],
-            ConversationMessage::User { content } if content == "oldest"
+            ConversationMessage::User { content, .. } if content == "oldest"
         ));
         assert!(matches!(
             &msgs[1],
@@ -4561,7 +4557,7 @@ mod tests {
         }
         // Second message should be the user message.
         match &first_call[1] {
-            ConversationMessage::User { content } => {
+            ConversationMessage::User { content, .. } => {
                 assert_eq!(content, "What is 2+2?");
             }
             other => panic!("expected User message second, got {other:?}"),
@@ -4603,7 +4599,7 @@ mod tests {
         let first_call = &msgs[0];
         // First message should be User, not System.
         match &first_call[0] {
-            ConversationMessage::User { content } => {
+            ConversationMessage::User { content, .. } => {
                 assert_eq!(content, "hello");
             }
             other => panic!("expected User message first (no system prompt), got {other:?}"),

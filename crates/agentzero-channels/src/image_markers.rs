@@ -140,6 +140,92 @@ pub fn check_vision_support(
     }
 }
 
+/// Load image data from parsed image references, producing ContentParts.
+///
+/// - LocalFile: read file, base64-encode, infer media_type from extension.
+/// - DataUri: parse inline data URI.
+/// - RemoteUrl: skipped (caller should use validate_image_refs to reject if needed).
+pub async fn load_image_refs(
+    refs: &[ImageRef],
+) -> anyhow::Result<Vec<agentzero_core::ContentPart>> {
+    use agentzero_core::ContentPart;
+    use base64::Engine;
+
+    let mut parts = Vec::new();
+    for r in refs {
+        match r.kind {
+            ImageSourceKind::LocalFile => {
+                let data = tokio::fs::read(&r.source).await.map_err(|e| {
+                    anyhow::anyhow!("failed to read image file '{}': {e}", r.source)
+                })?;
+                let media_type = mime_from_extension(&r.source);
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                parts.push(ContentPart::Image {
+                    media_type,
+                    data: encoded,
+                });
+            }
+            ImageSourceKind::DataUri => {
+                // data:image/png;base64,...
+                if let Some((header, b64)) = r.source.split_once(',') {
+                    let media_type = header
+                        .strip_prefix("data:")
+                        .and_then(|s| s.strip_suffix(";base64"))
+                        .unwrap_or("image/png")
+                        .to_string();
+                    parts.push(ContentPart::Image {
+                        media_type,
+                        data: b64.to_string(),
+                    });
+                }
+            }
+            ImageSourceKind::RemoteUrl => {
+                // Remote URLs are not loaded automatically.
+                // Caller should validate/reject or handle externally.
+            }
+        }
+    }
+    Ok(parts)
+}
+
+fn mime_from_extension(path: &str) -> String {
+    let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
+/// Build a ConversationMessage::User from text that may contain image markers.
+///
+/// If vision is enabled and markers are present, produces a multi-modal message.
+/// If vision is disabled, strips markers and produces a text-only message.
+pub async fn build_user_message(
+    text: &str,
+    vision_enabled: bool,
+) -> anyhow::Result<agentzero_core::ConversationMessage> {
+    let refs = parse_image_markers(text);
+    if refs.is_empty() || !vision_enabled {
+        let clean_text = if refs.is_empty() {
+            text.to_string()
+        } else {
+            strip_image_markers(text)
+        };
+        return Ok(agentzero_core::ConversationMessage::user(clean_text));
+    }
+
+    let stripped = strip_image_markers(text);
+    let parts = load_image_refs(&refs).await?;
+    Ok(agentzero_core::ConversationMessage::user_with_parts(
+        stripped, parts,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

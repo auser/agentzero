@@ -25,6 +25,7 @@ pub struct AgentZeroConfig {
     pub cost: CostConfig,
     pub identity: IdentityConfig,
     pub multimodal: MultimodalConfig,
+    pub audio: AudioConfig,
     pub skills: SkillsConfig,
     #[serde(alias = "provider_settings")]
     pub provider_options: ProviderOptionsConfig,
@@ -669,6 +670,8 @@ pub struct PluginConfig {
     /// Override for the development plugin directory (CWD hot-reload).
     /// Defaults to `{cwd}/plugins/`.
     pub dev_plugin_dir: Option<String>,
+    /// URL to a plugin registry index (JSON manifest).
+    pub registry_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1109,6 +1112,35 @@ impl Default for MultimodalConfig {
             max_images: 4,
             max_image_size_mb: 5,
             allow_remote_fetch: false,
+        }
+    }
+}
+
+/// Configuration for audio transcription via a Whisper-compatible API.
+///
+/// Used to transcribe `[AUDIO:path]` markers in user messages before sending
+/// them to the LLM. Compatible with Groq, OpenAI, and any Whisper-compatible
+/// `/audio/transcriptions` endpoint.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AudioConfig {
+    /// Whisper-compatible transcription endpoint.
+    pub api_url: String,
+    /// API key for the transcription service (e.g. `GROQ_API_KEY`).
+    pub api_key: Option<String>,
+    /// Language hint for transcription (e.g. `"en"`). Optional.
+    pub language: Option<String>,
+    /// Whisper model name (e.g. `"whisper-large-v3"`).
+    pub model: String,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            api_url: "https://api.groq.com/openai/v1/audio/transcriptions".to_string(),
+            api_key: None,
+            language: None,
+            model: "whisper-large-v3".to_string(),
         }
     }
 }

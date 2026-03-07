@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+base64 = "0.22"
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
 agentzero-storage = { workspace = true }

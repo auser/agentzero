@@ -255,6 +255,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: MemoryCommands,
     },
+    /// Conversation branching and management commands.
+    Conversation {
+        #[command(subcommand)]
+        command: ConversationCommands,
+    },
     /// Retrieval-augmented generation index operations.
     Rag {
         #[command(subcommand)]
@@ -696,7 +701,7 @@ pub enum PluginCommands {
         /// Path to a local .tar package file.
         #[arg(long)]
         package: Option<String>,
-        /// URL to download a plugin package from (supports file:// for local paths).
+        /// URL to download a plugin package from (supports https:// or file://).
         #[arg(long)]
         url: Option<String>,
         /// Expected SHA256 checksum for URL-based installs.
@@ -704,6 +709,9 @@ pub enum PluginCommands {
         sha256: Option<String>,
         #[arg(long)]
         install_dir: Option<String>,
+        /// Registry URL for resolving dependencies (supports https:// or file://).
+        #[arg(long)]
+        registry_url: Option<String>,
     },
     /// List installed plugins.
     List {
@@ -764,6 +772,12 @@ pub enum PluginCommands {
         registry_url: Option<String>,
         #[arg(long)]
         install_dir: Option<String>,
+    },
+    /// Force-refresh the cached registry index.
+    Refresh {
+        /// Registry URL to fetch (default: configured registry_url).
+        #[arg(long)]
+        registry_url: Option<String>,
     },
     /// Generate a registry index entry for publishing.
     Publish {
@@ -1374,6 +1388,31 @@ pub enum MemoryCommands {
         /// Emit machine-readable JSON output.
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConversationCommands {
+    /// List all named conversations.
+    List {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Fork an existing conversation into a new branch.
+    Fork {
+        /// Source conversation ID to fork from.
+        from: String,
+        /// New conversation ID for the fork.
+        to: String,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Switch the active conversation.
+    Switch {
+        /// Conversation ID to switch to (use empty string for global).
+        id: String,
     },
 }
 

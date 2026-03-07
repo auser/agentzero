@@ -4,6 +4,7 @@
 //! the runtime execution builder, audit sinks, tool registration, and
 //! the WASM plugin bridge.
 
+pub mod audio;
 pub mod audit;
 pub mod runtime;
 pub mod tools;

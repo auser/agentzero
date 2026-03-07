@@ -37,6 +37,7 @@ impl AgentZeroCommand for AgentCommand {
             model_override: opts.model,
             profile_override: opts.profile,
             extra_tools: vec![],
+            conversation_id: super::conversation::read_active_conversation(ctx),
         })
         .await?;
 
@@ -55,6 +56,7 @@ async fn run_streaming(ctx: &CommandContext, opts: AgentOptions) -> anyhow::Resu
         model_override: opts.model,
         profile_override: opts.profile,
         extra_tools: vec![],
+        conversation_id: super::conversation::read_active_conversation(ctx),
     })
     .await?;
 

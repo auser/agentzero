@@ -36,6 +36,8 @@ async fn e2e_basic_completion() {
         tools: vec![],
         audit_sink: None,
         hook_sink: None,
+        conversation_id: None,
+        audio_config: None,
     };
 
     let output = run_agent_with_runtime(execution, workspace_root(), "Say hello.".to_string())
@@ -66,6 +68,8 @@ async fn e2e_agent_with_echo_tool() {
         tools: vec![Box::new(EchoTool)],
         audit_sink: None,
         hook_sink: None,
+        conversation_id: None,
+        audio_config: None,
     };
 
     let output = run_agent_with_runtime(
@@ -105,6 +109,8 @@ async fn e2e_multi_turn_memory() {
         tools: vec![],
         audit_sink: None,
         hook_sink: None,
+        conversation_id: None,
+        audio_config: None,
     };
 
     let output1 = run_agent_with_runtime(
@@ -128,6 +134,8 @@ async fn e2e_multi_turn_memory() {
         tools: vec![],
         audit_sink: None,
         hook_sink: None,
+        conversation_id: None,
+        audio_config: None,
     };
 
     let output2 =

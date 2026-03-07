@@ -156,6 +156,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Config { command } => commands::config::ConfigCommand::run(&ctx, command).await,
         Commands::Memory { command } => commands::memory::MemoryCommand::run(&ctx, command).await,
+        Commands::Conversation { command } => {
+            commands::conversation::ConversationCommand::run(&ctx, command).await
+        }
         Commands::Rag { command } => commands::rag::RagCommand::run(&ctx, command).await,
         Commands::Hardware { command } => {
             commands::hardware::HardwareCommand::run(&ctx, command).await

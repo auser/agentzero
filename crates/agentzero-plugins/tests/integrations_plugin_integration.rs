@@ -70,6 +70,7 @@ mod integrations_plugins {
     // ---- composio tests ----
 
     #[test]
+    #[ignore]
     fn composio_valid_request() {
         let wasm_path = composio_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -104,6 +105,7 @@ mod integrations_plugins {
     }
 
     #[test]
+    #[ignore]
     fn composio_missing_action() {
         let wasm_path = composio_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -127,6 +129,7 @@ mod integrations_plugins {
     }
 
     #[test]
+    #[ignore]
     fn composio_missing_api_key() {
         let wasm_path = composio_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -153,6 +156,7 @@ mod integrations_plugins {
     // ---- pushover tests ----
 
     #[test]
+    #[ignore]
     fn pushover_valid_request() {
         let wasm_path = pushover_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -188,6 +192,7 @@ mod integrations_plugins {
     }
 
     #[test]
+    #[ignore]
     fn pushover_missing_message() {
         let wasm_path = pushover_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -211,6 +216,7 @@ mod integrations_plugins {
     }
 
     #[test]
+    #[ignore]
     fn pushover_invalid_priority() {
         let wasm_path = pushover_wasm();
         if skip_if_not_built(&wasm_path) {
@@ -234,6 +240,7 @@ mod integrations_plugins {
     }
 
     #[test]
+    #[ignore]
     fn pushover_missing_token() {
         let wasm_path = pushover_wasm();
         if skip_if_not_built(&wasm_path) {

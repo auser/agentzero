@@ -2,8 +2,9 @@ use crate::cli::PluginCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_plugins::package::{
     check_outdated, generate_registry_entry, install_from_url, install_packaged_plugin,
-    list_installed_plugins, load_registry_index, package_plugin, remove_installed_plugin,
-    PluginManifest, PluginState, RegistryEntryParams,
+    install_with_dependencies, list_installed_plugins, load_registry_index, package_plugin,
+    refresh_registry_index, remove_installed_plugin, PluginManifest, PluginState,
+    RegistryEntryParams,
 };
 use agentzero_plugins::wasm::{
     WasmExecutionRequest, WasmIsolationPolicy, WasmPluginContainer, WasmPluginRuntime,
@@ -61,6 +62,7 @@ impl AgentZeroCommand for PluginCommand {
                         min_runtime_api: 2,
                         max_runtime_api: 2,
                         allowed_host_calls: vec![],
+                        dependencies: vec![],
                     };
                     manifest.validate()?;
                     fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
@@ -181,32 +183,54 @@ impl AgentZeroCommand for PluginCommand {
                 url,
                 sha256,
                 install_dir,
+                registry_url,
             } => {
                 let install_root = install_dir
                     .map(PathBuf::from)
                     .unwrap_or_else(|| ctx.data_dir.join("plugins"));
 
-                let is_url_install = url.is_some();
-                let installed = if let Some(url) = url {
-                    install_from_url(&url, &install_root, sha256.as_deref())?
+                let mut state = PluginState::load(&ctx.data_dir);
+
+                if let Some(url) = url {
+                    // Resolve dependencies when a registry is available
+                    let registry = load_registry_index(&ctx.data_dir, registry_url.as_deref()).ok();
+                    let all = if let Some(ref reg) = registry {
+                        install_with_dependencies(&url, &install_root, sha256.as_deref(), reg)?
+                    } else {
+                        vec![install_from_url(&url, &install_root, sha256.as_deref())?]
+                    };
+                    for installed in &all {
+                        state.record_install(
+                            &installed.manifest.id,
+                            &installed.manifest.version,
+                            "url",
+                        );
+                    }
+                    let main = &all[0];
+                    println!(
+                        "Installed plugin {}@{} at {}",
+                        main.manifest.id,
+                        main.manifest.version,
+                        main.install_dir.display()
+                    );
                 } else if let Some(package) = package {
-                    install_packaged_plugin(package, &install_root)?
+                    let installed = install_packaged_plugin(package, &install_root)?;
+                    state.record_install(
+                        &installed.manifest.id,
+                        &installed.manifest.version,
+                        "local",
+                    );
+                    println!(
+                        "Installed plugin {}@{} at {}",
+                        installed.manifest.id,
+                        installed.manifest.version,
+                        installed.install_dir.display()
+                    );
                 } else {
                     anyhow::bail!("either --package or --url is required");
-                };
+                }
 
-                // Record install in state
-                let mut state = PluginState::load(&ctx.data_dir);
-                let source = if is_url_install { "url" } else { "local" };
-                state.record_install(&installed.manifest.id, &installed.manifest.version, source);
                 state.save(&ctx.data_dir)?;
-
-                println!(
-                    "Installed plugin {}@{} at {}",
-                    installed.manifest.id,
-                    installed.manifest.version,
-                    installed.install_dir.display()
-                );
             }
             PluginCommands::List { json, install_dir } => {
                 let install_root = install_dir
@@ -425,6 +449,13 @@ impl AgentZeroCommand for PluginCommand {
                     }
                 }
             }
+            PluginCommands::Refresh { registry_url } => {
+                let index = refresh_registry_index(&ctx.data_dir, registry_url.as_deref())?;
+                println!(
+                    "Registry cache refreshed ({} plugin(s))",
+                    index.plugins.len()
+                );
+            }
             PluginCommands::Publish {
                 manifest,
                 download_url,
@@ -551,6 +582,7 @@ fn execute(input: ToolInput) -> ToolOutput {{
         min_runtime_api: 2,
         max_runtime_api: 2,
         allowed_host_calls: vec![],
+        dependencies: vec![],
     };
     fs::write(
         project_dir.join("manifest.json"),

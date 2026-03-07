@@ -1,7 +1,10 @@
+use crate::audio::process_audio_markers;
 use crate::audit::FileAuditSink;
 use crate::tools::default_tools;
 use agentzero_auth::AuthManager;
-use agentzero_config::{load, load_audit_policy, load_env_var, load_tool_security_policy};
+use agentzero_config::{
+    load, load_audit_policy, load_env_var, load_tool_security_policy, AudioConfig,
+};
 use agentzero_core::common::local_providers::{is_local_provider, local_provider_meta};
 use agentzero_core::delegation::DelegateConfig;
 use agentzero_core::routing::{ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter};
@@ -33,6 +36,8 @@ pub struct RunAgentRequest {
     /// Additional tools injected by the caller (e.g. FFI-registered tools).
     /// These are appended to the tools built from the security policy.
     pub extra_tools: Vec<Box<dyn Tool>>,
+    /// Active conversation ID for memory scoping.
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +53,9 @@ pub struct RuntimeExecution {
     pub tools: Vec<Box<dyn Tool>>,
     pub audit_sink: Option<Box<dyn AuditSink>>,
     pub hook_sink: Option<Box<dyn HookSink>>,
+    pub conversation_id: Option<String>,
+    /// Audio transcription config; `None` → audio markers are stripped.
+    pub audio_config: Option<AudioConfig>,
 }
 
 struct AuditHookSink {
@@ -216,6 +224,12 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         } else {
             None
         },
+        conversation_id: req.conversation_id,
+        audio_config: if config.audio.api_key.is_some() {
+            Some(config.audio.clone())
+        } else {
+            None
+        },
     })
 }
 
@@ -268,6 +282,7 @@ pub fn run_agent_streaming(
 
         let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
         ctx.privacy_boundary = privacy_boundary;
+        ctx.conversation_id = execution.conversation_id.clone();
 
         let response = agent
             .respond_streaming(UserMessage { text: message }, &ctx, tx)
@@ -307,6 +322,9 @@ pub async fn run_agent_with_runtime(
 
     let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
     ctx.privacy_boundary = privacy_boundary;
+
+    // Transcribe [AUDIO:path] markers before the message reaches the LLM.
+    let message = process_audio_markers(&message, execution.audio_config.as_ref()).await?;
 
     let response = agent.respond(UserMessage { text: message }, &ctx).await?;
     let metrics_snapshot = runtime_metrics.export_json();
@@ -927,6 +945,8 @@ mod tests {
             tools: vec![],
             audit_sink: None,
             hook_sink: None,
+            conversation_id: None,
+            audio_config: None,
         }
     }
 

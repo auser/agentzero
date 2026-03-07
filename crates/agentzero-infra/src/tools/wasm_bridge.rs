@@ -172,6 +172,7 @@ mod tests {
             min_runtime_api: 2,
             max_runtime_api: 2,
             allowed_host_calls: vec![],
+            dependencies: vec![],
         }
     }
 
