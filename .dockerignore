@@ -1,0 +1,53 @@
+# Build artifacts
+target/
+dist/
+
+# Git
+.git/
+.gitignore
+
+# Site and docs
+site/
+gh-pages/
+node_modules/
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Dev tooling
+.claude/
+.astro/
+.playwright-mcp/
+.githooks/
+.github/
+
+# Local config and secrets
+.env
+.env.*
+*.db
+*.sqlite
+auth_profiles.json
+
+# External dependencies
+externals/
+
+# Plugin fixtures and examples
+plugins/
+examples/
+
+# Specs and planning docs
+specs/
+
+# FFI bindings output
+crates/agentzero-ffi/bindings/
+
+# Test and bench crates (not needed for production build)
+crates/agentzero-bench/
+crates/agentzero-testkit/
