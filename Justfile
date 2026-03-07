@@ -144,13 +144,14 @@ release VERSION:
     # Bump inline version on internal workspace dep entries (path = "crates/…", version = "…")
     perl -i -pe 's|(agentzero-[a-z-]+ = \{ path = "crates/[^"]+", version = )"[^"]+"|${1}"{{VERSION}}"|g' Cargo.toml
     echo "    Cargo.toml [workspace.package] version set to {{VERSION}}"
-    # 2. Quality gates (also updates Cargo.lock as a side-effect of compilation)
-    cargo fmt --all --check
+    # 2. Quality gates — auto-fix fmt and clippy, then test
+    cargo fmt --all
+    cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets -- -D warnings
     cargo nextest run --workspace
-    # 3. Commit the version bump + updated Cargo.lock
+    # 3. Commit the version bump + any fmt/clippy fixes + updated Cargo.lock
     if ! git diff --quiet Cargo.toml Cargo.lock; then
-        git add Cargo.toml Cargo.lock
+        git add -u
         git commit -m "chore: bump workspace version to {{VERSION}}"
     fi
     # 4. Add changelog entry if not already present (moves [Unreleased] → [VERSION] - DATE)
