@@ -6,6 +6,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+
+## [0.4.2] - 2026-03-07
+
+### Added
+- Populate changelog entries and auto-generate with git-cliff — Populate empty v0.4.0 and v0.4.1 release notes with curated content
+
+### Fixed
+- Mark agentzero-testkit as unpublishable to fix release — agentzero-testkit depends on agentzero-providers (publish = false),
 ## [0.4.1] - 2026-03-06
 
 ### Added
