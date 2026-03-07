@@ -5,6 +5,21 @@ description: All environment variables recognized by the AgentZero runtime.
 
 AgentZero reads several environment variables for API keys, backend selection, and runtime overrides.
 
+## `.env` File Support
+
+All environment variables can be set in `.env` files instead of (or in addition to) the shell environment. AgentZero loads `.env` files from two locations:
+
+1. **Config directory** (`~/.agentzero/.env`) — global defaults
+2. **Current working directory** (`./.env`) — project-local overrides
+
+Within each directory, files are loaded in this order (later overrides earlier):
+
+- `.env` — base values
+- `.env.local` — local overrides (typically gitignored)
+- `.env.{AGENTZERO_ENV}` — environment-specific (e.g. `.env.production`), selected via `AGENTZERO_ENV`, `APP_ENV`, or `NODE_ENV`
+
+CWD files take priority over config-dir files. Process environment variables (`export`) take priority over all `.env` files.
+
 ## Core Variables
 
 | Variable | Description | Default |

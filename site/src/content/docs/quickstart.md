@@ -149,13 +149,13 @@ export OPENAI_API_KEY="sk-ant-..."   # Anthropic
 
 ### Option C: `.env` file
 
-Create a `.env` file in the same directory as your `agentzero.toml`:
+Create a `.env` file in your config directory (`~/.agentzero/`) or the current working directory:
 
 ```bash
 OPENAI_API_KEY=sk-or-v1-...
 ```
 
-AgentZero loads `.env` and `.env.local` automatically.
+AgentZero loads `.env` and `.env.local` from both the config directory and the current working directory. CWD files take priority over config-dir files, so you can set global defaults in `~/.agentzero/.env` and override per-project in a local `.env`.
 
 ### Local models (no credentials needed)
 

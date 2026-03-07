@@ -43,29 +43,29 @@ pub fn load_env_var(path: &Path, key: &str) -> anyhow::Result<Option<String>> {
 
 fn load_dotenv_chain(config_path: &Path) -> anyhow::Result<HashMap<String, String>> {
     let mut out = HashMap::new();
-    let root = config_path
+    let config_dir = config_path
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    for file in [root.join(".env"), root.join(".env.local")] {
-        if !file.exists() {
-            continue;
-        }
-        for entry in dotenvy::from_path_iter(&file)
-            .with_context(|| format!("failed to read dotenv file at {}", file.display()))?
-        {
-            let (key, value) = entry
-                .with_context(|| format!("failed to parse dotenv entry in {}", file.display()))?;
-            out.insert(key, value);
+    // Collect directories to scan: config dir first, then CWD (if different).
+    // Later directories override earlier ones, so CWD `.env` takes priority.
+    let mut dirs = vec![config_dir.clone()];
+    if let Ok(cwd) = std::env::current_dir() {
+        let cwd_canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
+        let config_canonical = config_dir
+            .canonicalize()
+            .unwrap_or_else(|_| config_dir.clone());
+        if cwd_canonical != config_canonical {
+            dirs.push(cwd);
         }
     }
 
-    if let Some(env) = first_nonempty_env(&["AGENTZERO_ENV", "APP_ENV", "NODE_ENV"])
-        .or_else(|| first_nonempty_value(&out, &["AGENTZERO_ENV", "APP_ENV", "NODE_ENV"]))
-    {
-        let file = root.join(format!(".env.{env}"));
-        if file.exists() {
+    for dir in &dirs {
+        for file in [dir.join(".env"), dir.join(".env.local")] {
+            if !file.exists() {
+                continue;
+            }
             for entry in dotenvy::from_path_iter(&file)
                 .with_context(|| format!("failed to read dotenv file at {}", file.display()))?
             {
@@ -73,6 +73,25 @@ fn load_dotenv_chain(config_path: &Path) -> anyhow::Result<HashMap<String, Strin
                     format!("failed to parse dotenv entry in {}", file.display())
                 })?;
                 out.insert(key, value);
+            }
+        }
+    }
+
+    if let Some(env) = first_nonempty_env(&["AGENTZERO_ENV", "APP_ENV", "NODE_ENV"])
+        .or_else(|| first_nonempty_value(&out, &["AGENTZERO_ENV", "APP_ENV", "NODE_ENV"]))
+    {
+        for dir in dirs.iter().rev() {
+            let file = dir.join(format!(".env.{env}"));
+            if file.exists() {
+                for entry in dotenvy::from_path_iter(&file)
+                    .with_context(|| format!("failed to read dotenv file at {}", file.display()))?
+                {
+                    let (key, value) = entry.with_context(|| {
+                        format!("failed to parse dotenv entry in {}", file.display())
+                    })?;
+                    out.insert(key, value);
+                }
+                break;
             }
         }
     }

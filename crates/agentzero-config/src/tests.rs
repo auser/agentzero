@@ -250,6 +250,42 @@ fn load_env_var_prefers_process_env_over_dotenv() {
 }
 
 #[test]
+fn cwd_dotenv_overrides_config_dir_dotenv() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let config_dir = temp_dir();
+    let cwd_dir = temp_dir();
+    let config_path = config_dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"openai\"\nbase_url=\"https://api.openai.com\"\nmodel=\"from-file\"\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    // Config dir has a .env with one value
+    fs::write(
+        config_dir.join(".env"),
+        "AGENTZERO_PROVIDER__MODEL=from-config-dir\n",
+    )
+    .expect("config dir .env should be written");
+
+    // CWD has a .env with a different value — should win
+    fs::write(cwd_dir.join(".env"), "AGENTZERO_PROVIDER__MODEL=from-cwd\n")
+        .expect("cwd .env should be written");
+
+    let original_dir = std::env::current_dir().expect("should get cwd");
+    std::env::set_current_dir(&cwd_dir).expect("should set cwd");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("typed config should load with cwd dotenv");
+        assert_eq!(cfg.provider.model, "from-cwd");
+    });
+
+    std::env::set_current_dir(&original_dir).expect("should restore cwd");
+    fs::remove_dir_all(config_dir).expect("config temp dir should be removed");
+    fs::remove_dir_all(cwd_dir).expect("cwd temp dir should be removed");
+}
+
+#[test]
 fn rejects_enabled_mcp_without_allowed_servers() {
     let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
     let dir = temp_dir();
