@@ -15,6 +15,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [0.4.2] - 2026-03-07
 
+## [0.4.2] - 2026-03-07
+
 ### Added
 - Populate changelog entries and auto-generate with git-cliff — Populate empty v0.4.0 and v0.4.1 release notes with curated content
 
