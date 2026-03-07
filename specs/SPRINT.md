@@ -57,8 +57,8 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 
 ### Backlog (candidates for Sprint 27)
 
-- [ ] **Conversation branching** — Forking and branching conversation histories
-- [ ] **Multi-modal input** — Image and audio across all providers
+- [x] **Conversation branching** — Forking and branching conversation histories *(Sprint 29)*
+- [x] **Multi-modal input** — Image (not audio) across Anthropic and OpenAI providers *(Sprint 29)*
 
 ---
 
@@ -94,18 +94,18 @@ Previous sprints archived to `specs/sprints/23-24-production-readiness-privacy.m
 ### Phase D: Tests & Verification
 
 - [x] **Unit tests** — 29 tests across EventBus (9), AgentRouter (5), Coordinator (3), IPC (8), SubAgent tools (4). Covers pub/sub, filtered recv, topic matching, boundary compatibility, keyword routing, error strategies.
-- [ ] **Integration tests** — Agent chain (A→B→C→channel), privacy routing, graceful shutdown, error propagation. *(Carried to Sprint 28 Phase A.)*
+- [x] **Integration tests** — Agent chain (A→B→C→channel), privacy routing, graceful shutdown, error propagation. *(Completed in Sprint 28 Phase A.)*
 
 ### Acceptance Criteria
 
 - [x] Event bus pub/sub works with multiple subscribers, filtered recv, and lagged consumer handling
-- [ ] Agent chaining: Agent A output triggers Agent B which triggers Agent C (via topic subscriptions) *(needs integration test)*
+- [x] Agent chaining: Agent A output triggers Agent B which triggers Agent C (via topic subscriptions) *(Sprint 28)*
 - [x] AI router classifies messages and picks best agent by description; falls back to keywords
-- [ ] Privacy boundaries enforced: `local_only` events only route to `local_only` agents *(needs integration test)*
-- [ ] `correlation_id` traces full chain back to original channel message *(needs integration test)*
-- [ ] Terminal detection: when no agent subscribes to an output and correlation traces to channel, response is dispatched *(needs integration test)*
+- [x] Privacy boundaries enforced: `local_only` events only route to `local_only` agents *(Sprint 28)*
+- [x] `correlation_id` traces full chain back to original channel message *(Sprint 28)*
+- [x] Terminal detection: when no agent subscribes to an output and correlation traces to channel, response is dispatched *(Sprint 28)*
 - [x] Explicit pipelines execute sequential steps with error strategies (abort/skip/retry)
-- [ ] Graceful shutdown: in-flight chains complete within grace period *(needs integration test)*
+- [x] Graceful shutdown: in-flight chains complete within grace period *(Sprint 28)*
 - [x] All quality gates pass: `cargo fmt`, `cargo clippy`, `cargo test --workspace`
 
 ---
