@@ -125,7 +125,8 @@ agentzero auth setup-token --provider anthropic --token sk-ant-...
 agentzero auth setup-token --provider openai --token sk-...
 
 # Or use OAuth login (for providers that support it)
-agentzero auth login --provider openai-codex
+agentzero auth login --provider openai-codex     # OpenAI browser login
+agentzero auth login --provider anthropic        # Claude browser login
 ```
 
 Manage saved profiles:

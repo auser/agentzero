@@ -239,6 +239,31 @@ All `#[ignore]` in `crates/agentzero-infra/tests/e2e_local_llm.rs`:
 
 ### Backlog (candidates for Sprint 31)
 
+- [x] **Anthropic browser login** — OAuth browser flow for `auth login --provider anthropic` *(Sprint 31)*
 - [ ] **Plugin registry repo** — New `agentzero-plugins` git repo with example plugins, manifest schema, and CI publishing
 - [ ] **Audio streaming** — Real-time transcription in `TranscriptionChannel::listen()` (hardware mic input → agent)
 - [ ] **Image generation** — `[IMAGE_GEN:prompt]` markers that call a DALL-E / Stable Diffusion compatible endpoint
+
+---
+
+## Sprint 31: Anthropic Browser Login
+
+**Goal:** Add OAuth browser-based login for Anthropic/Claude, matching the existing OpenAI Codex browser flow.
+
+**Baseline:** 17-crate workspace, v0.4.2, 0 clippy warnings, Sprint 30 complete.
+
+### Completed
+
+- [x] **Anthropic OAuth browser flow** — `auth login --provider anthropic` opens browser to `claude.ai/oauth/authorize`, captures callback on `localhost:54321/callback`, exchanges code for tokens via `platform.claude.com/v1/oauth/token` (JSON body with PKCE + state). Uses same client ID as Claude Code CLI.
+- [x] **Token refresh** — `auth refresh --provider anthropic` exchanges refresh token for new access token via Claude token endpoint (JSON body).
+- [x] **Paste-redirect fallback** — `auth paste-redirect --provider anthropic` works if callback capture fails.
+- [x] **State generation fix** — PKCE state now uses 32 random bytes (43 base64url chars) to meet claude.ai minimum length requirement.
+- [x] **Site docs updated** — Quickstart, providers guide, daily-usage guide, and commands reference updated to reflect Anthropic browser login.
+
+### Acceptance Criteria
+
+- [x] `agentzero auth login --provider anthropic` opens browser and completes OAuth flow
+- [x] `agentzero auth refresh --provider anthropic` refreshes expired token
+- [x] `agentzero auth paste-redirect --provider anthropic` handles manual code paste
+- [x] Existing OpenAI Codex and Gemini auth flows unaffected
+- [x] All auth tests pass; no clippy warnings

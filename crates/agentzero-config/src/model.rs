@@ -38,6 +38,7 @@ pub struct AgentZeroConfig {
     pub agents: HashMap<String, DelegateAgentConfig>,
     pub privacy: PrivacyConfig,
     pub swarm: SwarmConfig,
+    pub logging: LoggingConfig,
 }
 
 impl AgentZeroConfig {
@@ -764,6 +765,40 @@ impl Default for ObservabilityConfig {
             runtime_trace_mode: "none".to_string(),
             runtime_trace_path: "state/runtime-trace.jsonl".to_string(),
             runtime_trace_max_entries: 200,
+        }
+    }
+}
+
+/// Log output format.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    /// Human-readable text output (default).
+    #[default]
+    Text,
+    /// Structured JSON — one JSON object per line.
+    /// Suitable for container log aggregation (Fluentd, Datadog, CloudWatch, Loki).
+    Json,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct LoggingConfig {
+    /// Output format: "text" (default) or "json".
+    pub format: LogFormat,
+    /// Default log level: "error", "warn", "info", "debug", "trace".
+    pub level: String,
+    /// Per-module log level overrides.
+    /// Example: `{ "agentzero_gateway" = "debug" }`
+    pub modules: HashMap<String, String>,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            format: LogFormat::Text,
+            level: "error".to_string(),
+            modules: HashMap::new(),
         }
     }
 }

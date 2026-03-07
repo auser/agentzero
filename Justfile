@@ -132,6 +132,33 @@ build-sizes:
     cargo build -p agentzero --profile release-min --no-default-features --features memory-sqlite,plugins,tls-native -q
     echo "  plugins+native-tls: $(du -h target/release-min/agentzero | cut -f1)"
 
+# ── Docker ────────────────────────────────────────
+
+# Build Docker image
+docker-build:
+    docker build -t agentzero:latest .
+
+# Run Docker container (requires OPENAI_API_KEY in env)
+docker-run:
+    docker run -d \
+      --name agentzero \
+      -p 8080:8080 \
+      -v agentzero-data:/data \
+      -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
+      agentzero:latest
+
+# Stop and remove Docker container
+docker-stop:
+    docker stop agentzero && docker rm agentzero
+
+# Start via docker compose
+docker-up:
+    docker compose up -d
+
+# Stop docker compose
+docker-down:
+    docker compose down
+
 # ── Release ───────────────────────────────────────
 
 # Preview changelog draft for next release (dry run, stdout only)
@@ -156,7 +183,39 @@ bump-versions VERSION:
         fi
     done
 
-# Cut a release: just release 0.4.0
+# Cut a release with automatic version bump (based on conventional commits)
+release-auto:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "==> Preparing automatic release"
+    # 1. Quality gates — auto-fix fmt and clippy, then test
+    cargo fmt --all
+    cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo nextest run --workspace
+    # 2. Determine next version from conventional commits
+    NEXT_VERSION=$(git-cliff --bumped-version | sed 's/^v//')
+    echo "==> Auto-detected next version: $NEXT_VERSION"
+    # 3. Bump all workspace versions
+    just bump-versions "$NEXT_VERSION"
+    # 4. Commit the version bump + any fmt/clippy fixes + updated Cargo.lock
+    if ! git diff --quiet; then
+        git add -u
+        git commit -m "chore: bump workspace version to $NEXT_VERSION"
+    fi
+    # 5. Generate changelog entry from conventional commits (via git-cliff)
+    git-cliff --tag "v$NEXT_VERSION" --unreleased --prepend CHANGELOG.md
+    git add CHANGELOG.md
+    git commit -m "chore: add changelog entry for v$NEXT_VERSION"
+    # 6. Verify changelog & crate versions match
+    scripts/verify-release-version.sh --version "$NEXT_VERSION"
+    # 7. Push branch commits, tag, and push tag (triggers .github/workflows/release.yml)
+    git push
+    git tag "v$NEXT_VERSION"
+    git push origin "v$NEXT_VERSION"
+    echo "==> Tag v$NEXT_VERSION pushed. Release workflow will build and publish."
+
+# Cut a release with specific version: just release 0.4.0
 release VERSION:
     #!/usr/bin/env bash
     set -euo pipefail

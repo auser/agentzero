@@ -311,13 +311,13 @@ Manage provider authentication profiles. Supports OAuth (browser-based), API key
 
 #### `auth login`
 
-Start an interactive login flow. Opens a browser for OAuth providers (OpenAI Codex, Gemini) or prompts for an API key (Anthropic).
+Start an interactive login flow. Opens a browser for OAuth providers (OpenAI Codex, Anthropic) or prompts for an API key (Gemini).
 
 ```bash
 agentzero auth login                             # Interactive provider selection
 agentzero auth login --provider openai-codex     # OAuth browser flow
-agentzero auth login --provider gemini           # OAuth browser flow
-agentzero auth login --provider anthropic        # API key paste
+agentzero auth login --provider anthropic        # OAuth browser flow (claude.ai)
+agentzero auth login --provider gemini           # API key paste
 ```
 
 | Flag | Description |
@@ -353,6 +353,7 @@ Complete an OAuth flow by pasting the redirect URL or authorization code.
 
 ```bash
 agentzero auth paste-redirect --provider openai-codex
+agentzero auth paste-redirect --provider anthropic --input "https://..."
 agentzero auth paste-redirect --provider gemini --input "https://..."
 ```
 
@@ -368,6 +369,7 @@ Refresh an expired OAuth access token using a stored refresh token.
 
 ```bash
 agentzero auth refresh --provider openai-codex
+agentzero auth refresh --provider anthropic
 agentzero auth refresh --provider gemini --profile work
 ```
 

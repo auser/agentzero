@@ -14,6 +14,10 @@ use std::net::TcpListener;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const CLAUDE_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const CLAUDE_AUTH_URL: &str = "https://claude.ai/oauth/authorize";
+const CLAUDE_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
+
 pub struct AuthCommand;
 
 #[async_trait]
@@ -37,7 +41,7 @@ impl AgentZeroCommand for AuthCommand {
                         {
                             let options = vec![
                                 "OpenAI Codex  (browser login)",
-                                "Anthropic     (paste API key)",
+                                "Anthropic     (browser login)",
                                 "Google Gemini (paste API key)",
                             ];
                             let selection = inquire::Select::new(
@@ -60,14 +64,9 @@ impl AgentZeroCommand for AuthCommand {
                     }
                 };
 
-                // Anthropic and Gemini use paste-key flow, not browser OAuth.
-                if provider == "anthropic" || provider == "gemini" {
-                    let label = if provider == "anthropic" {
-                        "Paste your Anthropic API key"
-                    } else {
-                        "Paste your Google AI Studio API key"
-                    };
-                    let value = read_plain_input(label)?;
+                // Gemini uses paste-key flow, not browser OAuth.
+                if provider == "gemini" {
+                    let value = read_plain_input("Paste your Google AI Studio API key")?;
                     manager.paste_token(&profile, &provider, &value, true)?;
                     println!("Saved profile {profile}");
                     println!("Active profile for {provider}: {profile}");
@@ -83,8 +82,15 @@ impl AgentZeroCommand for AuthCommand {
 
                 let preferred_port = if provider == "openai-codex" {
                     1455
+                } else if provider == "anthropic" {
+                    54321
                 } else {
                     1456
+                };
+                let callback_path = if provider == "anthropic" {
+                    "/callback"
+                } else {
+                    "/auth/callback"
                 };
                 let callback_port = match allocate_callback_port(preferred_port) {
                     Ok(port) => port,
@@ -97,12 +103,12 @@ impl AgentZeroCommand for AuthCommand {
                 };
                 if callback_port != preferred_port {
                     println!(
-                        "Preferred callback port {preferred_port} is unavailable. Using http://localhost:{callback_port}/auth/callback"
+                        "Preferred callback port {preferred_port} is unavailable. Using http://localhost:{callback_port}{callback_path}"
                     );
                 }
 
                 let (state, code_verifier) = generate_pkce_seed();
-                let redirect_uri = format!("http://localhost:{callback_port}/auth/callback");
+                let redirect_uri = format!("http://localhost:{callback_port}{callback_path}");
                 let pending = PendingOAuthLogin {
                     provider: provider.to_string(),
                     profile: profile.clone(),
@@ -119,16 +125,21 @@ impl AgentZeroCommand for AuthCommand {
                 println!("{authorize_url}");
                 println!();
 
-                if provider == "openai-codex" {
+                if provider == "openai-codex" || provider == "anthropic" {
                     println!(
-                        "Waiting for callback at http://localhost:{callback_port}/auth/callback ..."
+                        "Waiting for callback at http://localhost:{callback_port}{callback_path} ..."
                     );
                     match receive_loopback_code(callback_port, &state, oauth_callback_timeout()) {
                         Ok(code) => {
                             println!("Received authorization code, exchanging for token...");
-                            let tokens =
-                                exchange_oauth_code(provider, &code, &code_verifier, &redirect_uri)
-                                    .await?;
+                            let tokens = exchange_oauth_code(
+                                provider,
+                                &code,
+                                &code_verifier,
+                                &redirect_uri,
+                                &state,
+                            )
+                            .await?;
                             manager.store_oauth_tokens(
                                 &profile,
                                 provider,
@@ -144,7 +155,7 @@ impl AgentZeroCommand for AuthCommand {
                         Err(err_text) => {
                             println!("Callback capture failed: {err_text}");
                             println!(
-                                "Run `agentzero auth paste-redirect --provider openai-codex --profile {profile}`"
+                                "Run `agentzero auth paste-redirect --provider {provider} --profile {profile}`"
                             );
                             return Ok(());
                         }
@@ -197,10 +208,15 @@ impl AgentZeroCommand for AuthCommand {
                 let redirect_uri = pending
                     .redirect_uri
                     .unwrap_or_else(|| "http://localhost:1455/auth/callback".to_string());
-                if provider == "openai-codex" {
-                    let tokens =
-                        exchange_oauth_code(provider, &code, &pending.code_verifier, &redirect_uri)
-                            .await?;
+                if provider == "openai-codex" || provider == "anthropic" {
+                    let tokens = exchange_oauth_code(
+                        provider,
+                        &code,
+                        &pending.code_verifier,
+                        &redirect_uri,
+                        &pending.state,
+                    )
+                    .await?;
                     manager.store_oauth_tokens(
                         &profile,
                         provider,
@@ -276,6 +292,36 @@ impl AgentZeroCommand for AuthCommand {
                             );
                         }
                     },
+                    "anthropic" => {
+                        let profile_name = profile.as_deref();
+                        let refresh_token =
+                            manager.refresh_token_for_provider("anthropic", profile_name)?;
+                        match refresh_token {
+                            Some(rt) => {
+                                let tokens = anthropic_refresh_token(&rt).await?;
+                                let target_profile = profile_name.unwrap_or("default");
+                                manager.store_oauth_tokens(
+                                    target_profile,
+                                    "anthropic",
+                                    &tokens.access_token,
+                                    tokens.refresh_token.as_deref(),
+                                    tokens.expires_in,
+                                    false,
+                                )?;
+                                println!("Anthropic token refreshed successfully.");
+                                println!("  Profile: anthropic:{target_profile}");
+                            }
+                            None => {
+                                if result.is_some() {
+                                    println!("Anthropic token has no refresh token stored.");
+                                } else {
+                                    bail!(
+                                        "No Anthropic auth profile found. Run `agentzero auth login --provider anthropic`."
+                                    );
+                                }
+                            }
+                        }
+                    }
                     "gemini" => match result {
                         Some(found) if found.status != RefreshStatus::ExpiredNeedsLogin => {
                             println!("✓ Gemini token refreshed successfully");
@@ -358,7 +404,10 @@ fn normalize_refresh_provider(provider: &str) -> anyhow::Result<&str> {
     if trimmed.eq_ignore_ascii_case("gemini") || trimmed.eq_ignore_ascii_case("google-gemini") {
         return Ok("gemini");
     }
-    bail!("`auth refresh` supports --provider openai-codex or gemini");
+    if trimmed.eq_ignore_ascii_case("anthropic") || trimmed.eq_ignore_ascii_case("claude") {
+        return Ok("anthropic");
+    }
+    bail!("`auth refresh` supports --provider openai-codex, anthropic, or gemini");
 }
 
 fn normalize_oauth_provider(provider: &str) -> anyhow::Result<&str> {
@@ -379,10 +428,10 @@ fn normalize_oauth_provider(provider: &str) -> anyhow::Result<&str> {
 }
 
 fn provider_to_pending_label(provider: &str) -> &'static str {
-    if provider == "openai-codex" {
-        "OpenAI"
-    } else {
-        "Gemini"
+    match provider {
+        "openai-codex" => "OpenAI",
+        "anthropic" => "Anthropic",
+        _ => "Gemini",
     }
 }
 
@@ -392,12 +441,23 @@ fn build_authorize_url(
     code_verifier: &str,
     callback_port: u16,
 ) -> String {
-    let redirect_uri = format!("http://localhost:{callback_port}/auth/callback");
+    let callback_path = if provider == "anthropic" {
+        "/callback"
+    } else {
+        "/auth/callback"
+    };
+    let redirect_uri = format!("http://localhost:{callback_port}{callback_path}");
     let (base, client_id, scope) = if provider == "openai-codex" {
         (
             "https://auth.openai.com/oauth/authorize",
             openai_client_id(),
             "openid profile email offline_access",
+        )
+    } else if provider == "anthropic" {
+        (
+            CLAUDE_AUTH_URL,
+            CLAUDE_CLIENT_ID,
+            "user:inference user:profile",
         )
     } else {
         (
@@ -430,13 +490,10 @@ fn build_authorize_url(
 fn generate_pkce_seed() -> (String, String) {
     use rand::Rng;
 
-    let now = now_epoch_secs();
-    let pid = std::process::id();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after unix epoch")
-        .as_nanos();
-    let state = format!("st_{pid:x}_{now:x}_{nanos:x}");
+    // State: 32 random bytes → 43 base64url chars (meets claude.ai minimum).
+    let mut state_bytes = [0u8; 32];
+    rand::thread_rng().fill(&mut state_bytes);
+    let state = URL_SAFE_NO_PAD.encode(state_bytes);
 
     // RFC 7636: code_verifier must be 43-128 chars of [A-Z]/[a-z]/[0-9]/"-"/"."/"_"/"~".
     // Generate 32 random bytes and base64url-encode (no padding) → 43 characters.
@@ -470,26 +527,41 @@ async fn exchange_oauth_code(
     code: &str,
     code_verifier: &str,
     redirect_uri: &str,
+    state: &str,
 ) -> anyhow::Result<OAuthTokenResponse> {
-    let (token_url, client_id) = if provider == "openai-codex" {
-        ("https://auth.openai.com/oauth/token", openai_client_id())
+    let client = reqwest::Client::new();
+
+    let resp = if provider == "anthropic" {
+        // Claude requires JSON body with state parameter.
+        client
+            .post(CLAUDE_TOKEN_URL)
+            .json(&serde_json::json!({
+                "grant_type": "authorization_code",
+                "client_id": CLAUDE_CLIENT_ID,
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "code_verifier": code_verifier,
+                "state": state,
+            }))
+            .send()
+            .await
+            .context("failed to exchange authorization code")?
+    } else if provider == "openai-codex" {
+        client
+            .post("https://auth.openai.com/oauth/token")
+            .form(&[
+                ("grant_type", "authorization_code"),
+                ("code", code),
+                ("redirect_uri", redirect_uri),
+                ("client_id", openai_client_id()),
+                ("code_verifier", code_verifier),
+            ])
+            .send()
+            .await
+            .context("failed to exchange authorization code")?
     } else {
         bail!("OAuth token exchange not yet implemented for {provider}");
     };
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(token_url)
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", redirect_uri),
-            ("client_id", client_id),
-            ("code_verifier", code_verifier),
-        ])
-        .send()
-        .await
-        .context("failed to exchange authorization code")?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -500,6 +572,30 @@ async fn exchange_oauth_code(
     resp.json::<OAuthTokenResponse>()
         .await
         .context("failed to parse token exchange response")
+}
+
+async fn anthropic_refresh_token(refresh_token: &str) -> anyhow::Result<OAuthTokenResponse> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(CLAUDE_TOKEN_URL)
+        .json(&serde_json::json!({
+            "grant_type": "refresh_token",
+            "client_id": CLAUDE_CLIENT_ID,
+            "refresh_token": refresh_token,
+        }))
+        .send()
+        .await
+        .context("failed to refresh Anthropic token")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("Anthropic token refresh failed (HTTP {status}): {body}");
+    }
+
+    resp.json::<OAuthTokenResponse>()
+        .await
+        .context("failed to parse Anthropic refresh response")
 }
 
 fn now_epoch_secs() -> u64 {
@@ -694,6 +790,7 @@ fn is_oauth_provider(provider: &str) -> bool {
     provider.eq_ignore_ascii_case("openai-codex")
         || provider.eq_ignore_ascii_case("openai_codex")
         || provider.eq_ignore_ascii_case("codex")
+        || provider.eq_ignore_ascii_case("anthropic")
         || provider.eq_ignore_ascii_case("gemini")
         || provider.eq_ignore_ascii_case("google-gemini")
 }
@@ -945,7 +1042,7 @@ mod tests {
         let err = AuthCommand::run(
             &ctx,
             AuthCommands::Refresh {
-                provider: "anthropic".to_string(),
+                provider: "openrouter".to_string(),
                 profile: None,
             },
         )
@@ -953,7 +1050,7 @@ mod tests {
         .expect_err("unsupported provider should fail");
         assert!(err
             .to_string()
-            .contains("supports --provider openai-codex or gemini"));
+            .contains("supports --provider openai-codex, anthropic, or gemini"));
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }

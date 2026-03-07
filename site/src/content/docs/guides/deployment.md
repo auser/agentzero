@@ -116,28 +116,19 @@ Caddy handles TLS automatically via Let's Encrypt.
 
 ## Docker
 
-### Dockerfile
+The repository includes a `Dockerfile` and `docker-compose.yml` at the project root. The image builds the **server variant** (~7 MB binary) with SQLite, WASM plugins, and the HTTP gateway. TUI and interactive features are excluded since they are not needed in a container.
 
-```dockerfile
-FROM rust:1.80-slim AS builder
-WORKDIR /build
-COPY . .
-RUN cargo build -p agentzero --release
+### Quick start
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/agentzero /usr/local/bin/agentzero
-
-# Create data directory
-RUN mkdir -p /data
-ENV AGENTZERO_DATA_DIR=/data
-
-EXPOSE 8080
-ENTRYPOINT ["agentzero"]
-CMD ["gateway", "--host", "0.0.0.0", "--port", "8080"]
+```bash
+git clone https://github.com/auser/agentzero.git
+cd agentzero
+echo "OPENAI_API_KEY=sk-..." > .env
+docker compose up -d
+curl http://localhost:8080/health
 ```
 
-### Build and run
+### Build and run manually
 
 ```bash
 docker build -t agentzero .
@@ -149,45 +140,30 @@ docker run -d \
   agentzero
 ```
 
-### docker-compose
+Or use the Justfile shortcuts:
 
-```yaml
-version: "3.8"
-services:
-  agentzero:
-    build: .
-    ports:
-      - "8080:8080"
-    volumes:
-      - agentzero-data:/data
-      - ./agentzero.toml:/data/agentzero.toml:ro
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-volumes:
-  agentzero-data:
+```bash
+just docker-build
+just docker-up      # docker compose up -d
+just docker-down    # docker compose down
 ```
 
-### Configuration in Docker
+### Custom configuration
 
-Mount your `agentzero.toml` into the container's data directory, or use environment variables:
+The image ships with a minimal default config that sets `allow_public_bind = true` (required for Docker networking). To use your own config, mount it into the container:
 
 ```bash
 docker run -d \
   -p 8080:8080 \
+  -v agentzero-data:/data \
   -v ./agentzero.toml:/data/agentzero.toml:ro \
   -e OPENAI_API_KEY="sk-..." \
+  -e AGENTZERO_CONFIG=/data/agentzero.toml \
   agentzero
 ```
 
 :::caution
-When running in Docker, set `allow_public_bind = true` in your gateway config since Docker networking requires binding to `0.0.0.0`.
+When running in Docker, your config must include `allow_public_bind = true` in the `[gateway]` section since Docker networking requires binding to `0.0.0.0`.
 :::
 
 ---

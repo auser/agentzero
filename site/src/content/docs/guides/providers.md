@@ -36,11 +36,16 @@ model = "gpt-4o"
 
 ## Anthropic
 
-1. Get an API key from [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
-2. Configure:
+**Option A: Browser login (recommended)** — uses your claude.ai subscription:
 
 ```bash
 agentzero onboard --provider anthropic --model claude-sonnet-4-6 --yes
+agentzero auth login --provider anthropic       # opens browser for OAuth
+```
+
+**Option B: API key** — from [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys):
+
+```bash
 agentzero auth setup-token --provider anthropic --token sk-ant-...
 ```
 

@@ -168,8 +168,9 @@ agentzero auth logout --provider openrouter                  # remove
 
 ```bash
 agentzero auth login --provider openai-codex    # opens browser
-agentzero auth login --provider gemini
+agentzero auth login --provider anthropic       # opens browser (claude.ai)
 agentzero auth refresh --provider openai-codex  # refresh expired token
+agentzero auth refresh --provider anthropic     # refresh expired token
 ```
 
 ---
