@@ -144,6 +144,13 @@ release VERSION:
     # Bump inline version on internal workspace dep entries (path = "crates/…", version = "…")
     perl -i -pe 's|(agentzero-[a-z-]+ = \{ path = "crates/[^"]+", version = )"[^"]+"|${1}"{{VERSION}}"|g' Cargo.toml
     echo "    Cargo.toml [workspace.package] version set to {{VERSION}}"
+    # Bump standalone Cargo.toml files (plugins, fixtures) that don't use version.workspace
+    rg --files -g 'Cargo.toml' | grep -v '^Cargo\.toml$' | while IFS= read -r f; do
+        if grep -q '^version = ' "$f" && ! grep -q 'version\.workspace' "$f"; then
+            sed -i '' 's/^version = ".*"/version = "{{VERSION}}"/' "$f"
+        fi
+    done
+    echo "    Plugin and fixture Cargo.toml versions set to {{VERSION}}"
     # 2. Quality gates — auto-fix fmt and clippy, then test
     cargo fmt --all
     cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings
