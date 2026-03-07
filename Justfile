@@ -176,7 +176,8 @@ release VERSION:
     fi
     # 5. Verify changelog & crate versions match
     scripts/verify-release-version.sh --version "{{VERSION}}"
-    # 6. Tag and push (triggers .github/workflows/release.yml)
+    # 6. Push branch commits, tag, and push tag (triggers .github/workflows/release.yml)
+    git push
     git tag "v{{VERSION}}"
     git push origin "v{{VERSION}}"
     echo "==> Tag v{{VERSION}} pushed. Release workflow will build and publish."
