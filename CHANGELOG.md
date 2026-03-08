@@ -7,6 +7,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.4.2] - 2026-03-08
+
 ## [0.4.2] - 2026-03-07
 
 ## [0.4.2] - 2026-03-07
