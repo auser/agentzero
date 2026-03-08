@@ -204,14 +204,18 @@ release-auto:
         git commit -m "chore: bump workspace version to $NEXT_VERSION"
     fi
     # 5. Generate changelog entry from conventional commits (via git-cliff)
-    git-cliff --tag "v$NEXT_VERSION" --unreleased --prepend CHANGELOG.md
-    git add CHANGELOG.md
-    git commit -m "chore: add changelog entry for v$NEXT_VERSION"
+    if ! grep -q "^## \[$NEXT_VERSION\]" CHANGELOG.md; then
+        git-cliff --tag "v$NEXT_VERSION" --unreleased --prepend CHANGELOG.md
+        git add CHANGELOG.md
+        git commit -m "chore: add changelog entry for v$NEXT_VERSION"
+    fi
     # 6. Verify changelog & crate versions match
     scripts/verify-release-version.sh --version "$NEXT_VERSION"
     # 7. Push branch commits, tag, and push tag (triggers .github/workflows/release.yml)
     git push
-    git tag "v$NEXT_VERSION"
+    if ! git tag -l "v$NEXT_VERSION" | grep -q .; then
+        git tag "v$NEXT_VERSION"
+    fi
     git push origin "v$NEXT_VERSION"
     echo "==> Tag v$NEXT_VERSION pushed. Release workflow will build and publish."
 
