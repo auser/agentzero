@@ -246,6 +246,8 @@ release VERSION:
     scripts/verify-release-version.sh --version "{{VERSION}}"
     # 6. Push branch commits, tag, and push tag (triggers .github/workflows/release.yml)
     git push
-    git tag "v{{VERSION}}"
+    if ! git tag -l "v{{VERSION}}" | grep -q .; then
+        git tag "v{{VERSION}}"
+    fi
     git push origin "v{{VERSION}}"
     echo "==> Tag v{{VERSION}} pushed. Release workflow will build and publish."
