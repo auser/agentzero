@@ -181,9 +181,19 @@ pub(crate) struct AsyncSubmitRequest {
     #[serde(default)]
     #[allow(dead_code)]
     pub(crate) lane: Option<String>,
+    /// Queue mode: "steer" (default), "followup", "collect", "interrupt".
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub(crate) mode: Option<String>,
     /// Model override.
     #[serde(default)]
     pub(crate) model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CancelQuery {
+    #[serde(default)]
+    pub(crate) cascade: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

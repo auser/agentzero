@@ -2,7 +2,7 @@ use crate::token_store::save_paired_tokens;
 use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
-use agentzero_orchestrator::JobStore;
+use agentzero_orchestrator::{JobStore, PresenceStore};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
     collections::HashSet,
@@ -56,6 +56,8 @@ pub(crate) struct GatewayState {
     pub(crate) live_config: Option<watch::Receiver<AgentZeroConfig>>,
     /// Async job store for tracking /v1/runs submissions.
     pub(crate) job_store: Option<Arc<JobStore>>,
+    /// Agent presence tracking for /v1/agents endpoint.
+    pub(crate) presence_store: Option<Arc<PresenceStore>>,
 }
 
 impl GatewayState {
@@ -97,6 +99,7 @@ impl GatewayState {
             relay_mailbox: None,
             live_config: None,
             job_store: None,
+            presence_store: None,
         }
     }
 
@@ -252,6 +255,7 @@ impl GatewayState {
             relay_mailbox: None,
             live_config: None,
             job_store: None,
+            presence_store: None,
         }
     }
 
@@ -287,6 +291,7 @@ impl GatewayState {
             relay_mailbox: None,
             live_config: None,
             job_store: None,
+            presence_store: None,
         }
     }
 }

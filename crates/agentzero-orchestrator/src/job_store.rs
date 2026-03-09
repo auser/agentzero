@@ -4,10 +4,72 @@
 //! lifecycle: `Pending → Running → Completed/Failed/Cancelled`.
 
 use agentzero_core::{JobStatus, Lane, RunId};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
+
+/// Kind of event that occurred during a run's lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventKind {
+    Created,
+    Running,
+    ToolCall { name: String },
+    ToolResult { name: String },
+    Completed { summary: String },
+    Failed { error: String },
+    Cancelled,
+}
+
+/// A single event in a run's persistent event log.
+#[derive(Debug, Clone)]
+pub struct RunEvent {
+    pub timestamp: Instant,
+    pub run_id: RunId,
+    pub kind: EventKind,
+}
+
+/// Append-only event log for run lifecycle tracking.
+#[derive(Debug, Clone, Default)]
+pub struct EventLog {
+    events: Arc<RwLock<HashMap<RunId, Vec<RunEvent>>>>,
+}
+
+impl EventLog {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append an event to a run's log.
+    pub async fn append(&self, run_id: &RunId, kind: EventKind) {
+        let event = RunEvent {
+            timestamp: Instant::now(),
+            run_id: run_id.clone(),
+            kind,
+        };
+        self.events
+            .write()
+            .await
+            .entry(run_id.clone())
+            .or_default()
+            .push(event);
+    }
+
+    /// Get all events for a run.
+    pub async fn get(&self, run_id: &RunId) -> Vec<RunEvent> {
+        self.events
+            .read()
+            .await
+            .get(run_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Remove events for a run (used during GC).
+    pub async fn remove(&self, run_id: &RunId) {
+        self.events.write().await.remove(run_id);
+    }
+}
 
 /// Record for a single async job.
 #[derive(Debug, Clone)]
@@ -33,6 +95,8 @@ pub struct JobStore {
     jobs: Arc<RwLock<HashMap<RunId, JobRecord>>>,
     /// Channel that fires whenever a job's status changes.
     notify: Arc<tokio::sync::broadcast::Sender<(RunId, JobStatus)>>,
+    /// Persistent event log for run lifecycle tracking.
+    event_log: EventLog,
 }
 
 impl JobStore {
@@ -41,7 +105,13 @@ impl JobStore {
         Self {
             jobs: Arc::new(RwLock::new(HashMap::new())),
             notify: Arc::new(tx),
+            event_log: EventLog::new(),
         }
+    }
+
+    /// Access the event log for recording tool calls and other events.
+    pub fn event_log(&self) -> &EventLog {
+        &self.event_log
     }
 
     /// Submit a new job. Returns the assigned [`RunId`].
@@ -67,6 +137,7 @@ impl JobStore {
         };
         self.jobs.write().await.insert(run_id.clone(), record);
         let _ = self.notify.send((run_id.clone(), JobStatus::Pending));
+        self.event_log.append(&run_id, EventKind::Created).await;
         run_id
     }
 
@@ -78,7 +149,21 @@ impl JobStore {
             record.updated_at = Instant::now();
         }
         drop(jobs);
-        let _ = self.notify.send((run_id.clone(), status));
+        let _ = self.notify.send((run_id.clone(), status.clone()));
+
+        // Record in event log.
+        let kind = match &status {
+            JobStatus::Pending => EventKind::Created,
+            JobStatus::Running => EventKind::Running,
+            JobStatus::Completed { result } => EventKind::Completed {
+                summary: result.clone(),
+            },
+            JobStatus::Failed { error } => EventKind::Failed {
+                error: error.clone(),
+            },
+            JobStatus::Cancelled => EventKind::Cancelled,
+        };
+        self.event_log.append(run_id, kind).await;
     }
 
     /// Get a snapshot of a job record.
@@ -126,6 +211,51 @@ impl JobStore {
         }
     }
 
+    /// Cancel a job and all its descendants recursively (BFS).
+    /// Returns the list of run IDs that were cancelled.
+    pub async fn cascade_cancel(&self, run_id: &RunId) -> Vec<RunId> {
+        let mut cancelled = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(run_id.clone());
+
+        while let Some(current) = queue.pop_front() {
+            // Cancel this job.
+            let did_cancel = {
+                let mut jobs = self.jobs.write().await;
+                if let Some(record) = jobs.get_mut(&current) {
+                    if !record.status.is_terminal() {
+                        record.status = JobStatus::Cancelled;
+                        record.updated_at = Instant::now();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+
+            if did_cancel {
+                let _ = self.notify.send((current.clone(), JobStatus::Cancelled));
+                self.event_log.append(&current, EventKind::Cancelled).await;
+                cancelled.push(current.clone());
+            }
+
+            // Find all children of this job.
+            let children: Vec<RunId> = {
+                let jobs = self.jobs.read().await;
+                jobs.values()
+                    .filter(|r| r.parent_run_id.as_ref() == Some(&current))
+                    .filter(|r| !r.status.is_terminal())
+                    .map(|r| r.run_id.clone())
+                    .collect()
+            };
+            queue.extend(children);
+        }
+
+        cancelled
+    }
+
     /// List all jobs, optionally filtered by status string.
     pub async fn list_all(&self, status_filter: Option<&str>) -> Vec<JobRecord> {
         let jobs = self.jobs.read().await;
@@ -158,11 +288,52 @@ impl JobStore {
         self.notify.subscribe()
     }
 
+    /// Record a tool call event in the persistent event log.
+    pub async fn record_tool_call(&self, run_id: &RunId, tool_name: &str) {
+        self.event_log
+            .append(
+                run_id,
+                EventKind::ToolCall {
+                    name: tool_name.to_string(),
+                },
+            )
+            .await;
+    }
+
+    /// Record a tool result event in the persistent event log.
+    pub async fn record_tool_result(&self, run_id: &RunId, tool_name: &str) {
+        self.event_log
+            .append(
+                run_id,
+                EventKind::ToolResult {
+                    name: tool_name.to_string(),
+                },
+            )
+            .await;
+    }
+
+    /// Get the persistent event log for a run.
+    pub async fn get_events(&self, run_id: &RunId) -> Vec<RunEvent> {
+        self.event_log.get(run_id).await
+    }
+
     /// Remove completed/failed/cancelled jobs older than `max_age`.
     pub async fn gc_expired(&self, max_age: std::time::Duration) {
         let cutoff = Instant::now() - max_age;
         let mut jobs = self.jobs.write().await;
-        jobs.retain(|_, record| !record.status.is_terminal() || record.updated_at > cutoff);
+        let expired: Vec<RunId> = jobs
+            .iter()
+            .filter(|(_, record)| record.status.is_terminal() && record.updated_at <= cutoff)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &expired {
+            jobs.remove(id);
+        }
+        drop(jobs);
+        // Clean up event logs for expired jobs.
+        for id in &expired {
+            self.event_log.remove(id).await;
+        }
     }
 
     /// Total number of tracked jobs.
@@ -350,5 +521,191 @@ mod tests {
         let record = store.get(&run_id).await.unwrap();
         assert_eq!(record.tokens_used, 1500);
         assert_eq!(record.cost_microdollars, 4200);
+    }
+
+    #[tokio::test]
+    async fn cascade_cancel_parent_and_children() {
+        let store = JobStore::new();
+        let parent = store.submit("parent".to_string(), Lane::Main, None).await;
+        store.update_status(&parent, JobStatus::Running).await;
+
+        let child1 = store
+            .submit(
+                "child1".to_string(),
+                Lane::SubAgent {
+                    parent_run_id: parent.clone(),
+                    depth: 1,
+                },
+                Some(parent.clone()),
+            )
+            .await;
+        store.update_status(&child1, JobStatus::Running).await;
+
+        let child2 = store
+            .submit(
+                "child2".to_string(),
+                Lane::SubAgent {
+                    parent_run_id: parent.clone(),
+                    depth: 1,
+                },
+                Some(parent.clone()),
+            )
+            .await;
+        store.update_status(&child2, JobStatus::Running).await;
+
+        let cancelled = store.cascade_cancel(&parent).await;
+        assert_eq!(cancelled.len(), 3);
+
+        assert_eq!(
+            store.get(&parent).await.unwrap().status,
+            JobStatus::Cancelled
+        );
+        assert_eq!(
+            store.get(&child1).await.unwrap().status,
+            JobStatus::Cancelled
+        );
+        assert_eq!(
+            store.get(&child2).await.unwrap().status,
+            JobStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn cascade_cancel_three_levels_deep() {
+        let store = JobStore::new();
+        let root = store.submit("root".to_string(), Lane::Main, None).await;
+        store.update_status(&root, JobStatus::Running).await;
+
+        let child = store
+            .submit(
+                "child".to_string(),
+                Lane::SubAgent {
+                    parent_run_id: root.clone(),
+                    depth: 1,
+                },
+                Some(root.clone()),
+            )
+            .await;
+        store.update_status(&child, JobStatus::Running).await;
+
+        let grandchild = store
+            .submit(
+                "grandchild".to_string(),
+                Lane::SubAgent {
+                    parent_run_id: child.clone(),
+                    depth: 2,
+                },
+                Some(child.clone()),
+            )
+            .await;
+        store.update_status(&grandchild, JobStatus::Running).await;
+
+        let cancelled = store.cascade_cancel(&root).await;
+        assert_eq!(cancelled.len(), 3);
+        assert_eq!(
+            store.get(&grandchild).await.unwrap().status,
+            JobStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn cascade_cancel_skips_already_terminal() {
+        let store = JobStore::new();
+        let parent = store.submit("parent".to_string(), Lane::Main, None).await;
+        store.update_status(&parent, JobStatus::Running).await;
+
+        let completed_child = store
+            .submit(
+                "done".to_string(),
+                Lane::SubAgent {
+                    parent_run_id: parent.clone(),
+                    depth: 1,
+                },
+                Some(parent.clone()),
+            )
+            .await;
+        store
+            .update_status(
+                &completed_child,
+                JobStatus::Completed {
+                    result: "ok".to_string(),
+                },
+            )
+            .await;
+
+        let running_child = store
+            .submit(
+                "running".to_string(),
+                Lane::SubAgent {
+                    parent_run_id: parent.clone(),
+                    depth: 1,
+                },
+                Some(parent.clone()),
+            )
+            .await;
+        store
+            .update_status(&running_child, JobStatus::Running)
+            .await;
+
+        let cancelled = store.cascade_cancel(&parent).await;
+        // Parent + running_child cancelled; completed_child skipped.
+        assert_eq!(cancelled.len(), 2);
+        assert!(cancelled.contains(&parent));
+        assert!(cancelled.contains(&running_child));
+    }
+
+    #[tokio::test]
+    async fn event_log_records_lifecycle() {
+        let store = JobStore::new();
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+        store.update_status(&run_id, JobStatus::Running).await;
+        store.record_tool_call(&run_id, "read_file").await;
+        store.record_tool_result(&run_id, "read_file").await;
+        store
+            .update_status(
+                &run_id,
+                JobStatus::Completed {
+                    result: "done".to_string(),
+                },
+            )
+            .await;
+
+        let events = store.get_events(&run_id).await;
+        assert_eq!(events.len(), 5); // Created, Running, ToolCall, ToolResult, Completed
+
+        assert_eq!(events[0].kind, EventKind::Created);
+        assert_eq!(events[1].kind, EventKind::Running);
+        assert_eq!(
+            events[2].kind,
+            EventKind::ToolCall {
+                name: "read_file".to_string()
+            }
+        );
+        assert_eq!(
+            events[3].kind,
+            EventKind::ToolResult {
+                name: "read_file".to_string()
+            }
+        );
+        assert!(matches!(events[4].kind, EventKind::Completed { .. }));
+    }
+
+    #[tokio::test]
+    async fn gc_also_removes_event_log() {
+        let store = JobStore::new();
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+        store.record_tool_call(&run_id, "test").await;
+        store
+            .update_status(
+                &run_id,
+                JobStatus::Completed {
+                    result: "ok".to_string(),
+                },
+            )
+            .await;
+
+        store.gc_expired(std::time::Duration::ZERO).await;
+        assert!(store.get(&run_id).await.is_none());
+        assert!(store.get_events(&run_id).await.is_empty());
     }
 }

@@ -7,7 +7,7 @@
 //! - **Cron**: Scheduled jobs (parallel up to configured limit).
 //! - **SubAgent**: Sub-agent work spawned by parent agents (parallel up to limit).
 
-use agentzero_core::{Lane, RunId};
+use agentzero_core::{Lane, QueueMode, RunId};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Semaphore};
 
@@ -38,6 +38,8 @@ pub struct WorkItem {
     pub agent_id: String,
     pub message: String,
     pub lane: Lane,
+    /// How this message should be routed within the lane.
+    pub queue_mode: QueueMode,
     /// Channel to send the result back to the submitter.
     pub result_tx: Option<tokio::sync::oneshot::Sender<WorkResult>>,
 }
@@ -168,6 +170,7 @@ mod tests {
             agent_id: "test-agent".to_string(),
             message: "hello".to_string(),
             lane: Lane::Main,
+            queue_mode: QueueMode::default(),
             result_tx: Some(result_tx),
         };
 
@@ -202,6 +205,7 @@ mod tests {
                 parent_run_id: parent.clone(),
                 depth: 1,
             },
+            queue_mode: QueueMode::default(),
             result_tx: None,
         };
 

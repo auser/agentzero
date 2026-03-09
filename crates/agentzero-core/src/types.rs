@@ -80,6 +80,36 @@ pub enum Lane {
     SubAgent { parent_run_id: RunId, depth: u8 },
 }
 
+/// How a message should be routed within a lane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+#[derive(Default)]
+pub enum QueueMode {
+    /// Route message to a single agent based on AI router classification (default).
+    #[default]
+    Steer,
+    /// Append to an existing run's conversation rather than starting a new one.
+    Followup { run_id: RunId },
+    /// Fan-out to all agents in the lane, collect all responses, merge into a single result.
+    Collect,
+    /// Preempt the currently running agent in the lane, cancelling its in-flight work.
+    Interrupt,
+}
+
+
+/// Action returned by a tool-loop detector after inspecting a tool call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopAction {
+    /// No loop detected — continue normally.
+    Continue,
+    /// Inject a system message telling the agent to try a different approach.
+    InjectMessage(String),
+    /// Remove the named tools for the next iteration.
+    RestrictTools(Vec<String>),
+    /// Force-complete the run with the given error message.
+    ForceComplete(String),
+}
+
 /// Message published when a sub-agent completes, announcing its result
 /// back to the parent agent's channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1092,5 +1122,58 @@ mod tests {
         }
         .is_terminal());
         assert!(JobStatus::Cancelled.is_terminal());
+    }
+
+    #[test]
+    fn queue_mode_serde_steer() {
+        let mode = QueueMode::Steer;
+        let json = serde_json::to_string(&mode).unwrap();
+        assert!(json.contains("\"mode\":\"steer\""));
+        let parsed: QueueMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, QueueMode::Steer);
+    }
+
+    #[test]
+    fn queue_mode_serde_followup() {
+        let mode = QueueMode::Followup {
+            run_id: RunId("run-123".to_string()),
+        };
+        let json = serde_json::to_string(&mode).unwrap();
+        assert!(json.contains("\"followup\""));
+        let parsed: QueueMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, mode);
+    }
+
+    #[test]
+    fn queue_mode_serde_collect() {
+        let mode = QueueMode::Collect;
+        let json = serde_json::to_string(&mode).unwrap();
+        let parsed: QueueMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, QueueMode::Collect);
+    }
+
+    #[test]
+    fn queue_mode_serde_interrupt() {
+        let mode = QueueMode::Interrupt;
+        let json = serde_json::to_string(&mode).unwrap();
+        let parsed: QueueMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, QueueMode::Interrupt);
+    }
+
+    #[test]
+    fn queue_mode_default_is_steer() {
+        assert_eq!(QueueMode::default(), QueueMode::Steer);
+    }
+
+    #[test]
+    fn loop_action_variants() {
+        let actions = [LoopAction::Continue,
+            LoopAction::InjectMessage("try different".to_string()),
+            LoopAction::RestrictTools(vec!["shell".to_string()]),
+            LoopAction::ForceComplete("budget exceeded".to_string())];
+        // Verify all variants exist and are distinct.
+        assert_ne!(actions[0], actions[1]);
+        assert_ne!(actions[1], actions[2]);
+        assert_ne!(actions[2], actions[3]);
     }
 }

@@ -1591,6 +1591,7 @@ async fn v1_runs_events_for_completed_job() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let events = json["events"].as_array().unwrap();
     assert_eq!(events.len(), 3); // created, running, completed
+    assert_eq!(json["total"], 3);
     assert_eq!(events[0]["type"], "created");
     assert_eq!(events[1]["type"], "running");
     assert_eq!(events[2]["type"], "completed");
@@ -1653,6 +1654,152 @@ fn status_frame_failed() {
     let v: serde_json::Value = serde_json::from_str(&frame).unwrap();
     assert_eq!(v["type"], "failed");
     assert_eq!(v["error"], "something broke");
+}
+
+// ---------------------------------------------------------------------------
+// Cascade cancel tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn v1_runs_cascade_cancel() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let parent = store
+        .submit("parent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&parent, agentzero_core::JobStatus::Running)
+        .await;
+
+    let _child = store
+        .submit(
+            "child".to_string(),
+            agentzero_core::Lane::SubAgent {
+                parent_run_id: parent.clone(),
+                depth: 1,
+            },
+            Some(parent.clone()),
+        )
+        .await;
+    store
+        .update_status(&_child, agentzero_core::JobStatus::Running)
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("DELETE")
+        .uri(format!("/v1/runs/{}?cascade=true", parent.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["cancelled"], true);
+    assert_eq!(json["cascade_count"], 2); // parent + child
+}
+
+// ---------------------------------------------------------------------------
+// Agents list tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn v1_agents_list_with_presence() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::PresenceStore::new());
+    store
+        .register("researcher", std::time::Duration::from_secs(30))
+        .await;
+    store
+        .register("writer", std::time::Duration::from_secs(30))
+        .await;
+
+    let mut state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    state.presence_store = Some(store);
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/agents")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total"], 2);
+    let data = json["data"].as_array().unwrap();
+    assert_eq!(data.len(), 2);
+    // All should be alive (just registered).
+    for agent in data {
+        assert_eq!(agent["status"], "alive");
+    }
+}
+
+#[tokio::test]
+async fn v1_agents_list_no_presence_store_returns_503() {
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/agents")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+// ---------------------------------------------------------------------------
+// Event log via API tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn v1_runs_events_include_tool_calls() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("tool-agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&run_id, agentzero_core::JobStatus::Running)
+        .await;
+    store.record_tool_call(&run_id, "read_file").await;
+    store.record_tool_result(&run_id, "read_file").await;
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "done".to_string(),
+            },
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/events", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let events = json["events"].as_array().unwrap();
+    // Created, Running, ToolCall, ToolResult, Completed = 5
+    assert_eq!(events.len(), 5);
+    assert_eq!(events[2]["type"], "tool_call");
+    assert_eq!(events[2]["tool"], "read_file");
+    assert_eq!(events[3]["type"], "tool_result");
+    assert_eq!(events[3]["tool"], "read_file");
 }
 
 // ---------------------------------------------------------------------------

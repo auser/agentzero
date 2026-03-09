@@ -26,9 +26,9 @@ pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{
     AgentConfig, AgentError, AnnounceMessage, AssistantMessage, AuditEvent, AuditSink, ChatResult,
     ContentPart, ConversationMessage, DepthPolicy, DepthRule, HookEvent, HookFailureMode,
-    HookPolicy, HookRiskTier, HookSink, JobStatus, Lane, MemoryEntry, MemoryStore, MergeStrategy,
-    MetricsSink, Provider, ReasoningConfig, ResearchPolicy, ResearchTrigger, RunId, StopReason,
-    StreamChunk, StreamSink, Tool, ToolCallDelta, ToolContext, ToolDefinition, ToolResult,
-    ToolResultMessage, ToolUseRequest, UserMessage,
+    HookPolicy, HookRiskTier, HookSink, JobStatus, Lane, LoopAction, MemoryEntry, MemoryStore,
+    MergeStrategy, MetricsSink, Provider, QueueMode, ReasoningConfig, ResearchPolicy,
+    ResearchTrigger, RunId, StopReason, StreamChunk, StreamSink, Tool, ToolCallDelta, ToolContext,
+    ToolDefinition, ToolResult, ToolResultMessage, ToolUseRequest, UserMessage,
 };
 pub use validation::validate_json;

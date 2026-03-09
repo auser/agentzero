@@ -1,9 +1,9 @@
 use crate::auth::authorize_request;
 use crate::models::{
-    AsyncSubmitRequest, AsyncSubmitResponse, ChatCompletionsRequest, ChatCompletionsResponse,
-    ChatRequest, ChatResponse, CompletionChoice, CompletionChoiceMessage, GatewayError,
-    HealthResponse, JobListQuery, JobStatusResponse, ModelItem, ModelsResponse, PairRequest,
-    PairResponse, PingRequest, PingResponse, WebhookResponse,
+    AsyncSubmitRequest, AsyncSubmitResponse, CancelQuery, ChatCompletionsRequest,
+    ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice, CompletionChoiceMessage,
+    GatewayError, HealthResponse, JobListQuery, JobStatusResponse, ModelItem, ModelsResponse,
+    PairRequest, PairResponse, PingRequest, PingResponse, WebhookResponse,
 };
 use crate::state::GatewayState;
 use crate::util::{generate_session_token, now_epoch_secs};
@@ -656,6 +656,7 @@ pub(crate) async fn job_cancel(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<CancelQuery>,
 ) -> Result<Json<Value>, GatewayError> {
     authorize_request(&state, &headers, false)?;
 
@@ -671,11 +672,21 @@ pub(crate) async fn job_cancel(
         });
     }
 
-    let cancelled = job_store.cancel(&run_id).await;
-    Ok(Json(json!({
-        "run_id": run_id_str,
-        "cancelled": cancelled,
-    })))
+    if query.cascade.unwrap_or(false) {
+        let cancelled_ids = job_store.cascade_cancel(&run_id).await;
+        Ok(Json(json!({
+            "run_id": run_id_str,
+            "cancelled": !cancelled_ids.is_empty(),
+            "cascade_count": cancelled_ids.len(),
+            "cancelled_ids": cancelled_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        })))
+    } else {
+        let cancelled = job_store.cancel(&run_id).await;
+        Ok(Json(json!({
+            "run_id": run_id_str,
+            "cancelled": cancelled,
+        })))
+    }
 }
 
 /// GET /v1/runs — list all jobs, optionally filtered by status query param.
@@ -741,55 +752,102 @@ pub(crate) async fn job_events(
         .as_ref()
         .ok_or(GatewayError::AgentUnavailable)?;
     let run_id = agentzero_core::RunId(run_id_str.clone());
-    let record = job_store.get(&run_id).await.ok_or(GatewayError::NotFound {
-        resource: format!("run {run_id_str}"),
-    })?;
 
-    // Reconstruct events from the current state.
-    // In a full implementation, these would be persisted as a log.
-    let mut events = vec![json!({
-        "type": "created",
-        "run_id": run_id_str,
-        "agent_id": record.agent_id,
-    })];
-
-    match &record.status {
-        agentzero_core::JobStatus::Pending => {}
-        agentzero_core::JobStatus::Running => {
-            events.push(json!({ "type": "running", "run_id": run_id_str }));
-        }
-        agentzero_core::JobStatus::Completed { result } => {
-            events.push(json!({ "type": "running", "run_id": run_id_str }));
-            events.push(json!({
-                "type": "completed",
-                "run_id": run_id_str,
-                "result": result,
-                "tokens_used": record.tokens_used,
-                "cost_microdollars": record.cost_microdollars,
-            }));
-        }
-        agentzero_core::JobStatus::Failed { error } => {
-            events.push(json!({ "type": "running", "run_id": run_id_str }));
-            events.push(json!({
-                "type": "failed",
-                "run_id": run_id_str,
-                "error": error,
-            }));
-        }
-        agentzero_core::JobStatus::Cancelled => {
-            events.push(json!({ "type": "cancelled", "run_id": run_id_str }));
-        }
+    if job_store.get(&run_id).await.is_none() {
+        return Err(GatewayError::NotFound {
+            resource: format!("run {run_id_str}"),
+        });
     }
+
+    // Use the persistent event log instead of reconstructing from state.
+    let log_events = job_store.get_events(&run_id).await;
+    let events: Vec<Value> = log_events
+        .iter()
+        .map(|e| {
+            use agentzero_orchestrator::EventKind;
+            match &e.kind {
+                EventKind::Created => json!({
+                    "type": "created",
+                    "run_id": run_id_str,
+                }),
+                EventKind::Running => json!({
+                    "type": "running",
+                    "run_id": run_id_str,
+                }),
+                EventKind::ToolCall { name } => json!({
+                    "type": "tool_call",
+                    "run_id": run_id_str,
+                    "tool": name,
+                }),
+                EventKind::ToolResult { name } => json!({
+                    "type": "tool_result",
+                    "run_id": run_id_str,
+                    "tool": name,
+                }),
+                EventKind::Completed { summary } => json!({
+                    "type": "completed",
+                    "run_id": run_id_str,
+                    "result": summary,
+                }),
+                EventKind::Failed { error } => json!({
+                    "type": "failed",
+                    "run_id": run_id_str,
+                    "error": error,
+                }),
+                EventKind::Cancelled => json!({
+                    "type": "cancelled",
+                    "run_id": run_id_str,
+                }),
+            }
+        })
+        .collect();
 
     Ok(Json(json!({
         "object": "list",
         "run_id": run_id_str,
         "events": events,
+        "total": events.len(),
     })))
 }
 
 // ---------------------------------------------------------------------------
 // WebSocket run subscription: /ws/runs/:run_id
+/// GET /v1/agents — list all registered agents with their presence status.
+pub(crate) async fn agents_list(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let presence = state
+        .presence_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let records = presence.list_all().await;
+    let data: Vec<Value> = records
+        .iter()
+        .map(|r| {
+            let status_str = match r.status {
+                agentzero_orchestrator::PresenceStatus::Alive => "alive",
+                agentzero_orchestrator::PresenceStatus::Stale => "stale",
+                agentzero_orchestrator::PresenceStatus::Dead => "dead",
+            };
+            json!({
+                "agent_id": r.agent_id,
+                "status": status_str,
+                "ttl_secs": r.ttl.as_secs(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "object": "list",
+        "data": data,
+        "total": data.len(),
+    })))
+}
+
 // ---------------------------------------------------------------------------
 
 /// GET /ws/runs/:run_id — subscribe to real-time status updates for a job.
