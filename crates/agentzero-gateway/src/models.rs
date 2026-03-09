@@ -170,6 +170,44 @@ impl IntoResponse for GatewayError {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Async job submission (OpenClaw-style /v1/runs)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AsyncSubmitRequest {
+    pub(crate) message: String,
+    /// Lane override: "main" (default), "cron", or "subagent".
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub(crate) lane: Option<String>,
+    /// Model override.
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AsyncSubmitResponse {
+    pub(crate) run_id: String,
+    pub(crate) accepted_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct JobStatusResponse {
+    pub(crate) run_id: String,
+    pub(crate) status: String,
+    pub(crate) agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct JobListQuery {
+    pub(crate) status: Option<String>,
+}
+
 impl From<StatusCode> for GatewayError {
     fn from(status: StatusCode) -> Self {
         match status {

@@ -1747,6 +1747,12 @@ pub struct SwarmConfig {
     /// Explicit sequential pipelines for common workflows.
     #[serde(default)]
     pub pipelines: Vec<PipelineConfig>,
+    /// Lane-based concurrency configuration.
+    #[serde(default)]
+    pub lanes: LanesConfig,
+    /// Depth-gated tool policy for sub-agent nesting.
+    #[serde(default)]
+    pub depth_policy: Vec<DepthRuleConfig>,
 }
 
 impl Default for SwarmConfig {
@@ -1759,8 +1765,47 @@ impl Default for SwarmConfig {
             router: SwarmRouterConfig::default(),
             agents: HashMap::new(),
             pipelines: Vec::new(),
+            lanes: LanesConfig::default(),
+            depth_policy: Vec::new(),
         }
     }
+}
+
+/// Lane-based concurrency configuration for the swarm coordinator.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct LanesConfig {
+    /// Max concurrent interactive requests (default: 1 = serialized).
+    pub main_concurrency: usize,
+    /// Max concurrent cron/scheduled jobs.
+    pub cron_concurrency: usize,
+    /// Max concurrent sub-agent executions.
+    pub subagent_concurrency: usize,
+    /// Max queued items per lane before backpressure.
+    pub queue_capacity: usize,
+}
+
+impl Default for LanesConfig {
+    fn default() -> Self {
+        Self {
+            main_concurrency: 1,
+            cron_concurrency: 3,
+            subagent_concurrency: 5,
+            queue_capacity: 64,
+        }
+    }
+}
+
+/// Depth-gated tool policy rule (config representation).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+#[derive(Default)]
+pub struct DepthRuleConfig {
+    pub max_depth: u8,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub denied_tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1863,6 +1908,19 @@ pub struct PipelineConfig {
     pub max_retries: u8,
     /// Per-step timeout in seconds.
     pub step_timeout_secs: u64,
+    /// Execution mode: "sequential" (default), "fanout", or "mixed".
+    #[serde(default = "default_execution_mode")]
+    pub execution_mode: String,
+    /// Fan-out steps: groups of agents to run in parallel.
+    #[serde(default)]
+    pub fanout_steps: Vec<FanOutStepConfig>,
+    /// Publish an AnnounceMessage when the pipeline completes.
+    #[serde(default)]
+    pub announce_on_complete: bool,
+}
+
+fn default_execution_mode() -> String {
+    "sequential".to_string()
 }
 
 impl Default for PipelineConfig {
@@ -1875,6 +1933,31 @@ impl Default for PipelineConfig {
             on_step_error: "abort".to_string(),
             max_retries: 3,
             step_timeout_secs: 120,
+            execution_mode: default_execution_mode(),
+            fanout_steps: Vec::new(),
+            announce_on_complete: false,
+        }
+    }
+}
+
+/// A fan-out step: multiple agents run in parallel, results merged.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct FanOutStepConfig {
+    /// Agent ids to run in parallel.
+    pub agents: Vec<String>,
+    /// Merge strategy: "wait_all" (default), "wait_any", "wait_quorum".
+    pub merge: String,
+    /// Minimum agents required for quorum (only with "wait_quorum").
+    pub quorum_min: usize,
+}
+
+impl Default for FanOutStepConfig {
+    fn default() -> Self {
+        Self {
+            agents: Vec::new(),
+            merge: "wait_all".to_string(),
+            quorum_min: 1,
         }
     }
 }

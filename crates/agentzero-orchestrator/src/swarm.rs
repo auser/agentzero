@@ -136,7 +136,18 @@ pub async fn build_swarm(
                 agent_config.max_tool_iterations = agent_cfg.max_iterations;
                 agent_config.privacy_boundary = agent_cfg.privacy_boundary.clone();
 
-                let agent = Agent::new(agent_config, exec.provider, exec.memory, exec.tools);
+                let tools = if agent_cfg.allowed_tools.is_empty() {
+                    exec.tools
+                } else {
+                    let allowed: std::collections::HashSet<&str> =
+                        agent_cfg.allowed_tools.iter().map(|s| s.as_str()).collect();
+                    exec.tools
+                        .into_iter()
+                        .filter(|t| allowed.contains(t.name()))
+                        .collect()
+                };
+
+                let agent = Agent::new(agent_config, exec.provider, exec.memory, tools);
 
                 coord.register_agent(
                     descriptor,

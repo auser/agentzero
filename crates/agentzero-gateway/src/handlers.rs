@@ -1,7 +1,8 @@
 use crate::auth::authorize_request;
 use crate::models::{
-    ChatCompletionsRequest, ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice,
-    CompletionChoiceMessage, GatewayError, HealthResponse, ModelItem, ModelsResponse, PairRequest,
+    AsyncSubmitRequest, AsyncSubmitResponse, ChatCompletionsRequest, ChatCompletionsResponse,
+    ChatRequest, ChatResponse, CompletionChoice, CompletionChoiceMessage, GatewayError,
+    HealthResponse, JobListQuery, JobStatusResponse, ModelItem, ModelsResponse, PairRequest,
     PairResponse, PingRequest, PingResponse, WebhookResponse,
 };
 use crate::state::GatewayState;
@@ -119,7 +120,7 @@ pub(crate) async fn legacy_webhook(
 ) -> Result<Json<ChatResponse>, GatewayError> {
     authorize_request(&state, &headers, false)?;
 
-    if let Some(reason) = check_perplexity(&req.message, &state.perplexity_filter) {
+    if let Some(reason) = check_perplexity(&req.message, &state.effective_perplexity_filter()) {
         tracing::warn!(reason = %reason, "gateway legacy_webhook blocked by perplexity filter");
         return Err(GatewayError::BadRequest {
             message: format!("blocked by perplexity filter: {reason}"),
@@ -170,7 +171,7 @@ pub(crate) async fn api_chat(
 ) -> Result<Json<ChatResponse>, GatewayError> {
     authorize_request(&state, &headers, false)?;
 
-    if let Some(reason) = check_perplexity(&req.message, &state.perplexity_filter) {
+    if let Some(reason) = check_perplexity(&req.message, &state.effective_perplexity_filter()) {
         tracing::warn!(reason = %reason, "gateway api_chat blocked by perplexity filter");
         return Err(GatewayError::BadRequest {
             message: format!("blocked by perplexity filter: {reason}"),
@@ -206,7 +207,7 @@ pub(crate) async fn v1_chat_completions(
         .map(|msg| msg.content.clone())
         .unwrap_or_else(|| "hello".to_string());
 
-    if let Some(reason) = check_perplexity(&last_user, &state.perplexity_filter) {
+    if let Some(reason) = check_perplexity(&last_user, &state.effective_perplexity_filter()) {
         tracing::warn!(reason = %reason, "gateway chat_completions blocked by perplexity filter");
         return Err(GatewayError::BadRequest {
             message: format!("blocked by perplexity filter: {reason}"),
@@ -487,4 +488,470 @@ async fn handle_text_message(
         .send(Message::Text(json!({"type": "done"}).to_string()))
         .await;
     let _ = handle.await;
+}
+
+// ---------------------------------------------------------------------------
+// Async job submission: /v1/runs (OpenClaw-style)
+// ---------------------------------------------------------------------------
+
+/// POST /v1/runs — submit an async agent job. Returns 202 Accepted with a run_id.
+pub(crate) async fn async_submit(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(req): Json<AsyncSubmitRequest>,
+) -> Result<Response, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    if let Some(reason) = check_perplexity(&req.message, &state.effective_perplexity_filter()) {
+        tracing::warn!(reason = %reason, "async_submit blocked by perplexity filter");
+        return Err(GatewayError::BadRequest {
+            message: format!("blocked by perplexity filter: {reason}"),
+        });
+    }
+
+    let lane = agentzero_core::Lane::Main;
+    let run_id = job_store.submit("agent".to_string(), lane, None).await;
+
+    // Build agent request and spawn in background.
+    let agent_req = build_agent_request(&state, req.message, req.model)?;
+    let store = job_store.clone();
+    let rid = run_id.clone();
+    tokio::spawn(async move {
+        store
+            .update_status(&rid, agentzero_core::JobStatus::Running)
+            .await;
+        match run_agent_once(agent_req).await {
+            Ok(output) => {
+                store
+                    .update_status(
+                        &rid,
+                        agentzero_core::JobStatus::Completed {
+                            result: output.response_text,
+                        },
+                    )
+                    .await;
+            }
+            Err(e) => {
+                store
+                    .update_status(
+                        &rid,
+                        agentzero_core::JobStatus::Failed {
+                            error: e.to_string(),
+                        },
+                    )
+                    .await;
+            }
+        }
+    });
+
+    let resp = AsyncSubmitResponse {
+        run_id: run_id.0.clone(),
+        accepted_at: chrono_now_iso(),
+    };
+    Ok((axum::http::StatusCode::ACCEPTED, Json(resp)).into_response())
+}
+
+/// GET /v1/runs/:run_id — poll job status.
+pub(crate) async fn job_status(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id_str): Path<String>,
+) -> Result<Json<JobStatusResponse>, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let run_id = agentzero_core::RunId(run_id_str.clone());
+    let record = job_store.get(&run_id).await.ok_or(GatewayError::NotFound {
+        resource: format!("run {run_id_str}"),
+    })?;
+
+    let (status_str, result, error) = match &record.status {
+        agentzero_core::JobStatus::Pending => ("pending", None, None),
+        agentzero_core::JobStatus::Running => ("running", None, None),
+        agentzero_core::JobStatus::Completed { result } => {
+            ("completed", Some(result.clone()), None)
+        }
+        agentzero_core::JobStatus::Failed { error } => ("failed", None, Some(error.clone())),
+        agentzero_core::JobStatus::Cancelled => ("cancelled", None, None),
+    };
+
+    Ok(Json(JobStatusResponse {
+        run_id: run_id_str,
+        status: status_str.to_string(),
+        agent_id: record.agent_id,
+        result,
+        error,
+    }))
+}
+
+/// GET /v1/runs/:run_id/result — get completed result (or 404/202).
+pub(crate) async fn job_result(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id_str): Path<String>,
+) -> Result<Response, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let run_id = agentzero_core::RunId(run_id_str.clone());
+    let record = job_store.get(&run_id).await.ok_or(GatewayError::NotFound {
+        resource: format!("run {run_id_str}"),
+    })?;
+
+    match record.status {
+        agentzero_core::JobStatus::Completed { result } => Ok(Json(json!({
+            "run_id": run_id_str,
+            "status": "completed",
+            "result": result,
+        }))
+        .into_response()),
+        agentzero_core::JobStatus::Failed { error } => Ok(Json(json!({
+            "run_id": run_id_str,
+            "status": "failed",
+            "error": error,
+        }))
+        .into_response()),
+        _ => {
+            // Still running — return 202 Accepted.
+            Ok((
+                axum::http::StatusCode::ACCEPTED,
+                Json(json!({
+                    "run_id": run_id_str,
+                    "status": "pending",
+                })),
+            )
+                .into_response())
+        }
+    }
+}
+
+fn chrono_now_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{secs}")
+}
+
+// ---------------------------------------------------------------------------
+// Job management: cancel, list, events
+// ---------------------------------------------------------------------------
+
+/// DELETE /v1/runs/:run_id — cancel a pending or running job.
+pub(crate) async fn job_cancel(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id_str): Path<String>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+    let run_id = agentzero_core::RunId(run_id_str.clone());
+
+    if job_store.get(&run_id).await.is_none() {
+        return Err(GatewayError::NotFound {
+            resource: format!("run {run_id_str}"),
+        });
+    }
+
+    let cancelled = job_store.cancel(&run_id).await;
+    Ok(Json(json!({
+        "run_id": run_id_str,
+        "cancelled": cancelled,
+    })))
+}
+
+/// GET /v1/runs — list all jobs, optionally filtered by status query param.
+pub(crate) async fn job_list(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    query: axum::extract::Query<JobListQuery>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+    let jobs = job_store.list_all(query.status.as_deref()).await;
+
+    let items: Vec<Value> = jobs
+        .iter()
+        .map(|r| {
+            let (status_str, result, error) = match &r.status {
+                agentzero_core::JobStatus::Pending => ("pending", None, None),
+                agentzero_core::JobStatus::Running => ("running", None, None),
+                agentzero_core::JobStatus::Completed { result } => {
+                    ("completed", Some(result.clone()), None)
+                }
+                agentzero_core::JobStatus::Failed { error } => {
+                    ("failed", None, Some(error.clone()))
+                }
+                agentzero_core::JobStatus::Cancelled => ("cancelled", None, None),
+            };
+            json!({
+                "run_id": r.run_id.0,
+                "status": status_str,
+                "agent_id": r.agent_id,
+                "result": result,
+                "error": error,
+                "tokens_used": r.tokens_used,
+                "cost_microdollars": r.cost_microdollars,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "object": "list",
+        "data": items,
+        "total": items.len(),
+    })))
+}
+
+/// GET /v1/runs/:run_id/events — stream job events as newline-delimited JSON.
+///
+/// Returns the status transitions for a job as a sequence of events.
+/// If the job is still running, returns events so far.
+pub(crate) async fn job_events(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id_str): Path<String>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+    let run_id = agentzero_core::RunId(run_id_str.clone());
+    let record = job_store.get(&run_id).await.ok_or(GatewayError::NotFound {
+        resource: format!("run {run_id_str}"),
+    })?;
+
+    // Reconstruct events from the current state.
+    // In a full implementation, these would be persisted as a log.
+    let mut events = vec![json!({
+        "type": "created",
+        "run_id": run_id_str,
+        "agent_id": record.agent_id,
+    })];
+
+    match &record.status {
+        agentzero_core::JobStatus::Pending => {}
+        agentzero_core::JobStatus::Running => {
+            events.push(json!({ "type": "running", "run_id": run_id_str }));
+        }
+        agentzero_core::JobStatus::Completed { result } => {
+            events.push(json!({ "type": "running", "run_id": run_id_str }));
+            events.push(json!({
+                "type": "completed",
+                "run_id": run_id_str,
+                "result": result,
+                "tokens_used": record.tokens_used,
+                "cost_microdollars": record.cost_microdollars,
+            }));
+        }
+        agentzero_core::JobStatus::Failed { error } => {
+            events.push(json!({ "type": "running", "run_id": run_id_str }));
+            events.push(json!({
+                "type": "failed",
+                "run_id": run_id_str,
+                "error": error,
+            }));
+        }
+        agentzero_core::JobStatus::Cancelled => {
+            events.push(json!({ "type": "cancelled", "run_id": run_id_str }));
+        }
+    }
+
+    Ok(Json(json!({
+        "object": "list",
+        "run_id": run_id_str,
+        "events": events,
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket run subscription: /ws/runs/:run_id
+// ---------------------------------------------------------------------------
+
+/// GET /ws/runs/:run_id — subscribe to real-time status updates for a job.
+///
+/// The client connects via WebSocket and receives JSON frames whenever the
+/// job status changes. The connection closes automatically when the job
+/// reaches a terminal state (completed, failed, cancelled).
+///
+/// Frames sent to client:
+/// - `{"type": "status", "run_id": "...", "status": "pending"|"running"|...}`
+/// - `{"type": "completed", "run_id": "...", "result": "..."}`
+/// - `{"type": "failed", "run_id": "...", "error": "..."}`
+/// - `{"type": "cancelled", "run_id": "..."}`
+pub(crate) async fn ws_run_subscribe(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id_str): Path<String>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?
+        .clone();
+
+    let run_id = agentzero_core::RunId(run_id_str.clone());
+
+    // Verify the run exists before upgrading.
+    if job_store.get(&run_id).await.is_none() {
+        return Err(GatewayError::NotFound {
+            resource: format!("run {run_id_str}"),
+        });
+    }
+
+    Ok(ws
+        .on_upgrade(move |socket| handle_run_socket(socket, job_store, run_id))
+        .into_response())
+}
+
+async fn handle_run_socket(
+    mut socket: WebSocket,
+    job_store: Arc<agentzero_orchestrator::JobStore>,
+    run_id: agentzero_core::RunId,
+) {
+    // Send current status immediately.
+    if let Some(record) = job_store.get(&run_id).await {
+        let frame = status_frame(&run_id, &record.status);
+        if socket.send(Message::Text(frame)).await.is_err() {
+            return;
+        }
+        if record.status.is_terminal() {
+            let _ = socket.send(Message::Close(None)).await;
+            return;
+        }
+    }
+
+    // Subscribe to status updates via a relay channel so we can select
+    // on both the broadcast receiver and socket messages without double-
+    // borrowing `socket`.
+    let mut rx = job_store.subscribe();
+    let (relay_tx, mut relay_rx) = tokio::sync::mpsc::channel::<String>(16);
+    let sub_run_id = run_id.clone();
+
+    // Spawn a task that filters broadcast events and relays frames.
+    let relay_handle = tokio::spawn(async move {
+        while let Ok((notified_run_id, new_status)) = rx.recv().await {
+            if notified_run_id != sub_run_id {
+                continue;
+            }
+            let frame = status_frame(&sub_run_id, &new_status);
+            let terminal = new_status.is_terminal();
+            if relay_tx.send(frame).await.is_err() {
+                break;
+            }
+            if terminal {
+                break;
+            }
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(600);
+
+    loop {
+        tokio::select! {
+            frame = relay_rx.recv() => {
+                match frame {
+                    Some(f) => {
+                        if socket.send(Message::Text(f)).await.is_err() {
+                            break;
+                        }
+                        // Check if the last sent frame was terminal by peeking at
+                        // the relay channel; if the relay task exited, we're done.
+                        if relay_rx.is_empty() && relay_handle.is_finished() {
+                            let _ = socket.send(Message::Close(None)).await;
+                            break;
+                        }
+                    }
+                    None => {
+                        // Relay closed — job reached terminal state or broadcast ended.
+                        let _ = socket.send(Message::Close(None)).await;
+                        break;
+                    }
+                }
+            }
+            msg = socket.next() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Ping(data))) => {
+                        let _ = socket.send(Message::Pong(data)).await;
+                    }
+                    _ => {} // Ignore other messages.
+                }
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                let _ = socket
+                    .send(Message::Text(
+                        json!({"type": "error", "message": "subscription timeout"}).to_string(),
+                    ))
+                    .await;
+                let _ = socket.send(Message::Close(None)).await;
+                break;
+            }
+        }
+    }
+
+    relay_handle.abort();
+}
+
+/// Build a JSON status frame for a given job status.
+pub(crate) fn status_frame(
+    run_id: &agentzero_core::RunId,
+    status: &agentzero_core::JobStatus,
+) -> String {
+    match status {
+        agentzero_core::JobStatus::Completed { result } => json!({
+            "type": "completed",
+            "run_id": run_id.0,
+            "result": result,
+        }),
+        agentzero_core::JobStatus::Failed { error } => json!({
+            "type": "failed",
+            "run_id": run_id.0,
+            "error": error,
+        }),
+        agentzero_core::JobStatus::Cancelled => json!({
+            "type": "cancelled",
+            "run_id": run_id.0,
+        }),
+        other => {
+            let status_str = match other {
+                agentzero_core::JobStatus::Pending => "pending",
+                agentzero_core::JobStatus::Running => "running",
+                _ => "unknown",
+            };
+            json!({
+                "type": "status",
+                "run_id": run_id.0,
+                "status": status_str,
+            })
+        }
+    }
+    .to_string()
 }

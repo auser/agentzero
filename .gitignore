@@ -13,6 +13,7 @@ agentzero.toml
 # Site build
 /gh-pages/
 site/node_modules/
+scripts/agent-browser/node_modules/
 site/.astro/
 site/dist/
 

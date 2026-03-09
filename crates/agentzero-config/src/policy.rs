@@ -74,6 +74,7 @@ pub fn load_tool_security_policy(
         enable_web_fetch: config.web_fetch.enabled,
         enable_url_validation: true,
         enable_agents_ipc: true,
+        enable_html_extract: config.web_fetch.enabled,
         enable_composio: config.composio.enabled,
         enable_pushover: config.pushover.enabled,
         enable_wasm_plugins: config.security.plugin.wasm_enabled,
@@ -87,6 +88,7 @@ pub fn load_tool_security_policy(
         policy.enable_http_request = false;
         policy.enable_web_fetch = false;
         policy.enable_web_search = false;
+        policy.enable_html_extract = false;
         policy.enable_composio = false;
         // Restrict URL access to localhost only.
         policy.url_access.allow_loopback = true;

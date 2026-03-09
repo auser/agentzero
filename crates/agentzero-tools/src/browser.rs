@@ -4,7 +4,9 @@ use agentzero_core::{Tool, ToolContext, ToolResult};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::path::Path;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
@@ -77,10 +79,20 @@ impl Default for BrowserConfig {
     }
 }
 
-#[derive(Default)]
 pub struct BrowserTool {
     config: BrowserConfig,
     url_policy: UrlAccessPolicy,
+    deps_checked: AtomicBool,
+}
+
+impl Default for BrowserTool {
+    fn default() -> Self {
+        Self {
+            config: BrowserConfig::default(),
+            url_policy: UrlAccessPolicy::default(),
+            deps_checked: AtomicBool::new(false),
+        }
+    }
 }
 
 impl BrowserTool {
@@ -88,6 +100,7 @@ impl BrowserTool {
         Self {
             config,
             url_policy: UrlAccessPolicy::default(),
+            deps_checked: AtomicBool::new(false),
         }
     }
 
@@ -123,7 +136,43 @@ impl BrowserTool {
         Ok(())
     }
 
+    /// If `agent_browser_command` points to a JS file with a sibling `package.json`
+    /// but no `node_modules/`, run `npm install` automatically (once per process).
+    async fn ensure_deps_installed(&self) {
+        if self.deps_checked.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let cmd_path = Path::new(&self.config.agent_browser_command);
+        let dir = match cmd_path.parent() {
+            Some(d) if d.join("package.json").exists() && !d.join("node_modules").exists() => d,
+            _ => return,
+        };
+        tracing::info!(
+            "agent-browser: installing npm dependencies in {}",
+            dir.display()
+        );
+        let status = std::process::Command::new("npm")
+            .arg("install")
+            .current_dir(dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .status();
+        match status {
+            Ok(s) if s.success() => {
+                tracing::info!("agent-browser: npm install succeeded");
+            }
+            Ok(s) => {
+                tracing::warn!("agent-browser: npm install exited with {s}");
+            }
+            Err(e) => {
+                tracing::warn!("agent-browser: failed to run npm install: {e}");
+            }
+        }
+    }
+
     async fn send_to_agent_browser(&self, action_json: &str) -> anyhow::Result<String> {
+        self.ensure_deps_installed().await;
+
         let mut cmd = Command::new(&self.config.agent_browser_command);
         cmd.args(&self.config.agent_browser_extra_args);
         cmd.arg("--action").arg(action_json);

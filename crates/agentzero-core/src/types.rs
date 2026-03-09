@@ -7,6 +7,152 @@ use thiserror::Error;
 
 use crate::event_bus::EventBus;
 
+// ---------------------------------------------------------------------------
+// Multi-agent orchestration types (OpenClaw-inspired)
+// ---------------------------------------------------------------------------
+
+/// Unique identifier for an async job / agent run.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RunId(pub String);
+
+impl RunId {
+    pub fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        Self(format!("run-{ts:x}-{seq}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for RunId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for RunId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Status of an async job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum JobStatus {
+    Pending,
+    Running,
+    Completed { result: String },
+    Failed { error: String },
+    Cancelled,
+}
+
+impl JobStatus {
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            JobStatus::Completed { .. } | JobStatus::Failed { .. } | JobStatus::Cancelled
+        )
+    }
+}
+
+/// Processing lane for work items. Separate lanes prevent session collisions
+/// and allow independent concurrency control.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "lane", rename_all = "snake_case")]
+#[derive(Default)]
+pub enum Lane {
+    /// Interactive user requests (serialized, one at a time).
+    #[default]
+    Main,
+    /// Scheduled/cron jobs (parallel up to configured limit).
+    Cron,
+    /// Sub-agent work spawned by a parent agent.
+    SubAgent { parent_run_id: RunId, depth: u8 },
+}
+
+/// Message published when a sub-agent completes, announcing its result
+/// back to the parent agent's channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnounceMessage {
+    pub run_id: RunId,
+    pub agent_id: String,
+    pub parent_run_id: Option<RunId>,
+    pub summary: String,
+    pub status: JobStatus,
+    pub depth: u8,
+}
+
+/// Rule controlling which tools are available at a given nesting depth.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DepthRule {
+    /// Maximum depth this rule applies to (inclusive).
+    pub max_depth: u8,
+    /// If non-empty, ONLY these tools are available (allowlist).
+    #[serde(default)]
+    pub allowed_tools: HashSet<String>,
+    /// These tools are removed regardless of the allowlist (denylist).
+    #[serde(default)]
+    pub denied_tools: HashSet<String>,
+}
+
+/// Policy controlling tool availability based on sub-agent nesting depth.
+/// Rules are evaluated in order; the first rule where `depth <= max_depth` applies.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DepthPolicy {
+    pub rules: Vec<DepthRule>,
+}
+
+impl DepthPolicy {
+    /// Filter a list of tool names based on the current depth.
+    /// Returns the names that should remain available.
+    pub fn filter_tools(&self, depth: u8, tool_names: &[&str]) -> Vec<String> {
+        let rule = self.rules.iter().find(|r| depth <= r.max_depth);
+        match rule {
+            None => tool_names.iter().map(|s| s.to_string()).collect(),
+            Some(rule) => {
+                let mut result: Vec<String> = if rule.allowed_tools.is_empty() {
+                    // No allowlist → start with all tools.
+                    tool_names.iter().map(|s| s.to_string()).collect()
+                } else {
+                    // Allowlist mode → only include listed tools.
+                    tool_names
+                        .iter()
+                        .filter(|name| rule.allowed_tools.contains(**name))
+                        .map(|s| s.to_string())
+                        .collect()
+                };
+                // Always apply denylist.
+                result.retain(|name| !rule.denied_tools.contains(name));
+                result
+            }
+        }
+    }
+}
+
+/// Merge strategy for fan-out steps where multiple agents run in parallel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum MergeStrategy {
+    /// Wait for all agents to complete before proceeding.
+    #[default]
+    WaitAll,
+    /// Proceed as soon as any one agent completes.
+    WaitAny,
+    /// Proceed once at least `min` agents have completed.
+    WaitQuorum { min: usize },
+}
+
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
     pub max_tool_iterations: usize,
@@ -207,6 +353,18 @@ pub struct ToolContext {
     /// Active conversation identifier. When set, memory queries are scoped to this conversation.
     #[serde(default)]
     pub conversation_id: Option<String>,
+    /// Current nesting depth (0 = top-level agent, 1 = first sub-agent, etc.).
+    #[serde(default)]
+    pub depth: u8,
+    /// Run identifier for this execution (for async job tracking).
+    #[serde(default)]
+    pub run_id: Option<RunId>,
+    /// Parent run that spawned this sub-agent (for announce-back pattern).
+    #[serde(default)]
+    pub parent_run_id: Option<RunId>,
+    /// Processing lane this execution belongs to.
+    #[serde(default)]
+    pub lane: Option<Lane>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -226,6 +384,10 @@ impl std::fmt::Debug for ToolContext {
             .field("event_bus", &self.event_bus.as_ref().map(|_| "..."))
             .field("agent_id", &self.agent_id)
             .field("conversation_id", &self.conversation_id)
+            .field("depth", &self.depth)
+            .field("run_id", &self.run_id)
+            .field("parent_run_id", &self.parent_run_id)
+            .field("lane", &self.lane)
             .finish()
     }
 }
@@ -241,6 +403,10 @@ impl ToolContext {
             event_bus: None,
             agent_id: None,
             conversation_id: None,
+            depth: 0,
+            run_id: None,
+            parent_run_id: None,
+            lane: None,
         }
     }
 }
@@ -834,5 +1000,97 @@ mod tests {
         let parsed: ChatResult = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.tool_calls.len(), 1);
         assert_eq!(parsed.stop_reason, Some(StopReason::ToolUse));
+    }
+
+    #[test]
+    fn depth_policy_no_rules_passes_all() {
+        let policy = DepthPolicy::default();
+        let tools = vec!["shell", "read_file", "write_file"];
+        let filtered = policy.filter_tools(0, &tools);
+        assert_eq!(filtered.len(), 3);
+    }
+
+    #[test]
+    fn depth_policy_denylist_removes_tools() {
+        let policy = DepthPolicy {
+            rules: vec![DepthRule {
+                max_depth: 1,
+                allowed_tools: HashSet::new(),
+                denied_tools: HashSet::from(["shell".to_string(), "write_file".to_string()]),
+            }],
+        };
+        let tools = vec!["shell", "read_file", "write_file", "web_search"];
+        let filtered = policy.filter_tools(1, &tools);
+        assert_eq!(filtered, vec!["read_file", "web_search"]);
+    }
+
+    #[test]
+    fn depth_policy_allowlist_restricts_tools() {
+        let policy = DepthPolicy {
+            rules: vec![DepthRule {
+                max_depth: 2,
+                allowed_tools: HashSet::from([
+                    "read_file".to_string(),
+                    "content_search".to_string(),
+                ]),
+                denied_tools: HashSet::new(),
+            }],
+        };
+        let tools = vec!["shell", "read_file", "write_file", "content_search"];
+        let filtered = policy.filter_tools(2, &tools);
+        assert_eq!(filtered, vec!["read_file", "content_search"]);
+    }
+
+    #[test]
+    fn depth_policy_allowlist_with_denylist() {
+        let policy = DepthPolicy {
+            rules: vec![DepthRule {
+                max_depth: 1,
+                allowed_tools: HashSet::from(["read_file".to_string(), "shell".to_string()]),
+                denied_tools: HashSet::from(["shell".to_string()]),
+            }],
+        };
+        let tools = vec!["shell", "read_file", "write_file"];
+        let filtered = policy.filter_tools(1, &tools);
+        // shell is in allowlist but also in denylist — denylist wins.
+        assert_eq!(filtered, vec!["read_file"]);
+    }
+
+    #[test]
+    fn depth_policy_no_matching_rule_passes_all() {
+        let policy = DepthPolicy {
+            rules: vec![DepthRule {
+                max_depth: 0,
+                allowed_tools: HashSet::new(),
+                denied_tools: HashSet::from(["shell".to_string()]),
+            }],
+        };
+        // Depth 3 doesn't match max_depth 0, so no rule applies.
+        let tools = vec!["shell", "read_file"];
+        let filtered = policy.filter_tools(3, &tools);
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn run_id_generates_unique_ids() {
+        let a = RunId::new();
+        let b = RunId::new();
+        assert_ne!(a, b);
+        assert!(a.as_str().starts_with("run-"));
+    }
+
+    #[test]
+    fn job_status_terminal_check() {
+        assert!(!JobStatus::Pending.is_terminal());
+        assert!(!JobStatus::Running.is_terminal());
+        assert!(JobStatus::Completed {
+            result: "ok".to_string()
+        }
+        .is_terminal());
+        assert!(JobStatus::Failed {
+            error: "err".to_string()
+        }
+        .is_terminal());
+        assert!(JobStatus::Cancelled.is_terminal());
     }
 }

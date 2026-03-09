@@ -21,6 +21,8 @@ use tracing::{info_span, trace, Instrument};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: u32 = 8192;
+/// Beta flag required when authenticating with OAuth tokens.
+const ANTHROPIC_OAUTH_BETA: &str = "oauth-2025-04-20";
 
 // ---------------------------------------------------------------------------
 // Transport abstraction (Anthropic-specific payload)
@@ -32,6 +34,7 @@ trait HttpTransport: Send + Sync {
         &self,
         url: &str,
         api_key: &str,
+        use_bearer_auth: bool,
         payload: &MessagesRequest,
     ) -> Result<TransportResponse, TransportError>;
 }
@@ -51,20 +54,38 @@ impl ReqwestTransport {
     }
 }
 
+/// Apply the appropriate auth header for the Anthropic API.
+/// API keys use `x-api-key`; OAuth tokens use `Authorization: Bearer`.
+fn apply_anthropic_auth(
+    builder: reqwest::RequestBuilder,
+    api_key: &str,
+    use_bearer_auth: bool,
+) -> reqwest::RequestBuilder {
+    if use_bearer_auth {
+        builder.bearer_auth(api_key)
+    } else {
+        builder.header("x-api-key", api_key)
+    }
+}
+
 #[async_trait]
 impl HttpTransport for ReqwestTransport {
     async fn send(
         &self,
         url: &str,
         api_key: &str,
+        use_bearer_auth: bool,
         payload: &MessagesRequest,
     ) -> Result<TransportResponse, TransportError> {
-        let response = self
-            .client
-            .post(url)
-            .header("x-api-key", api_key)
+        let request = self.client.post(url);
+        let request = apply_anthropic_auth(request, api_key, use_bearer_auth);
+        let mut request = request
             .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+        if use_bearer_auth {
+            request = request.header("anthropic-beta", ANTHROPIC_OAUTH_BETA);
+        }
+        let response = request
             .json(payload)
             .send()
             .await
@@ -93,11 +114,23 @@ pub struct AnthropicProvider {
     transport: Arc<dyn HttpTransport>,
     circuit_breaker: Arc<CircuitBreaker>,
     config: TransportConfig,
+    /// OAuth tokens use `Authorization: Bearer` header instead of `x-api-key`.
+    /// Detected by checking if the key lacks the `sk-ant-` prefix.
+    use_bearer_auth: bool,
 }
 
 impl AnthropicProvider {
+    /// Returns true if the key appears to be an OAuth token rather than an API key.
+    /// Anthropic OAuth tokens use the `sk-ant-oat` prefix ("OAuth Access Token"),
+    /// while regular API keys use prefixes like `sk-ant-api`. OAuth tokens must
+    /// be sent as `Authorization: Bearer` instead of `x-api-key`.
+    fn is_oauth_token(key: &str) -> bool {
+        key.starts_with("sk-ant-oat") || (!key.is_empty() && !key.starts_with("sk-ant-"))
+    }
+
     pub fn new(base_url: String, api_key: String, model: String) -> Self {
         let config = TransportConfig::default();
+        let use_bearer_auth = Self::is_oauth_token(&api_key);
         Self {
             transport: Arc::new(ReqwestTransport::new(&config)),
             circuit_breaker: Arc::new(CircuitBreaker::from_config(&config)),
@@ -105,6 +138,7 @@ impl AnthropicProvider {
             api_key,
             model,
             config,
+            use_bearer_auth,
         }
     }
 
@@ -114,6 +148,7 @@ impl AnthropicProvider {
         model: String,
         config: TransportConfig,
     ) -> Self {
+        let use_bearer_auth = Self::is_oauth_token(&api_key);
         Self {
             transport: Arc::new(ReqwestTransport::new(&config)),
             circuit_breaker: Arc::new(CircuitBreaker::from_config(&config)),
@@ -121,6 +156,7 @@ impl AnthropicProvider {
             api_key,
             model,
             config,
+            use_bearer_auth,
         }
     }
 
@@ -132,6 +168,7 @@ impl AnthropicProvider {
         transport: Arc<dyn HttpTransport>,
     ) -> Self {
         let config = TransportConfig::default();
+        let use_bearer_auth = Self::is_oauth_token(&api_key);
         Self {
             circuit_breaker: Arc::new(CircuitBreaker::from_config(&config)),
             base_url,
@@ -139,6 +176,7 @@ impl AnthropicProvider {
             model,
             transport,
             config,
+            use_bearer_auth,
         }
     }
 
@@ -505,7 +543,11 @@ impl Provider for AnthropicProvider {
 
             let mut last_error: Option<anyhow::Error> = None;
             for attempt in 0..max_retries {
-                match self.transport.send(&url, &self.api_key, &payload).await {
+                match self
+                    .transport
+                    .send(&url, &self.api_key, self.use_bearer_auth, &payload)
+                    .await
+                {
                     Ok(response) => {
                         log_response(
                             "anthropic",
@@ -595,15 +637,15 @@ impl Provider for AnthropicProvider {
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new());
 
-            let response = match client
-                .post(&url)
-                .header("x-api-key", &self.api_key)
+            let request = client.post(&url);
+            let request = apply_anthropic_auth(request, &self.api_key, self.use_bearer_auth);
+            let mut request = request
                 .header("anthropic-version", ANTHROPIC_VERSION)
-                .header("content-type", "application/json")
-                .json(&payload)
-                .send()
-                .await
-            {
+                .header("content-type", "application/json");
+            if self.use_bearer_auth {
+                request = request.header("anthropic-beta", ANTHROPIC_OAUTH_BETA);
+            }
+            let response = match request.json(&payload).send().await {
                 Ok(resp) => resp,
                 Err(e) => {
                     self.circuit_breaker.record_failure().await;
@@ -720,7 +762,11 @@ impl Provider for AnthropicProvider {
 
             let mut last_error: Option<anyhow::Error> = None;
             for attempt in 0..max_retries {
-                match self.transport.send(&url, &self.api_key, &payload).await {
+                match self
+                    .transport
+                    .send(&url, &self.api_key, self.use_bearer_auth, &payload)
+                    .await
+                {
                     Ok(response) => {
                         log_response(
                             "anthropic",
@@ -838,15 +884,15 @@ impl Provider for AnthropicProvider {
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new());
 
-            let response = match client
-                .post(&url)
-                .header("x-api-key", &self.api_key)
+            let request = client.post(&url);
+            let request = apply_anthropic_auth(request, &self.api_key, self.use_bearer_auth);
+            let mut request = request
                 .header("anthropic-version", ANTHROPIC_VERSION)
-                .header("content-type", "application/json")
-                .json(&payload)
-                .send()
-                .await
-            {
+                .header("content-type", "application/json");
+            if self.use_bearer_auth {
+                request = request.header("anthropic-beta", ANTHROPIC_OAUTH_BETA);
+            }
+            let response = match request.json(&payload).send().await {
                 Ok(resp) => resp,
                 Err(e) => {
                     self.circuit_breaker.record_failure().await;
@@ -1150,6 +1196,7 @@ mod tests {
             &self,
             _url: &str,
             _api_key: &str,
+            _use_bearer_auth: bool,
             _payload: &MessagesRequest,
         ) -> Result<TransportResponse, TransportError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -1194,6 +1241,7 @@ mod tests {
             &self,
             _url: &str,
             _api_key: &str,
+            _use_bearer_auth: bool,
             payload: &MessagesRequest,
         ) -> Result<TransportResponse, TransportError> {
             let json = serde_json::to_string(payload).expect("payload should serialize");
@@ -1448,6 +1496,7 @@ mod tests {
             transport: transport.clone(),
             circuit_breaker: cb.clone(),
             config: config.clone(),
+            use_bearer_auth: false,
         };
 
         // First call: 3 retries, all fail → circuit opens (3 failures > threshold of 2).
@@ -1971,5 +2020,40 @@ mod tests {
     fn parse_sse_text_delta_returns_none_for_tool_use() {
         let block = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"shell\"}}";
         assert_eq!(parse_sse_text_delta(block), None);
+    }
+
+    #[test]
+    fn is_oauth_token_detects_oat_prefix() {
+        assert!(AnthropicProvider::is_oauth_token("sk-ant-oat-abc123"));
+    }
+
+    #[test]
+    fn is_oauth_token_rejects_api_key() {
+        assert!(!AnthropicProvider::is_oauth_token("sk-ant-api03-abc123"));
+    }
+
+    #[test]
+    fn is_oauth_token_detects_non_sk_ant_as_oauth() {
+        assert!(AnthropicProvider::is_oauth_token("some-other-token"));
+    }
+
+    #[test]
+    fn oauth_token_enables_bearer_auth() {
+        let provider = AnthropicProvider::new(
+            "https://api.anthropic.com".to_string(),
+            "sk-ant-oat-abc123".to_string(),
+            "claude-sonnet-4-6".to_string(),
+        );
+        assert!(provider.use_bearer_auth);
+    }
+
+    #[test]
+    fn api_key_disables_bearer_auth() {
+        let provider = AnthropicProvider::new(
+            "https://api.anthropic.com".to_string(),
+            "sk-ant-api03-abc123".to_string(),
+            "claude-sonnet-4-6".to_string(),
+        );
+        assert!(!provider.use_bearer_auth);
     }
 }

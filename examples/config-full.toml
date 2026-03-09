@@ -449,3 +449,135 @@ enabled = false
 # agentic = true
 # max_iterations = 10
 # allowed_tools = ["web_search", "web_fetch", "read_file"]
+
+# ---------------------------------------------------------------------------
+# Swarm — multi-agent coordination
+# ---------------------------------------------------------------------------
+# [swarm]
+# enabled = false
+# max_agents = 10
+# event_bus_capacity = 256                   # broadcast channel size
+# shutdown_grace_ms = 10000                  # grace period for in-flight tasks
+
+# [swarm.router]
+# provider = "openrouter"                    # fast model for message classification
+# model = "anthropic/claude-haiku-4-5"
+# base_url = "https://openrouter.ai/api/v1"
+# api_key = ""                              # falls back to AGENTZERO_API_KEY
+# fallback_to_keywords = true               # use keyword matching if AI fails
+
+# [swarm.agents.example]
+# name = "Example Agent"
+# description = "What this agent does — used by the AI router for classification"
+# keywords = ["keyword1", "keyword2"]        # fallback routing keywords
+# provider = "openrouter"
+# model = "anthropic/claude-sonnet-4-6"
+# base_url = "https://openrouter.ai/api/v1"
+# api_key = ""
+# privacy_boundary = "encrypted_only"        # local_only | encrypted_only | any
+# allowed_tools = ["read_file", "write_file", "web_search"]
+# subscribes_to = ["channel.*.message"]      # topic patterns to react to
+# produces = ["task.example.complete"]        # topics published on output
+# max_iterations = 10
+# system_prompt = "You are a specialized agent..."
+
+# [[swarm.pipelines]]
+# name = "example-pipeline"
+# channel_reply = true                       # send result back to channel
+# on_step_error = "abort"                    # abort | skip | retry
+# max_retries = 1
+# step_timeout_secs = 120
+# steps = ["agent1", "agent2", "agent3"]     # sequential agent IDs
+#
+# [swarm.pipelines.trigger]
+# keywords = ["trigger word", "another trigger"]
+# regex = ""                                 # optional regex pattern
+
+# ---------------------------------------------------------------------------
+# Channels — per-channel instance configuration
+# ---------------------------------------------------------------------------
+# Channel instances are loaded from [channels.<name>] sections.
+# Each channel type uses only the fields it needs; others are ignored.
+
+# [channels.telegram]
+# bot_token = "YOUR_TELEGRAM_BOT_TOKEN"
+# allowed_users = []                         # empty = allow all
+# privacy_boundary = ""                      # inherit from channels_config
+
+# [channels.slack]
+# bot_token = "xoxb-YOUR-SLACK-BOT-TOKEN"
+# app_token = "xapp-YOUR-SLACK-APP-TOKEN"
+# privacy_boundary = ""
+
+# [channels.discord]
+# bot_token = "YOUR_DISCORD_BOT_TOKEN"
+# privacy_boundary = ""
+
+# [channels.mattermost]
+# base_url = "https://your-mattermost.example.com"
+# token = "YOUR_MATTERMOST_TOKEN"
+# channel_id = "YOUR_CHANNEL_ID"
+
+# [channels.matrix]
+# homeserver = "https://matrix.org"
+# access_token = "YOUR_MATRIX_TOKEN"
+# room_id = "!roomid:matrix.org"
+
+# [channels.email]
+# smtp_host = "smtp.gmail.com"
+# smtp_port = 587
+# imap_host = "imap.gmail.com"
+# imap_port = 993
+# username = "you@gmail.com"
+# password = "app-specific-password"
+# from_address = "you@gmail.com"
+
+# [channels.irc]
+# server = "irc.libera.chat"
+# port = 6697
+# nick = "agentzero-bot"
+# channel_name = "#your-channel"
+# password = ""
+
+# [channels.nostr]
+# relay_url = "wss://relay.example.com"
+# private_key_hex = "YOUR_NOSTR_PRIVATE_KEY_HEX"
+
+# [channels.webhook]
+# base_url = "http://localhost:8080/webhook"
+
+# ---------------------------------------------------------------------------
+# Privacy — encryption and privacy features
+# ---------------------------------------------------------------------------
+# [privacy]
+# mode = "off"                               # off | local_only | encrypted | full
+# enforce_local_provider = false
+# block_cloud_providers = false
+#
+# [privacy.noise]
+# enabled = false
+#
+# [privacy.sealed_envelopes]
+# enabled = false
+#
+# [privacy.key_rotation]
+# enabled = false
+
+# ---------------------------------------------------------------------------
+# Audio — transcription settings
+# ---------------------------------------------------------------------------
+# [audio]
+# api_url = "https://api.groq.com/openai/v1/audio/transcriptions"
+# api_key = ""                               # or set GROQ_API_KEY
+# language = "en"
+# model = "whisper-large-v3"
+
+# ---------------------------------------------------------------------------
+# Logging — log format and level
+# ---------------------------------------------------------------------------
+# [logging]
+# format = "text"                            # text | json
+# level = "error"                            # error | warn | info | debug | trace
+# [logging.modules]
+# agentzero_gateway = "debug"
+# agentzero_orchestrator = "info"

@@ -14,8 +14,15 @@ impl AgentZeroCommand for GatewayCommand {
     type Options = GatewayOptions;
 
     async fn run(ctx: &CommandContext, opts: Self::Options) -> anyhow::Result<()> {
-        let host = opts.host.unwrap_or_else(|| "127.0.0.1".to_string());
-        let port = opts.port.unwrap_or(8080);
+        let cfg = agentzero_config::load(&ctx.config_path).ok();
+        let host = opts.host.unwrap_or_else(|| {
+            cfg.as_ref()
+                .map(|c| c.gateway.host.clone())
+                .unwrap_or_else(|| "127.0.0.1".to_string())
+        });
+        let port = opts
+            .port
+            .unwrap_or_else(|| cfg.as_ref().map(|c| c.gateway.port).unwrap_or(8080));
         let token_store_path = ctx.data_dir.join("gateway-paired-tokens.json");
         agentzero_gateway::run(
             &host,
@@ -24,6 +31,8 @@ impl AgentZeroCommand for GatewayCommand {
                 token_store_path: Some(token_store_path),
                 new_pairing: opts.new_pairing,
                 data_dir: Some(ctx.data_dir.clone()),
+                config_path: Some(ctx.config_path.clone()),
+                workspace_root: Some(ctx.workspace_root.clone()),
                 ..Default::default()
             },
         )
@@ -43,6 +52,7 @@ mod tests {
             port: None,
             new_pairing: false,
         };
+        // Without a config, falls back to hardcoded defaults
         let host = opts.host.unwrap_or_else(|| "127.0.0.1".to_string());
         let port = opts.port.unwrap_or(8080);
         assert_eq!(host, "127.0.0.1");

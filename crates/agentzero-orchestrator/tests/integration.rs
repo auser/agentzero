@@ -312,6 +312,7 @@ async fn pipeline_executes_sequential_steps() {
         on_step_error: "abort".to_string(),
         max_retries: 1,
         step_timeout_secs: 10,
+        ..Default::default()
     };
 
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![pipeline], 100);

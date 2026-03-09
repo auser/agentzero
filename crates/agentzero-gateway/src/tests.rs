@@ -1016,6 +1016,880 @@ async fn bad_request_perplexity_filter_returns_structured_json() {
 }
 
 // ---------------------------------------------------------------------------
+// Async job submission (/v1/runs) tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn v1_runs_submit_returns_202_with_run_id() {
+    // Need a state with job_store and agent paths for async_submit to work.
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    // Agent unavailable is expected (no config paths), but we test the job store path.
+    // Set config_path so build_agent_request doesn't fail at the "no config" stage.
+    // Since there's no real config, agent execution will fail, but the run should be
+    // created and transition to Failed.
+    let app = build_router(state, &default_config());
+
+    let body = json!({
+        "message": "hello async world"
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    // Should get 503 because config_path is None (agent unavailable).
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn v1_runs_status_returns_404_for_unknown_run() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/runs/run-nonexistent-0")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn v1_runs_result_returns_404_for_unknown_run() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/runs/run-nonexistent-0/result")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn v1_runs_status_returns_job_record() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("test-agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "all done".to_string(),
+            },
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}", run_id.as_str()))
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["result"], "all done");
+    assert_eq!(json["agent_id"], "test-agent");
+}
+
+#[tokio::test]
+async fn v1_runs_result_returns_completed_result() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("writer".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "the final brief".to_string(),
+            },
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/result", run_id.as_str()))
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["result"], "the final brief");
+}
+
+#[tokio::test]
+async fn v1_runs_result_returns_202_for_pending_job() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/result", run_id.as_str()))
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(
+        response.status(),
+        StatusCode::ACCEPTED,
+        "pending job should return 202"
+    );
+}
+
+#[tokio::test]
+async fn v1_runs_requires_auth() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let state = GatewayState::test_with_bearer(Some("secret-tok")).with_job_store(store);
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"message":"test"}"#))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn v1_runs_without_job_store_returns_503() {
+    // No job_store on state.
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"message":"test"}"#))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+// ---------------------------------------------------------------------------
+// Async job lifecycle tests
+// ---------------------------------------------------------------------------
+
+/// Full lifecycle: submit → running → completed → poll status → get result.
+/// This simulates the background execution by manually driving the JobStore.
+#[tokio::test]
+async fn v1_runs_full_lifecycle_pending_running_completed() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit(
+            "lifecycle-agent".to_string(),
+            agentzero_core::Lane::Main,
+            None,
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store.clone());
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    // 1. Poll status while pending
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "pending");
+
+    // 2. Transition to running
+    store
+        .update_status(&run_id, agentzero_core::JobStatus::Running)
+        .await;
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "running");
+
+    // 3. Result endpoint returns 202 while still running
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/result", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+    // 4. Transition to completed
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "lifecycle result".to_string(),
+            },
+        )
+        .await;
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["result"], "lifecycle result");
+
+    // 5. Result endpoint returns 200 with result
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/result", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["result"], "lifecycle result");
+}
+
+/// Lifecycle variant: job fails instead of completing.
+#[tokio::test]
+async fn v1_runs_lifecycle_failure_path() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("fail-agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&run_id, agentzero_core::JobStatus::Running)
+        .await;
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Failed {
+                error: "model rate limited".to_string(),
+            },
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    // Status shows failed
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["error"], "model rate limited");
+
+    // Result endpoint also returns the error
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/result", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["error"], "model rate limited");
+}
+
+/// Broadcast subscriber receives status transitions.
+#[tokio::test]
+async fn job_store_broadcast_lifecycle_transitions() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let mut rx = store.subscribe();
+
+    let run_id = store
+        .submit(
+            "broadcast-agent".to_string(),
+            agentzero_core::Lane::Main,
+            None,
+        )
+        .await;
+
+    // Pending notification from submit
+    let (notified_id, status) = rx.recv().await.unwrap();
+    assert_eq!(notified_id, run_id);
+    assert!(matches!(status, agentzero_core::JobStatus::Pending));
+
+    // Running
+    store
+        .update_status(&run_id, agentzero_core::JobStatus::Running)
+        .await;
+    let (_, status) = rx.recv().await.unwrap();
+    assert!(matches!(status, agentzero_core::JobStatus::Running));
+
+    // Completed
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "done".to_string(),
+            },
+        )
+        .await;
+    let (_, status) = rx.recv().await.unwrap();
+    assert!(matches!(
+        status,
+        agentzero_core::JobStatus::Completed { .. }
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Job management endpoint tests: cancel, list, events
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn v1_runs_cancel_running_job() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("cancel-agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&run_id, agentzero_core::JobStatus::Running)
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("DELETE")
+        .uri(format!("/v1/runs/{}", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["cancelled"], true);
+}
+
+#[tokio::test]
+async fn v1_runs_cancel_completed_job_returns_false() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("done-agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "done".to_string(),
+            },
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("DELETE")
+        .uri(format!("/v1/runs/{}", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["cancelled"], false);
+}
+
+#[tokio::test]
+async fn v1_runs_cancel_unknown_returns_404() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("DELETE")
+        .uri("/v1/runs/run-nonexistent")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn v1_runs_list_all_jobs() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    store
+        .submit("a".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .submit("b".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/runs")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total"], 2);
+    assert_eq!(json["data"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn v1_runs_list_filtered_by_status() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let r1 = store
+        .submit("a".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .submit("b".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&r1, agentzero_core::JobStatus::Running)
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/runs?status=running")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total"], 1);
+    assert_eq!(json["data"][0]["agent_id"], "a");
+}
+
+#[tokio::test]
+async fn v1_runs_events_for_completed_job() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("events-agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&run_id, agentzero_core::JobStatus::Running)
+        .await;
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "final output".to_string(),
+            },
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/events", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let events = json["events"].as_array().unwrap();
+    assert_eq!(events.len(), 3); // created, running, completed
+    assert_eq!(events[0]["type"], "created");
+    assert_eq!(events[1]["type"], "running");
+    assert_eq!(events[2]["type"], "completed");
+    assert_eq!(events[2]["result"], "final output");
+}
+
+#[tokio::test]
+async fn v1_runs_events_unknown_returns_404() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/runs/run-nope/events")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket run subscription tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn status_frame_pending() {
+    let run_id = agentzero_core::RunId("run-test".to_string());
+    let frame = crate::handlers::status_frame(&run_id, &agentzero_core::JobStatus::Pending);
+    let v: serde_json::Value = serde_json::from_str(&frame).unwrap();
+    assert_eq!(v["type"], "status");
+    assert_eq!(v["status"], "pending");
+    assert_eq!(v["run_id"], "run-test");
+}
+
+#[test]
+fn status_frame_completed() {
+    let run_id = agentzero_core::RunId("run-done".to_string());
+    let frame = crate::handlers::status_frame(
+        &run_id,
+        &agentzero_core::JobStatus::Completed {
+            result: "output data".to_string(),
+        },
+    );
+    let v: serde_json::Value = serde_json::from_str(&frame).unwrap();
+    assert_eq!(v["type"], "completed");
+    assert_eq!(v["result"], "output data");
+}
+
+#[test]
+fn status_frame_failed() {
+    let run_id = agentzero_core::RunId("run-err".to_string());
+    let frame = crate::handlers::status_frame(
+        &run_id,
+        &agentzero_core::JobStatus::Failed {
+            error: "something broke".to_string(),
+        },
+    );
+    let v: serde_json::Value = serde_json::from_str(&frame).unwrap();
+    assert_eq!(v["type"], "failed");
+    assert_eq!(v["error"], "something broke");
+}
+
+// ---------------------------------------------------------------------------
+// E2E integration test: full gateway → pair → chat with real LLM
+// ---------------------------------------------------------------------------
+
+/// Full end-to-end test of the research pipeline flow:
+///   1. Start a real gateway on an ephemeral port with the research-pipeline config
+///   2. Pair a client using the pairing code
+///   3. Send a chat request via /api/chat
+///   4. Verify the LLM returns a non-empty response
+///
+/// Requires: ANTHROPIC_API_KEY set in the environment.
+/// Run with: ANTHROPIC_API_KEY=sk-... cargo test -p agentzero-gateway -- --ignored e2e_research_pipeline
+#[tokio::test]
+#[ignore]
+async fn e2e_research_pipeline_pair_and_chat() {
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    if std::env::var("ANTHROPIC_API_KEY").is_err() {
+        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        return;
+    }
+
+    // Resolve paths relative to workspace root.
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.join("../..").canonicalize().unwrap();
+    let config_path = workspace_root.join("examples/research-pipeline/agentzero.toml");
+    assert!(
+        config_path.exists(),
+        "research-pipeline config should exist at {config_path:?}"
+    );
+
+    // Create a temp workspace with a .env file so the agent runtime finds the key
+    // via the config path's parent directory.
+    let tmp_workspace = std::env::temp_dir().join(format!(
+        "agentzero-e2e-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&tmp_workspace).unwrap();
+
+    // Build gateway state with a known pairing code and agent paths.
+    let pairing_code = "123456";
+    let prometheus_handle = GatewayState::test_prometheus_handle();
+    let state = GatewayState::new(
+        Some(pairing_code.to_string()),
+        "TESTOTP".to_string(),
+        HashSet::new(),
+        None,
+        prometheus_handle,
+    )
+    .with_agent_paths(config_path.clone(), tmp_workspace.clone())
+    .with_gateway_config(true, false);
+
+    let app = build_router(state, &default_config());
+
+    // Bind to ephemeral port.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("should bind to ephemeral port");
+    let addr = listener.local_addr().expect("should have local addr");
+    let base_url = format!("http://{addr}");
+
+    // Spawn the server.
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("server should run");
+    });
+
+    // Give server a moment to start.
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let client = reqwest::Client::new();
+
+    // --- Step 1: Health check ---
+    let health = client
+        .get(format!("{base_url}/health"))
+        .send()
+        .await
+        .expect("health should succeed");
+    assert_eq!(health.status(), 200, "health endpoint should return 200");
+
+    // --- Step 2: Pair ---
+    let pair_resp = client
+        .post(format!("{base_url}/pair"))
+        .header("x-pairing-code", pairing_code)
+        .send()
+        .await
+        .expect("pair request should succeed");
+    assert_eq!(pair_resp.status(), 200, "pairing should return 200");
+
+    let pair_json: serde_json::Value = pair_resp
+        .json()
+        .await
+        .expect("pair response should be json");
+    assert_eq!(pair_json["paired"], true, "should be paired");
+    let token = pair_json["token"]
+        .as_str()
+        .expect("pair response should contain token");
+    assert!(!token.is_empty(), "token should not be empty");
+
+    // --- Step 3: Send chat and get LLM response ---
+    let chat_resp = client
+        .post(format!("{base_url}/api/chat"))
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .json(&serde_json::json!({
+            "message": "What is 2 + 2? Reply with just the number."
+        }))
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .expect("chat request should succeed");
+    let chat_status = chat_resp.status();
+    let chat_body = chat_resp.text().await.expect("should read chat body");
+    assert_eq!(
+        chat_status, 200,
+        "chat should return 200, got {chat_status}: {chat_body}"
+    );
+
+    let chat_json: serde_json::Value =
+        serde_json::from_str(&chat_body).expect("chat response should be json");
+    let message = chat_json["message"]
+        .as_str()
+        .expect("chat response should contain message field");
+    assert!(!message.is_empty(), "LLM response should not be empty");
+    assert!(
+        message.contains('4'),
+        "LLM should answer 2+2=4, got: {message}"
+    );
+
+    // --- Cleanup ---
+    server.abort();
+    let _ = std::fs::remove_dir_all(&tmp_workspace);
+}
+
+/// Full e2e test using the OpenAI-compatible /v1/chat/completions endpoint.
+/// Tests the same flow but through the standardized API surface.
+#[tokio::test]
+#[ignore]
+async fn e2e_v1_chat_completions_with_real_llm() {
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    if std::env::var("ANTHROPIC_API_KEY").is_err() {
+        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        return;
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.join("../..").canonicalize().unwrap();
+    let config_path = workspace_root.join("examples/research-pipeline/agentzero.toml");
+    assert!(config_path.exists());
+
+    let tmp_workspace = std::env::temp_dir().join(format!(
+        "agentzero-e2e-v1-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&tmp_workspace).unwrap();
+
+    let pairing_code = "654321";
+    let prometheus_handle = GatewayState::test_prometheus_handle();
+    let state = GatewayState::new(
+        Some(pairing_code.to_string()),
+        "TESTOTP".to_string(),
+        HashSet::new(),
+        None,
+        prometheus_handle,
+    )
+    .with_agent_paths(config_path.clone(), tmp_workspace.clone())
+    .with_gateway_config(true, false);
+
+    let app = build_router(state, &default_config());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("should bind");
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{addr}");
+
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    let client = reqwest::Client::new();
+
+    // Pair first.
+    let pair_json: serde_json::Value = client
+        .post(format!("{base_url}/pair"))
+        .header("x-pairing-code", pairing_code)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let token = pair_json["token"].as_str().unwrap();
+
+    // Send via OpenAI-compatible endpoint.
+    let chat_resp = client
+        .post(format!("{base_url}/v1/chat/completions"))
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "user", "content": "What is the capital of France? Reply with just the city name."}
+            ]
+        }))
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .expect("v1/chat/completions should succeed");
+    assert_eq!(chat_resp.status(), 200);
+
+    let json: serde_json::Value = chat_resp.json().await.unwrap();
+    let content = json["choices"][0]["message"]["content"]
+        .as_str()
+        .expect("should have choices[0].message.content");
+    assert!(!content.is_empty());
+    assert!(
+        content.to_lowercase().contains("paris"),
+        "should answer Paris, got: {content}"
+    );
+
+    server.abort();
+    let _ = std::fs::remove_dir_all(&tmp_workspace);
+}
+
+// ---------------------------------------------------------------------------
 // Privacy integration tests
 // ---------------------------------------------------------------------------
 

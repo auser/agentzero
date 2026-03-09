@@ -400,10 +400,16 @@ pub async fn health_probe(base_url: &str, api_key: &str, provider_kind: &str) ->
 
     let start = Instant::now();
     let request = if provider_kind == "anthropic" {
-        client
-            .post(&url)
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
+        let req = client.post(&url);
+        // OAuth tokens (`sk-ant-oat` prefix or non `sk-ant-`) use Bearer auth.
+        let req = if api_key.starts_with("sk-ant-oat")
+            || (!api_key.is_empty() && !api_key.starts_with("sk-ant-"))
+        {
+            req.bearer_auth(api_key)
+        } else {
+            req.header("x-api-key", api_key)
+        };
+        req.header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .body(r#"{"model":"claude-haiku-4-20250414","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}"#)
     } else {

@@ -1,6 +1,8 @@
 use crate::token_store::save_paired_tokens;
 use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
+use agentzero_config::AgentZeroConfig;
+use agentzero_orchestrator::JobStore;
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
     collections::HashSet,
@@ -8,6 +10,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
+use tokio::sync::watch;
 
 #[derive(Clone)]
 pub(crate) struct GatewayState {
@@ -48,6 +51,11 @@ pub(crate) struct GatewayState {
     /// Relay mailbox for sealed envelopes.
     #[cfg(feature = "privacy")]
     pub(crate) relay_mailbox: Option<Arc<crate::relay::RelayMailbox>>,
+    /// Live config receiver for hot-reload. When present, accessor methods
+    /// read from this instead of static fields.
+    pub(crate) live_config: Option<watch::Receiver<AgentZeroConfig>>,
+    /// Async job store for tracking /v1/runs submissions.
+    pub(crate) job_store: Option<Arc<JobStore>>,
 }
 
 impl GatewayState {
@@ -87,6 +95,8 @@ impl GatewayState {
             relay_mode: false,
             #[cfg(feature = "privacy")]
             relay_mailbox: None,
+            live_config: None,
+            job_store: None,
         }
     }
 
@@ -141,6 +151,13 @@ impl GatewayState {
         self
     }
 
+    /// Set the async job store for /v1/runs endpoints.
+    #[allow(dead_code)]
+    pub(crate) fn with_job_store(mut self, store: Arc<JobStore>) -> Self {
+        self.job_store = Some(store);
+        self
+    }
+
     /// Return the current pairing code if it exists and hasn't expired.
     pub(crate) fn pairing_code_valid(&self) -> Option<&str> {
         let code = self.pairing_code.as_deref()?;
@@ -157,6 +174,38 @@ impl GatewayState {
         self
     }
 
+    /// Attach a live config receiver for hot-reload support.
+    pub(crate) fn with_live_config(mut self, rx: watch::Receiver<AgentZeroConfig>) -> Self {
+        self.live_config = Some(rx);
+        self
+    }
+
+    /// Read `require_pairing` from live config if available, otherwise use the static field.
+    #[allow(dead_code)]
+    pub(crate) fn effective_require_pairing(&self) -> bool {
+        self.live_config
+            .as_ref()
+            .map(|rx| rx.borrow().gateway.require_pairing)
+            .unwrap_or(self.require_pairing)
+    }
+
+    /// Read perplexity filter settings from live config if available, otherwise use the static field.
+    pub(crate) fn effective_perplexity_filter(&self) -> PerplexityFilterSettings {
+        self.live_config
+            .as_ref()
+            .map(|rx| {
+                let pf = &rx.borrow().security.perplexity_filter;
+                PerplexityFilterSettings {
+                    enabled: pf.enable_perplexity_filter,
+                    perplexity_threshold: pf.perplexity_threshold,
+                    suffix_window_chars: pf.suffix_window_chars,
+                    min_prompt_chars: pf.min_prompt_chars,
+                    symbol_ratio_threshold: pf.symbol_ratio_threshold,
+                }
+            })
+            .unwrap_or_else(|| (*self.perplexity_filter).clone())
+    }
+
     pub(crate) fn add_paired_token(&self, token: String) -> anyhow::Result<()> {
         let path = self.token_store_path.as_deref().map(PathBuf::as_path);
         let mut guard = self.paired_tokens.lock().expect("pairing lock poisoned");
@@ -166,7 +215,7 @@ impl GatewayState {
     }
 
     #[cfg(test)]
-    fn test_prometheus_handle() -> PrometheusHandle {
+    pub(crate) fn test_prometheus_handle() -> PrometheusHandle {
         // Build without installing a global recorder — metrics macros become
         // no-ops in tests, but the handle can still render (empty output).
         let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
@@ -201,6 +250,8 @@ impl GatewayState {
             relay_mode: false,
             #[cfg(feature = "privacy")]
             relay_mailbox: None,
+            live_config: None,
+            job_store: None,
         }
     }
 
@@ -234,6 +285,8 @@ impl GatewayState {
             relay_mode: false,
             #[cfg(feature = "privacy")]
             relay_mailbox: None,
+            live_config: None,
+            job_store: None,
         }
     }
 }

@@ -97,12 +97,18 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         config.provider.model = model.clone();
     }
 
+    // If the config specifies a non-default provider kind but the base_url is
+    // still the default (openrouter), resolve the correct URL from the catalog.
+    // This handles configs like `kind = "anthropic"` without an explicit base_url.
+    resolve_base_url_from_catalog(&mut config);
+
     let key = resolve_api_key(
         &req.config_path,
         &mut config,
         req.profile_override.as_deref(),
         req.provider_override.is_some(),
-    )?;
+    )
+    .await?;
 
     let router = build_model_router(&config);
     let delegate_agents = build_delegate_agents(&config);
@@ -344,7 +350,7 @@ pub async fn run_agent_with_runtime(
 ///
 /// When an auth profile provides credentials and `--provider` was not given,
 /// the config's provider kind, base URL, and model are updated to match.
-fn resolve_api_key(
+async fn resolve_api_key(
     config_path: &Path,
     config: &mut agentzero_config::AgentZeroConfig,
     profile_override: Option<&str>,
@@ -365,6 +371,9 @@ fn resolve_api_key(
             apply_provider_defaults(config, &cred.provider);
         }
         info!("using auth profile (provider '{}')", cred.provider);
+        if cred.provider == "anthropic" && cred.token.starts_with("sk-ant-oat") {
+            return exchange_anthropic_oauth_token(&cred.token).await;
+        }
         return Ok(cred.token);
     }
 
@@ -375,14 +384,35 @@ fn resolve_api_key(
     }
 
     // Env var takes highest priority for cloud providers.
+    // Check provider-specific env vars first, then the generic OPENAI_API_KEY.
+    let provider_env_var = match config.provider.kind.as_str() {
+        "anthropic" => Some("ANTHROPIC_API_KEY"),
+        _ => None,
+    };
+    if let Some(env_var) = provider_env_var {
+        if let Some(key) = load_env_var(config_path, env_var)? {
+            return Ok(key);
+        }
+    }
     if let Some(key) = load_env_var(config_path, "OPENAI_API_KEY")? {
         return Ok(key);
     }
 
     // Auth profiles: provider match then any active profile.
     // Before resolving, attempt auto-refresh if the token is expired.
+    // Try the config file's parent directory first, then fall back to the
+    // default data directory (where `auth login` stores credentials).
+    let mut auth_dirs: Vec<PathBuf> = Vec::new();
     if let Some(config_dir) = config_path.parent() {
-        if let Ok(manager) = AuthManager::in_config_dir(config_dir) {
+        auth_dirs.push(config_dir.to_path_buf());
+    }
+    if let Some(default_dir) = agentzero_core::common::paths::default_data_dir() {
+        if !auth_dirs.iter().any(|d| d == &default_dir) {
+            auth_dirs.push(default_dir);
+        }
+    }
+    for auth_dir in &auth_dirs {
+        if let Ok(manager) = AuthManager::in_config_dir(auth_dir) {
             // Attempt auto-refresh for expired OAuth tokens.
             if let Ok(Some(refresh_result)) =
                 manager.refresh_for_provider(&config.provider.kind, None)
@@ -401,16 +431,71 @@ fn resolve_api_key(
                     apply_provider_defaults(config, &cred.provider);
                 }
                 info!("using auth credential for provider '{}'", cred.provider);
+                // Anthropic OAuth tokens (sk-ant-oat) must be exchanged for
+                // a short-lived API key before use with the Messages API.
+                if config.provider.kind == "anthropic" && cred.token.starts_with("sk-ant-oat") {
+                    return exchange_anthropic_oauth_token(&cred.token).await;
+                }
                 return Ok(cred.token);
             }
         }
     }
 
+    let env_hint = match config.provider.kind.as_str() {
+        "anthropic" => "ANTHROPIC_API_KEY",
+        _ => "OPENAI_API_KEY",
+    };
     anyhow::bail!(
         "missing API key for provider '{}': \
-         set OPENAI_API_KEY (env var or .env) or run `agentzero auth login`",
+         set {env_hint} (env var or .env) or use a provider that supports your auth method",
         config.provider.kind
     )
+}
+
+/// Exchange an Anthropic OAuth access token (`sk-ant-oat...`) for a
+/// short-lived API key via the same endpoint Claude Code uses.
+async fn exchange_anthropic_oauth_token(oauth_token: &str) -> anyhow::Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let response = client
+        .post("https://api.anthropic.com/api/oauth/claude_cli/create_api_key")
+        .bearer_auth(oauth_token)
+        .header("content-type", "application/json")
+        .header("anthropic-version", "2023-06-01")
+        .json(&serde_json::json!({
+            "name": "agentzero-session"
+        }))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to exchange OAuth token for API key: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("failed to exchange OAuth token for API key ({status}): {body}");
+    }
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to parse API key response: {e}"))?;
+
+    let api_key = body
+        .get("api_key")
+        .or_else(|| body.get("key"))
+        .or_else(|| body.get("token"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "OAuth token exchange succeeded but response has no API key field: {body}"
+            )
+        })?;
+
+    info!("exchanged OAuth token for short-lived API key");
+    Ok(api_key.to_string())
 }
 
 /// Core key resolution by provider kind (env var -> auth profile -> error).
@@ -441,6 +526,27 @@ fn resolve_api_key_for_provider(config_path: &Path, provider_kind: &str) -> anyh
         "missing API key for provider '{provider_kind}': \
          set OPENAI_API_KEY (env var or .env) or run `agentzero auth login`"
     )
+}
+
+const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api";
+
+/// If the provider kind is not "openrouter" but the base_url is still the
+/// openrouter default, resolve the correct base URL from the provider catalog.
+fn resolve_base_url_from_catalog(config: &mut agentzero_config::AgentZeroConfig) {
+    if config.provider.kind == "openrouter" {
+        return;
+    }
+    let url = config.provider.base_url.trim();
+    if !url.is_empty() && url != DEFAULT_OPENROUTER_BASE_URL {
+        return; // user explicitly set a custom base_url
+    }
+    if let Some(meta) = local_provider_meta(&config.provider.kind) {
+        config.provider.base_url = meta.default_base_url.to_string();
+    } else if let Some(descriptor) = find_provider(&config.provider.kind) {
+        if let Some(catalog_url) = descriptor.default_base_url {
+            config.provider.base_url = catalog_url.to_string();
+        }
+    }
 }
 
 /// Update config's provider base URL and default model to match a provider kind.

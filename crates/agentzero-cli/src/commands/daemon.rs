@@ -20,8 +20,14 @@ impl AgentZeroCommand for DaemonCommand {
                 port,
                 foreground,
             } => {
-                let host = host.unwrap_or_else(|| "127.0.0.1".to_string());
-                let port = port.unwrap_or(8080);
+                let cfg = agentzero_config::load(&ctx.config_path).ok();
+                let host = host.unwrap_or_else(|| {
+                    cfg.as_ref()
+                        .map(|c| c.gateway.host.clone())
+                        .unwrap_or_else(|| "127.0.0.1".to_string())
+                });
+                let port =
+                    port.unwrap_or_else(|| cfg.as_ref().map(|c| c.gateway.port).unwrap_or(8080));
 
                 if foreground {
                     run_foreground(&manager, ctx, host, port).await
@@ -93,6 +99,8 @@ async fn run_foreground(
             token_store_path: Some(token_store_path),
             new_pairing: false,
             data_dir: Some(ctx.data_dir.clone()),
+            config_path: Some(ctx.config_path.clone()),
+            workspace_root: Some(ctx.workspace_root.clone()),
             ..Default::default()
         },
     )

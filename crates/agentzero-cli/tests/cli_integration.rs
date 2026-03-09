@@ -2521,3 +2521,730 @@ fn local_discover_retries_arg_parses_success_path() {
         agentzero_cli::parse_cli_from(["agentzero", "local", "discover", "--retries", "3"]);
     assert!(result.is_ok(), "local discover --retries should parse");
 }
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — tools command (zero prior coverage)
+// ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn tools_list_success_path() {
+    let dir = temp_dir("tools-list");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&["agentzero", "--data-dir", d, "tools", "list"])
+        .await
+        .expect("tools list should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn tools_list_with_schema_success_path() {
+    let dir = temp_dir("tools-list-schema");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "tools",
+        "list",
+        "--with-schema",
+    ])
+    .await
+    .expect("tools list --with-schema should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn tools_info_known_tool_success_path() {
+    let dir = temp_dir("tools-info");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&["agentzero", "--data-dir", d, "tools", "info", "read_file"])
+        .await
+        .expect("tools info read_file should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn tools_info_unknown_tool_negative_path() {
+    let dir = temp_dir("tools-info-neg");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "tools",
+        "info",
+        "nonexistent_tool_xyz",
+    ])
+    .await;
+    assert!(result.is_err(), "tools info with unknown tool should fail");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn tools_schema_known_tool_success_path() {
+    let dir = temp_dir("tools-schema");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&["agentzero", "--data-dir", d, "tools", "schema", "read_file"])
+        .await
+        .expect("tools schema read_file should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn tools_schema_pretty_success_path() {
+    let dir = temp_dir("tools-schema-pretty");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "tools",
+        "schema",
+        "read_file",
+        "--pretty",
+    ])
+    .await
+    .expect("tools schema --pretty should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn tools_schema_unknown_negative_path() {
+    let dir = temp_dir("tools-schema-neg");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "tools",
+        "schema",
+        "nonexistent_tool_xyz",
+    ])
+    .await;
+    assert!(
+        result.is_err(),
+        "tools schema with unknown tool should fail"
+    );
+
+    cleanup(dir);
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — conversation command (zero prior coverage)
+// ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn conversation_list_empty_success_path() {
+    let dir = temp_dir("conv-list");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&["agentzero", "--data-dir", d, "conversation", "list"])
+        .await
+        .expect("conversation list should succeed with no conversations");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn conversation_switch_success_path() {
+    let dir = temp_dir("conv-switch");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "conversation",
+        "switch",
+        "test-conv",
+    ])
+    .await
+    .expect("conversation switch should succeed");
+
+    // Verify the active_conversation state file was written
+    let state = fs::read_to_string(dir.join("active_conversation"))
+        .expect("active_conversation file should exist");
+    assert_eq!(state, "test-conv");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn conversation_switch_global_success_path() {
+    let dir = temp_dir("conv-switch-global");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    // First switch to a named conversation
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "conversation",
+        "switch",
+        "temp",
+    ])
+    .await
+    .expect("switch to named should succeed");
+
+    // Then switch to global (empty string)
+    run_cmd(&["agentzero", "--data-dir", d, "conversation", "switch", ""])
+        .await
+        .expect("conversation switch to global should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn conversation_fork_missing_negative_path() {
+    let dir = temp_dir("conv-fork-neg");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    // fork succeeds even with nonexistent source (sqlite creates on-the-fly)
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "conversation",
+        "fork",
+        "nonexistent-source",
+        "new-target",
+    ])
+    .await
+    .expect("conversation fork should succeed (creates empty fork)");
+
+    cleanup(dir);
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — privacy command (zero prior coverage)
+// ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn privacy_status_success_path() {
+    let dir = temp_dir("privacy-status");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&["agentzero", "--data-dir", d, "privacy", "status"])
+        .await
+        .expect("privacy status should succeed");
+
+    cleanup(dir);
+}
+
+#[test]
+fn privacy_status_json_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "privacy", "status", "--json"]);
+    assert!(result.is_ok(), "privacy status --json should parse");
+}
+
+#[test]
+fn privacy_rotate_keys_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "privacy", "rotate-keys", "--force"]);
+    assert!(result.is_ok(), "privacy rotate-keys --force should parse");
+}
+
+#[test]
+fn privacy_generate_keypair_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "privacy", "generate-keypair"]);
+    assert!(result.is_ok(), "privacy generate-keypair should parse");
+}
+
+#[test]
+fn privacy_test_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "privacy", "test"]);
+    assert!(result.is_ok(), "privacy test should parse");
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — doctor models (missing subcommand)
+// ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn doctor_models_success_path() {
+    let dir = temp_dir("doctor-models");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "doctor",
+        "models",
+        "--use-cache",
+    ])
+    .await
+    .expect("doctor models --use-cache should succeed");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn doctor_models_specific_provider_success_path() {
+    let dir = temp_dir("doctor-models-prov");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "doctor",
+        "models",
+        "--provider",
+        "openrouter",
+        "--use-cache",
+    ])
+    .await
+    .expect("doctor models --provider openrouter should succeed");
+
+    cleanup(dir);
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — models refresh (missing subcommand)
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn models_refresh_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "models",
+        "refresh",
+        "--provider",
+        "openrouter",
+    ]);
+    assert!(result.is_ok(), "models refresh args should parse");
+}
+
+#[test]
+fn models_refresh_all_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "models", "refresh", "--all"]);
+    assert!(result.is_ok(), "models refresh --all args should parse");
+}
+
+#[test]
+fn models_refresh_force_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "models",
+        "refresh",
+        "--provider",
+        "openrouter",
+        "--force",
+    ]);
+    assert!(result.is_ok(), "models refresh --force args should parse");
+}
+
+#[tokio::test]
+async fn models_refresh_unsupported_provider_negative_path() {
+    let dir = temp_dir("models-refresh-unsup");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "models",
+        "refresh",
+        "--provider",
+        "not-a-real-provider",
+    ])
+    .await;
+    assert!(
+        result.is_err(),
+        "models refresh with unsupported provider should fail"
+    );
+
+    cleanup(dir);
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — auth gaps (paste-redirect, refresh)
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn auth_paste_redirect_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "auth",
+        "paste-redirect",
+        "--provider",
+        "openai-codex",
+        "--input",
+        "code123",
+    ]);
+    assert!(result.is_ok(), "auth paste-redirect args should parse");
+}
+
+#[test]
+fn auth_refresh_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "auth",
+        "refresh",
+        "--provider",
+        "openai-codex",
+    ]);
+    assert!(result.is_ok(), "auth refresh args should parse");
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — skill gaps (go, python, install)
+// ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn skill_new_go_success_path() {
+    let dir = temp_dir("skill-new-go");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "skill",
+        "new",
+        "test-go-skill",
+        "--template",
+        "go",
+        "--dir",
+        d,
+    ])
+    .await
+    .expect("skill new --template go should succeed");
+
+    assert!(
+        dir.join("test-go-skill").exists(),
+        "go skill project directory should exist"
+    );
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn skill_new_python_success_path() {
+    let dir = temp_dir("skill-new-py");
+    let d = dir.to_str().unwrap();
+
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "skill",
+        "new",
+        "test-py-skill",
+        "--template",
+        "python",
+        "--dir",
+        d,
+    ])
+    .await
+    .expect("skill new --template python should succeed");
+
+    assert!(
+        dir.join("test-py-skill").exists(),
+        "python skill project directory should exist"
+    );
+
+    cleanup(dir);
+}
+
+#[test]
+fn skill_install_args_parse_success_path() {
+    let result =
+        agentzero_cli::parse_cli_from(["agentzero", "skill", "install", "--name", "my-skill"]);
+    assert!(result.is_ok(), "skill install args should parse");
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — plugin gaps
+// ──────────────────────────────────────────────────────────────
+
+#[cfg(feature = "plugins")]
+#[tokio::test]
+async fn plugin_enable_missing_negative_path() {
+    let dir = temp_dir("plugin-enable-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "plugin",
+        "enable",
+        "--id",
+        "nonexistent-plugin",
+    ])
+    .await;
+    assert!(
+        result.is_err(),
+        "plugin enable on missing plugin should fail"
+    );
+
+    cleanup(dir);
+}
+
+#[cfg(feature = "plugins")]
+#[tokio::test]
+async fn plugin_disable_missing_negative_path() {
+    let dir = temp_dir("plugin-disable-neg");
+    let d = dir.to_str().unwrap();
+
+    let result = run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "plugin",
+        "disable",
+        "--id",
+        "nonexistent-plugin",
+    ])
+    .await;
+    assert!(
+        result.is_err(),
+        "plugin disable on missing plugin should fail"
+    );
+
+    cleanup(dir);
+}
+
+#[cfg(feature = "plugins")]
+#[tokio::test]
+async fn plugin_info_missing_success_path() {
+    let dir = temp_dir("plugin-info-miss");
+    let d = dir.to_str().unwrap();
+
+    // info on a missing plugin prints "No installed plugin found" and returns Ok
+    run_cmd(&[
+        "agentzero",
+        "--data-dir",
+        d,
+        "plugin",
+        "info",
+        "--id",
+        "nonexistent-plugin",
+    ])
+    .await
+    .expect("plugin info on missing plugin should succeed (prints not found)");
+
+    cleanup(dir);
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn plugin_install_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "plugin",
+        "install",
+        "--url",
+        "https://example.com/plugin.tar",
+        "--sha256",
+        "abc123def456",
+    ]);
+    assert!(result.is_ok(), "plugin install args should parse");
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn plugin_search_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "plugin", "search", "browser"]);
+    assert!(result.is_ok(), "plugin search args should parse");
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn plugin_outdated_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "plugin", "outdated"]);
+    assert!(result.is_ok(), "plugin outdated args should parse");
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn plugin_update_args_parse_success_path() {
+    let result =
+        agentzero_cli::parse_cli_from(["agentzero", "plugin", "update", "--id", "some-plugin"]);
+    assert!(result.is_ok(), "plugin update args should parse");
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn plugin_refresh_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "plugin", "refresh"]);
+    assert!(result.is_ok(), "plugin refresh args should parse");
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn plugin_publish_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "plugin",
+        "publish",
+        "--manifest",
+        "manifest.json",
+        "--download-url",
+        "https://example.com/plugin.tar",
+        "--sha256",
+        "abc123",
+        "--description",
+        "A test plugin",
+        "--category",
+        "tools",
+        "--author",
+        "tester",
+        "--repository",
+        "https://github.com/test/plugin",
+    ]);
+    assert!(result.is_ok(), "plugin publish args should parse");
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — update gaps (apply, rollback)
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn update_apply_args_parse_success_path() {
+    let result =
+        agentzero_cli::parse_cli_from(["agentzero", "update", "apply", "--version", "0.5.0"]);
+    assert!(result.is_ok(), "update apply args should parse");
+}
+
+#[test]
+fn update_rollback_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "update", "rollback"]);
+    assert!(result.is_ok(), "update rollback args should parse");
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — hardware introspect
+// ──────────────────────────────────────────────────────────────
+
+#[cfg(feature = "hardware")]
+#[tokio::test]
+async fn hardware_introspect_success_path() {
+    let dir = temp_dir("hw-introspect");
+    let d = dir.to_str().unwrap();
+    write_minimal_config(&dir);
+
+    run_cmd(&["agentzero", "--data-dir", d, "hardware", "introspect"])
+        .await
+        .expect("hardware introspect should succeed");
+
+    cleanup(dir);
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — peripheral gaps (flash, flash-nucleo, setup-uno-q)
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn peripheral_flash_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "peripheral",
+        "flash",
+        "--id",
+        "nucleo1",
+        "--firmware",
+        "firmware.bin",
+    ]);
+    assert!(result.is_ok(), "peripheral flash args should parse");
+}
+
+#[test]
+fn peripheral_flash_nucleo_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from(["agentzero", "peripheral", "flash-nucleo"]);
+    assert!(result.is_ok(), "peripheral flash-nucleo args should parse");
+}
+
+#[test]
+fn peripheral_setup_uno_q_args_parse_success_path() {
+    let result = agentzero_cli::parse_cli_from([
+        "agentzero",
+        "peripheral",
+        "setup-uno-q",
+        "--host",
+        "192.168.0.48",
+    ]);
+    assert!(result.is_ok(), "peripheral setup-uno-q args should parse");
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — service restart
+// ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn service_restart_after_install_success_path() {
+    let dir = temp_dir("svc-restart");
+    let d = dir.to_str().unwrap();
+
+    // Install first
+    run_cmd(&["agentzero", "--data-dir", d, "service", "install"])
+        .await
+        .expect("service install should succeed");
+
+    // Restart
+    run_cmd(&["agentzero", "--data-dir", d, "service", "restart"])
+        .await
+        .expect("service restart should succeed after install");
+
+    // Cleanup
+    let _ = run_cmd(&["agentzero", "--data-dir", d, "service", "uninstall"]).await;
+    cleanup(dir);
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — tunnel stop (parse-only)
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn tunnel_stop_args_parse_success_path() {
+    let result =
+        agentzero_cli::parse_cli_from(["agentzero", "tunnel", "stop", "--name", "default"]);
+    assert!(result.is_ok(), "tunnel stop args should parse");
+}
+
+// ──────────────────────────────────────────────────────────────
+// Gap coverage — daemon status execution
+// ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn daemon_status_no_daemon_success_path() {
+    let dir = temp_dir("daemon-status-norun");
+    let d = dir.to_str().unwrap();
+
+    // daemon status when no daemon is running should not panic
+    let result = run_cmd(&["agentzero", "--data-dir", d, "daemon", "status"]).await;
+    // It may succeed (reporting not running) or error — either is acceptable
+    // The key assertion is that it doesn't panic
+    let _ = result;
+
+    cleanup(dir);
+}

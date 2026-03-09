@@ -22,6 +22,7 @@ pub mod git_operations;
 pub mod glob_search;
 pub mod hardware;
 pub mod hardware_tools;
+pub mod html_extract;
 pub mod http_request;
 pub mod image_info;
 pub mod memory_tools;
@@ -65,6 +66,7 @@ pub use file_edit::FileEditTool;
 pub use git_operations::GitOperationsTool;
 pub use glob_search::GlobSearchTool;
 pub use hardware_tools::{HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool};
+pub use html_extract::HtmlExtractTool;
 pub use http_request::HttpRequestTool;
 pub use image_info::ImageInfoTool;
 pub use memory_tools::{MemoryForgetTool, MemoryRecallTool, MemoryStoreTool};
@@ -105,6 +107,7 @@ pub struct ToolSecurityPolicy {
     pub enable_web_fetch: bool,
     pub enable_url_validation: bool,
     pub enable_agents_ipc: bool,
+    pub enable_html_extract: bool,
     pub enable_composio: bool,
     pub enable_pushover: bool,
     pub enable_wasm_plugins: bool,
@@ -169,6 +172,7 @@ impl ToolSecurityPolicy {
             enable_web_fetch: false,
             enable_url_validation: false,
             enable_agents_ipc: true,
+            enable_html_extract: false,
             enable_composio: false,
             enable_pushover: false,
             enable_wasm_plugins: false,

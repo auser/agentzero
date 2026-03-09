@@ -24,10 +24,11 @@ pub use agent::Agent;
 pub use event_bus::{Event, EventBus, EventSubscriber, InMemoryBus};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{
-    AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ChatResult, ContentPart,
-    ConversationMessage, HookEvent, HookFailureMode, HookPolicy, HookRiskTier, HookSink,
-    MemoryEntry, MemoryStore, MetricsSink, Provider, ReasoningConfig, ResearchPolicy,
-    ResearchTrigger, StopReason, StreamChunk, StreamSink, Tool, ToolCallDelta, ToolContext,
-    ToolDefinition, ToolResult, ToolResultMessage, ToolUseRequest, UserMessage,
+    AgentConfig, AgentError, AnnounceMessage, AssistantMessage, AuditEvent, AuditSink, ChatResult,
+    ContentPart, ConversationMessage, DepthPolicy, DepthRule, HookEvent, HookFailureMode,
+    HookPolicy, HookRiskTier, HookSink, JobStatus, Lane, MemoryEntry, MemoryStore, MergeStrategy,
+    MetricsSink, Provider, ReasoningConfig, ResearchPolicy, ResearchTrigger, RunId, StopReason,
+    StreamChunk, StreamSink, Tool, ToolCallDelta, ToolContext, ToolDefinition, ToolResult,
+    ToolResultMessage, ToolUseRequest, UserMessage,
 };
 pub use validation::validate_json;

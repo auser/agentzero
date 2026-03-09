@@ -1,6 +1,7 @@
 use crate::handlers::{
-    api_chat, api_fallback, dashboard, health, legacy_webhook, metrics, pair, ping,
-    v1_chat_completions, v1_models, webhook, ws_chat,
+    api_chat, api_fallback, async_submit, dashboard, health, job_cancel, job_events, job_list,
+    job_result, job_status, legacy_webhook, metrics, pair, ping, v1_chat_completions, v1_models,
+    webhook, ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -32,7 +33,12 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/api/chat", post(api_chat))
         .route("/v1/chat/completions", post(v1_chat_completions))
         .route("/v1/models", get(v1_models))
+        .route("/v1/runs", post(async_submit).get(job_list))
+        .route("/v1/runs/:run_id", get(job_status).delete(job_cancel))
+        .route("/v1/runs/:run_id/result", get(job_result))
+        .route("/v1/runs/:run_id/events", get(job_events))
         .route("/ws/chat", get(ws_chat))
+        .route("/ws/runs/:run_id", get(ws_run_subscribe))
         .route("/api/*path", get(api_fallback));
 
     // Noise Protocol handshake and transport routes (privacy feature).

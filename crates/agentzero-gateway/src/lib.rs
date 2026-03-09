@@ -26,11 +26,14 @@ mod tests;
 mod token_store;
 mod util;
 
+use agentzero_config::watcher::ConfigWatcher;
 use anyhow::Context;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 #[cfg(feature = "privacy")]
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::watch;
 
 use banner::print_gateway_banner;
 use middleware::MiddlewareConfig;
@@ -123,6 +126,33 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
     {
         state = state.with_agent_paths(config_path, workspace_root);
     }
+
+    // Start config file watcher for live hot-reload.
+    let _config_watcher_cancel = if let (Some(ref config_path), Some(ref cfg)) =
+        (state.config_path.as_ref(), &full_config)
+    {
+        let watcher = ConfigWatcher::from_config(
+            config_path.as_ref().clone(),
+            Duration::from_secs(2),
+            cfg.clone(),
+        );
+        let rx = watcher.subscribe();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        tokio::spawn(watcher.run(cancel_rx));
+
+        // Spawn a task that logs every config reload.
+        let mut log_rx = rx.clone();
+        tokio::spawn(async move {
+            while log_rx.changed().await.is_ok() {
+                tracing::info!("gateway config updated (live reload)");
+            }
+        });
+
+        state = state.with_live_config(rx);
+        Some(cancel_tx)
+    } else {
+        None
+    };
 
     // --- Privacy initialization ---
     // Mode acts as a preset: "encrypted" or "full" auto-enables noise, relay, and

@@ -5,7 +5,7 @@ mod wasm_bridge;
 
 use agentzero_core::delegation::DelegateConfig;
 use agentzero_core::routing::ModelRouter;
-use agentzero_core::Tool;
+use agentzero_core::{DepthPolicy, Tool};
 use agentzero_tools::ToolBuilder;
 use anyhow::Context;
 use serde::Deserialize;
@@ -17,13 +17,13 @@ pub use agentzero_tools::{
     ContentSearchTool, CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool,
     CronUpdateTool, DelegateCoordinationStatusTool, DelegateTool, DocxReadTool, FileEditTool,
     GitOperationsTool, GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool,
-    HardwareMemoryReadTool, HttpRequestTool, ImageInfoTool, MemoryForgetTool, MemoryRecallTool,
-    MemoryStoreTool, ModelRoutingConfigTool, PdfReadTool, ProcessTool, ProxyConfigTool,
-    PushoverTool, ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool, ShellPolicy,
-    ShellTool, SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool,
-    SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool, ToolSecurityPolicy,
-    UrlValidationTool, WasmModuleTool, WasmToolExecTool, WebFetchTool, WebSearchTool,
-    WriteFilePolicy, WriteFileTool,
+    HardwareMemoryReadTool, HtmlExtractTool, HttpRequestTool, ImageInfoTool, MemoryForgetTool,
+    MemoryRecallTool, MemoryStoreTool, ModelRoutingConfigTool, PdfReadTool, ProcessTool,
+    ProxyConfigTool, PushoverTool, ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool,
+    ShellPolicy, ShellTool, SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool,
+    SopStatusTool, SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool,
+    ToolSecurityPolicy, UrlValidationTool, WasmModuleTool, WasmToolExecTool, WebFetchTool,
+    WebSearchTool, WriteFilePolicy, WriteFileTool,
 };
 pub use mcp::McpTool;
 pub use plugin::ProcessPluginTool;
@@ -114,6 +114,10 @@ pub fn default_tools(
         ));
     }
 
+    if policy.enable_html_extract {
+        tools.push(Box::new(HtmlExtractTool));
+    }
+
     if policy.enable_url_validation {
         tools.push(Box::new(
             UrlValidationTool::default().with_url_policy(policy.url_access.clone()),
@@ -199,6 +203,32 @@ pub fn default_tools(
     Ok(tools)
 }
 
+/// Build the default tool set, then filter by depth policy.
+/// If no policy is provided or no rule matches the depth, all tools pass through.
+pub fn default_tools_with_depth(
+    policy: &ToolSecurityPolicy,
+    router: Option<ModelRouter>,
+    delegate_agents: Option<HashMap<String, DelegateConfig>>,
+    depth: u8,
+    depth_policy: &DepthPolicy,
+) -> anyhow::Result<Vec<Box<dyn Tool>>> {
+    let all_tools = default_tools(policy, router, delegate_agents)?;
+
+    if depth_policy.rules.is_empty() {
+        return Ok(all_tools);
+    }
+
+    let tool_names: Vec<&str> = all_tools.iter().map(|t| t.name()).collect();
+    let allowed = depth_policy.filter_tools(depth, &tool_names);
+
+    let filtered = all_tools
+        .into_iter()
+        .filter(|t| allowed.iter().any(|name| name == t.name()))
+        .collect();
+
+    Ok(filtered)
+}
+
 #[derive(Debug, Deserialize)]
 struct PluginToolEnvConfig {
     command: String,
@@ -220,7 +250,12 @@ fn optional_process_plugin_tool_from_env() -> anyhow::Result<Option<ProcessPlugi
 
 #[cfg(test)]
 mod tests {
-    use super::{default_tools, optional_process_plugin_tool_from_env, ToolSecurityPolicy};
+    use super::{
+        default_tools, default_tools_with_depth, optional_process_plugin_tool_from_env,
+        ToolSecurityPolicy,
+    };
+    use agentzero_core::{DepthPolicy, DepthRule};
+    use std::collections::HashSet;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -327,5 +362,104 @@ mod tests {
         assert!(!names.contains(&"web_fetch"));
         assert!(!names.contains(&"url_validation"));
         assert!(!names.contains(&"agents_ipc"));
+    }
+
+    #[test]
+    fn depth_tools_empty_policy_returns_all_tools() {
+        let policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        let depth_policy = DepthPolicy::default(); // empty rules
+        let all_tools = default_tools(&policy, None, None).expect("default tools should build");
+        let all_count = all_tools.len();
+
+        let depth_tools = default_tools_with_depth(&policy, None, None, 0, &depth_policy)
+            .expect("depth tools should build");
+        assert_eq!(
+            depth_tools.len(),
+            all_count,
+            "empty policy should return all tools"
+        );
+
+        // Also at deeper depth
+        let depth_tools_deep = default_tools_with_depth(&policy, None, None, 5, &depth_policy)
+            .expect("depth tools should build");
+        assert_eq!(depth_tools_deep.len(), all_count);
+    }
+
+    #[test]
+    fn depth_tools_denylist_removes_tools_at_depth() {
+        let policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        let depth_policy = DepthPolicy {
+            rules: vec![DepthRule {
+                max_depth: 5,
+                allowed_tools: HashSet::new(), // no allowlist = start with all
+                denied_tools: HashSet::from(["shell".to_string(), "read_file".to_string()]),
+            }],
+        };
+
+        let tools = default_tools_with_depth(&policy, None, None, 1, &depth_policy)
+            .expect("depth tools should build");
+        let names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+        assert!(!names.contains(&"shell"), "shell should be denied");
+        assert!(!names.contains(&"read_file"), "read_file should be denied");
+        // Other tools should still be present
+        assert!(names.contains(&"glob_search"), "glob_search should remain");
+    }
+
+    #[test]
+    fn depth_tools_allowlist_restricts_tools_at_depth() {
+        let policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        let depth_policy = DepthPolicy {
+            rules: vec![DepthRule {
+                max_depth: 3,
+                allowed_tools: HashSet::from([
+                    "read_file".to_string(),
+                    "glob_search".to_string(),
+                    "content_search".to_string(),
+                ]),
+                denied_tools: HashSet::new(),
+            }],
+        };
+
+        let tools = default_tools_with_depth(&policy, None, None, 1, &depth_policy)
+            .expect("depth tools should build");
+        let names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+        assert_eq!(names.len(), 3, "only 3 allowed tools should remain");
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"glob_search"));
+        assert!(names.contains(&"content_search"));
+    }
+
+    #[test]
+    fn depth_tools_no_matching_rule_returns_all() {
+        let policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        // Rule only applies to depth <= 2
+        let depth_policy = DepthPolicy {
+            rules: vec![DepthRule {
+                max_depth: 2,
+                allowed_tools: HashSet::from(["read_file".to_string()]),
+                denied_tools: HashSet::new(),
+            }],
+        };
+
+        let all_tools = default_tools(&policy, None, None).expect("default tools should build");
+        let all_count = all_tools.len();
+
+        // Depth 1 should match the rule → restricted
+        let tools_d1 = default_tools_with_depth(&policy, None, None, 1, &depth_policy)
+            .expect("depth tools should build");
+        assert_eq!(tools_d1.len(), 1, "depth 1 should match rule");
+
+        // Depth 5 exceeds max_depth 2 → no rule matches → all tools
+        let tools_d5 = default_tools_with_depth(&policy, None, None, 5, &depth_policy)
+            .expect("depth tools should build");
+        assert_eq!(tools_d5.len(), all_count, "depth 5 should return all tools");
     }
 }

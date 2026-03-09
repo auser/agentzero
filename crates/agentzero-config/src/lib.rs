@@ -14,13 +14,14 @@ pub use loader::{load, load_env_var, update_auto_approve};
 pub use model::{
     AgentSettings, AgentZeroConfig, AudioConfig, AuditConfig, AutonomyConfig, BrowserConfig,
     ChannelsGlobalConfig, ComposioConfig, ComputerUseConfig, CostConfig, CredentialProfile,
-    DelegateAgentConfig, EmbeddingRoute, EstopConfig, GatewayConfig, HookSettings,
-    HttpRequestConfig, IdentityConfig, McpConfig, MemoryConfig, ModelProviderProfile, ModelRoute,
-    MultimodalConfig, NodeControlConfig, ObservabilityConfig, OtpConfig, OutboundLeakGuardConfig,
-    PerplexityFilterConfig, PipelineConfig, PipelineTriggerConfig, PluginConfig, ProviderConfig,
-    ProviderOptionsConfig, QueryClassificationConfig, QueryClassificationRule, ReadFileConfig,
-    ResearchConfig, RuntimeConfig, SecurityConfig, ShellConfig, SkillsConfig, SwarmAgentConfig,
-    SwarmConfig, SwarmRouterConfig, SyscallAnomalyConfig, UrlAccessConfig, WasmRuntimeConfig,
+    DelegateAgentConfig, DepthRuleConfig, EmbeddingRoute, EstopConfig, FanOutStepConfig,
+    GatewayConfig, HookSettings, HttpRequestConfig, IdentityConfig, LanesConfig, McpConfig,
+    MemoryConfig, ModelProviderProfile, ModelRoute, MultimodalConfig, NodeControlConfig,
+    ObservabilityConfig, OtpConfig, OutboundLeakGuardConfig, PerplexityFilterConfig,
+    PipelineConfig, PipelineTriggerConfig, PluginConfig, ProviderConfig, ProviderOptionsConfig,
+    QueryClassificationConfig, QueryClassificationRule, ReadFileConfig, ResearchConfig,
+    RuntimeConfig, SecurityConfig, ShellConfig, SkillsConfig, SwarmAgentConfig, SwarmConfig,
+    SwarmRouterConfig, SyscallAnomalyConfig, UrlAccessConfig, WasmRuntimeConfig,
     WasmSecurityConfig, WebFetchConfig, WebSearchConfig, WriteFileConfig,
 };
 pub use policy::{load_audit_policy, load_tool_security_policy, AuditPolicy};

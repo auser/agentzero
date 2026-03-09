@@ -15,7 +15,7 @@ use crate::agent_router::{AgentDescriptor, AgentRouter};
 use agentzero_channels::{ChannelMessage, ChannelRegistry, SendMessage};
 use agentzero_config::PipelineConfig;
 use agentzero_core::event_bus::{is_boundary_compatible, topic_matches, Event, EventBus};
-use agentzero_core::{Agent, ToolContext};
+use agentzero_core::{Agent, AnnounceMessage, JobStatus, RunId, ToolContext};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -410,6 +410,59 @@ impl Coordinator {
                 continue;
             }
 
+            // Handle announce events: dispatch summary to parent agent or channel.
+            if event.topic.ends_with(".announce") {
+                if let Ok(announce) = serde_json::from_str::<AnnounceMessage>(&event.payload) {
+                    tracing::info!(
+                        agent = %announce.agent_id,
+                        run_id = %announce.run_id,
+                        parent = ?announce.parent_run_id,
+                        depth = announce.depth,
+                        "sub-agent announce received"
+                    );
+
+                    // Publish a synthesized event on the parent's topic so the
+                    // response handler's normal chain logic can pick it up.
+                    let parent_topic = "agent.announce.summary".to_string();
+                    let summary_event = Event::new(
+                        &parent_topic,
+                        &announce.agent_id,
+                        serde_json::to_string(&announce).unwrap_or_default(),
+                    )
+                    .with_correlation(event.correlation_id.clone().unwrap_or_default())
+                    .with_boundary(&event.privacy_boundary);
+
+                    // Try to dispatch to the originating channel via correlation.
+                    if let Some(ref corr_id) = event.correlation_id {
+                        let store = self.correlation_store.lock().await;
+                        if let Some(origin) = store.get(corr_id) {
+                            let channel = origin.channel.clone();
+                            let reply_target = origin.reply_target.clone();
+                            drop(store);
+
+                            if let Some(ch) = self.channels.get(&channel) {
+                                let announce_text = format!(
+                                    "[Sub-agent {} completed]: {}",
+                                    announce.agent_id, announce.summary
+                                );
+                                let _ = ch
+                                    .send(&SendMessage {
+                                        recipient: reply_target,
+                                        content: announce_text,
+                                        subject: None,
+                                        thread_ts: None,
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+
+                    // Also publish the summary event so subscribed agents can chain.
+                    let _ = self.bus.publish(summary_event).await;
+                }
+                continue;
+            }
+
             // 1. Check if any agent subscribes to this topic → CHAIN
             let mut routed = false;
             for worker in self.agents.values() {
@@ -545,6 +598,9 @@ async fn agent_worker(
             text: content.clone(),
         };
 
+        // Extract run metadata from the event payload for announce-back.
+        let run_meta = extract_run_metadata(&task.event.payload);
+
         match agent.respond(user_msg, &ctx).await {
             Ok(response) => {
                 let response_text = response.text;
@@ -582,6 +638,29 @@ async fn agent_worker(
                         .with_boundary(&descriptor.privacy_boundary);
                         let _ = bus.publish(event).await;
                     }
+
+                    // Announce-back: if this execution has run metadata, publish
+                    // an AnnounceMessage so the parent agent is notified.
+                    if let Some((run_id, parent_run_id, depth)) = &run_meta {
+                        let announce = AnnounceMessage {
+                            run_id: run_id.clone(),
+                            agent_id: descriptor.id.clone(),
+                            parent_run_id: Some(parent_run_id.clone()),
+                            summary: truncate_for_announce(&response_text, 500),
+                            status: JobStatus::Completed {
+                                result: response_text.clone(),
+                            },
+                            depth: *depth,
+                        };
+                        let announce_event = Event::new(
+                            format!("agent.{}.announce", descriptor.id),
+                            &descriptor.id,
+                            serde_json::to_string(&announce).unwrap_or_default(),
+                        )
+                        .with_correlation(task.correlation_id.clone())
+                        .with_boundary(&descriptor.privacy_boundary);
+                        let _ = bus.publish(announce_event).await;
+                    }
                 }
             }
             Err(e) => {
@@ -598,9 +677,31 @@ async fn agent_worker(
                         &descriptor.id,
                         e.to_string(),
                     )
-                    .with_correlation(task.correlation_id)
+                    .with_correlation(task.correlation_id.clone())
                     .with_boundary(&descriptor.privacy_boundary);
                     let _ = bus.publish(event).await;
+
+                    // Announce-back failure.
+                    if let Some((run_id, parent_run_id, depth)) = &run_meta {
+                        let announce = AnnounceMessage {
+                            run_id: run_id.clone(),
+                            agent_id: descriptor.id.clone(),
+                            parent_run_id: Some(parent_run_id.clone()),
+                            summary: format!("Agent failed: {e}"),
+                            status: JobStatus::Failed {
+                                error: e.to_string(),
+                            },
+                            depth: *depth,
+                        };
+                        let announce_event = Event::new(
+                            format!("agent.{}.announce", descriptor.id),
+                            &descriptor.id,
+                            serde_json::to_string(&announce).unwrap_or_default(),
+                        )
+                        .with_correlation(task.correlation_id)
+                        .with_boundary(&descriptor.privacy_boundary);
+                        let _ = bus.publish(announce_event).await;
+                    }
                 }
             }
         }
@@ -628,92 +729,70 @@ async fn execute_pipeline(
     let correlation_id = initial_event.correlation_id.clone().unwrap_or_else(uuid_v4);
     let mut current_payload = extract_content(&initial_event.payload);
 
-    for (i, agent_id) in pipeline.steps.iter().enumerate() {
-        let agent_tx = agents.get(agent_id).ok_or_else(|| {
-            anyhow::anyhow!(
-                "pipeline '{}' step {}: agent '{}' not found",
-                pipeline.name,
-                i,
-                agent_id
+    match pipeline.execution_mode.as_str() {
+        "fanout" => {
+            // Fan-out mode: run all fanout_steps groups in parallel.
+            current_payload = execute_fanout_steps(
+                pipeline,
+                &current_payload,
+                agents,
+                &correlation_id,
+                &initial_event.privacy_boundary,
+                step_timeout_secs,
             )
-        })?;
-
-        let mut attempts = 0u8;
-        let max_attempts = match error_strategy {
-            ErrorStrategy::Retry { max_attempts } => max_attempts,
-            _ => 1,
-        };
-
-        loop {
-            attempts += 1;
-            let (result_tx, result_rx) = oneshot::channel();
-
-            agent_tx
-                .send(TaskMessage {
-                    event: Event::new(
-                        format!("pipeline.{}.step.{}", pipeline.name, i),
-                        "coordinator",
-                        &current_payload,
-                    )
-                    .with_correlation(correlation_id.clone())
-                    .with_boundary(&initial_event.privacy_boundary),
-                    correlation_id: correlation_id.clone(),
-                    result_tx: Some(result_tx),
-                })
-                .await
-                .map_err(|_| anyhow::anyhow!("agent '{}' channel closed", agent_id))?;
-
-            match tokio::time::timeout(Duration::from_secs(step_timeout_secs), result_rx).await {
-                Ok(Ok(result)) => {
-                    current_payload = result.payload;
-                    // Publish step completion for observability.
-                    let _ = bus
-                        .publish(
-                            Event::new(
-                                format!("pipeline.{}.step.{}.complete", pipeline.name, i),
-                                "coordinator",
-                                &current_payload,
-                            )
-                            .with_correlation(correlation_id.clone()),
-                        )
-                        .await;
-                    break;
-                }
-                Ok(Err(_)) | Err(_) => match error_strategy {
-                    ErrorStrategy::Abort => {
-                        return Err(anyhow::anyhow!(
-                            "pipeline '{}' aborted at step {} (agent '{}')",
-                            pipeline.name,
-                            i,
-                            agent_id
-                        ));
-                    }
-                    ErrorStrategy::Skip => {
-                        tracing::warn!(
-                            pipeline = %pipeline.name,
-                            step = i,
-                            agent = %agent_id,
-                            "step failed, skipping"
-                        );
-                        break;
-                    }
-                    ErrorStrategy::Retry { max_attempts: _ } => {
-                        if attempts >= max_attempts {
-                            return Err(anyhow::anyhow!(
-                                "pipeline '{}' step {} exhausted retries",
-                                pipeline.name,
-                                i
-                            ));
-                        }
-                        tracing::warn!(
-                            pipeline = %pipeline.name,
-                            step = i,
-                            attempt = attempts,
-                            "step failed, retrying"
-                        );
-                    }
-                },
+            .await?;
+        }
+        "mixed" => {
+            // Mixed mode: alternate between sequential steps and fanout steps.
+            // First run sequential steps, then fanout steps.
+            for (i, agent_id) in pipeline.steps.iter().enumerate() {
+                current_payload = execute_single_step(
+                    pipeline,
+                    i,
+                    agent_id,
+                    &current_payload,
+                    agents,
+                    bus,
+                    &correlation_id,
+                    &initial_event.privacy_boundary,
+                    error_strategy,
+                    step_timeout_secs,
+                )
+                .await?;
             }
+            if !pipeline.fanout_steps.is_empty() {
+                current_payload = execute_fanout_steps(
+                    pipeline,
+                    &current_payload,
+                    agents,
+                    &correlation_id,
+                    &initial_event.privacy_boundary,
+                    step_timeout_secs,
+                )
+                .await?;
+            }
+        }
+        _ => {
+            // Default sequential mode.
+        }
+    }
+
+    // Sequential steps (for "sequential" mode only).
+    if pipeline.execution_mode != "fanout" && pipeline.execution_mode != "mixed" {
+        for (i, agent_id) in pipeline.steps.iter().enumerate() {
+            current_payload = execute_single_step(
+                pipeline,
+                i,
+                agent_id,
+                &current_payload,
+                agents,
+                bus,
+                &correlation_id,
+                &initial_event.privacy_boundary,
+                error_strategy,
+                step_timeout_secs,
+            )
+            .await?;
         }
     }
 
@@ -729,7 +808,7 @@ async fn execute_pipeline(
                 let _ = ch
                     .send(&SendMessage {
                         recipient: reply_target,
-                        content: current_payload,
+                        content: current_payload.clone(),
                         subject: None,
                         thread_ts: None,
                     })
@@ -738,7 +817,233 @@ async fn execute_pipeline(
         }
     }
 
+    // Announce-on-complete: publish an AnnounceMessage summarizing the
+    // pipeline result so parent agents or listeners can react.
+    if pipeline.announce_on_complete {
+        let announce = AnnounceMessage {
+            run_id: RunId::new(),
+            agent_id: format!("pipeline:{}", pipeline.name),
+            parent_run_id: None,
+            summary: truncate_for_announce(&current_payload, 500),
+            status: JobStatus::Completed {
+                result: current_payload,
+            },
+            depth: 0,
+        };
+        let announce_event = Event::new(
+            format!("pipeline.{}.announce", pipeline.name),
+            "coordinator",
+            serde_json::to_string(&announce).unwrap_or_default(),
+        )
+        .with_correlation(correlation_id)
+        .with_boundary(&initial_event.privacy_boundary);
+        let _ = bus.publish(announce_event).await;
+    }
+
     Ok(())
+}
+
+// ─── Pipeline Step Helpers ──────────────────────────────────────────────────
+
+/// Execute a single sequential pipeline step with retry/skip/abort handling.
+#[allow(clippy::too_many_arguments)]
+async fn execute_single_step(
+    pipeline: &PipelineConfig,
+    step_index: usize,
+    agent_id: &str,
+    current_payload: &str,
+    agents: &HashMap<String, mpsc::Sender<TaskMessage>>,
+    bus: &Arc<dyn EventBus>,
+    correlation_id: &str,
+    privacy_boundary: &str,
+    error_strategy: ErrorStrategy,
+    step_timeout_secs: u64,
+) -> anyhow::Result<String> {
+    let agent_tx = agents.get(agent_id).ok_or_else(|| {
+        anyhow::anyhow!(
+            "pipeline '{}' step {}: agent '{}' not found",
+            pipeline.name,
+            step_index,
+            agent_id
+        )
+    })?;
+
+    let mut attempts = 0u8;
+    let max_attempts = match error_strategy {
+        ErrorStrategy::Retry { max_attempts } => max_attempts,
+        _ => 1,
+    };
+
+    loop {
+        attempts += 1;
+        let (result_tx, result_rx) = oneshot::channel();
+
+        agent_tx
+            .send(TaskMessage {
+                event: Event::new(
+                    format!("pipeline.{}.step.{}", pipeline.name, step_index),
+                    "coordinator",
+                    current_payload,
+                )
+                .with_correlation(correlation_id.to_string())
+                .with_boundary(privacy_boundary),
+                correlation_id: correlation_id.to_string(),
+                result_tx: Some(result_tx),
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("agent '{}' channel closed", agent_id))?;
+
+        match tokio::time::timeout(Duration::from_secs(step_timeout_secs), result_rx).await {
+            Ok(Ok(result)) => {
+                let payload = result.payload;
+                let _ = bus
+                    .publish(
+                        Event::new(
+                            format!("pipeline.{}.step.{}.complete", pipeline.name, step_index),
+                            "coordinator",
+                            &payload,
+                        )
+                        .with_correlation(correlation_id.to_string()),
+                    )
+                    .await;
+                return Ok(payload);
+            }
+            Ok(Err(_)) | Err(_) => match error_strategy {
+                ErrorStrategy::Abort => {
+                    return Err(anyhow::anyhow!(
+                        "pipeline '{}' aborted at step {} (agent '{}')",
+                        pipeline.name,
+                        step_index,
+                        agent_id
+                    ));
+                }
+                ErrorStrategy::Skip => {
+                    tracing::warn!(
+                        pipeline = %pipeline.name,
+                        step = step_index,
+                        agent = %agent_id,
+                        "step failed, skipping"
+                    );
+                    return Ok(current_payload.to_string());
+                }
+                ErrorStrategy::Retry { max_attempts: _ } => {
+                    if attempts >= max_attempts {
+                        return Err(anyhow::anyhow!(
+                            "pipeline '{}' step {} exhausted retries",
+                            pipeline.name,
+                            step_index
+                        ));
+                    }
+                    tracing::warn!(
+                        pipeline = %pipeline.name,
+                        step = step_index,
+                        attempt = attempts,
+                        "step failed, retrying"
+                    );
+                }
+            },
+        }
+    }
+}
+
+/// Execute fan-out steps: for each `FanOutStepConfig`, run all agents in parallel
+/// and merge their results according to the configured strategy.
+async fn execute_fanout_steps(
+    pipeline: &PipelineConfig,
+    current_payload: &str,
+    agents: &HashMap<String, mpsc::Sender<TaskMessage>>,
+    correlation_id: &str,
+    privacy_boundary: &str,
+    step_timeout_secs: u64,
+) -> anyhow::Result<String> {
+    let mut merged_payload = current_payload.to_string();
+
+    for (group_idx, fanout_step) in pipeline.fanout_steps.iter().enumerate() {
+        let merge_strategy = match fanout_step.merge.as_str() {
+            "wait_any" => agentzero_core::MergeStrategy::WaitAny,
+            "wait_quorum" => agentzero_core::MergeStrategy::WaitQuorum {
+                min: fanout_step.quorum_min,
+            },
+            _ => agentzero_core::MergeStrategy::WaitAll,
+        };
+
+        let step = crate::fanout::FanOutStep {
+            agents: fanout_step.agents.clone(),
+            merge: merge_strategy,
+            timeout: Duration::from_secs(step_timeout_secs),
+        };
+
+        // Capture agent senders for the closure.
+        let agents_clone = agents.clone();
+        let payload = merged_payload.clone();
+        let corr = correlation_id.to_string();
+        let boundary = privacy_boundary.to_string();
+        let pipe_name = pipeline.name.clone();
+
+        let results = crate::fanout::execute_fanout(&step, |agent_id| {
+            let agents_inner = agents_clone.clone();
+            let payload_inner = payload.clone();
+            let corr_inner = corr.clone();
+            let boundary_inner = boundary.clone();
+            let pipe_name_inner = pipe_name.clone();
+            async move {
+                let agent_tx = agents_inner
+                    .get(&agent_id)
+                    .ok_or_else(|| format!("agent '{}' not found for fanout", agent_id))?;
+
+                let (result_tx, result_rx) = oneshot::channel();
+                agent_tx
+                    .send(TaskMessage {
+                        event: Event::new(
+                            format!("pipeline.{}.fanout.{}", pipe_name_inner, agent_id),
+                            "coordinator",
+                            &payload_inner,
+                        )
+                        .with_correlation(corr_inner)
+                        .with_boundary(&boundary_inner),
+                        correlation_id: String::new(),
+                        result_tx: Some(result_tx),
+                    })
+                    .await
+                    .map_err(|_| format!("agent '{}' channel closed", agent_id))?;
+
+                match tokio::time::timeout(Duration::from_secs(120), result_rx).await {
+                    Ok(Ok(result)) => Ok(result.payload),
+                    Ok(Err(_)) => Err(format!("agent '{}' result channel dropped", agent_id)),
+                    Err(_) => Err(format!("agent '{}' timed out", agent_id)),
+                }
+            }
+        })
+        .await;
+
+        // Merge results into a single payload.
+        let successful: Vec<String> = results
+            .iter()
+            .filter_map(|r| r.output.as_ref().ok().cloned())
+            .collect();
+
+        if successful.is_empty() {
+            let errors: Vec<String> = results
+                .iter()
+                .filter_map(|r| r.output.as_ref().err().cloned())
+                .collect();
+            return Err(anyhow::anyhow!(
+                "pipeline '{}' fanout group {} failed: {}",
+                pipeline.name,
+                group_idx,
+                errors.join("; ")
+            ));
+        }
+
+        // Combine results with separators.
+        merged_payload = if successful.len() == 1 {
+            successful.into_iter().next().unwrap()
+        } else {
+            successful.join("\n\n---\n\n")
+        };
+    }
+
+    Ok(merged_payload)
 }
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
@@ -749,6 +1054,29 @@ fn extract_content(payload: &str) -> String {
         .ok()
         .and_then(|v| v["content"].as_str().map(String::from))
         .unwrap_or_else(|| payload.to_string())
+}
+
+/// Extract run metadata (run_id, parent_run_id, depth) embedded in an event
+/// payload. Returns None if the payload doesn't contain run tracking fields.
+fn extract_run_metadata(payload: &str) -> Option<(RunId, RunId, u8)> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    let run_id = v.get("run_id")?.as_str()?;
+    let parent_run_id = v.get("parent_run_id")?.as_str()?;
+    let depth = v.get("depth").and_then(|d| d.as_u64()).unwrap_or(0) as u8;
+    Some((
+        RunId(run_id.to_string()),
+        RunId(parent_run_id.to_string()),
+        depth,
+    ))
+}
+
+/// Truncate a string for use in announce summaries.
+fn truncate_for_announce(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max_len])
+    }
 }
 
 fn uuid_v4() -> String {
@@ -796,5 +1124,66 @@ mod tests {
             ErrorStrategy::from_config("unknown", 3),
             ErrorStrategy::Abort
         ));
+    }
+
+    #[test]
+    fn extract_run_metadata_parses_valid_payload() {
+        let payload =
+            r#"{"run_id":"run-abc","parent_run_id":"run-parent","depth":2,"content":"hello"}"#;
+        let meta = extract_run_metadata(payload);
+        assert!(meta.is_some());
+        let (run_id, parent_run_id, depth) = meta.unwrap();
+        assert_eq!(run_id.0, "run-abc");
+        assert_eq!(parent_run_id.0, "run-parent");
+        assert_eq!(depth, 2);
+    }
+
+    #[test]
+    fn extract_run_metadata_returns_none_for_missing_fields() {
+        assert!(extract_run_metadata(r#"{"content":"hello"}"#).is_none());
+        assert!(extract_run_metadata(r#"{"run_id":"run-1"}"#).is_none());
+        assert!(extract_run_metadata("not json").is_none());
+    }
+
+    #[test]
+    fn extract_run_metadata_defaults_depth_to_zero() {
+        let payload = r#"{"run_id":"run-abc","parent_run_id":"run-parent"}"#;
+        let (_, _, depth) = extract_run_metadata(payload).unwrap();
+        assert_eq!(depth, 0);
+    }
+
+    #[test]
+    fn truncate_for_announce_short_string() {
+        let s = "hello world";
+        assert_eq!(truncate_for_announce(s, 100), "hello world");
+    }
+
+    #[test]
+    fn truncate_for_announce_long_string() {
+        let s = "a".repeat(600);
+        let result = truncate_for_announce(&s, 500);
+        // 500 chars + ellipsis
+        assert!(result.len() < 510);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn announce_message_serialization_roundtrip() {
+        let msg = AnnounceMessage {
+            run_id: RunId("run-test-1".to_string()),
+            agent_id: "researcher".to_string(),
+            parent_run_id: Some(RunId("run-parent-1".to_string())),
+            summary: "Found 3 relevant papers".to_string(),
+            status: JobStatus::Completed {
+                result: "full result text".to_string(),
+            },
+            depth: 1,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: AnnounceMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.run_id.0, "run-test-1");
+        assert_eq!(parsed.agent_id, "researcher");
+        assert_eq!(parsed.depth, 1);
+        assert!(matches!(parsed.status, JobStatus::Completed { .. }));
     }
 }
