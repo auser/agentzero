@@ -183,8 +183,10 @@ pub(crate) struct AsyncSubmitRequest {
     pub(crate) lane: Option<String>,
     /// Queue mode: "steer" (default), "followup", "collect", "interrupt".
     #[serde(default)]
-    #[allow(dead_code)]
     pub(crate) mode: Option<String>,
+    /// Run ID for followup mode — appends to an existing run's conversation.
+    #[serde(default)]
+    pub(crate) run_id: Option<String>,
     /// Model override.
     #[serde(default)]
     pub(crate) model: Option<String>,
@@ -194,6 +196,14 @@ pub(crate) struct AsyncSubmitRequest {
 pub(crate) struct CancelQuery {
     #[serde(default)]
     pub(crate) cascade: Option<bool>,
+}
+
+/// Query params for WebSocket run subscription.
+#[derive(Debug, Deserialize)]
+pub(crate) struct WsRunQuery {
+    /// Output format: "raw" (default) or "blocks" (markdown-aware chunking).
+    #[serde(default)]
+    pub(crate) format: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

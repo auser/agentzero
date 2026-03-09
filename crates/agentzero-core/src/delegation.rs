@@ -24,6 +24,12 @@ pub struct DelegateConfig {
     /// Empty string means inherit from parent.
     #[serde(default)]
     pub privacy_boundary: String,
+    /// Maximum token budget for this sub-agent (0 = inherit from parent or unlimited).
+    #[serde(default)]
+    pub max_tokens: u64,
+    /// Maximum cost budget in micro-dollars for this sub-agent (0 = inherit from parent or unlimited).
+    #[serde(default)]
+    pub max_cost_microdollars: u64,
 }
 
 impl Default for DelegateConfig {
@@ -41,6 +47,8 @@ impl Default for DelegateConfig {
             allowed_tools: HashSet::new(),
             max_iterations: 10,
             privacy_boundary: String::new(),
+            max_tokens: 0,
+            max_cost_microdollars: 0,
         }
     }
 }

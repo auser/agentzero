@@ -716,6 +716,7 @@ impl Provider for OpenAiCompatibleProvider {
                 output_text: accumulated_text,
                 tool_calls,
                 stop_reason,
+                ..Default::default()
             })
         }
         .instrument(span)
@@ -832,6 +833,7 @@ fn parse_tool_chat_response(body: &str) -> anyhow::Result<ChatResult> {
         output_text,
         tool_calls,
         stop_reason,
+        ..Default::default()
     })
 }
 

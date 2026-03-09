@@ -66,6 +66,79 @@ impl Default for AutonomyPolicy {
     }
 }
 
+impl AutonomyLevel {
+    /// Return the more restrictive of two levels.
+    fn most_restrictive(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::ReadOnly, _) | (_, Self::ReadOnly) => Self::ReadOnly,
+            (Self::Supervised, _) | (_, Self::Supervised) => Self::Supervised,
+            _ => Self::Full,
+        }
+    }
+}
+
+impl AutonomyPolicy {
+    /// Intersect two policies, producing a child policy that is at least as
+    /// restrictive as the parent on every dimension. Used when delegating to
+    /// sub-agents so the child can never escalate beyond the parent's privileges.
+    pub fn intersect(&self, child: &AutonomyPolicy) -> AutonomyPolicy {
+        // Most restrictive level wins.
+        let level = self.level.most_restrictive(child.level);
+
+        // workspace_only: true if either requires it.
+        let workspace_only = self.workspace_only || child.workspace_only;
+
+        // Forbidden paths: union of both (more paths forbidden).
+        let mut forbidden_paths = self.forbidden_paths.clone();
+        for p in &child.forbidden_paths {
+            if !forbidden_paths.contains(p) {
+                forbidden_paths.push(p.clone());
+            }
+        }
+
+        // Allowed roots: intersection (only roots allowed by both).
+        // Empty means "all", so if one side is empty, use the other.
+        let allowed_roots = if self.allowed_roots.is_empty() {
+            child.allowed_roots.clone()
+        } else if child.allowed_roots.is_empty() {
+            self.allowed_roots.clone()
+        } else {
+            self.allowed_roots
+                .iter()
+                .filter(|r| child.allowed_roots.contains(r))
+                .cloned()
+                .collect()
+        };
+
+        // auto_approve: intersection (only tools both approve).
+        let auto_approve = self
+            .auto_approve
+            .intersection(&child.auto_approve)
+            .cloned()
+            .collect();
+
+        // always_ask: union (if either side requires asking, ask).
+        let always_ask = self.always_ask.union(&child.always_ask).cloned().collect();
+
+        // Sensitive file access: only if both allow.
+        let allow_sensitive_file_reads =
+            self.allow_sensitive_file_reads && child.allow_sensitive_file_reads;
+        let allow_sensitive_file_writes =
+            self.allow_sensitive_file_writes && child.allow_sensitive_file_writes;
+
+        AutonomyPolicy {
+            level,
+            workspace_only,
+            forbidden_paths,
+            allowed_roots,
+            auto_approve,
+            always_ask,
+            allow_sensitive_file_reads,
+            allow_sensitive_file_writes,
+        }
+    }
+}
+
 /// Outcome of a tool approval check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalDecision {
@@ -374,5 +447,127 @@ mod tests {
             p.check_file_write("/project/file.txt"),
             ApprovalDecision::Blocked { .. }
         ));
+    }
+
+    // ─── intersect() tests ──────────────────────────────────────────────
+
+    #[test]
+    fn intersect_level_takes_most_restrictive() {
+        let parent = AutonomyPolicy {
+            level: AutonomyLevel::Full,
+            ..policy()
+        };
+        let child = AutonomyPolicy {
+            level: AutonomyLevel::Supervised,
+            ..policy()
+        };
+        assert_eq!(parent.intersect(&child).level, AutonomyLevel::Supervised);
+
+        let parent2 = AutonomyPolicy {
+            level: AutonomyLevel::ReadOnly,
+            ..policy()
+        };
+        assert_eq!(parent2.intersect(&child).level, AutonomyLevel::ReadOnly);
+    }
+
+    #[test]
+    fn intersect_workspace_only_is_union() {
+        let parent = AutonomyPolicy {
+            workspace_only: false,
+            ..policy()
+        };
+        let child = AutonomyPolicy {
+            workspace_only: true,
+            ..policy()
+        };
+        assert!(parent.intersect(&child).workspace_only);
+    }
+
+    #[test]
+    fn intersect_forbidden_paths_is_union() {
+        let parent = AutonomyPolicy {
+            forbidden_paths: vec!["/etc".into(), "/root".into()],
+            ..policy()
+        };
+        let child = AutonomyPolicy {
+            forbidden_paths: vec!["/root".into(), "/tmp".into()],
+            ..policy()
+        };
+        let result = parent.intersect(&child);
+        assert!(result.forbidden_paths.contains(&"/etc".to_string()));
+        assert!(result.forbidden_paths.contains(&"/root".to_string()));
+        assert!(result.forbidden_paths.contains(&"/tmp".to_string()));
+        // No duplicates.
+        assert_eq!(result.forbidden_paths.len(), 3);
+    }
+
+    #[test]
+    fn intersect_allowed_roots_is_intersection() {
+        let parent = AutonomyPolicy {
+            allowed_roots: vec!["/project".into(), "/shared".into()],
+            ..policy()
+        };
+        let child = AutonomyPolicy {
+            allowed_roots: vec!["/project".into(), "/other".into()],
+            ..policy()
+        };
+        let result = parent.intersect(&child);
+        assert_eq!(result.allowed_roots, vec!["/project".to_string()]);
+    }
+
+    #[test]
+    fn intersect_allowed_roots_empty_parent_uses_child() {
+        let parent = AutonomyPolicy {
+            allowed_roots: vec![],
+            ..policy()
+        };
+        let child = AutonomyPolicy {
+            allowed_roots: vec!["/project".into()],
+            ..policy()
+        };
+        let result = parent.intersect(&child);
+        assert_eq!(result.allowed_roots, vec!["/project".to_string()]);
+    }
+
+    #[test]
+    fn intersect_auto_approve_is_intersection() {
+        let mut parent = policy();
+        parent.auto_approve.insert("shell".into());
+        parent.auto_approve.insert("file_read".into());
+        let mut child = policy();
+        child.auto_approve.insert("file_read".into());
+        child.auto_approve.insert("web_search".into());
+        let result = parent.intersect(&child);
+        assert!(result.auto_approve.contains("file_read"));
+        assert!(!result.auto_approve.contains("shell"));
+        assert!(!result.auto_approve.contains("web_search"));
+    }
+
+    #[test]
+    fn intersect_always_ask_is_union() {
+        let mut parent = policy();
+        parent.always_ask.insert("shell".into());
+        let mut child = policy();
+        child.always_ask.insert("http_request".into());
+        let result = parent.intersect(&child);
+        assert!(result.always_ask.contains("shell"));
+        assert!(result.always_ask.contains("http_request"));
+    }
+
+    #[test]
+    fn intersect_sensitive_only_if_both_allow() {
+        let parent = AutonomyPolicy {
+            allow_sensitive_file_reads: true,
+            allow_sensitive_file_writes: false,
+            ..policy()
+        };
+        let child = AutonomyPolicy {
+            allow_sensitive_file_reads: true,
+            allow_sensitive_file_writes: true,
+            ..policy()
+        };
+        let result = parent.intersect(&child);
+        assert!(result.allow_sensitive_file_reads);
+        assert!(!result.allow_sensitive_file_writes);
     }
 }

@@ -8,6 +8,7 @@ pub mod agent;
 pub mod common;
 pub mod delegation;
 pub mod event_bus;
+pub mod loop_detection;
 pub mod metrics;
 #[cfg(feature = "privacy")]
 pub mod privacy;
@@ -22,6 +23,7 @@ pub use tracing;
 
 pub use agent::Agent;
 pub use event_bus::{Event, EventBus, EventSubscriber, InMemoryBus};
+pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{
     AgentConfig, AgentError, AnnounceMessage, AssistantMessage, AuditEvent, AuditSink, ChatResult,

@@ -344,6 +344,7 @@ impl agentzero_core::Provider for ScriptedToolProvider {
                     input: json!({"message": "hello from tool"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             })
         } else {
             // Second call: the conversation should contain the tool result.
@@ -360,6 +361,7 @@ impl agentzero_core::Provider for ScriptedToolProvider {
                 output_text: format!("Tool said: {tool_output}"),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             })
         }
     }

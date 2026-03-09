@@ -1803,6 +1803,265 @@ async fn v1_runs_events_include_tool_calls() {
 }
 
 // ---------------------------------------------------------------------------
+// Queue mode tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn v1_runs_followup_mode_requires_run_id() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    // Followup without run_id should return 400.
+    let body = json!({
+        "message": "follow up question",
+        "mode": "followup"
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn v1_runs_followup_mode_unknown_run_id_returns_404() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let body = json!({
+        "message": "follow up",
+        "mode": "followup",
+        "run_id": "nonexistent-run-id"
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn v1_runs_followup_mode_valid_run_id_accepted() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "done".to_string(),
+            },
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let body = json!({
+        "message": "follow up question",
+        "mode": "followup",
+        "run_id": run_id.0
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    // 503 because no config_path, but the mode dispatch reached the agent submission
+    // (past validation). If we had config paths it would return 202.
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn v1_runs_interrupt_mode_cancels_active_runs() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let r1 = store
+        .submit("agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&r1, agentzero_core::JobStatus::Running)
+        .await;
+    let r2 = store
+        .submit("agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&r2, agentzero_core::JobStatus::Running)
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store.clone());
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let body = json!({
+        "message": "interrupt everything",
+        "mode": "interrupt"
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/runs")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    // 503 because no config_path, but by this point interrupt has already cancelled active runs.
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    // Verify both original runs were cancelled.
+    let r1_record = store.get(&r1).await.unwrap();
+    assert!(r1_record.status.is_terminal());
+    let r2_record = store.get(&r2).await.unwrap();
+    assert!(r2_record.status.is_terminal());
+}
+
+// ---------------------------------------------------------------------------
+// SSE stream tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn v1_runs_stream_returns_sse_for_completed_job() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "hello world".to_string(),
+            },
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/stream", run_id.0))
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let body_str = String::from_utf8_lossy(&body);
+    assert!(body_str.contains("data:"));
+    assert!(body_str.contains("\"type\":\"completed\""));
+    assert!(body_str.contains("hello world"));
+}
+
+#[tokio::test]
+async fn v1_runs_stream_blocks_format_returns_blocks() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "# Title\n\nSome paragraph text.\n\n```rust\nfn main() {}\n```\n"
+                    .to_string(),
+            },
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/stream?format=blocks", run_id.0))
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let body_str = String::from_utf8_lossy(&body);
+    assert!(body_str.contains("\"format\":\"blocks\""));
+    assert!(body_str.contains("\"blocks\""));
+}
+
+#[tokio::test]
+async fn v1_runs_stream_unknown_run_returns_404() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/runs/nonexistent/stream")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// ---------------------------------------------------------------------------
 // E2E integration test: full gateway → pair → chat with real LLM
 // ---------------------------------------------------------------------------
 
@@ -2034,6 +2293,132 @@ async fn e2e_v1_chat_completions_with_real_llm() {
 
     server.abort();
     let _ = std::fs::remove_dir_all(&tmp_workspace);
+}
+
+// ---------------------------------------------------------------------------
+// Emergency stop tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn v1_estop_cancels_all_active_runs() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+
+    // Create 3 root-level runs, one already completed.
+    let r1 = store
+        .submit("agent-a".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&r1, agentzero_core::JobStatus::Running)
+        .await;
+
+    let r2 = store
+        .submit("agent-b".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&r2, agentzero_core::JobStatus::Running)
+        .await;
+
+    let r3 = store
+        .submit("agent-c".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(
+            &r3,
+            agentzero_core::JobStatus::Completed {
+                result: "done".to_string(),
+            },
+        )
+        .await;
+
+    // Create a child run under r1.
+    let child = store
+        .submit(
+            "child".to_string(),
+            agentzero_core::Lane::Main,
+            Some(r1.clone()),
+        )
+        .await;
+    store
+        .update_status(&child, agentzero_core::JobStatus::Running)
+        .await;
+
+    let mut state = GatewayState::test_with_bearer(None);
+    state.job_store = Some(store.clone());
+    state.require_pairing = false;
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/estop")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["emergency_stop"], true);
+    // r1 + child + r2 cancelled; r3 was already completed → skipped.
+    assert_eq!(json["cancelled_count"], 3);
+
+    // Verify individual statuses.
+    assert_eq!(
+        store.get(&r1).await.unwrap().status,
+        agentzero_core::JobStatus::Cancelled
+    );
+    assert_eq!(
+        store.get(&r2).await.unwrap().status,
+        agentzero_core::JobStatus::Cancelled
+    );
+    assert_eq!(
+        store.get(&child).await.unwrap().status,
+        agentzero_core::JobStatus::Cancelled
+    );
+    // r3 should still be completed.
+    assert!(matches!(
+        store.get(&r3).await.unwrap().status,
+        agentzero_core::JobStatus::Completed { .. }
+    ));
+}
+
+#[tokio::test]
+async fn v1_estop_no_active_runs_returns_zero() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let mut state = GatewayState::test_with_bearer(None);
+    state.job_store = Some(store);
+    state.require_pairing = false;
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/estop")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["emergency_stop"], true);
+    assert_eq!(json["cancelled_count"], 0);
+}
+
+#[tokio::test]
+async fn v1_estop_no_job_store_returns_503() {
+    let mut state = GatewayState::test_with_bearer(None);
+    state.require_pairing = false;
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/estop")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 // ---------------------------------------------------------------------------

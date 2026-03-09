@@ -3,7 +3,7 @@ use crate::models::{
     AsyncSubmitRequest, AsyncSubmitResponse, CancelQuery, ChatCompletionsRequest,
     ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice, CompletionChoiceMessage,
     GatewayError, HealthResponse, JobListQuery, JobStatusResponse, ModelItem, ModelsResponse,
-    PairRequest, PairResponse, PingRequest, PingResponse, WebhookResponse,
+    PairRequest, PairResponse, PingRequest, PingResponse, WebhookResponse, WsRunQuery,
 };
 use crate::state::GatewayState;
 use crate::util::{generate_session_token, now_epoch_secs};
@@ -495,6 +495,12 @@ async fn handle_text_message(
 // ---------------------------------------------------------------------------
 
 /// POST /v1/runs — submit an async agent job. Returns 202 Accepted with a run_id.
+///
+/// Supports four queue modes via the `mode` field:
+/// - `steer` (default): Route to a single agent.
+/// - `followup`: Append to an existing run's conversation (requires `run_id`).
+/// - `collect`: Fan-out to all available agents, merge responses.
+/// - `interrupt`: Cancel active runs in the lane, then submit new job.
 pub(crate) async fn async_submit(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -514,46 +520,225 @@ pub(crate) async fn async_submit(
         });
     }
 
+    let mode = req.mode.as_deref().unwrap_or("steer");
     let lane = agentzero_core::Lane::Main;
-    let run_id = job_store.submit("agent".to_string(), lane, None).await;
 
-    // Build agent request and spawn in background.
-    let agent_req = build_agent_request(&state, req.message, req.model)?;
-    let store = job_store.clone();
-    let rid = run_id.clone();
-    tokio::spawn(async move {
-        store
-            .update_status(&rid, agentzero_core::JobStatus::Running)
-            .await;
-        match run_agent_once(agent_req).await {
-            Ok(output) => {
-                store
-                    .update_status(
-                        &rid,
-                        agentzero_core::JobStatus::Completed {
-                            result: output.response_text,
-                        },
-                    )
-                    .await;
+    match mode {
+        "followup" => {
+            // Followup mode: append to existing run's conversation.
+            let existing_run_id = req.run_id.as_deref().ok_or(GatewayError::BadRequest {
+                message: "followup mode requires a `run_id` field".to_string(),
+            })?;
+            let target_run_id = agentzero_core::RunId(existing_run_id.to_string());
+
+            // Verify the target run exists.
+            if job_store.get(&target_run_id).await.is_none() {
+                return Err(GatewayError::NotFound {
+                    resource: format!("run {existing_run_id}"),
+                });
             }
-            Err(e) => {
+
+            // Submit a new run linked to the original conversation.
+            let run_id = job_store.submit("agent".to_string(), lane, None).await;
+
+            let mut agent_req = build_agent_request(&state, req.message, req.model)?;
+            agent_req.conversation_id = Some(existing_run_id.to_string());
+
+            let store = job_store.clone();
+            let rid = run_id.clone();
+            tokio::spawn(async move {
                 store
-                    .update_status(
-                        &rid,
-                        agentzero_core::JobStatus::Failed {
-                            error: e.to_string(),
-                        },
-                    )
+                    .update_status(&rid, agentzero_core::JobStatus::Running)
                     .await;
-            }
+                match run_agent_once(agent_req).await {
+                    Ok(output) => {
+                        store
+                            .update_status(
+                                &rid,
+                                agentzero_core::JobStatus::Completed {
+                                    result: output.response_text,
+                                },
+                            )
+                            .await;
+                    }
+                    Err(e) => {
+                        store
+                            .update_status(
+                                &rid,
+                                agentzero_core::JobStatus::Failed {
+                                    error: e.to_string(),
+                                },
+                            )
+                            .await;
+                    }
+                }
+            });
+
+            let resp = AsyncSubmitResponse {
+                run_id: run_id.0.clone(),
+                accepted_at: chrono_now_iso(),
+            };
+            Ok((axum::http::StatusCode::ACCEPTED, Json(resp)).into_response())
         }
-    });
 
-    let resp = AsyncSubmitResponse {
-        run_id: run_id.0.clone(),
-        accepted_at: chrono_now_iso(),
-    };
-    Ok((axum::http::StatusCode::ACCEPTED, Json(resp)).into_response())
+        "collect" => {
+            // Collect mode: fan-out to multiple agents, merge all responses.
+            let run_id = job_store.submit("agent".to_string(), lane, None).await;
+
+            // Capture the fields we need to rebuild requests per agent.
+            let message = req.message.clone();
+            let model = req.model.clone();
+            let state_clone = state.clone();
+            let store = job_store.clone();
+            let rid = run_id.clone();
+            let collect_count = 3usize; // fan-out to N parallel copies
+
+            tokio::spawn(async move {
+                store
+                    .update_status(&rid, agentzero_core::JobStatus::Running)
+                    .await;
+
+                // Spawn parallel agent invocations, each building its own request.
+                let mut handles = Vec::with_capacity(collect_count);
+                for _ in 0..collect_count {
+                    let msg = message.clone();
+                    let mdl = model.clone();
+                    let st = state_clone.clone();
+                    handles.push(tokio::spawn(async move {
+                        let req = match build_agent_request(&st, msg, mdl) {
+                            Ok(r) => r,
+                            Err(e) => return Err(anyhow::anyhow!("{e:?}")),
+                        };
+                        run_agent_once(req).await
+                    }));
+                }
+
+                // Collect all results.
+                let mut results = Vec::with_capacity(collect_count);
+                for handle in handles {
+                    match handle.await {
+                        Ok(Ok(output)) => results.push(output.response_text),
+                        Ok(Err(e)) => results.push(format!("[error] {e}")),
+                        Err(e) => results.push(format!("[join error] {e}")),
+                    }
+                }
+
+                // Merge results into a single response.
+                let merged = results
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| format!("--- Agent {} ---\n{}", i + 1, r))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+
+                store
+                    .update_status(
+                        &rid,
+                        agentzero_core::JobStatus::Completed { result: merged },
+                    )
+                    .await;
+            });
+
+            let resp = AsyncSubmitResponse {
+                run_id: run_id.0.clone(),
+                accepted_at: chrono_now_iso(),
+            };
+            Ok((axum::http::StatusCode::ACCEPTED, Json(resp)).into_response())
+        }
+
+        "interrupt" => {
+            // Interrupt mode: cancel all active runs, then submit new job.
+            let active_runs = job_store.list_all(None).await;
+            for job in &active_runs {
+                if !job.status.is_terminal() {
+                    job_store
+                        .update_status(&job.run_id, agentzero_core::JobStatus::Cancelled)
+                        .await;
+                }
+            }
+
+            let run_id = job_store.submit("agent".to_string(), lane, None).await;
+
+            let agent_req = build_agent_request(&state, req.message, req.model)?;
+            let store = job_store.clone();
+            let rid = run_id.clone();
+            tokio::spawn(async move {
+                store
+                    .update_status(&rid, agentzero_core::JobStatus::Running)
+                    .await;
+                match run_agent_once(agent_req).await {
+                    Ok(output) => {
+                        store
+                            .update_status(
+                                &rid,
+                                agentzero_core::JobStatus::Completed {
+                                    result: output.response_text,
+                                },
+                            )
+                            .await;
+                    }
+                    Err(e) => {
+                        store
+                            .update_status(
+                                &rid,
+                                agentzero_core::JobStatus::Failed {
+                                    error: e.to_string(),
+                                },
+                            )
+                            .await;
+                    }
+                }
+            });
+
+            let resp = AsyncSubmitResponse {
+                run_id: run_id.0.clone(),
+                accepted_at: chrono_now_iso(),
+            };
+            Ok((axum::http::StatusCode::ACCEPTED, Json(resp)).into_response())
+        }
+
+        _ => {
+            // Steer mode (default): single agent submission.
+            let run_id = job_store.submit("agent".to_string(), lane, None).await;
+
+            let agent_req = build_agent_request(&state, req.message, req.model)?;
+            let store = job_store.clone();
+            let rid = run_id.clone();
+            tokio::spawn(async move {
+                store
+                    .update_status(&rid, agentzero_core::JobStatus::Running)
+                    .await;
+                match run_agent_once(agent_req).await {
+                    Ok(output) => {
+                        store
+                            .update_status(
+                                &rid,
+                                agentzero_core::JobStatus::Completed {
+                                    result: output.response_text,
+                                },
+                            )
+                            .await;
+                    }
+                    Err(e) => {
+                        store
+                            .update_status(
+                                &rid,
+                                agentzero_core::JobStatus::Failed {
+                                    error: e.to_string(),
+                                },
+                            )
+                            .await;
+                    }
+                }
+            });
+
+            let resp = AsyncSubmitResponse {
+                run_id: run_id.0.clone(),
+                accepted_at: chrono_now_iso(),
+            };
+            Ok((axum::http::StatusCode::ACCEPTED, Json(resp)).into_response())
+        }
+    }
 }
 
 /// GET /v1/runs/:run_id — poll job status.
@@ -848,6 +1033,35 @@ pub(crate) async fn agents_list(
     })))
 }
 
+/// POST /v1/estop — emergency stop: cascade-cancel all active root-level runs.
+///
+/// Returns the list of cancelled run IDs and the total count.
+pub(crate) async fn emergency_stop(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let cancelled_ids = job_store.emergency_stop_all().await;
+    let count = cancelled_ids.len();
+
+    tracing::warn!(
+        cancelled_count = count,
+        "emergency stop triggered — cancelled all active runs"
+    );
+
+    Ok(Json(json!({
+        "emergency_stop": true,
+        "cancelled_count": count,
+        "cancelled_ids": cancelled_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+    })))
+}
+
 // ---------------------------------------------------------------------------
 
 /// GET /ws/runs/:run_id — subscribe to real-time status updates for a job.
@@ -865,6 +1079,7 @@ pub(crate) async fn ws_run_subscribe(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
+    query: axum::extract::Query<WsRunQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, GatewayError> {
     authorize_request(&state, &headers, false)?;
@@ -884,8 +1099,10 @@ pub(crate) async fn ws_run_subscribe(
         });
     }
 
+    let use_blocks = query.format.as_deref() == Some("blocks");
+
     Ok(ws
-        .on_upgrade(move |socket| handle_run_socket(socket, job_store, run_id))
+        .on_upgrade(move |socket| handle_run_socket(socket, job_store, run_id, use_blocks))
         .into_response())
 }
 
@@ -893,10 +1110,15 @@ async fn handle_run_socket(
     mut socket: WebSocket,
     job_store: Arc<agentzero_orchestrator::JobStore>,
     run_id: agentzero_core::RunId,
+    use_blocks: bool,
 ) {
     // Send current status immediately.
     if let Some(record) = job_store.get(&run_id).await {
-        let frame = status_frame(&run_id, &record.status);
+        let frame = if use_blocks {
+            block_status_frame(&run_id, &record.status)
+        } else {
+            status_frame(&run_id, &record.status)
+        };
         if socket.send(Message::Text(frame)).await.is_err() {
             return;
         }
@@ -919,7 +1141,11 @@ async fn handle_run_socket(
             if notified_run_id != sub_run_id {
                 continue;
             }
-            let frame = status_frame(&sub_run_id, &new_status);
+            let frame = if use_blocks {
+                block_status_frame(&sub_run_id, &new_status)
+            } else {
+                status_frame(&sub_run_id, &new_status)
+            };
             let terminal = new_status.is_terminal();
             if relay_tx.send(frame).await.is_err() {
                 break;
@@ -1012,4 +1238,154 @@ pub(crate) fn status_frame(
         }
     }
     .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// SSE run stream: GET /v1/runs/:run_id/stream
+// ---------------------------------------------------------------------------
+
+/// GET /v1/runs/:run_id/stream — Server-Sent Events stream for job status.
+///
+/// Alternative to WebSocket for environments that don't support WS.
+/// Sends `text/event-stream` with block-level events when `?format=blocks`
+/// is specified, otherwise raw status events.
+pub(crate) async fn sse_run_stream(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id_str): Path<String>,
+    query: axum::extract::Query<WsRunQuery>,
+) -> Result<Response, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?
+        .clone();
+
+    let run_id = agentzero_core::RunId(run_id_str.clone());
+
+    // Verify the run exists.
+    if job_store.get(&run_id).await.is_none() {
+        return Err(GatewayError::NotFound {
+            resource: format!("run {run_id_str}"),
+        });
+    }
+
+    let use_blocks = query.format.as_deref() == Some("blocks");
+
+    // Build an async stream that yields SSE events.
+    let stream = async_stream::stream! {
+        // Send current status immediately.
+        if let Some(record) = job_store.get(&run_id).await {
+            let frame = if use_blocks {
+                block_status_frame(&run_id, &record.status)
+            } else {
+                status_frame(&run_id, &record.status)
+            };
+            yield Ok::<_, std::convert::Infallible>(
+                format!("data: {frame}\n\n")
+            );
+            if record.status.is_terminal() {
+                return;
+            }
+        }
+
+        // Subscribe to status updates.
+        let mut rx = job_store.subscribe();
+        let deadline = Instant::now() + Duration::from_secs(600);
+
+        loop {
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok((notified_run_id, new_status)) => {
+                            if notified_run_id != run_id {
+                                continue;
+                            }
+                            let frame = if use_blocks {
+                                block_status_frame(&run_id, &new_status)
+                            } else {
+                                status_frame(&run_id, &new_status)
+                            };
+                            let terminal = new_status.is_terminal();
+                            yield Ok(format!("data: {frame}\n\n"));
+                            if terminal {
+                                return;
+                            }
+                        }
+                        Err(_) => return,
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    yield Ok(format!(
+                        "data: {}\n\n",
+                        json!({"type": "error", "message": "stream timeout"})
+                    ));
+                    return;
+                }
+            }
+        }
+    };
+
+    let body = axum::body::Body::from_stream(stream);
+    Ok(Response::builder()
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive")
+        .body(body)
+        .unwrap()
+        .into_response())
+}
+
+// ---------------------------------------------------------------------------
+
+/// Build a block-level JSON frame for completed results.
+///
+/// For completed jobs, the result text is parsed through `BlockAccumulator`
+/// to produce semantic blocks (paragraphs, code blocks, headers, list items).
+/// Other statuses are forwarded as-is.
+fn block_status_frame(
+    run_id: &agentzero_core::RunId,
+    status: &agentzero_core::JobStatus,
+) -> String {
+    match status {
+        agentzero_core::JobStatus::Completed { result } => {
+            let mut acc = agentzero_orchestrator::BlockAccumulator::new();
+            acc.push(result);
+            let blocks = acc.flush();
+            let block_data: Vec<Value> = blocks
+                .iter()
+                .map(|b| match b {
+                    agentzero_orchestrator::Block::Paragraph(text) => json!({
+                        "type": "paragraph",
+                        "content": text,
+                    }),
+                    agentzero_orchestrator::Block::CodeBlock { language, content } => json!({
+                        "type": "code_block",
+                        "language": language,
+                        "content": content,
+                    }),
+                    agentzero_orchestrator::Block::Header { level, text } => json!({
+                        "type": "header",
+                        "level": level,
+                        "content": text,
+                    }),
+                    agentzero_orchestrator::Block::ListItem(text) => json!({
+                        "type": "list_item",
+                        "content": text,
+                    }),
+                })
+                .collect();
+            json!({
+                "type": "completed",
+                "run_id": run_id.0,
+                "format": "blocks",
+                "blocks": block_data,
+            })
+            .to_string()
+        }
+        // For non-completed statuses, delegate to the raw frame builder.
+        other => status_frame(run_id, other),
+    }
 }

@@ -12,6 +12,7 @@
 //! channel and publishing results back on the event bus.
 
 use crate::agent_router::{AgentDescriptor, AgentRouter};
+use crate::presence::PresenceStore;
 use agentzero_channels::{ChannelMessage, ChannelRegistry, SendMessage};
 use agentzero_config::PipelineConfig;
 use agentzero_core::event_bus::{is_boundary_compatible, topic_matches, Event, EventBus};
@@ -37,6 +38,8 @@ pub struct TaskMessage {
     /// If set, the worker sends the result back through this channel
     /// (used by pipeline executor for synchronous step execution).
     pub result_tx: Option<oneshot::Sender<TaskResult>>,
+    /// Cancellation flag — set to `true` to signal the agent to stop.
+    pub cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub struct TaskResult {
@@ -92,6 +95,8 @@ pub struct Coordinator {
     /// Maps correlation_id → origin channel info.
     correlation_store: Arc<tokio::sync::Mutex<HashMap<String, CorrelationOrigin>>>,
     shutdown_grace_ms: u64,
+    /// Optional presence store for agent heartbeat tracking.
+    presence: Option<Arc<PresenceStore>>,
 }
 
 impl Coordinator {
@@ -111,7 +116,14 @@ impl Coordinator {
             pipelines,
             correlation_store: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             shutdown_grace_ms,
+            presence: None,
         }
+    }
+
+    /// Set the presence store for agent heartbeat tracking.
+    pub fn with_presence(mut self, store: Arc<PresenceStore>) -> Self {
+        self.presence = Some(store);
+        self
     }
 
     /// Register an agent worker. The coordinator owns the agent's task channel
@@ -129,6 +141,7 @@ impl Coordinator {
         let bus = self.bus.clone();
         let desc = descriptor.clone();
         let worker_status = status.clone();
+        let presence = self.presence.clone();
 
         let join_handle = tokio::spawn(agent_worker(
             agent,
@@ -137,6 +150,7 @@ impl Coordinator {
             desc,
             worker_status,
             workspace_root,
+            presence,
         ));
 
         self.agents.insert(
@@ -336,8 +350,19 @@ impl Coordinator {
                 continue;
             }
 
-            // AI/keyword routing
-            let descriptors = self.agent_descriptors();
+            // AI/keyword routing — filter out dead agents from candidates.
+            let mut descriptors = self.agent_descriptors();
+            if let Some(ref ps) = self.presence {
+                let mut alive_descriptors = Vec::with_capacity(descriptors.len());
+                for d in descriptors {
+                    if ps.is_alive(&d.id).await {
+                        alive_descriptors.push(d);
+                    } else {
+                        tracing::debug!(agent = %d.id, "skipping dead agent in routing");
+                    }
+                }
+                descriptors = alive_descriptors;
+            }
             match self.router.route(&content, &descriptors).await {
                 Ok(Some(agent_id)) => {
                     if let Some(worker) = self.agents.get(&agent_id) {
@@ -361,6 +386,7 @@ impl Coordinator {
                                 event,
                                 correlation_id,
                                 result_tx: None,
+                                cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                             })
                             .await;
                     }
@@ -488,6 +514,7 @@ impl Coordinator {
                             event: event.clone(),
                             correlation_id,
                             result_tx: None,
+                            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                         })
                         .await;
                     routed = true;
@@ -574,17 +601,29 @@ async fn agent_worker(
     descriptor: AgentDescriptor,
     status: Arc<AtomicU8>,
     workspace_root: String,
+    presence: Option<Arc<PresenceStore>>,
 ) {
     tracing::info!(agent = %descriptor.id, "agent worker started");
 
+    // Register with presence store if available.
+    if let Some(ref ps) = presence {
+        ps.register(&descriptor.id, Duration::from_secs(30)).await;
+    }
+
     while let Some(task) = task_rx.recv().await {
         status.store(STATUS_BUSY, Ordering::Relaxed);
+
+        // Heartbeat on task start.
+        if let Some(ref ps) = presence {
+            ps.heartbeat(&descriptor.id).await;
+        }
 
         let content = extract_content(&task.event.payload);
         let mut ctx = ToolContext::new(workspace_root.clone());
         ctx.event_bus = Some(bus.clone());
         ctx.agent_id = Some(descriptor.id.clone());
         ctx.privacy_boundary = descriptor.privacy_boundary.clone();
+        ctx.cancelled = task.cancelled.clone();
 
         // Extract source channel from event if available.
         if task.event.topic.starts_with("channel.") {
@@ -706,7 +745,17 @@ async fn agent_worker(
             }
         }
 
+        // Heartbeat on task completion.
+        if let Some(ref ps) = presence {
+            ps.heartbeat(&descriptor.id).await;
+        }
+
         status.store(STATUS_IDLE, Ordering::Relaxed);
+    }
+
+    // Deregister from presence store on shutdown.
+    if let Some(ref ps) = presence {
+        ps.deregister(&descriptor.id).await;
     }
 
     status.store(STATUS_STOPPED, Ordering::Relaxed);
@@ -889,6 +938,7 @@ async fn execute_single_step(
                 .with_boundary(privacy_boundary),
                 correlation_id: correlation_id.to_string(),
                 result_tx: Some(result_tx),
+                cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             })
             .await
             .map_err(|_| anyhow::anyhow!("agent '{}' channel closed", agent_id))?;
@@ -1003,6 +1053,7 @@ async fn execute_fanout_steps(
                         .with_boundary(&boundary_inner),
                         correlation_id: String::new(),
                         result_tx: Some(result_tx),
+                        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     })
                     .await
                     .map_err(|_| format!("agent '{}' channel closed", agent_id))?;

@@ -343,10 +343,16 @@ fn parse_tool_response(body: &str) -> anyhow::Result<ChatResult> {
     let response: MessagesResponse =
         serde_json::from_str(body).context("failed to parse Anthropic response JSON")?;
 
-    if let Some(ref usage) = response.usage {
+    let (input_tokens, output_tokens) = response
+        .usage
+        .as_ref()
+        .map(|u| (u.input_tokens, u.output_tokens))
+        .unwrap_or((0, 0));
+
+    if input_tokens > 0 || output_tokens > 0 {
         trace!(
-            input_tokens = usage.input_tokens,
-            output_tokens = usage.output_tokens,
+            input_tokens,
+            output_tokens,
             stop_reason = response.stop_reason.as_deref().unwrap_or("none"),
             "Anthropic tool response metadata"
         );
@@ -360,6 +366,8 @@ fn parse_tool_response(body: &str) -> anyhow::Result<ChatResult> {
         output_text: text,
         tool_calls,
         stop_reason,
+        input_tokens,
+        output_tokens,
     })
 }
 
@@ -919,6 +927,8 @@ impl Provider for AnthropicProvider {
             }
             let mut tool_accumulators: Vec<(usize, ToolCallAccum)> = Vec::new();
             let mut final_stop_reason: Option<String> = None;
+            let mut stream_input_tokens: u64 = 0;
+            let mut stream_output_tokens: u64 = 0;
 
             while let Some(chunk_result) = byte_stream.next().await {
                 let bytes = chunk_result.context("error reading SSE chunk")?;
@@ -975,8 +985,15 @@ impl Provider for AnthropicProvider {
                             });
                         }
                         SseEvent::ContentBlockStop { .. } => {}
-                        SseEvent::MessageDelta { stop_reason } => {
+                        SseEvent::MessageStart { input_tokens } => {
+                            stream_input_tokens = input_tokens;
+                        }
+                        SseEvent::MessageDelta {
+                            stop_reason,
+                            output_tokens,
+                        } => {
                             final_stop_reason = stop_reason;
+                            stream_output_tokens = output_tokens;
                         }
                         SseEvent::Other => {}
                     }
@@ -1012,6 +1029,8 @@ impl Provider for AnthropicProvider {
                 output_text: accumulated_text,
                 tool_calls,
                 stop_reason,
+                input_tokens: stream_input_tokens,
+                output_tokens: stream_output_tokens,
             })
         }
         .instrument(span)
@@ -1034,8 +1053,13 @@ enum SseEvent {
     ToolUseInputDelta { index: usize, delta: String },
     /// End of a content block.
     ContentBlockStop { index: usize },
-    /// Final message delta with stop_reason.
-    MessageDelta { stop_reason: Option<String> },
+    /// Message start event carrying input token count.
+    MessageStart { input_tokens: u64 },
+    /// Final message delta with stop_reason and output token count.
+    MessageDelta {
+        stop_reason: Option<String>,
+        output_tokens: u64,
+    },
     /// Event we don't need to act on.
     Other,
 }
@@ -1108,13 +1132,30 @@ fn parse_sse_event(event_block: &str) -> SseEvent {
             let index = value.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             SseEvent::ContentBlockStop { index }
         }
+        Some("message_start") => {
+            let input_tokens = value
+                .get("message")
+                .and_then(|m| m.get("usage"))
+                .and_then(|u| u.get("input_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            SseEvent::MessageStart { input_tokens }
+        }
         Some("message_delta") => {
             let stop_reason = value
                 .get("delta")
                 .and_then(|d| d.get("stop_reason"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            SseEvent::MessageDelta { stop_reason }
+            let output_tokens = value
+                .get("usage")
+                .and_then(|u| u.get("output_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            SseEvent::MessageDelta {
+                stop_reason,
+                output_tokens,
+            }
         }
         _ => {
             // Fallback: try the old content_block_delta parse for events without event: prefix
@@ -1981,6 +2022,7 @@ mod tests {
             parse_sse_event(block),
             SseEvent::MessageDelta {
                 stop_reason: Some("tool_use".to_string()),
+                output_tokens: 50,
             }
         );
     }
@@ -1992,6 +2034,7 @@ mod tests {
             parse_sse_event(block),
             SseEvent::MessageDelta {
                 stop_reason: Some("end_turn".to_string()),
+                output_tokens: 0,
             }
         );
     }

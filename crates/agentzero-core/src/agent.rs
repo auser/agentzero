@@ -1,10 +1,11 @@
 use crate::common::privacy_helpers::{is_network_tool, resolve_boundary};
+use crate::loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 use crate::security::redaction::redact_text;
 use crate::types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ConversationMessage,
-    HookEvent, HookFailureMode, HookRiskTier, HookSink, MemoryEntry, MemoryStore, MetricsSink,
-    Provider, ResearchTrigger, StopReason, StreamSink, Tool, ToolContext, ToolDefinition,
-    ToolResultMessage, UserMessage,
+    HookEvent, HookFailureMode, HookRiskTier, HookSink, LoopAction, MemoryEntry, MemoryStore,
+    MetricsSink, Provider, ResearchTrigger, StopReason, StreamSink, Tool, ToolContext,
+    ToolDefinition, ToolResultMessage, UserMessage,
 };
 use crate::validation::validate_json;
 use serde_json::json;
@@ -188,6 +189,7 @@ pub struct Agent {
     audit: Option<Box<dyn AuditSink>>,
     hooks: Option<Box<dyn HookSink>>,
     metrics: Option<Box<dyn MetricsSink>>,
+    loop_detection_config: Option<LoopDetectionConfig>,
 }
 
 impl Agent {
@@ -205,7 +207,14 @@ impl Agent {
             audit: None,
             hooks: None,
             metrics: None,
+            loop_detection_config: None,
         }
+    }
+
+    /// Enable tiered loop detection (similarity + cost runaway) for this agent.
+    pub fn with_loop_detection(mut self, config: LoopDetectionConfig) -> Self {
+        self.loop_detection_config = Some(config);
+        self
     }
 
     pub fn with_audit(mut self, audit: Box<dyn AuditSink>) -> Self {
@@ -802,8 +811,26 @@ impl Agent {
 
         let mut tool_history: Vec<(String, String, String)> = Vec::new();
         let mut failure_streak: usize = 0;
+        let mut loop_detector = self
+            .loop_detection_config
+            .as_ref()
+            .map(|cfg| ToolLoopDetector::new(cfg.clone()));
+        let mut restricted_tools: Vec<String> = Vec::new();
 
         for iteration in 0..self.config.max_tool_iterations {
+            // Check cancellation between tool iterations.
+            if ctx.is_cancelled() {
+                warn!(request_id = %request_id, "agent execution cancelled");
+                self.audit(
+                    "execution_cancelled",
+                    json!({"request_id": request_id, "iteration": iteration}),
+                )
+                .await;
+                return Ok(AssistantMessage {
+                    text: "[Execution cancelled]".to_string(),
+                });
+            }
+
             truncate_messages(&mut messages, self.config.max_prompt_chars);
 
             self.hook(
@@ -826,19 +853,30 @@ impl Agent {
             )
             .await;
 
+            // Filter tool definitions if loop detection has restricted some tools.
+            let effective_tools: Vec<ToolDefinition> = if restricted_tools.is_empty() {
+                tool_definitions.clone()
+            } else {
+                tool_definitions
+                    .iter()
+                    .filter(|td| !restricted_tools.contains(&td.name))
+                    .cloned()
+                    .collect()
+            };
+
             let provider_started = Instant::now();
             let provider_result = if let Some(ref sink) = stream_sink {
                 self.provider
                     .complete_streaming_with_tools(
                         &messages,
-                        &tool_definitions,
+                        &effective_tools,
                         &self.config.reasoning,
                         sink.clone(),
                     )
                     .await
             } else {
                 self.provider
-                    .complete_with_tools(&messages, &tool_definitions, &self.config.reasoning)
+                    .complete_with_tools(&messages, &effective_tools, &self.config.reasoning)
                     .await
             };
             let chat_result = match provider_result {
@@ -856,11 +894,31 @@ impl Agent {
                 "provider_latency_ms",
                 provider_started.elapsed().as_secs_f64() * 1000.0,
             );
+
+            // Accumulate token usage from this provider call into the budget.
+            let iter_tokens = chat_result.input_tokens + chat_result.output_tokens;
+            if iter_tokens > 0 {
+                ctx.add_tokens(iter_tokens);
+            }
+
+            // Check budget limits.
+            if let Some(reason) = ctx.budget_exceeded() {
+                warn!(
+                    request_id = %request_id,
+                    iteration = iteration,
+                    reason = %reason,
+                    "budget exceeded — force-completing run"
+                );
+                return Err(AgentError::BudgetExceeded { reason });
+            }
+
             info!(
                 request_id = %request_id,
                 iteration = iteration,
                 stop_reason = ?chat_result.stop_reason,
                 tool_calls = chat_result.tool_calls.len(),
+                tokens_this_call = iter_tokens,
+                total_tokens = ctx.current_tokens(),
                 "structured provider call finished"
             );
             self.hook(
@@ -1081,6 +1139,118 @@ impl Agent {
             // Append tool results to conversation.
             for result in &tool_results {
                 messages.push(ConversationMessage::ToolResult(result.clone()));
+            }
+
+            // Tiered loop detection (similarity + cost runaway).
+            if let Some(ref mut detector) = loop_detector {
+                // Check each tool call from this iteration.
+                let tool_calls_this_iter = &chat_result.tool_calls;
+                let mut worst_action = LoopAction::Continue;
+                for tc in tool_calls_this_iter {
+                    let action = detector.check(
+                        &tc.name,
+                        &tc.input,
+                        ctx.current_tokens(),
+                        ctx.current_cost(),
+                    );
+                    if crate::loop_detection::severity(&action)
+                        > crate::loop_detection::severity(&worst_action)
+                    {
+                        worst_action = action;
+                    }
+                }
+
+                match worst_action {
+                    LoopAction::Continue => {}
+                    LoopAction::InjectMessage(ref msg) => {
+                        warn!(
+                            request_id = %request_id,
+                            "tiered loop detection: injecting message"
+                        );
+                        self.audit(
+                            "loop_detection_inject",
+                            json!({
+                                "request_id": request_id,
+                                "iteration": iteration,
+                                "message": msg,
+                            }),
+                        )
+                        .await;
+                        messages.push(ConversationMessage::user(format!("SYSTEM NOTICE: {msg}")));
+                    }
+                    LoopAction::RestrictTools(ref tools) => {
+                        warn!(
+                            request_id = %request_id,
+                            tools = ?tools,
+                            "tiered loop detection: restricting tools"
+                        );
+                        self.audit(
+                            "loop_detection_restrict",
+                            json!({
+                                "request_id": request_id,
+                                "iteration": iteration,
+                                "restricted_tools": tools,
+                            }),
+                        )
+                        .await;
+                        restricted_tools.extend(tools.iter().cloned());
+                        messages.push(ConversationMessage::user(format!(
+                            "SYSTEM NOTICE: The following tools have been temporarily \
+                             restricted due to repetitive usage: {}. Try a different approach.",
+                            tools.join(", ")
+                        )));
+                    }
+                    LoopAction::ForceComplete(ref reason) => {
+                        warn!(
+                            request_id = %request_id,
+                            reason = %reason,
+                            "tiered loop detection: force completing"
+                        );
+                        self.audit(
+                            "loop_detection_force_complete",
+                            json!({
+                                "request_id": request_id,
+                                "iteration": iteration,
+                                "reason": reason,
+                            }),
+                        )
+                        .await;
+                        // Force a final response without tools.
+                        messages.push(ConversationMessage::user(format!(
+                            "SYSTEM NOTICE: {reason}. Provide your best answer now \
+                             without calling any more tools."
+                        )));
+                        truncate_messages(&mut messages, self.config.max_prompt_chars);
+                        let final_result = if let Some(ref sink) = stream_sink {
+                            self.provider
+                                .complete_streaming_with_tools(
+                                    &messages,
+                                    &[],
+                                    &self.config.reasoning,
+                                    sink.clone(),
+                                )
+                                .await
+                                .map_err(|source| AgentError::Provider { source })?
+                        } else {
+                            self.provider
+                                .complete_with_tools(&messages, &[], &self.config.reasoning)
+                                .await
+                                .map_err(|source| AgentError::Provider { source })?
+                        };
+                        let response_text = final_result.output_text;
+                        self.write_to_memory(
+                            "assistant",
+                            &response_text,
+                            request_id,
+                            ctx.source_channel.as_deref(),
+                            ctx.conversation_id.as_deref().unwrap_or(""),
+                        )
+                        .await?;
+                        return Ok(AssistantMessage {
+                            text: response_text,
+                        });
+                    }
+                }
             }
 
             // Loop detection: no-progress.
@@ -3370,11 +3540,13 @@ mod tests {
                     input: json!({"text": "hello"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: "The echo returned: hello".to_string(),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             },
         ]);
         let received = provider.received_messages.clone();
@@ -3414,6 +3586,7 @@ mod tests {
             output_text: "Hello! No tools needed.".to_string(),
             tool_calls: vec![],
             stop_reason: Some(StopReason::EndTurn),
+            ..Default::default()
         }]);
 
         let agent = Agent::new(
@@ -3447,11 +3620,13 @@ mod tests {
                     input: json!({}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: "I see the tool was not found.".to_string(),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             },
         ]);
         let received = provider.received_messages.clone();
@@ -3495,11 +3670,13 @@ mod tests {
                     input: json!({}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: "I handled the error gracefully.".to_string(),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             },
         ]);
 
@@ -3535,6 +3712,7 @@ mod tests {
                     input: json!({"text": "first"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             // Second: call echo again
             ChatResult {
@@ -3545,12 +3723,14 @@ mod tests {
                     input: json!({"text": "second"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             // Third: final answer
             ChatResult {
                 output_text: "Done with two tool calls.".to_string(),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             },
         ]);
         let received = provider.received_messages.clone();
@@ -3591,6 +3771,7 @@ mod tests {
                     input: json!({"text": "loop"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: String::new(),
@@ -3600,6 +3781,7 @@ mod tests {
                     input: json!({"text": "loop"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: String::new(),
@@ -3609,12 +3791,14 @@ mod tests {
                     input: json!({"text": "loop"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             // 4th call: forced final answer (after max iterations).
             ChatResult {
                 output_text: "Forced final answer.".to_string(),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             },
         ];
 
@@ -3720,11 +3904,13 @@ mod tests {
                     },
                 ],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: "Both tools ran.".to_string(),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             },
         ]);
         let received = provider.received_messages.clone();
@@ -3785,6 +3971,7 @@ mod tests {
             output_text: "I see your history.".to_string(),
             tool_calls: vec![],
             stop_reason: Some(StopReason::EndTurn),
+            ..Default::default()
         }]);
         let received = provider.received_messages.clone();
 
@@ -4185,11 +4372,13 @@ mod tests {
                     input: json!({"text": "hello"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: "Done echoing.".to_string(),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             },
         ]);
 
@@ -4233,6 +4422,7 @@ mod tests {
                     input: json!({"text": "first"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: String::new(),
@@ -4242,11 +4432,13 @@ mod tests {
                     input: json!({"text": "second"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: "All done.".to_string(),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             },
         ]);
 
@@ -4381,11 +4573,13 @@ mod tests {
                     input: json!({}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: "Recovered from error.".to_string(),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             },
         ]);
 
@@ -4429,11 +4623,13 @@ mod tests {
                     },
                 ],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: "Parallel done.".to_string(),
                 tool_calls: vec![],
                 stop_reason: Some(StopReason::EndTurn),
+                ..Default::default()
             },
         ]);
 
@@ -4468,6 +4664,7 @@ mod tests {
             output_text: "abc".to_string(),
             tool_calls: vec![],
             stop_reason: Some(StopReason::EndTurn),
+            ..Default::default()
         }]);
 
         let agent = Agent::new(
@@ -4618,6 +4815,7 @@ mod tests {
                     input: serde_json::json!({"text": "ping"}),
                 }],
                 stop_reason: Some(StopReason::ToolUse),
+                ..Default::default()
             },
             ChatResult {
                 output_text: "pong".to_string(),
@@ -4676,6 +4874,7 @@ mod tests {
             output_text: "noted".to_string(),
             tool_calls: vec![],
             stop_reason: None,
+            ..Default::default()
         }]);
         let config = AgentConfig {
             privacy_boundary: "encrypted_only".to_string(),
@@ -4713,6 +4912,7 @@ mod tests {
             output_text: "ok".to_string(),
             tool_calls: vec![],
             stop_reason: None,
+            ..Default::default()
         }]);
         let agent = Agent::new(
             AgentConfig::default(),

@@ -96,7 +96,6 @@ pub enum QueueMode {
     Interrupt,
 }
 
-
 /// Action returned by a tool-loop detector after inspecting a tool call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoopAction {
@@ -331,6 +330,12 @@ pub struct ChatResult {
     pub tool_calls: Vec<ToolUseRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<StopReason>,
+    /// Number of input tokens consumed by this provider call (0 if unknown).
+    #[serde(default)]
+    pub input_tokens: u64,
+    /// Number of output tokens produced by this provider call (0 if unknown).
+    #[serde(default)]
+    pub output_tokens: u64,
 }
 
 /// Incremental tool call data emitted during streaming tool use.
@@ -395,6 +400,24 @@ pub struct ToolContext {
     /// Processing lane this execution belongs to.
     #[serde(default)]
     pub lane: Option<Lane>,
+    /// Cancellation flag. When set to `true`, the agent should stop executing
+    /// tool calls and return as soon as possible.
+    #[serde(skip)]
+    pub cancelled: Arc<std::sync::atomic::AtomicBool>,
+    /// Accumulated token usage for this execution (input + output tokens).
+    /// Shared via `Arc` so child delegations can aggregate back to the parent.
+    #[serde(skip)]
+    pub tokens_used: Arc<std::sync::atomic::AtomicU64>,
+    /// Accumulated cost in micro-dollars for this execution.
+    /// Shared via `Arc` so child delegations can aggregate back to the parent.
+    #[serde(skip)]
+    pub cost_microdollars: Arc<std::sync::atomic::AtomicU64>,
+    /// Maximum token budget for this execution (0 = unlimited).
+    #[serde(default)]
+    pub max_tokens: u64,
+    /// Maximum cost budget in micro-dollars (0 = unlimited).
+    #[serde(default)]
+    pub max_cost_microdollars: u64,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -418,6 +441,22 @@ impl std::fmt::Debug for ToolContext {
             .field("run_id", &self.run_id)
             .field("parent_run_id", &self.parent_run_id)
             .field("lane", &self.lane)
+            .field(
+                "cancelled",
+                &self.cancelled.load(std::sync::atomic::Ordering::Relaxed),
+            )
+            .field(
+                "tokens_used",
+                &self.tokens_used.load(std::sync::atomic::Ordering::Relaxed),
+            )
+            .field(
+                "cost_microdollars",
+                &self
+                    .cost_microdollars
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            )
+            .field("max_tokens", &self.max_tokens)
+            .field("max_cost_microdollars", &self.max_cost_microdollars)
             .finish()
     }
 }
@@ -437,6 +476,62 @@ impl ToolContext {
             run_id: None,
             parent_run_id: None,
             lane: None,
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tokens_used: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            cost_microdollars: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            max_tokens: 0,
+            max_cost_microdollars: 0,
+        }
+    }
+
+    /// Check if this execution has been cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Add tokens to the running total. Returns the new total.
+    pub fn add_tokens(&self, tokens: u64) -> u64 {
+        self.tokens_used
+            .fetch_add(tokens, std::sync::atomic::Ordering::Relaxed)
+            + tokens
+    }
+
+    /// Add cost (in micro-dollars) to the running total. Returns the new total.
+    pub fn add_cost(&self, microdollars: u64) -> u64 {
+        self.cost_microdollars
+            .fetch_add(microdollars, std::sync::atomic::Ordering::Relaxed)
+            + microdollars
+    }
+
+    /// Current accumulated token usage.
+    pub fn current_tokens(&self) -> u64 {
+        self.tokens_used.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Current accumulated cost in micro-dollars.
+    pub fn current_cost(&self) -> u64 {
+        self.cost_microdollars
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Check if the token or cost budget has been exceeded.
+    /// Returns `Some(reason)` if a budget limit has been exceeded, `None` otherwise.
+    pub fn budget_exceeded(&self) -> Option<String> {
+        if self.max_tokens > 0 && self.current_tokens() > self.max_tokens {
+            Some(format!(
+                "token budget exceeded: {} > {}",
+                self.current_tokens(),
+                self.max_tokens,
+            ))
+        } else if self.max_cost_microdollars > 0 && self.current_cost() > self.max_cost_microdollars
+        {
+            Some(format!(
+                "cost budget exceeded: {} > {} microdollars",
+                self.current_cost(),
+                self.max_cost_microdollars,
+            ))
+        } else {
+            None
         }
     }
 }
@@ -630,6 +725,8 @@ pub enum AgentError {
         #[source]
         source: anyhow::Error,
     },
+    #[error("budget exceeded: {reason}")]
+    BudgetExceeded { reason: String },
 }
 
 #[async_trait]
@@ -1023,6 +1120,7 @@ mod tests {
                 input: serde_json::json!({}),
             }],
             stop_reason: Some(StopReason::ToolUse),
+            ..Default::default()
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("tool_calls"));
@@ -1167,10 +1265,12 @@ mod tests {
 
     #[test]
     fn loop_action_variants() {
-        let actions = [LoopAction::Continue,
+        let actions = [
+            LoopAction::Continue,
             LoopAction::InjectMessage("try different".to_string()),
             LoopAction::RestrictTools(vec!["shell".to_string()]),
-            LoopAction::ForceComplete("budget exceeded".to_string())];
+            LoopAction::ForceComplete("budget exceeded".to_string()),
+        ];
         // Verify all variants exist and are distinct.
         assert_ne!(actions[0], actions[1]);
         assert_ne!(actions[1], actions[2]);

@@ -693,6 +693,8 @@ fn build_delegate_agents(
                     allowed_tools: agent.allowed_tools.iter().cloned().collect(),
                     max_iterations: agent.max_iterations,
                     privacy_boundary: resolved_boundary,
+                    max_tokens: 0,
+                    max_cost_microdollars: 0,
                 },
             )
         })

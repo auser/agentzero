@@ -256,6 +256,26 @@ impl JobStore {
         cancelled
     }
 
+    /// Emergency stop: cascade-cancel all active root-level runs.
+    /// Returns the total list of run IDs that were cancelled (roots + descendants).
+    pub async fn emergency_stop_all(&self) -> Vec<RunId> {
+        // Collect all root-level (no parent) non-terminal run IDs.
+        let roots: Vec<RunId> = {
+            let jobs = self.jobs.read().await;
+            jobs.values()
+                .filter(|r| r.parent_run_id.is_none() && !r.status.is_terminal())
+                .map(|r| r.run_id.clone())
+                .collect()
+        };
+
+        let mut all_cancelled = Vec::new();
+        for root in roots {
+            let cancelled = self.cascade_cancel(&root).await;
+            all_cancelled.extend(cancelled);
+        }
+        all_cancelled
+    }
+
     /// List all jobs, optionally filtered by status string.
     pub async fn list_all(&self, status_filter: Option<&str>) -> Vec<JobRecord> {
         let jobs = self.jobs.read().await;
@@ -652,6 +672,49 @@ mod tests {
         assert_eq!(cancelled.len(), 2);
         assert!(cancelled.contains(&parent));
         assert!(cancelled.contains(&running_child));
+    }
+
+    #[tokio::test]
+    async fn emergency_stop_all_cancels_roots_and_children() {
+        let store = JobStore::new();
+
+        // Root 1 with a child.
+        let r1 = store.submit("a".to_string(), Lane::Main, None).await;
+        store.update_status(&r1, JobStatus::Running).await;
+        let child = store
+            .submit("a-child".to_string(), Lane::Main, Some(r1.clone()))
+            .await;
+        store.update_status(&child, JobStatus::Running).await;
+
+        // Root 2 (running).
+        let r2 = store.submit("b".to_string(), Lane::Main, None).await;
+        store.update_status(&r2, JobStatus::Running).await;
+
+        // Root 3 (already completed — should be skipped).
+        let r3 = store.submit("c".to_string(), Lane::Main, None).await;
+        store
+            .update_status(
+                &r3,
+                JobStatus::Completed {
+                    result: "done".to_string(),
+                },
+            )
+            .await;
+
+        let cancelled = store.emergency_stop_all().await;
+        // r1 + child + r2 cancelled; r3 skipped.
+        assert_eq!(cancelled.len(), 3);
+        assert!(cancelled.contains(&r1));
+        assert!(cancelled.contains(&child));
+        assert!(cancelled.contains(&r2));
+        assert!(!cancelled.contains(&r3));
+    }
+
+    #[tokio::test]
+    async fn emergency_stop_all_empty_store() {
+        let store = JobStore::new();
+        let cancelled = store.emergency_stop_all().await;
+        assert!(cancelled.is_empty());
     }
 
     #[tokio::test]
