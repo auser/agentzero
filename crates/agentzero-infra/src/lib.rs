@@ -7,6 +7,8 @@
 pub mod audio;
 pub mod audit;
 pub mod runtime;
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
 pub mod tools;
 
 // Compatibility re-exports while crates are split out from infra.

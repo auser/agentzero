@@ -1,7 +1,8 @@
 use crate::handlers::{
     agents_list, api_chat, api_fallback, async_submit, dashboard, emergency_stop, health,
-    job_cancel, job_events, job_list, job_result, job_status, legacy_webhook, metrics, pair, ping,
-    sse_run_stream, v1_chat_completions, v1_models, webhook, ws_chat, ws_run_subscribe,
+    health_ready, job_cancel, job_events, job_list, job_result, job_status, job_transcript,
+    legacy_webhook, metrics, pair, ping, sse_run_stream, v1_chat_completions, v1_models, webhook,
+    ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -25,6 +26,7 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
     let mut router = Router::new()
         .route("/", get(dashboard))
         .route("/health", get(health))
+        .route("/health/ready", get(health_ready))
         .route("/metrics", get(metrics))
         .route("/pair", post(pair))
         .route("/webhook", post(legacy_webhook))
@@ -37,6 +39,7 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/runs/:run_id", get(job_status).delete(job_cancel))
         .route("/v1/runs/:run_id/result", get(job_result))
         .route("/v1/runs/:run_id/events", get(job_events))
+        .route("/v1/runs/:run_id/transcript", get(job_transcript))
         .route("/v1/runs/:run_id/stream", get(sse_run_stream))
         .route("/v1/agents", get(agents_list))
         .route("/v1/estop", post(emergency_stop))

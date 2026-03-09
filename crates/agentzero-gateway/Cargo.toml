@@ -11,13 +11,14 @@ publish = false
 [features]
 default = []
 privacy = ["agentzero-core/privacy", "dep:dashmap", "dep:base64"]
+telemetry = ["agentzero-infra/telemetry"]
 
 [dependencies]
 anyhow.workspace = true
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
 agentzero-infra = { workspace = true }
-agentzero-storage = { workspace = true }
+agentzero-storage = { workspace = true, features = ["pool"] }
 agentzero-channels = { workspace = true }
 agentzero-orchestrator = { workspace = true }
 agentzero-providers = { workspace = true }
@@ -32,6 +33,8 @@ axum = { version = "0.7", default-features = false, features = ["http1", "json",
 futures-util = "0.3"
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+subtle = "2"
 tokio.workspace = true
 tracing.workspace = true
 

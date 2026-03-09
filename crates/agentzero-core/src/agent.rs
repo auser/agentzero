@@ -12,7 +12,7 @@ use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::{timeout, Duration};
-use tracing::{info, warn};
+use tracing::{info, info_span, warn, Instrument};
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -444,6 +444,13 @@ impl Agent {
             json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
         )
         .await;
+        let tool_span = info_span!(
+            "tool_call",
+            tool = %tool_name,
+            request_id = %request_id,
+            iteration = iteration,
+        );
+        let _tool_guard = tool_span.enter();
         let tool_started = Instant::now();
         let result = match tool.execute(tool_input, ctx).await {
             Ok(result) => result,
@@ -617,6 +624,8 @@ impl Agent {
                 privacy_boundary: self.config.privacy_boundary.clone(),
                 source_channel: source_channel.map(String::from),
                 conversation_id: conversation_id.to_string(),
+                created_at: None,
+                expires_at: None,
             })
             .await
             .map_err(|source| AgentError::Memory { source })?;
@@ -864,6 +873,13 @@ impl Agent {
                     .collect()
             };
 
+            let provider_span = info_span!(
+                "provider_call",
+                request_id = %request_id,
+                iteration = iteration,
+                tool_count = effective_tools.len(),
+            );
+            let _provider_guard = provider_span.enter();
             let provider_started = Instant::now();
             let provider_result = if let Some(ref sink) = stream_sink {
                 self.provider
@@ -1409,13 +1425,54 @@ impl Agent {
         ctx: &ToolContext,
     ) -> Result<AssistantMessage, AgentError> {
         let request_id = Self::next_request_id();
+        let span = info_span!(
+            "agent_run",
+            request_id = %request_id,
+            depth = ctx.depth,
+            conversation_id = ctx.conversation_id.as_deref().unwrap_or(""),
+        );
+        self.respond_traced(&request_id, user, ctx, None)
+            .instrument(span)
+            .await
+    }
+
+    /// Streaming variant of `respond()`. Sends incremental `StreamChunk`s through
+    /// `sink` as tokens arrive from the provider. Returns the final accumulated
+    /// `AssistantMessage` once the stream completes.
+    pub async fn respond_streaming(
+        &self,
+        user: UserMessage,
+        ctx: &ToolContext,
+        sink: StreamSink,
+    ) -> Result<AssistantMessage, AgentError> {
+        let request_id = Self::next_request_id();
+        let span = info_span!(
+            "agent_run",
+            request_id = %request_id,
+            depth = ctx.depth,
+            conversation_id = ctx.conversation_id.as_deref().unwrap_or(""),
+            streaming = true,
+        );
+        self.respond_traced(&request_id, user, ctx, Some(sink))
+            .instrument(span)
+            .await
+    }
+
+    /// Shared traced implementation for `respond()` and `respond_streaming()`.
+    async fn respond_traced(
+        &self,
+        request_id: &str,
+        user: UserMessage,
+        ctx: &ToolContext,
+        stream_sink: Option<StreamSink>,
+    ) -> Result<AssistantMessage, AgentError> {
         self.increment_counter("requests_total");
         let run_started = Instant::now();
         self.hook("before_run", json!({"request_id": request_id}))
             .await?;
         let timed = timeout(
             Duration::from_millis(self.config.request_timeout_ms),
-            self.respond_inner(&request_id, user, ctx, None),
+            self.respond_inner(request_id, user, ctx, stream_sink),
         )
         .await;
         let result = match timed {
@@ -1443,55 +1500,6 @@ impl Agent {
             request_id = %request_id,
             duration_ms = %run_started.elapsed().as_millis(),
             "agent run completed"
-        );
-        self.hook("after_run", after_detail).await?;
-        result
-    }
-
-    /// Streaming variant of `respond()`. Sends incremental `StreamChunk`s through
-    /// `sink` as tokens arrive from the provider. Returns the final accumulated
-    /// `AssistantMessage` once the stream completes.
-    pub async fn respond_streaming(
-        &self,
-        user: UserMessage,
-        ctx: &ToolContext,
-        sink: StreamSink,
-    ) -> Result<AssistantMessage, AgentError> {
-        let request_id = Self::next_request_id();
-        self.increment_counter("requests_total");
-        let run_started = Instant::now();
-        self.hook("before_run", json!({"request_id": request_id}))
-            .await?;
-        let timed = timeout(
-            Duration::from_millis(self.config.request_timeout_ms),
-            self.respond_inner(&request_id, user, ctx, Some(sink)),
-        )
-        .await;
-        let result = match timed {
-            Ok(result) => result,
-            Err(_) => Err(AgentError::Timeout {
-                timeout_ms: self.config.request_timeout_ms,
-            }),
-        };
-
-        let after_detail = match &result {
-            Ok(response) => json!({
-                "request_id": request_id,
-                "status": "ok",
-                "response_len": response.text.len(),
-                "duration_ms": run_started.elapsed().as_millis(),
-            }),
-            Err(err) => json!({
-                "request_id": request_id,
-                "status": "error",
-                "error": redact_text(&err.to_string()),
-                "duration_ms": run_started.elapsed().as_millis(),
-            }),
-        };
-        info!(
-            request_id = %request_id,
-            duration_ms = %run_started.elapsed().as_millis(),
-            "streaming agent run completed"
         );
         self.hook("after_run", after_detail).await?;
         result

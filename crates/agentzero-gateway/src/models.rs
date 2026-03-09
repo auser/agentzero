@@ -10,6 +10,16 @@ use serde_json::{json, Value};
 pub(crate) struct HealthResponse {
     pub(crate) status: &'static str,
     pub(crate) service: String,
+    pub(crate) version: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ReadyResponse {
+    pub(crate) ready: bool,
+    pub(crate) service: String,
+    pub(crate) version: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) checks_failed: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,6 +107,15 @@ pub(crate) struct CompletionChoice {
 pub(crate) struct CompletionChoiceMessage {
     pub(crate) role: &'static str,
     pub(crate) content: String,
+}
+
+/// A single transcript entry for sub-agent conversation retrieval.
+#[derive(Debug, Serialize)]
+pub(crate) struct TranscriptEntry {
+    pub(crate) role: String,
+    pub(crate) content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) created_at: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

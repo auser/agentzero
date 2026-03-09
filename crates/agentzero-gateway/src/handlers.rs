@@ -3,7 +3,8 @@ use crate::models::{
     AsyncSubmitRequest, AsyncSubmitResponse, CancelQuery, ChatCompletionsRequest,
     ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice, CompletionChoiceMessage,
     GatewayError, HealthResponse, JobListQuery, JobStatusResponse, ModelItem, ModelsResponse,
-    PairRequest, PairResponse, PingRequest, PingResponse, WebhookResponse, WsRunQuery,
+    PairRequest, PairResponse, PingRequest, PingResponse, ReadyResponse, WebhookResponse,
+    WsRunQuery,
 };
 use crate::state::GatewayState;
 use crate::util::{generate_session_token, now_epoch_secs};
@@ -39,6 +40,24 @@ pub(crate) async fn health(State(state): State<GatewayState>) -> Json<HealthResp
     Json(HealthResponse {
         status: "ok",
         service: (*state.service_name).clone(),
+        version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
+pub(crate) async fn health_ready(State(state): State<GatewayState>) -> Json<ReadyResponse> {
+    let mut checks_failed = Vec::new();
+
+    // Check memory store availability when config is loaded.
+    if state.memory_store.is_none() && state.config_path.is_some() {
+        checks_failed.push("memory_store".to_string());
+    }
+
+    let ready = checks_failed.is_empty();
+    Json(ReadyResponse {
+        ready,
+        service: (*state.service_name).clone(),
+        version: env!("CARGO_PKG_VERSION"),
+        checks_failed,
     })
 }
 
@@ -992,6 +1011,50 @@ pub(crate) async fn job_events(
         "run_id": run_id_str,
         "events": events,
         "total": events.len(),
+    })))
+}
+
+/// GET /v1/runs/:run_id/transcript — retrieve full conversation transcript for a run.
+pub(crate) async fn job_transcript(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id_str): Path<String>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let memory_store = state
+        .memory_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    // The agent runtime uses run_id as conversation_id.
+    let entries = memory_store
+        .recent_for_conversation(&run_id_str, 1000)
+        .await
+        .map_err(|e| GatewayError::AgentExecutionFailed {
+            message: format!("failed to retrieve transcript: {e}"),
+        })?;
+
+    if entries.is_empty() {
+        return Err(GatewayError::NotFound {
+            resource: format!("transcript for run {run_id_str}"),
+        });
+    }
+
+    let transcript: Vec<crate::models::TranscriptEntry> = entries
+        .into_iter()
+        .map(|e| crate::models::TranscriptEntry {
+            role: e.role,
+            content: e.content,
+            created_at: e.created_at,
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "object": "transcript",
+        "run_id": run_id_str,
+        "entries": transcript,
+        "total": transcript.len(),
     })))
 }
 

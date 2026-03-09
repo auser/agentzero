@@ -1,10 +1,12 @@
 use crate::middleware::MiddlewareConfig;
 use crate::router::build_router;
 use crate::state::GatewayState;
+use agentzero_core::{MemoryEntry, MemoryStore};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::json;
+use std::sync::Arc;
 use tower::ServiceExt;
 
 fn default_config() -> MiddlewareConfig {
@@ -2876,4 +2878,202 @@ mod privacy_tests {
         let poll_resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(poll_resp["envelopes"].as_array().unwrap().len(), 0);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Transcript API tests
+// ---------------------------------------------------------------------------
+
+/// In-memory store for transcript tests.
+#[derive(Default, Clone)]
+struct TestTranscriptStore {
+    entries: Arc<std::sync::Mutex<Vec<MemoryEntry>>>,
+}
+
+#[async_trait::async_trait]
+impl MemoryStore for TestTranscriptStore {
+    async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
+        self.entries.lock().unwrap().push(entry);
+        Ok(())
+    }
+    async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+        let entries = self.entries.lock().unwrap();
+        Ok(entries.iter().rev().take(limit).cloned().collect())
+    }
+    async fn recent_for_conversation(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let entries = self.entries.lock().unwrap();
+        Ok(entries
+            .iter()
+            .filter(|e| e.conversation_id == conversation_id)
+            .rev()
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect())
+    }
+}
+
+#[tokio::test]
+async fn v1_runs_transcript_returns_entries() {
+    let store = TestTranscriptStore::default();
+    store
+        .append(MemoryEntry {
+            role: "user".into(),
+            content: "hello agent".into(),
+            conversation_id: "run-abc".into(),
+            created_at: Some("2026-03-08T10:00:00".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    store
+        .append(MemoryEntry {
+            role: "assistant".into(),
+            content: "hello human".into(),
+            conversation_id: "run-abc".into(),
+            created_at: Some("2026-03-08T10:00:01".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let mut state = GatewayState::test_with_bearer(Some("tok"));
+    state.memory_store = Some(Arc::new(store));
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/runs/run-abc/transcript")
+        .header("authorization", "Bearer tok")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(resp["object"], "transcript");
+    assert_eq!(resp["run_id"], "run-abc");
+    assert_eq!(resp["total"], 2);
+    let entries = resp["entries"].as_array().unwrap();
+    assert_eq!(entries[0]["role"], "user");
+    assert_eq!(entries[0]["content"], "hello agent");
+    assert_eq!(entries[1]["role"], "assistant");
+}
+
+#[tokio::test]
+async fn v1_runs_transcript_not_found_for_unknown_run() {
+    let store = TestTranscriptStore::default();
+    let mut state = GatewayState::test_with_bearer(Some("tok"));
+    state.memory_store = Some(Arc::new(store));
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/runs/nonexistent/transcript")
+        .header("authorization", "Bearer tok")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn v1_runs_transcript_requires_auth() {
+    let store = TestTranscriptStore::default();
+    let mut state = GatewayState::test_with_bearer(Some("tok"));
+    state.memory_store = Some(Arc::new(store));
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/runs/run-abc/transcript")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn v1_runs_transcript_no_store_returns_503() {
+    // No memory store configured → AgentUnavailable (503)
+    let state = GatewayState::test_with_bearer(Some("tok"));
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/runs/run-abc/transcript")
+        .header("authorization", "Bearer tok")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+// --- Health & readiness probe tests ---
+
+#[tokio::test]
+async fn health_returns_version_field() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/health")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert!(json["version"].is_string());
+    assert!(!json["version"].as_str().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn health_ready_returns_ready_without_config() {
+    // No config_path → memory_store check is skipped → ready = true.
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/health/ready")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["ready"], true);
+    assert!(json["version"].is_string());
+}
+
+#[tokio::test]
+async fn health_ready_reports_missing_memory_store_when_config_set() {
+    // Config path set but no memory store → checks_failed includes "memory_store".
+    let mut state = GatewayState::test_with_bearer(None);
+    state.config_path = Some(std::sync::Arc::new(std::path::PathBuf::from(
+        "/tmp/test.toml",
+    )));
+    let app = build_router(state, &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/health/ready")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["ready"], false);
+    let checks = json["checks_failed"].as_array().unwrap();
+    assert!(checks.iter().any(|v| v == "memory_store"));
 }

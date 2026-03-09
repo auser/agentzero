@@ -146,12 +146,110 @@ OpenClaw's streaming doesn't just forward raw SSE tokens — it groups them into
 
 ---
 
-### Backlog (candidates for Sprint 36)
+## Sprint 36: Production Hardening
 
-- [ ] **Auto-archival of sub-agent transcripts** — When a sub-agent completes, archive its full conversation to storage keyed by run_id. Parent can retrieve via `GET /v1/runs/:run_id/transcript`.
-- [ ] **Worker pool pattern** — Gateway-fronted long-lived worker management with heartbeat, request queue, and backpressure
-- [ ] **OpenTelemetry wiring** — Wire `[observability]` config to real OTLP exporter with span-per-run tracing
-- [ ] **Distributed event bus** — Redis-backed `EventBus` for horizontal scaling (multi-node orchestration)
-- [ ] **Multi-tenancy & RBAC** — User identity, API keys, org isolation
-- [ ] **API polish** — OpenAPI spec generation, constant-time auth comparison, liveness/readiness probes
-- [ ] **Database connection pooling** — Replace `Mutex<Connection>` with r2d2 pool + migration framework
+**Goal:** Close the remaining production-readiness gaps: transcript archival, connection pooling, API security, health probes, observability wiring, distributed event bus, and multi-tenancy foundations.
+
+**Baseline:** Sprint 35 complete (hierarchical budgeting), all delegation security mitigations shipped, 0 clippy warnings.
+
+---
+
+### Phase 0: Canopy-Inspired Hardening (Message TTL, Claim Locks, Directive Integrity)
+
+Inspired by [Canopy](https://github.com/kwalus/Canopy)'s security-forward design. Three targeted hardening features.
+
+- [x] **Message TTL / ephemeral messages** — `MemoryEntry.expires_at: Option<i64>` (unix timestamp). Expired entries excluded from all queries (`WHERE expires_at IS NULL OR expires_at > unixepoch()`). `MemoryStore::gc_expired()` trait method deletes expired rows. Migration, SqliteMemoryStore, PooledMemoryStore all updated. 4 tests.
+- [x] **Job claim locks** — `JobStore::try_claim(run_id, agent_id) -> bool` atomically transitions Pending→Running with agent attribution. Prevents Steer-mode race between routing and execution. `JobRecord.claimed_by: Option<String>` for audit. 5 tests.
+- [x] **Directive integrity verification** — `compute_prompt_hash()` / `verify_prompt_hash()` (HMAC-SHA256) for system prompts. `DelegateConfig.system_prompt_hash` verified in `validate_delegation()`. Constant-time comparison via hmac crate. Backward-compatible (None hash = skip check). 7 tests.
+
+### Phase A: Sub-Agent Transcript Archival
+
+When a sub-agent completes, archive its full conversation to storage keyed by run_id so parent or operator can inspect what happened.
+
+**Current state:** `MemoryStore::recent_for_conversation()` exists and the gateway already uses `run_id` as `conversation_id`. Missing: dedicated archive/export API, run metadata on entries.
+
+**Tasks:**
+
+- [x] **`GET /v1/runs/:run_id/transcript`** — New gateway endpoint that calls `memory_store.recent_for_conversation(run_id, limit)` and returns the full conversation as JSON array of `{ role, content, timestamp }` objects. Auth-gated. 404 if no entries found.
+- [x] **`TranscriptEntry` response model** — Lightweight struct in `gateway::models` with `role`, `content`, `created_at` fields. Serialized from `MemoryEntry`.
+- [x] **Timestamp on MemoryEntry** — Add `created_at: Option<String>` field to `MemoryEntry` (populated from SQLite `created_at` column on retrieval). Update `SqliteMemoryStore::recent_for_conversation()` to include it.
+- [x] **DelegateTool transcript wiring** — After sub-agent completes in `DelegateTool::execute()`, generate a unique child `conversation_id` (`delegate-{agent}-{depth}-{nanos}`) and log it via `tracing::info!` so it's discoverable from parent's event log/trace.
+- [x] **Tests** — Gateway API test: create run with transcript entries, retrieve via endpoint. Empty transcript 404 test. Auth test.
+
+### Phase B: Database Connection Pooling
+
+Replace single `Mutex<Connection>` with r2d2 connection pool for SQLite. Eliminates lock contention under concurrent requests.
+
+**Current state:** `SqliteMemoryStore` wraps `Mutex<Connection>`. Lock acquired per query, panics on poison. No pooling, no connection limits.
+
+**Tasks:**
+
+- [x] **Add `r2d2` + `r2d2_sqlite` dependencies** to `agentzero-storage/Cargo.toml`.
+- [x] **`PooledMemoryStore`** — New implementation of `MemoryStore` backed by `r2d2::Pool<SqliteConnectionManager>`. Pool size configurable (default 4, max 16). Each method calls `pool.get()` instead of `mutex.lock()`.
+- [x] **Migration on pool init** — Run the same schema migrations on first connection from pool (via `r2d2::CustomizeConnection` or init hook).
+- [x] **SQLCipher support** — `SqliteConnectionManager` custom initialization callback that runs `PRAGMA key` on each new connection.
+- [x] **Config wiring** — Add `pool_size: usize` to memory config. `build_memory_store()` selects `PooledMemoryStore` when pool_size > 1, falls back to existing `SqliteMemoryStore` for pool_size=1.
+- [x] **Tests** — Concurrent write test (spawn 10 tasks writing simultaneously). Pool exhaustion behavior test. Migration runs once test.
+
+### Phase C: API Security & Health Probes
+
+Fix timing attack vulnerability in token comparison, add readiness probe with dependency checks, add version info.
+
+**Current state:** `auth.rs` uses `==` for token comparison (timing-vulnerable). `/health` returns static `"ok"` with no dependency checks. No readiness endpoint.
+
+**Tasks:**
+
+- [x] **Constant-time token comparison** — Replace `expected.as_str() == token` in `auth.rs` with `subtle::ConstantTimeEq` (add `subtle` crate dependency). Apply to both bearer and paired token paths.
+- [x] **`GET /health/ready`** — Readiness probe that checks: (1) memory store is connectable (try `recent(1)`), (2) at least one provider is configured. Returns `{ ready: true/false, checks: { memory: "ok"/"error: ...", provider: "ok"/"error: ..." } }`. Separate from liveness `/health`.
+- [x] **Version in health response** — Add `version: &'static str` to `HealthResponse`, populated from `env!("CARGO_PKG_VERSION")`.
+- [x] **Auth audit logging** — `tracing::warn!` on failed auth attempts with IP (from headers) and reason. Rate-limit the log to prevent log flooding.
+- [x] **Tests** — Timing-safe comparison unit test (subtle crate). Readiness probe: healthy returns ready=true, broken store returns ready=false. Version appears in health response.
+
+### Phase D: OpenTelemetry Wiring
+
+Wire the existing `[observability]` config skeleton to a real OTLP exporter with span-per-run tracing.
+
+**Current state:** `ObservabilityConfig` has `backend`, `otel_endpoint`, `otel_service_name` fields but they're unused. Runtime tracing goes to a JSONL file only.
+
+**Tasks:**
+
+- [x] **Add `opentelemetry`, `opentelemetry-otlp`, `opentelemetry_sdk`, `tracing-opentelemetry` dependencies** to `agentzero-infra/Cargo.toml` behind a `telemetry` feature flag.
+- [x] **`init_telemetry(config)` function** — In `agentzero-infra::telemetry`, initialize OTLP exporter when `backend = "otlp"`. Configure batch span processor, resource attributes (service name, version). Returns a guard that flushes on drop.
+- [x] **Span-per-run** — In `Agent::respond()` / `respond_streaming()`, create `agent_run` span with `request_id`, `depth`, `conversation_id` attributes. Provider calls get `provider_call` child spans with iteration and tool count.
+- [x] **Span-per-tool-call** — `Agent::execute_tool()` creates `tool_call` child span with tool name, request_id, and iteration.
+- [x] **Config integration** — Gateway `run()` calls `init_telemetry()` on startup when `telemetry` feature is enabled. Feature plumbed through `bin/agentzero` → `agentzero-cli` → `agentzero-gateway` → `agentzero-infra`.
+- [x] **Tests** — Unit test: `init_telemetry` with `backend = "none"` is a no-op (pre-existing). Compilation verified with and without `telemetry` feature. 0 clippy warnings.
+
+---
+
+### Acceptance Criteria
+
+- [x] Sub-agent transcripts retrievable via `GET /v1/runs/:run_id/transcript`
+- [x] Connection pool eliminates Mutex contention under concurrent load
+- [x] Token comparison is constant-time (no timing side-channel)
+- [x] Readiness probe checks real dependencies, version in health response
+- [x] OTLP traces emitted for agent runs and tool calls when configured
+- [x] DelegateTool generates child conversation_id and logs it for transcript discoverability
+- [x] All quality gates pass: `cargo clippy --workspace`, 0 warnings
+
+---
+
+## Backlog
+
+### Distributed Event Bus (was Sprint 36 Phase E)
+
+Redis-backed `EventBus` for horizontal scaling — multiple gateway/orchestrator instances share job state and events. Requires external Redis dependency.
+
+- `EventBus` trait with `InMemoryEventBus` and `RedisEventBus` impls
+- `RedisJobStore` backed by Redis hashes + pub/sub
+- Config: `[orchestrator] event_bus = "memory" | "redis"` with `redis_url`
+
+### Multi-Tenancy & RBAC Foundations (was Sprint 36 Phase F)
+
+User identity, API key scoping, and organization isolation.
+
+- `ApiKey` model with `key_id`, `key_hash`, `org_id`, `scopes`, `expires_at`
+- `ApiKeyStore` trait with SQLite impl
+- Org isolation on `JobStore` queries
+- Scope enforcement middleware (403 on insufficient scope)
+- CLI: `auth api-key create/revoke/list`

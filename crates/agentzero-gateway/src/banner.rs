@@ -9,6 +9,7 @@ pub(crate) fn print_gateway_banner(base: &str, pairing_code: Option<&str>) {
     println!("  GET  /api/*     — REST API (bearer token required)");
     println!("  GET  /ws/chat   — WebSocket agent chat");
     println!("  GET  /health    — health check");
+    println!("  GET  /health/ready — readiness probe");
     println!("  GET  /metrics   — Prometheus metrics");
     println!();
     if let Some(pairing_code) = pairing_code {

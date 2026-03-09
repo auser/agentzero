@@ -1,5 +1,6 @@
 use crate::state::GatewayState;
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
+use subtle::ConstantTimeEq;
 
 pub(crate) fn authorize_request(
     state: &GatewayState,
@@ -10,11 +11,13 @@ pub(crate) fn authorize_request(
 
     if always_require_pairing {
         let Some(token) = token else {
+            tracing::warn!("auth denied: no bearer token (pairing required)");
             return Err(StatusCode::UNAUTHORIZED);
         };
         if token_in_state(state, token) {
             return Ok(());
         }
+        tracing::warn!("auth denied: invalid token (pairing required)");
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -29,29 +32,43 @@ pub(crate) fn authorize_request(
     }
 
     let Some(token) = token else {
+        tracing::warn!("auth denied: no bearer token");
         return Err(StatusCode::UNAUTHORIZED);
     };
 
     if token_in_state(state, token) {
         Ok(())
     } else {
+        tracing::warn!("auth denied: invalid token");
         Err(StatusCode::UNAUTHORIZED)
     }
+}
+
+/// Constant-time token comparison to prevent timing side-channel attacks.
+fn ct_eq(a: &str, b: &str) -> bool {
+    // ConstantTimeEq requires equal-length slices; pad the shorter one to
+    // avoid leaking length information through early-exit timing.
+    if a.len() != b.len() {
+        // Still run a constant-time comparison on dummy data to avoid
+        // leaking that lengths differ through timing.
+        let dummy = vec![0u8; a.len()];
+        let _ = dummy.ct_eq(a.as_bytes());
+        return false;
+    }
+    a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
 fn token_in_state(state: &GatewayState, token: &str) -> bool {
     if state
         .bearer_token
         .as_deref()
-        .is_some_and(|expected| expected.as_str() == token)
+        .is_some_and(|expected| ct_eq(expected.as_str(), token))
     {
         return true;
     }
-    state
-        .paired_tokens
-        .lock()
-        .expect("pairing lock poisoned")
-        .contains(token)
+    // For paired tokens, we must iterate and compare each one in constant time.
+    let paired = state.paired_tokens.lock().expect("pairing lock poisoned");
+    paired.iter().any(|stored| ct_eq(stored, token))
 }
 
 fn parse_bearer(headers: &HeaderMap) -> Option<&str> {
@@ -211,5 +228,27 @@ mod tests {
     fn token_in_state_rejects_unknown() {
         let state = GatewayState::test_with_bearer(Some("bearer-tok"));
         assert!(!token_in_state(&state, "unknown-tok"));
+    }
+
+    // --- constant-time comparison ---
+
+    #[test]
+    fn ct_eq_equal_strings() {
+        assert!(ct_eq("hello", "hello"));
+    }
+
+    #[test]
+    fn ct_eq_different_strings_same_length() {
+        assert!(!ct_eq("hello", "world"));
+    }
+
+    #[test]
+    fn ct_eq_different_lengths() {
+        assert!(!ct_eq("short", "longer-string"));
+    }
+
+    #[test]
+    fn ct_eq_empty_strings() {
+        assert!(ct_eq("", ""));
     }
 }

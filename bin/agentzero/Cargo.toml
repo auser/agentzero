@@ -30,6 +30,7 @@ tls-rustls = ["agentzero-cli/tls-rustls"]
 tls-native = ["agentzero-cli/tls-native"]
 vendored-openssl = ["agentzero-cli/vendored-openssl"]
 privacy = ["agentzero-cli/privacy"]
+telemetry = ["agentzero-cli/telemetry"]
 
 [dependencies]
 anyhow.workspace = true

@@ -25,6 +25,7 @@ gateway = ["dep:agentzero-gateway"]
 tui = ["dep:ratatui", "dep:crossterm"]
 interactive = ["dep:inquire", "dep:console"]
 privacy = ["agentzero-core/privacy", "agentzero-gateway?/privacy"]
+telemetry = ["agentzero-infra/telemetry", "agentzero-gateway?/telemetry"]
 
 [dependencies]
 anyhow.workspace = true

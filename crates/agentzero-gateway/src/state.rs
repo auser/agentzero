@@ -2,6 +2,7 @@ use crate::token_store::save_paired_tokens;
 use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
+use agentzero_core::MemoryStore;
 use agentzero_orchestrator::{JobStore, PresenceStore};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
@@ -58,6 +59,8 @@ pub(crate) struct GatewayState {
     pub(crate) job_store: Option<Arc<JobStore>>,
     /// Agent presence tracking for /v1/agents endpoint.
     pub(crate) presence_store: Option<Arc<PresenceStore>>,
+    /// Shared memory store for transcript retrieval.
+    pub(crate) memory_store: Option<Arc<dyn MemoryStore>>,
 }
 
 impl GatewayState {
@@ -100,6 +103,7 @@ impl GatewayState {
             live_config: None,
             job_store: None,
             presence_store: None,
+            memory_store: None,
         }
     }
 
@@ -158,6 +162,12 @@ impl GatewayState {
     #[allow(dead_code)]
     pub(crate) fn with_job_store(mut self, store: Arc<JobStore>) -> Self {
         self.job_store = Some(store);
+        self
+    }
+
+    /// Set the shared memory store for transcript retrieval.
+    pub(crate) fn with_memory_store(mut self, store: Arc<dyn MemoryStore>) -> Self {
+        self.memory_store = Some(store);
         self
     }
 
@@ -256,6 +266,7 @@ impl GatewayState {
             live_config: None,
             job_store: None,
             presence_store: None,
+            memory_store: None,
         }
     }
 
@@ -292,6 +303,7 @@ impl GatewayState {
             live_config: None,
             job_store: None,
             presence_store: None,
+            memory_store: None,
         }
     }
 }

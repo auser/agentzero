@@ -87,6 +87,9 @@ pub struct JobRecord {
     pub cost_microdollars: u64,
     /// User-supplied metadata tags for filtering/grouping.
     pub tags: HashMap<String, String>,
+    /// Agent that successfully claimed this job via [`JobStore::try_claim`].
+    /// `None` until a claim succeeds.
+    pub claimed_by: Option<String>,
 }
 
 /// Thread-safe store for tracking async agent runs.
@@ -134,6 +137,7 @@ impl JobStore {
             tokens_used: 0,
             cost_microdollars: 0,
             tags: HashMap::new(),
+            claimed_by: None,
         };
         self.jobs.write().await.insert(run_id.clone(), record);
         let _ = self.notify.send((run_id.clone(), JobStatus::Pending));
@@ -164,6 +168,29 @@ impl JobStore {
             JobStatus::Cancelled => EventKind::Cancelled,
         };
         self.event_log.append(run_id, kind).await;
+    }
+
+    /// Atomically transition a job from `Pending` to `Running`, recording the
+    /// claiming agent. Returns `true` if this caller won the claim, `false` if
+    /// the job was already claimed, running, or in a terminal state.
+    ///
+    /// Use this in Steer mode to prevent multiple agents from picking up the
+    /// same work item.
+    pub async fn try_claim(&self, run_id: &RunId, agent_id: &str) -> bool {
+        let mut jobs = self.jobs.write().await;
+        if let Some(record) = jobs.get_mut(run_id) {
+            if record.status == JobStatus::Pending {
+                record.status = JobStatus::Running;
+                record.agent_id = agent_id.to_string();
+                record.claimed_by = Some(agent_id.to_string());
+                record.updated_at = Instant::now();
+                drop(jobs);
+                self.event_log.append(run_id, EventKind::Running).await;
+                let _ = self.notify.send((run_id.clone(), JobStatus::Running));
+                return true;
+            }
+        }
+        false
     }
 
     /// Get a snapshot of a job record.
@@ -770,5 +797,61 @@ mod tests {
         store.gc_expired(std::time::Duration::ZERO).await;
         assert!(store.get(&run_id).await.is_none());
         assert!(store.get_events(&run_id).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn try_claim_pending_job_succeeds() {
+        let store = JobStore::new();
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+
+        assert!(store.try_claim(&run_id, "claimer-1").await);
+        let record = store.get(&run_id).await.unwrap();
+        assert_eq!(record.status, JobStatus::Running);
+        assert_eq!(record.agent_id, "claimer-1");
+        assert_eq!(record.claimed_by.as_deref(), Some("claimer-1"));
+    }
+
+    #[tokio::test]
+    async fn try_claim_already_running_fails() {
+        let store = JobStore::new();
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+        store.update_status(&run_id, JobStatus::Running).await;
+
+        assert!(!store.try_claim(&run_id, "late-claimer").await);
+    }
+
+    #[tokio::test]
+    async fn try_claim_terminal_job_fails() {
+        let store = JobStore::new();
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+        store
+            .update_status(
+                &run_id,
+                JobStatus::Completed {
+                    result: "done".to_string(),
+                },
+            )
+            .await;
+
+        assert!(!store.try_claim(&run_id, "claimer").await);
+    }
+
+    #[tokio::test]
+    async fn try_claim_double_claim_second_fails() {
+        let store = JobStore::new();
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+
+        assert!(store.try_claim(&run_id, "first").await);
+        assert!(!store.try_claim(&run_id, "second").await);
+
+        let record = store.get(&run_id).await.unwrap();
+        assert_eq!(record.claimed_by.as_deref(), Some("first"));
+    }
+
+    #[tokio::test]
+    async fn try_claim_nonexistent_job_fails() {
+        let store = JobStore::new();
+        let fake = RunId("run-nope".to_string());
+        assert!(!store.try_claim(&fake, "claimer").await);
     }
 }

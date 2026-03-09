@@ -685,6 +685,14 @@ pub struct MemoryEntry {
     /// Conversation this entry belongs to. Empty string means global (legacy behavior).
     #[serde(default)]
     pub conversation_id: String,
+    /// ISO-8601 timestamp when this entry was created (populated on retrieval from storage).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    /// Optional expiration timestamp (unix seconds). `None` means the entry
+    /// never expires. Expired entries are excluded from queries and removed by
+    /// periodic garbage collection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -845,6 +853,13 @@ pub trait MemoryStore: Send + Sync {
     /// List all distinct conversation IDs in the store.
     async fn list_conversations(&self) -> anyhow::Result<Vec<String>> {
         Ok(Vec::new())
+    }
+
+    /// Remove entries whose `expires_at` timestamp has passed.
+    /// Default implementation is a no-op; backends with TTL column support
+    /// should override this.
+    async fn gc_expired(&self) -> anyhow::Result<u64> {
+        Ok(0)
     }
 }
 

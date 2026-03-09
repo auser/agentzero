@@ -165,6 +165,19 @@ impl Tool for DelegateTool {
             child_ctx.max_cost_microdollars = ctx.max_cost_microdollars.saturating_sub(used);
         }
 
+        // Assign a unique conversation_id to the child so its transcript is
+        // discoverable from the parent's event log / trace.
+        let child_conversation_id = format!(
+            "delegate-{}-{}-{}",
+            parsed.agent,
+            ctx.depth.saturating_add(1),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        child_ctx.conversation_id = Some(child_conversation_id.clone());
+
         let output = if config.agentic {
             run_agentic(
                 provider,
@@ -182,6 +195,14 @@ impl Tool for DelegateTool {
             };
             run_single_shot(provider.as_ref(), &effective_prompt).await?
         };
+
+        tracing::info!(
+            agent = %parsed.agent,
+            child_conversation_id = %child_conversation_id,
+            parent_conversation_id = ctx.conversation_id.as_deref().unwrap_or(""),
+            depth = child_ctx.depth,
+            "delegation completed"
+        );
 
         // Aggregate child usage back into parent counters.
         let child_tokens = child_ctx.current_tokens();
@@ -659,5 +680,26 @@ mod tests {
         let mut child_ctx = ctx.clone();
         child_ctx.depth = ctx.depth.saturating_add(1);
         assert_eq!(child_ctx.depth, 1);
+    }
+
+    #[test]
+    fn child_conversation_id_format() {
+        let agent_name = "researcher";
+        let depth: u8 = 1;
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cid = format!("delegate-{agent_name}-{depth}-{nanos}");
+        assert!(cid.starts_with("delegate-researcher-1-"));
+        // Should be unique — different nanos each time.
+        let cid2 = format!(
+            "delegate-{agent_name}-{depth}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        assert_ne!(cid, cid2);
     }
 }

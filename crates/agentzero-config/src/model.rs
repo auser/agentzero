@@ -420,6 +420,8 @@ pub struct MemoryConfig {
     pub backend: String,
     #[serde(alias = "path")]
     pub sqlite_path: String,
+    /// Connection pool size. 1 = no pool (Mutex-based), >1 = r2d2 pool.
+    pub pool_size: u32,
 }
 
 impl Default for MemoryConfig {
@@ -427,6 +429,7 @@ impl Default for MemoryConfig {
         Self {
             backend: "sqlite".to_string(),
             sqlite_path: default_sqlite_path(),
+            pool_size: 1,
         }
     }
 }

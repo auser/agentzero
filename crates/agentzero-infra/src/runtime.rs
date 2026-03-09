@@ -695,6 +695,7 @@ fn build_delegate_agents(
                     privacy_boundary: resolved_boundary,
                     max_tokens: 0,
                     max_cost_microdollars: 0,
+                    system_prompt_hash: None,
                 },
             )
         })

@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 
-const MEMORY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS memory (
+pub(crate) const MEMORY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS memory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -50,6 +50,7 @@ impl SqliteMemoryStore {
                     .context("failed to create memory table after migration")?;
                 migrate_privacy_columns(&conn)?;
                 migrate_conversation_column(&conn)?;
+                migrate_ttl_column(&conn)?;
                 return Ok(Self {
                     conn: Mutex::new(conn),
                 });
@@ -60,10 +61,20 @@ impl SqliteMemoryStore {
             .context("failed to create memory table")?;
         migrate_privacy_columns(&conn)?;
         migrate_conversation_column(&conn)?;
+        migrate_ttl_column(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
+}
+
+/// Run all schema migrations (privacy columns + conversation_id + TTL).
+#[cfg(feature = "pool")]
+pub(crate) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
+    migrate_privacy_columns(conn)?;
+    migrate_conversation_column(conn)?;
+    migrate_ttl_column(conn)?;
+    Ok(())
 }
 
 /// Add privacy_boundary and source_channel columns if they don't exist yet.
@@ -95,6 +106,16 @@ fn migrate_conversation_column(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Add expires_at column for message TTL support.
+fn migrate_ttl_column(conn: &Connection) -> anyhow::Result<()> {
+    match conn.execute_batch("ALTER TABLE memory ADD COLUMN expires_at INTEGER DEFAULT NULL") {
+        Ok(()) => {}
+        Err(e) if e.to_string().contains("duplicate column") => {}
+        Err(e) => return Err(e).context("failed to add expires_at column"),
+    }
+    Ok(())
+}
+
 fn hex_encode_key(key: &StorageKey) -> String {
     key.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -121,13 +142,26 @@ fn migrate_plaintext_to_encrypted(path: &Path, key: &StorageKey) -> anyhow::Resu
     Ok(())
 }
 
+/// Map a query row (columns 0–6) to a [`MemoryEntry`].
+fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
+    Ok(MemoryEntry {
+        role: row.get(0)?,
+        content: row.get(1)?,
+        privacy_boundary: row.get::<_, String>(2).unwrap_or_default(),
+        source_channel: row.get::<_, Option<String>>(3).unwrap_or_default(),
+        conversation_id: row.get::<_, String>(4).unwrap_or_default(),
+        created_at: row.get::<_, Option<String>>(5).ok().flatten(),
+        expires_at: row.get::<_, Option<i64>>(6).unwrap_or_default(),
+    })
+}
+
 #[async_trait]
 impl MemoryStore for SqliteMemoryStore {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id) VALUES(?1, ?2, ?3, ?4, ?5)",
-            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id],
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id, entry.expires_at],
         )?;
         Ok(())
     }
@@ -135,20 +169,14 @@ impl MemoryStore for SqliteMemoryStore {
     async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
-            "SELECT role, content, privacy_boundary, source_channel, conversation_id
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at
              FROM memory
+             WHERE expires_at IS NULL OR expires_at > unixepoch()
              ORDER BY id DESC
              LIMIT ?1",
         )?;
-        let rows = stmt.query_map([limit as i64], |row| {
-            Ok(MemoryEntry {
-                role: row.get(0)?,
-                content: row.get(1)?,
-                privacy_boundary: row.get::<_, String>(2).unwrap_or_default(),
-                source_channel: row.get::<_, Option<String>>(3).unwrap_or_default(),
-                conversation_id: row.get::<_, String>(4).unwrap_or_default(),
-            })
-        })?;
+        let rows = stmt.query_map([limit as i64], row_to_entry)?;
 
         let mut out = Vec::new();
         for row in rows {
@@ -166,9 +194,11 @@ impl MemoryStore for SqliteMemoryStore {
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
-            "SELECT role, content, privacy_boundary, source_channel, conversation_id
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at
              FROM memory
-             WHERE (privacy_boundary = '' OR privacy_boundary = ?1
+             WHERE (expires_at IS NULL OR expires_at > unixepoch())
+               AND (privacy_boundary = '' OR privacy_boundary = ?1
                     OR privacy_boundary IN ('any', 'inherit')
                     OR (?1 = 'local_only' AND privacy_boundary = 'encrypted_only'))
                AND (?2 IS NULL OR source_channel IS NULL OR source_channel = ?2)
@@ -177,15 +207,10 @@ impl MemoryStore for SqliteMemoryStore {
         )?;
         let boundary_owned = boundary.to_string();
         let source_owned = source_channel.map(|s| s.to_string());
-        let rows = stmt.query_map(params![boundary_owned, source_owned, limit as i64], |row| {
-            Ok(MemoryEntry {
-                role: row.get(0)?,
-                content: row.get(1)?,
-                privacy_boundary: row.get::<_, String>(2).unwrap_or_default(),
-                source_channel: row.get::<_, Option<String>>(3).unwrap_or_default(),
-                conversation_id: row.get::<_, String>(4).unwrap_or_default(),
-            })
-        })?;
+        let rows = stmt.query_map(
+            params![boundary_owned, source_owned, limit as i64],
+            row_to_entry,
+        )?;
 
         let mut out = Vec::new();
         for row in rows {
@@ -202,22 +227,16 @@ impl MemoryStore for SqliteMemoryStore {
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
-            "SELECT role, content, privacy_boundary, source_channel, conversation_id
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at
              FROM memory
              WHERE conversation_id = ?1
+               AND (expires_at IS NULL OR expires_at > unixepoch())
              ORDER BY id DESC
              LIMIT ?2",
         )?;
         let cid = conversation_id.to_string();
-        let rows = stmt.query_map(params![cid, limit as i64], |row| {
-            Ok(MemoryEntry {
-                role: row.get(0)?,
-                content: row.get(1)?,
-                privacy_boundary: row.get::<_, String>(2).unwrap_or_default(),
-                source_channel: row.get::<_, Option<String>>(3).unwrap_or_default(),
-                conversation_id: row.get::<_, String>(4).unwrap_or_default(),
-            })
-        })?;
+        let rows = stmt.query_map(params![cid, limit as i64], row_to_entry)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -229,14 +248,24 @@ impl MemoryStore for SqliteMemoryStore {
     async fn fork_conversation(&self, from_id: &str, new_id: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id)
-             SELECT role, content, privacy_boundary, source_channel, ?2
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at)
+             SELECT role, content, privacy_boundary, source_channel, ?2, expires_at
              FROM memory
              WHERE conversation_id = ?1
+               AND (expires_at IS NULL OR expires_at > unixepoch())
              ORDER BY id",
             params![from_id, new_id],
         )?;
         Ok(())
+    }
+
+    async fn gc_expired(&self) -> anyhow::Result<u64> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let deleted = conn.execute(
+            "DELETE FROM memory WHERE expires_at IS NOT NULL AND expires_at <= unixepoch()",
+            [],
+        )?;
+        Ok(deleted as u64)
     }
 
     async fn list_conversations(&self) -> anyhow::Result<Vec<String>> {
@@ -777,6 +806,140 @@ mod tests {
         // any should NOT see it
         let any = store.recent_for_boundary(10, "any", None).await.unwrap();
         assert_eq!(any.len(), 0);
+
+        fs::remove_file(db_path).ok();
+    }
+
+    // --- TTL / expires_at tests ---
+
+    #[tokio::test]
+    async fn expired_entries_excluded_from_recent() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+
+        // Insert a permanent entry.
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "permanent".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        // Insert an already-expired entry.
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "expired".into(),
+                expires_at: Some(1), // 1970-01-01 — definitely expired
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let recent = store.recent(10).await.unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].content, "permanent");
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn future_ttl_entry_is_visible() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+
+        let far_future = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 86400;
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "not yet expired".into(),
+                expires_at: Some(far_future),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let recent = store.recent(10).await.unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].content, "not yet expired");
+        assert_eq!(recent[0].expires_at, Some(far_future));
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn gc_expired_removes_expired_keeps_permanent() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "permanent".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "expired".into(),
+                expires_at: Some(1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let deleted = store.gc_expired().await.unwrap();
+        assert_eq!(deleted, 1);
+
+        // Force a raw query to verify the row is actually gone (not just filtered).
+        let conn = store.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM memory", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn expired_entries_excluded_from_conversation_query() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "visible".into(),
+                conversation_id: "conv-1".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "gone".into(),
+                conversation_id: "conv-1".into(),
+                expires_at: Some(1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let entries = store.recent_for_conversation("conv-1", 10).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].content, "visible");
 
         fs::remove_file(db_path).ok();
     }

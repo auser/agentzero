@@ -3,6 +3,7 @@
 //! Exposes the agent loop over HTTP and WebSocket endpoints with
 //! pairing-based authentication, streaming responses, and node control.
 
+pub mod api_keys;
 mod auth;
 mod banner;
 mod gateway_metrics;
@@ -125,6 +126,18 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
     if let (Some(config_path), Some(workspace_root)) = (options.config_path, options.workspace_root)
     {
         state = state.with_agent_paths(config_path, workspace_root);
+    }
+
+    // Build memory store for transcript retrieval if config is available.
+    if let (Some(config_path), Some(cfg)) = (state.config_path.as_ref(), &full_config) {
+        match build_memory_store_from_config(config_path, cfg) {
+            Ok(store) => {
+                state = state.with_memory_store(std::sync::Arc::from(store));
+            }
+            Err(e) => {
+                tracing::warn!("failed to build memory store for transcripts: {e}");
+            }
+        }
     }
 
     // Start config file watcher for live hot-reload.
@@ -313,6 +326,24 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         None
     };
 
+    // Initialize OpenTelemetry tracing when the telemetry feature is enabled
+    // and config has backend = "otlp". The guards must be held for the server
+    // lifetime so spans are flushed on shutdown.
+    #[cfg(feature = "telemetry")]
+    let _telemetry_guards = {
+        let obs_config = full_config
+            .as_ref()
+            .map(|c| c.observability.clone())
+            .unwrap_or_default();
+        match agentzero_infra::telemetry::init_telemetry(&obs_config) {
+            Ok(guards) => guards,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to initialize telemetry, continuing without it");
+                None
+            }
+        }
+    };
+
     let app = build_router(state, &options.middleware);
 
     let addr: SocketAddr = format!("{host}:{port}")
@@ -341,4 +372,50 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
 
     tracing::info!("gateway shut down gracefully");
     Ok(())
+}
+
+/// Build a memory store from gateway config for transcript retrieval.
+fn build_memory_store_from_config(
+    config_path: &std::path::Path,
+    config: &agentzero_config::AgentZeroConfig,
+) -> anyhow::Result<Box<dyn agentzero_core::MemoryStore>> {
+    let backend = &config.memory.backend;
+    match backend.as_str() {
+        "sqlite" => {
+            let config_dir = config_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let sqlite_path = resolve_sqlite_path(config_path, &config.memory.sqlite_path);
+            let key = agentzero_storage::StorageKey::from_config_dir(config_dir)?;
+            let pool_size = config.memory.pool_size;
+            if pool_size > 1 {
+                tracing::info!(pool_size, "using pooled SQLite memory store");
+                Ok(Box::new(
+                    agentzero_storage::memory::PooledMemoryStore::open(
+                        sqlite_path,
+                        Some(&key),
+                        pool_size,
+                    )?,
+                ))
+            } else {
+                Ok(Box::new(
+                    agentzero_storage::memory::SqliteMemoryStore::open(sqlite_path, Some(&key))?,
+                ))
+            }
+        }
+        _ => anyhow::bail!("memory backend '{backend}' not supported for gateway transcripts"),
+    }
+}
+
+/// Resolve the SQLite path relative to the config file directory.
+fn resolve_sqlite_path(config_path: &std::path::Path, sqlite_path: &str) -> std::path::PathBuf {
+    let path = std::path::Path::new(sqlite_path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        config_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(path)
+    }
 }
