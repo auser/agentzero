@@ -22,7 +22,7 @@ pub mod validation;
 pub use tracing;
 
 pub use agent::Agent;
-pub use event_bus::{Event, EventBus, EventSubscriber, InMemoryBus};
+pub use event_bus::{Event, EventBus, EventSubscriber, FileBackedBus, InMemoryBus};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{

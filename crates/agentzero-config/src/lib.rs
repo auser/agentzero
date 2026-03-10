@@ -16,12 +16,12 @@ pub use model::{
     ChannelsGlobalConfig, ComposioConfig, ComputerUseConfig, CostConfig, CredentialProfile,
     DelegateAgentConfig, DepthRuleConfig, EmbeddingRoute, EstopConfig, FanOutStepConfig,
     GatewayConfig, HookSettings, HttpRequestConfig, IdentityConfig, LanesConfig, McpConfig,
-    MemoryConfig, ModelProviderProfile, ModelRoute, MultimodalConfig, NodeControlConfig,
-    ObservabilityConfig, OtpConfig, OutboundLeakGuardConfig, PerplexityFilterConfig,
-    PipelineConfig, PipelineTriggerConfig, PluginConfig, ProviderConfig, ProviderOptionsConfig,
-    QueryClassificationConfig, QueryClassificationRule, ReadFileConfig, ResearchConfig,
-    RuntimeConfig, SecurityConfig, ShellConfig, SkillsConfig, SwarmAgentConfig, SwarmConfig,
-    SwarmRouterConfig, SyscallAnomalyConfig, UrlAccessConfig, WasmRuntimeConfig,
+    McpServerEntry, McpServersFile, MemoryConfig, ModelProviderProfile, ModelRoute,
+    MultimodalConfig, NodeControlConfig, ObservabilityConfig, OtpConfig, OutboundLeakGuardConfig,
+    PerplexityFilterConfig, PipelineConfig, PipelineTriggerConfig, PluginConfig, ProviderConfig,
+    ProviderOptionsConfig, QueryClassificationConfig, QueryClassificationRule, ReadFileConfig,
+    ResearchConfig, RuntimeConfig, SecurityConfig, ShellConfig, SkillsConfig, SwarmAgentConfig,
+    SwarmConfig, SwarmRouterConfig, SyscallAnomalyConfig, UrlAccessConfig, WasmRuntimeConfig,
     WasmSecurityConfig, WebFetchConfig, WebSearchConfig, WriteFileConfig,
 };
 pub use policy::{load_audit_policy, load_tool_security_policy, AuditPolicy};

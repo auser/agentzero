@@ -197,6 +197,26 @@ pub(crate) async fn api_chat(
         });
     }
 
+    // When the swarm is enabled, route through the gateway channel so
+    // pipelines (e.g. research-to-brief) can handle the request.
+    if let Some(ref gw_channel) = state.gateway_channel {
+        let response = gw_channel
+            .submit(req.message, Duration::from_secs(600))
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "api_chat pipeline execution failed");
+                GatewayError::AgentExecutionFailed {
+                    message: e.to_string(),
+                }
+            })?;
+
+        return Ok(Json(ChatResponse {
+            message: response,
+            tokens_used_estimate: 0,
+        }));
+    }
+
+    // Fallback: single-agent execution (no swarm).
     let agent_req = build_agent_request(&state, req.message, None)?;
     let output = run_agent_once(agent_req).await.map_err(|e| {
         tracing::error!(error = %e, "api_chat agent execution failed");
@@ -237,6 +257,33 @@ pub(crate) async fn v1_chat_completions(
 
     if req.stream {
         return v1_chat_completions_stream(&state, &last_user, model_override).await;
+    }
+
+    // Route through swarm pipeline when available.
+    if let Some(ref gw_channel) = state.gateway_channel {
+        let response = gw_channel
+            .submit(last_user, Duration::from_secs(600))
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "v1_chat_completions pipeline execution failed");
+                GatewayError::AgentExecutionFailed {
+                    message: e.to_string(),
+                }
+            })?;
+
+        return Ok(Json(ChatCompletionsResponse {
+            id: format!("chatcmpl-{}", now_epoch_secs()),
+            object: "chat.completion",
+            choices: vec![CompletionChoice {
+                index: 0,
+                message: CompletionChoiceMessage {
+                    role: "assistant",
+                    content: response,
+                },
+                finish_reason: "stop",
+            }],
+        })
+        .into_response());
     }
 
     let agent_req = build_agent_request(&state, last_user, model_override)?;
@@ -510,7 +557,7 @@ async fn handle_text_message(
 }
 
 // ---------------------------------------------------------------------------
-// Async job submission: /v1/runs (OpenClaw-style)
+// Async job submission: /v1/runs
 // ---------------------------------------------------------------------------
 
 /// POST /v1/runs — submit an async agent job. Returns 202 Accepted with a run_id.

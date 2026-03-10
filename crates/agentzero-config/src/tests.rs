@@ -286,7 +286,8 @@ fn cwd_dotenv_overrides_config_dir_dotenv() {
 }
 
 #[test]
-fn rejects_enabled_mcp_without_allowed_servers() {
+fn allows_enabled_mcp_without_allowed_servers() {
+    // allowed_servers is now optional — servers come from mcp.json files.
     let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
@@ -298,11 +299,10 @@ fn rejects_enabled_mcp_without_allowed_servers() {
 
     with_clean_agentzero_env(|| {
         let result = load(&config_path);
-        assert!(result.is_err());
-        assert!(result
-            .expect_err("invalid config should fail")
-            .to_string()
-            .contains("allowed_servers"));
+        assert!(
+            result.is_ok(),
+            "mcp enabled with empty allowed_servers should be valid"
+        );
     });
 
     fs::remove_dir_all(dir).expect("temp dir should be removed");
@@ -2273,6 +2273,169 @@ enabled = true
         let cfg = load(&config_path).expect("config should load with encrypted+noise");
         assert_eq!(cfg.privacy.mode, "encrypted");
         assert!(cfg.privacy.noise.enabled);
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// MCP mcp.json config loading tests
+// ---------------------------------------------------------------------------
+
+fn base_mcp_config_toml() -> &'static str {
+    "[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n\n[security.mcp]\nenabled=true\n"
+}
+
+#[test]
+fn mcp_loads_global_mcp_json() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(&config_path, base_mcp_config_toml()).expect("config should be written");
+
+    // Global mcp.json in the same dir as agentzero.toml.
+    fs::write(
+        dir.join("mcp.json"),
+        r#"{"mcpServers":{"fs":{"command":"echo","args":["hello"]}}}"#,
+    )
+    .expect("mcp.json should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert!(policy.enable_mcp);
+        assert_eq!(policy.mcp_servers.len(), 1);
+        assert!(policy.mcp_servers.contains_key("fs"));
+        assert_eq!(policy.mcp_servers["fs"].command, "echo");
+        assert_eq!(policy.mcp_servers["fs"].args, vec!["hello"]);
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn mcp_loads_project_mcp_json() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(&config_path, base_mcp_config_toml()).expect("config should be written");
+
+    // Project-level mcp.json in .agentzero/ subdirectory of workspace.
+    let project_dir = dir.join(".agentzero");
+    fs::create_dir_all(&project_dir).expect("project dir should be created");
+    fs::write(
+        project_dir.join("mcp.json"),
+        r#"{"mcpServers":{"git":{"command":"git-mcp","args":[]}}}"#,
+    )
+    .expect("project mcp.json should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert_eq!(policy.mcp_servers.len(), 1);
+        assert!(policy.mcp_servers.contains_key("git"));
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn mcp_project_overrides_global_by_name() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(&config_path, base_mcp_config_toml()).expect("config should be written");
+
+    // Global defines "fs" with command "global-cmd".
+    fs::write(
+        dir.join("mcp.json"),
+        r#"{"mcpServers":{"fs":{"command":"global-cmd","args":[]},"shared":{"command":"global-shared","args":[]}}}"#,
+    )
+    .expect("global mcp.json should be written");
+
+    // Project overrides "fs" with command "project-cmd".
+    let project_dir = dir.join(".agentzero");
+    fs::create_dir_all(&project_dir).expect("project dir should be created");
+    fs::write(
+        project_dir.join("mcp.json"),
+        r#"{"mcpServers":{"fs":{"command":"project-cmd","args":["--project"]}}}"#,
+    )
+    .expect("project mcp.json should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert_eq!(policy.mcp_servers.len(), 2);
+        // "fs" should be overridden by project.
+        assert_eq!(policy.mcp_servers["fs"].command, "project-cmd");
+        assert_eq!(policy.mcp_servers["fs"].args, vec!["--project"]);
+        // "shared" should remain from global.
+        assert_eq!(policy.mcp_servers["shared"].command, "global-shared");
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn mcp_allowed_servers_filters_results() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    // Config with allowed_servers = ["fs"] — only "fs" should pass.
+    fs::write(
+        &config_path,
+        "[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n\n[security.mcp]\nenabled=true\nallowed_servers=[\"fs\"]\n",
+    )
+    .expect("config should be written");
+
+    fs::write(
+        dir.join("mcp.json"),
+        r#"{"mcpServers":{"fs":{"command":"echo","args":[]},"git":{"command":"git-mcp","args":[]}}}"#,
+    )
+    .expect("mcp.json should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert_eq!(policy.mcp_servers.len(), 1);
+        assert!(policy.mcp_servers.contains_key("fs"));
+        assert!(!policy.mcp_servers.contains_key("git"));
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn mcp_no_files_returns_empty_servers() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(&config_path, base_mcp_config_toml()).expect("config should be written");
+
+    // No mcp.json files, no env var.
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert!(policy.mcp_servers.is_empty());
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn mcp_env_field_in_server_entry() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(&config_path, base_mcp_config_toml()).expect("config should be written");
+
+    fs::write(
+        dir.join("mcp.json"),
+        r#"{"mcpServers":{"gh":{"command":"gh-mcp","args":[],"env":{"GITHUB_TOKEN":"test123"}}}}"#,
+    )
+    .expect("mcp.json should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy = load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        assert_eq!(
+            policy.mcp_servers["gh"].env.get("GITHUB_TOKEN").unwrap(),
+            "test123"
+        );
     });
 
     fs::remove_dir_all(dir).ok();

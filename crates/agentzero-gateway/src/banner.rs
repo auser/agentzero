@@ -3,8 +3,12 @@ pub(crate) fn print_gateway_banner(base: &str, pairing_code: Option<&str>) {
     println!("  🌐 Web Dashboard: {base}/");
     println!("  POST /pair      — pair a new client (X-Pairing-Code header)");
     println!("  POST /webhook   — {{\"message\": \"your prompt\"}}");
-    println!("  POST /api/chat  — {{\"message\": \"...\", \"context\": [...]}} (tools-enabled, OpenClaw compat)");
+    println!("  POST /api/chat  — {{\"message\": \"...\", \"context\": [...]}} (tools-enabled)");
     println!("  POST /v1/chat/completions — OpenAI-compatible (full agent loop)");
+    println!("  POST /v1/runs   — submit async job (returns run_id)");
+    println!("  GET  /v1/runs   — list jobs");
+    println!("  GET  /v1/runs/:id — job status / result / events / transcript");
+    println!("  GET  /v1/runs/:id/stream — SSE event stream");
     println!("  GET  /v1/models — list available models");
     println!("  GET  /api/*     — REST API (bearer token required)");
     println!("  GET  /ws/chat   — WebSocket agent chat");

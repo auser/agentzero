@@ -69,7 +69,11 @@ context_aware_parsing = true                # smarter shell argument validation
 
 [security.mcp]
 enabled = false
-allowed_servers = []                        # must be non-empty when enabled
+# allowed_servers = ["filesystem"]          # optional filter; empty = all discovered servers
+# Server definitions go in mcp.json files:
+#   Global:  ~/.agentzero/mcp.json
+#   Project: {workspace}/.agentzero/mcp.json
+# Each tool appears as mcp__{server}__{tool} (e.g. mcp__filesystem__read_file)
 
 [security.plugin]
 enabled = false
@@ -308,7 +312,7 @@ allow_override = false
 # Identity — agent identity format
 # ---------------------------------------------------------------------------
 [identity]
-format = "openclaw"                         # openclaw | aieos
+format = "markdown"                         # markdown | aieos
 # aieos_path = "/etc/aieos.json"
 # aieos_inline = "..."
 

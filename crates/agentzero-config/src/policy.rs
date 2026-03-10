@@ -1,8 +1,11 @@
 use crate::loader::load;
+use crate::model::{McpServerEntry, McpServersFile};
+use agentzero_core::common::paths::MCP_CONFIG_FILE;
 use agentzero_tools::{
-    ReadFilePolicy, ShellPolicy, ToolSecurityPolicy, UrlAccessPolicy, WriteFilePolicy,
+    McpServerDef, ReadFilePolicy, ShellPolicy, ToolSecurityPolicy, UrlAccessPolicy, WriteFilePolicy,
 };
 use anyhow::Context;
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 pub fn load_tool_security_policy(
@@ -63,6 +66,11 @@ pub fn load_tool_security_policy(
         },
         enable_write_file: config.security.write_file.enabled,
         enable_mcp: config.security.mcp.enabled,
+        mcp_servers: load_mcp_servers(
+            config_path,
+            workspace_root,
+            &config.security.mcp.allowed_servers,
+        ),
         allowed_mcp_servers: config.security.mcp.allowed_servers,
         enable_process_plugin: config.security.plugin.enabled,
         enable_git,
@@ -157,5 +165,82 @@ fn resolve_path(workspace_root: &Path, configured: &str) -> PathBuf {
         path.to_path_buf()
     } else {
         workspace_root.join(path)
+    }
+}
+
+/// Load MCP server definitions from global and project `mcp.json` files,
+/// with an optional env-var override layer.
+///
+/// Merge order (later overrides earlier by server name):
+/// 1. Global: `{config_path.parent()}/mcp.json`
+/// 2. Project: `{workspace_root}/.agentzero/mcp.json`
+/// 3. `AGENTZERO_MCP_SERVERS` env var
+fn load_mcp_servers(
+    config_path: &Path,
+    workspace_root: &Path,
+    allowed_servers: &[String],
+) -> HashMap<String, McpServerDef> {
+    let mut servers: HashMap<String, McpServerEntry> = HashMap::new();
+
+    // 1. Global mcp.json (in the same directory as agentzero.toml).
+    if let Some(data_dir) = config_path.parent() {
+        let global_path = data_dir.join(MCP_CONFIG_FILE);
+        if let Some(file) = read_mcp_json(&global_path) {
+            servers.extend(file.mcp_servers);
+        }
+    }
+
+    // 2. Project mcp.json.
+    let project_path = workspace_root.join(".agentzero").join(MCP_CONFIG_FILE);
+    if let Some(file) = read_mcp_json(&project_path) {
+        servers.extend(file.mcp_servers);
+    }
+
+    // 3. AGENTZERO_MCP_SERVERS env var (legacy / override).
+    if let Ok(raw) = std::env::var("AGENTZERO_MCP_SERVERS") {
+        if let Ok(env_servers) = serde_json::from_str::<HashMap<String, McpServerEntry>>(&raw) {
+            servers.extend(env_servers);
+        } else {
+            eprintln!("warning: ignoring invalid AGENTZERO_MCP_SERVERS env var");
+        }
+    }
+
+    // Filter by allowed_servers if the list is non-empty.
+    if !allowed_servers.is_empty() {
+        servers.retain(|name, _| allowed_servers.contains(name));
+    }
+
+    // Convert McpServerEntry → McpServerDef.
+    servers
+        .into_iter()
+        .map(|(name, entry)| {
+            (
+                name,
+                McpServerDef {
+                    command: entry.command,
+                    args: entry.args,
+                    env: entry.env,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Read and parse an `mcp.json` file, returning `None` if it doesn't exist
+/// or is invalid (with a warning log).
+fn read_mcp_json(path: &Path) -> Option<McpServersFile> {
+    if !path.exists() {
+        return None;
+    }
+    let raw = match std::fs::read_to_string(path) {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
+    match serde_json::from_str::<McpServersFile>(&raw) {
+        Ok(file) => Some(file),
+        Err(_) => {
+            eprintln!("warning: ignoring invalid {}", path.display());
+            None
+        }
     }
 }

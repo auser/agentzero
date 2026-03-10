@@ -46,6 +46,7 @@ pub mod web_fetch;
 pub mod web_search;
 pub mod write_file;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub use agents_ipc::AgentsIpcTool;
@@ -88,6 +89,17 @@ pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
 pub use write_file::{WriteFilePolicy, WriteFileTool};
 
+/// MCP server definition for the tool security policy.
+///
+/// Kept in `agentzero-tools` to avoid a circular dependency with `agentzero-config`.
+/// The config layer converts its own `McpServerEntry` into this type.
+#[derive(Debug, Clone, Default)]
+pub struct McpServerDef {
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ToolSecurityPolicy {
     pub read_file: ReadFilePolicy,
@@ -97,6 +109,7 @@ pub struct ToolSecurityPolicy {
     pub enable_write_file: bool,
     pub enable_mcp: bool,
     pub allowed_mcp_servers: Vec<String>,
+    pub mcp_servers: HashMap<String, McpServerDef>,
     pub enable_process_plugin: bool,
     pub enable_git: bool,
     pub enable_cron: bool,
@@ -162,6 +175,7 @@ impl ToolSecurityPolicy {
             enable_write_file: false,
             enable_mcp: false,
             allowed_mcp_servers: vec![],
+            mcp_servers: HashMap::new(),
             enable_process_plugin: false,
             enable_git: false,
             enable_cron: false,

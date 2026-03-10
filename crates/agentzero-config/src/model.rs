@@ -177,11 +177,8 @@ impl AgentZeroConfig {
             return Err(anyhow!("security.shell.forbidden_chars must not be empty"));
         }
 
-        if self.security.mcp.enabled && self.security.mcp.allowed_servers.is_empty() {
-            return Err(anyhow!(
-                "security.mcp.allowed_servers must not be empty when MCP is enabled"
-            ));
-        }
+        // Note: allowed_servers is now optional — servers can come from mcp.json files.
+        // The config layer discovers mcp.json files and merges them into the policy.
 
         if self.security.audit.enabled && self.security.audit.path.trim().is_empty() {
             return Err(anyhow!(
@@ -655,7 +652,25 @@ impl Default for ShellConfig {
 #[serde(default)]
 pub struct McpConfig {
     pub enabled: bool,
+    #[serde(default)]
     pub allowed_servers: Vec<String>,
+}
+
+/// A single MCP server entry as found in `mcp.json`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct McpServerEntry {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+/// Top-level structure of an `mcp.json` file.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct McpServersFile {
+    #[serde(default, alias = "mcpServers")]
+    pub mcp_servers: HashMap<String, McpServerEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -1129,7 +1144,7 @@ pub struct IdentityConfig {
 impl Default for IdentityConfig {
     fn default() -> Self {
         Self {
-            format: "openclaw".to_string(),
+            format: "markdown".to_string(),
             aieos_path: None,
             aieos_inline: None,
         }
@@ -1743,6 +1758,11 @@ pub struct SwarmConfig {
     pub shutdown_grace_ms: u64,
     /// Capacity of the event bus broadcast channel.
     pub event_bus_capacity: usize,
+    /// Path to a JSONL file for persistent event logging.
+    /// When set, events are appended to this file and survive restarts.
+    /// Useful for research pipelines and audit trails.
+    #[serde(default)]
+    pub event_log_path: Option<String>,
     pub router: SwarmRouterConfig,
     /// Named agent definitions keyed by agent id.
     #[serde(default)]
@@ -1765,6 +1785,7 @@ impl Default for SwarmConfig {
             max_agents: 10,
             shutdown_grace_ms: 5_000,
             event_bus_capacity: 256,
+            event_log_path: None,
             router: SwarmRouterConfig::default(),
             agents: HashMap::new(),
             pipelines: Vec::new(),

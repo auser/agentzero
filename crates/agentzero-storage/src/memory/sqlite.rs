@@ -36,8 +36,14 @@ impl SqliteMemoryStore {
             // If the DB was previously plaintext, PRAGMA key will succeed but
             // subsequent reads will fail because SQLCipher tries to decrypt
             // plaintext pages. Detect this and auto-migrate.
+            //
+            // We distinguish "plaintext DB" from "encrypted with a different
+            // key" by checking the file header: an unencrypted SQLite DB
+            // starts with "SQLite format 3\0".  An encrypted DB has random
+            // bytes in the header, so we should NOT attempt migration for it.
             if path.exists()
                 && fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
+                && is_plaintext_sqlite(path)
                 && conn
                     .execute_batch("SELECT count(*) FROM sqlite_master")
                     .is_err()
@@ -120,25 +126,66 @@ fn hex_encode_key(key: &StorageKey) -> String {
     key.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Returns `true` if the file at `path` starts with the SQLite magic header,
+/// indicating it is an unencrypted (plaintext) SQLite database.
+/// Encrypted (SQLCipher) databases have random bytes in the header.
+fn is_plaintext_sqlite(path: &Path) -> bool {
+    const SQLITE_MAGIC: &[u8] = b"SQLite format 3\0";
+    let Ok(mut f) = fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 16];
+    use std::io::Read;
+    if f.read_exact(&mut buf).is_err() {
+        return false;
+    }
+    buf == *SQLITE_MAGIC
+}
+
 /// Migrate an existing plaintext SQLite database to SQLCipher-encrypted format.
 ///
 /// Opens the plaintext DB (no PRAGMA key), attaches a new encrypted DB,
 /// exports all data via `sqlcipher_export`, then swaps the files.
+///
+/// If the export fails (e.g. `sqlcipher_export` is not available or the DB is
+/// corrupt), falls back to deleting the plaintext file when it contains no
+/// conversation data worth preserving.
 fn migrate_plaintext_to_encrypted(path: &Path, key: &StorageKey) -> anyhow::Result<()> {
     let hex_key = hex_encode_key(key);
     let tmp = path.with_extension("db.encrypting");
 
     let conn = Connection::open(path).context("failed to open plaintext DB for migration")?;
-    conn.execute_batch(&format!(
+    let export_result = conn.execute_batch(&format!(
         "ATTACH DATABASE '{}' AS encrypted KEY \"x'{hex_key}'\"; \
          SELECT sqlcipher_export('encrypted'); \
          DETACH DATABASE encrypted;",
         tmp.display()
-    ))
-    .context("failed to export plaintext DB to encrypted format")?;
-    drop(conn);
+    ));
 
-    fs::rename(&tmp, path).context("failed to swap encrypted DB into place")?;
+    match export_result {
+        Ok(()) => {
+            drop(conn);
+            fs::rename(&tmp, path).context("failed to swap encrypted DB into place")?;
+        }
+        Err(export_err) => {
+            // Check if the DB has any rows worth preserving.
+            let row_count: i64 = conn
+                .query_row("SELECT count(*) FROM memory", [], |r| r.get(0))
+                .unwrap_or(0);
+            drop(conn);
+            let _ = fs::remove_file(&tmp); // clean up partial temp file
+
+            if row_count == 0 {
+                // Empty DB — just delete it so a fresh encrypted one is created.
+                fs::remove_file(path)
+                    .context("failed to remove empty plaintext DB for re-creation")?;
+            } else {
+                return Err(export_err)
+                    .context("failed to export plaintext DB to encrypted format");
+            }
+        }
+    }
+
     Ok(())
 }
 

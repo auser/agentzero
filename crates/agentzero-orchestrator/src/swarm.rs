@@ -7,7 +7,7 @@ use crate::agent_router::{AgentDescriptor, AgentRouter};
 use crate::coordinator::Coordinator;
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
-use agentzero_core::event_bus::InMemoryBus;
+use agentzero_core::event_bus::{FileBackedBus, InMemoryBus};
 use agentzero_core::Agent;
 use agentzero_infra::runtime::{build_runtime_execution, RunAgentRequest};
 use std::path::Path;
@@ -41,9 +41,25 @@ pub async fn build_swarm(
         "building swarm"
     );
 
-    // 1. Create the event bus
+    // 1. Create the event bus (file-backed if event_log_path is set)
     let bus: Arc<dyn agentzero_core::event_bus::EventBus> =
-        Arc::new(InMemoryBus::new(swarm_config.event_bus_capacity));
+        if let Some(ref log_path) = swarm_config.event_log_path {
+            let resolved = if Path::new(log_path).is_relative() {
+                workspace_root.join(log_path)
+            } else {
+                log_path.into()
+            };
+            tracing::info!(path = %resolved.display(), "using file-backed event bus");
+            Arc::new(
+                FileBackedBus::open(&resolved, swarm_config.event_bus_capacity)
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!("failed to open event log at {}: {e}", resolved.display())
+                    })?,
+            )
+        } else {
+            Arc::new(InMemoryBus::new(swarm_config.event_bus_capacity))
+        };
 
     // 2. Build the AI router
     let router = if !swarm_config.router.provider.is_empty() {

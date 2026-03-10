@@ -1,3 +1,4 @@
+use crate::gateway_channel::GatewayChannel;
 use crate::token_store::save_paired_tokens;
 use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
@@ -61,6 +62,8 @@ pub(crate) struct GatewayState {
     pub(crate) presence_store: Option<Arc<PresenceStore>>,
     /// Shared memory store for transcript retrieval.
     pub(crate) memory_store: Option<Arc<dyn MemoryStore>>,
+    /// Gateway channel for bridging API requests into the swarm pipeline.
+    pub(crate) gateway_channel: Option<Arc<GatewayChannel>>,
 }
 
 impl GatewayState {
@@ -104,6 +107,7 @@ impl GatewayState {
             job_store: None,
             presence_store: None,
             memory_store: None,
+            gateway_channel: None,
         }
     }
 
@@ -168,6 +172,12 @@ impl GatewayState {
     /// Set the shared memory store for transcript retrieval.
     pub(crate) fn with_memory_store(mut self, store: Arc<dyn MemoryStore>) -> Self {
         self.memory_store = Some(store);
+        self
+    }
+
+    /// Set the gateway channel for swarm pipeline integration.
+    pub(crate) fn with_gateway_channel(mut self, ch: Arc<GatewayChannel>) -> Self {
+        self.gateway_channel = Some(ch);
         self
     }
 
@@ -267,6 +277,7 @@ impl GatewayState {
             job_store: None,
             presence_store: None,
             memory_store: None,
+            gateway_channel: None,
         }
     }
 
@@ -304,6 +315,7 @@ impl GatewayState {
             job_store: None,
             presence_store: None,
             memory_store: None,
+            gateway_channel: None,
         }
     }
 }

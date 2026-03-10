@@ -900,20 +900,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_cli_from_parses_migrate_openclaw_command() {
+    fn parse_cli_from_parses_migrate_import_command() {
         let parsed = parse_cli_from([
             "agentzero",
             "migrate",
-            "openclaw",
+            "import",
             "--source",
             "/tmp/source",
             "--dry-run",
         ])
-        .expect("migrate openclaw should parse");
+        .expect("migrate import should parse");
         assert!(matches!(
             parsed.command,
             Commands::Migrate {
-                command: MigrateCommands::Openclaw { .. }
+                command: MigrateCommands::Import { .. }
             }
         ));
     }

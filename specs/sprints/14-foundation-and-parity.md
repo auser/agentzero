@@ -157,7 +157,7 @@ Goal: support hook points around each execution phase for policy, observability,
 - Acceptance:
 - Each step emits both before and after hooks with tests for success, timeout, and failure policies.
 
-## Upstream Module Parity Gaps (from `openclaw/src`)
+## Upstream Module Parity Gaps
 The following major upstream sections are not yet explicitly covered in our sprint plan and are required for a fuller clone trajectory:
 
 - [x] `approval`
@@ -175,7 +175,7 @@ The following major upstream sections are not yet explicitly covered in our spri
 - [x] `hardware` + `peripherals`
 - [x] Shared `util` extraction strategy
 
-## OpenClaw Tool Parity Checklist (from `openclaw/src/tools`)
+## Tool Parity Checklist
 - [x] `agents_ipc.rs`
 - [x] `apply_patch.rs`
 - [x] `browser.rs`
@@ -694,7 +694,7 @@ Goal: support the same workspace template model and usage flow.
 - 2026-02-28: Added `agentzero plugin new/validate/test/package/install` developer command surface wired to manifest validation, WASM runtime preflight/execute, and package/install integrity pipeline.
 - 2026-02-28: Extended plugin developer lifecycle with `agentzero plugin list/remove` plus installed-plugin index/removal APIs and JSON-capable listing output.
 - 2026-02-28: Updated Sprint 13.1 architecture to consolidate migration + update functionality into a single crate: `agentzero-update`.
-- 2026-02-28: Implemented `crates/agentzero-update` and wired `agentzero migrate openclaw` + `agentzero update check/apply/rollback/status` command surfaces with success/negative test coverage.
+- 2026-02-28: Implemented `crates/agentzero-update` and wired `agentzero migrate import` + `agentzero update check/apply/rollback/status` command surfaces with success/negative test coverage.
 - 2026-02-28: Implemented Sprint 13.2 with new `agentzero-rag` + `agentzero-multimodal` crates and feature-gated `agentzero rag ingest/query` CLI surface.
 - 2026-02-28: Fixed dashboard SQLite startup failure by creating missing DB parent directories in `agentzero-memory` before opening SQLite (`Error code 14` path).
 - 2026-02-28: Completed Sprint 14.1 with new `agentzero-hardware` + `agentzero-peripherals` crates and feature-gated `agentzero hardware/peripheral` CLI surfaces (disabled by default).
@@ -714,7 +714,7 @@ Goal: support the same workspace template model and usage flow.
 - 2026-02-28: Aligned `estop` CLI shape to top-level engage flags (`--level`, `--domain`, `--tool`) with `status` and `resume` subcommands (`--network`, `--domain`, `--tool`, `--otp`).
 - 2026-02-28: Aligned `daemon` CLI shape to direct `daemon [--host --port]` invocation (no subcommands).
 - 2026-02-28: Aligned `channel` CLI shape to snapshot parity subcommands (`add`, `bind-telegram`, `doctor`, `list`, `remove`, `start`).
-- 2026-02-28: Finalized parity for `integrations info/list/search` and parser/docs alignment for `migrate openclaw`.
+- 2026-02-28: Finalized parity for `integrations info/list/search` and parser/docs alignment for `migrate import`.
 - 2026-02-28: Completed `service` parity shape with `--service-init` and subcommands `install/restart/start/status/stop/uninstall`, including CLI + service-state tests.
 - 2026-02-28: Completed `hardware` parity shape with `discover`, `info --chip` (default `STM32F401RETx`), and `introspect`; updated parser/docs/tests.
 - 2026-02-28: Completed `status` parity by removing `--json` surface and aligning parser/runner/docs to formatted status output.
@@ -774,7 +774,7 @@ Generated from local reference binary.
 - [x] `hardware`: `discover`, `info`, `introspect`
 - [x] `integrations`: `info`, `list`, `search`
 - [x] `memory`: `clear`, `get`, `list`, `stats`
-- [x] `migrate`: `openclaw`
+- [x] `migrate`: `import`
 - [x] `models`: `list`, `refresh`, `set`, `status`
 - [x] `onboard` (no subcommands)
 - [x] `peripheral`: `add`, `flash`, `flash-nucleo`, `list`, `setup-uno-q`
@@ -1031,9 +1031,9 @@ Flags:
 - `    --config-dir <CONFIG_DIR>  `
 - `-h, --help                     Print help`
 Subcommands:
-- `migrate openclaw`
+- `migrate`
   - `    --config-dir <CONFIG_DIR>  `
-  - `    --source <SOURCE>          Optional path to `OpenClaw` workspace (defaults to ~/.openclaw/workspace)`
+  - `    --source <SOURCE>          Optional path to source workspace`
   - `    --dry-run                  Validate and preview migration without writing any data`
   - `-h, --help                     Print help`
 

@@ -911,7 +911,7 @@ pub enum AuthCommands {
 #[derive(Debug, Subcommand)]
 pub enum MigrateCommands {
     /// Migrate data from a source workspace.
-    Openclaw {
+    Import {
         /// Source directory to import from.
         #[arg(long)]
         source: Option<String>,

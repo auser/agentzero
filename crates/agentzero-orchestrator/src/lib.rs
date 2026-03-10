@@ -17,7 +17,9 @@ pub mod swarm;
 pub use agent_router::{AgentDescriptor, AgentRouter};
 pub use block_stream::{Block, BlockAccumulator};
 pub use coordinator::{Coordinator, ErrorStrategy, TaskMessage, TaskResult};
-pub use event_bus::{BusEvent, EventBus, EventReceiver, InMemoryEventBus};
+pub use event_bus::{
+    BusEvent, EventBus, EventReceiver, FileBackedEventBus, InMemoryEventBus, PersistedEvent,
+};
 pub use fanout::{execute_fanout, FanOutResult, FanOutStep};
 pub use job_store::{EventKind, EventLog, JobStore, RunEvent};
 pub use lanes::{LaneConfig, LaneManager, LaneReceivers, WorkItem, WorkResult};

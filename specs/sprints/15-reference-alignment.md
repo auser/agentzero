@@ -65,7 +65,7 @@ References:
 - [x] `[web_search]` — enabled, provider, fallback_providers, retries_per_provider, api keys (brave/perplexity/exa/jina), max_results
 - [x] `[composio]` — enabled, api_key, entity_id
 - [x] `[cost]` — enabled, daily_limit_usd, monthly_limit_usd, warn_at_percent, allow_override
-- [x] `[identity]` — format (openclaw/aieos), aieos_path, aieos_inline
+- [x] `[identity]` — format (markdown/aieos), aieos_path, aieos_inline
 - [x] `[multimodal]` — max_images, max_image_size_mb, allow_remote_fetch
 - [x] `[skills]` — open_skills_enabled, open_skills_dir, prompt_injection_mode, clawhub_token
 - [x] `[provider]` — reasoning_level, transport

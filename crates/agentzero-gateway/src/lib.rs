@@ -6,6 +6,7 @@
 pub mod api_keys;
 mod auth;
 mod banner;
+pub mod gateway_channel;
 mod gateway_metrics;
 mod handlers;
 #[cfg(feature = "privacy")]
@@ -31,7 +32,6 @@ use agentzero_config::watcher::ConfigWatcher;
 use anyhow::Context;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-#[cfg(feature = "privacy")]
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -73,7 +73,20 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
     let full_config = options
         .config_path
         .as_ref()
-        .and_then(|p| agentzero_config::load(p).ok());
+        .and_then(|p| match agentzero_config::load(p) {
+            Ok(cfg) => {
+                tracing::info!(path = %p.display(), "loaded config");
+                Some(cfg)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %p.display(),
+                    error = %e,
+                    "failed to load config — swarm/pipeline features will be unavailable"
+                );
+                None
+            }
+        });
 
     let (require_pairing, allow_public_bind) = match full_config.as_ref().map(|c| &c.gateway) {
         Some(gw) => (gw.require_pairing, gw.allow_public_bind),
@@ -139,6 +152,13 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
             }
         }
     }
+
+    // Wire up the job store and presence store for /v1/runs endpoints.
+    let job_store = Arc::new(agentzero_orchestrator::JobStore::new());
+    state = state.with_job_store(job_store.clone());
+
+    let presence_store = Arc::new(agentzero_orchestrator::PresenceStore::new());
+    state.presence_store = Some(presence_store);
 
     // Start config file watcher for live hot-reload.
     let _config_watcher_cancel = if let (Some(ref config_path), Some(ref cfg)) =
@@ -282,7 +302,7 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         rotation_handle
     };
 
-    // --- Swarm coordinator ---
+    // --- Gateway channel + Swarm coordinator ---
     let swarm_handle = if let Some(ref cfg) = full_config {
         if cfg.swarm.enabled {
             let config_path = state
@@ -295,6 +315,16 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
                 .as_ref()
                 .map(|p| p.as_ref().clone())
                 .unwrap_or_default();
+
+            // Create the gateway channel and register it with the channel registry
+            // so the swarm coordinator can receive API messages.
+            let gw_channel = gateway_channel::GatewayChannel::new(256);
+            {
+                let channels = Arc::get_mut(&mut state.channels)
+                    .expect("channels registry should be uniquely owned at this point");
+                channels.register(gw_channel.clone());
+            }
+            state = state.with_gateway_channel(gw_channel);
 
             match agentzero_orchestrator::build_swarm(
                 cfg,
@@ -359,10 +389,37 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
 
     tracing::info!(address = %addr, "gateway listening");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(middleware::shutdown_signal())
-        .await
-        .context("gateway server failed")?;
+    // Graceful shutdown: when the signal fires, axum stops accepting new
+    // connections and waits for in-flight requests.  If connections don't close
+    // within the grace period (e.g. keep-alive, WebSocket), force-exit.
+    let grace_ms = full_config
+        .as_ref()
+        .map(|c| c.swarm.shutdown_grace_ms)
+        .unwrap_or(5_000);
+
+    let server = axum::serve(listener, app).with_graceful_shutdown(middleware::shutdown_signal());
+
+    // Race the server against a hard deadline: once the shutdown signal fires
+    // inside `shutdown_signal()`, axum stops accepting but may block on open
+    // connections.  A second Ctrl+C or the grace-period timeout forces exit.
+    tokio::select! {
+        result = server => {
+            result.context("gateway server failed")?;
+        }
+        () = async {
+            // Wait for the first signal, then start a grace-period countdown.
+            middleware::shutdown_signal().await;
+            tracing::info!("forcing exit in {}ms (press Ctrl+C again to exit immediately)", grace_ms);
+            tokio::select! {
+                () = tokio::time::sleep(Duration::from_millis(grace_ms)) => {
+                    tracing::warn!("grace period expired, forcing exit");
+                }
+                () = force_shutdown_signal() => {
+                    tracing::warn!("second interrupt received, forcing exit");
+                }
+            }
+        } => {}
+    }
 
     // Abort swarm coordinator on gateway shutdown.
     if let Some(handle) = swarm_handle {
@@ -370,8 +427,34 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         let _ = handle.await;
     }
 
-    tracing::info!("gateway shut down gracefully");
+    tracing::info!("gateway shut down");
     Ok(())
+}
+
+/// Wait for a second Ctrl+C / SIGTERM after the first one has already been handled.
+async fn force_shutdown_signal() {
+    // The first signal was already consumed by `middleware::shutdown_signal()`.
+    // Register fresh listeners for the next one.
+    let ctrl_c = async {
+        // ctrl_c() returns a new future each time — it will resolve on the *next* signal.
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to listen for SIGTERM")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {},
+        () = terminate => {},
+    }
 }
 
 /// Build a memory store from gateway config for transcript retrieval.

@@ -5,9 +5,14 @@
 //! on the bus. The `EventBus` trait abstracts over transport so a future
 //! multi-node implementation (e.g. iroh QUIC) can be swapped in without
 //! changing any agent code.
+//!
+//! `FileBackedBus` wraps the in-memory broadcast with append-only JSONL
+//! persistence so events survive process restarts (useful for research
+//! pipelines and audit trails).
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
@@ -152,6 +157,104 @@ impl EventSubscriber for InMemorySubscriber {
                 }
             }
         }
+    }
+}
+
+/// File-backed event bus: wraps `InMemoryBus` with append-only JSONL persistence.
+///
+/// Every published event is serialized to a JSONL log file before being
+/// broadcast to live subscribers. Use [`FileBackedBus::replay`] to read
+/// back all persisted events (e.g. after a restart).
+pub struct FileBackedBus {
+    inner: InMemoryBus,
+    log_path: PathBuf,
+    writer: tokio::sync::Mutex<tokio::io::BufWriter<tokio::fs::File>>,
+}
+
+impl FileBackedBus {
+    /// Open (or create) a JSONL event log at `path` with the given broadcast capacity.
+    pub async fn open(path: impl AsRef<Path>, capacity: usize) -> anyhow::Result<Self> {
+        let log_path = path.as_ref().to_path_buf();
+        if let Some(parent) = log_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+        }
+
+        let file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .await?;
+
+        Ok(Self {
+            inner: InMemoryBus::new(capacity),
+            log_path,
+            writer: tokio::sync::Mutex::new(tokio::io::BufWriter::new(file)),
+        })
+    }
+
+    /// Replay all persisted events, optionally filtered by topic prefix.
+    pub async fn replay(&self, topic_filter: Option<&str>) -> anyhow::Result<Vec<Event>> {
+        use tokio::io::AsyncBufReadExt;
+
+        let file = tokio::fs::File::open(&self.log_path).await?;
+        let reader = tokio::io::BufReader::new(file);
+        let mut lines = reader.lines();
+        let mut events = Vec::new();
+
+        while let Some(line) = lines.next_line().await? {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<Event>(&line) {
+                Ok(evt) => {
+                    if let Some(prefix) = topic_filter {
+                        if !evt.topic.starts_with(prefix) {
+                            continue;
+                        }
+                    }
+                    events.push(evt);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "skipping malformed event line in log");
+                }
+            }
+        }
+
+        Ok(events)
+    }
+
+    /// Return the path to the JSONL log file.
+    pub fn log_path(&self) -> &Path {
+        &self.log_path
+    }
+}
+
+#[async_trait]
+impl EventBus for FileBackedBus {
+    async fn publish(&self, event: Event) -> anyhow::Result<()> {
+        use tokio::io::AsyncWriteExt;
+
+        // Persist first, then broadcast.
+        let mut line = serde_json::to_string(&event)?;
+        line.push('\n');
+
+        {
+            let mut w = self.writer.lock().await;
+            w.write_all(line.as_bytes()).await?;
+            w.flush().await?;
+        }
+
+        self.inner.publish(event).await
+    }
+
+    fn subscribe(&self) -> Box<dyn EventSubscriber> {
+        self.inner.subscribe()
+    }
+
+    fn subscriber_count(&self) -> usize {
+        self.inner.subscriber_count()
     }
 }
 
@@ -328,5 +431,104 @@ mod tests {
 
         let result = sub.recv().await;
         assert!(result.is_err());
+    }
+
+    // --- FileBackedBus tests ---
+
+    fn temp_event_log(suffix: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let ts = now_ms();
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "agentzero-core-events-{}-{ts}-{seq}-{suffix}.jsonl",
+            std::process::id()
+        ))
+    }
+
+    #[tokio::test]
+    async fn file_backed_publish_and_replay() {
+        let path = temp_event_log("roundtrip");
+        let bus = FileBackedBus::open(&path, 16).await.expect("open");
+
+        bus.publish(Event::new("task.research.raw", "researcher", "step-1"))
+            .await
+            .unwrap();
+        bus.publish(Event::new("task.research.raw", "researcher", "step-2"))
+            .await
+            .unwrap();
+        bus.publish(Event::new("task.alert", "system", "disk-low"))
+            .await
+            .unwrap();
+
+        let all = bus.replay(None).await.unwrap();
+        assert_eq!(all.len(), 3);
+
+        let research = bus.replay(Some("task.research.")).await.unwrap();
+        assert_eq!(research.len(), 2);
+        assert_eq!(research[0].payload, "step-1");
+        assert_eq!(research[1].payload, "step-2");
+
+        tokio::fs::remove_file(path).await.ok();
+    }
+
+    #[tokio::test]
+    async fn file_backed_live_subscribers() {
+        let path = temp_event_log("live");
+        let bus = FileBackedBus::open(&path, 16).await.expect("open");
+
+        let mut sub = bus.subscribe();
+        bus.publish(Event::new("t", "s", "hello")).await.unwrap();
+
+        let event = sub.recv().await.unwrap();
+        assert_eq!(event.payload, "hello");
+
+        tokio::fs::remove_file(path).await.ok();
+    }
+
+    #[tokio::test]
+    async fn file_backed_survives_reopen() {
+        let path = temp_event_log("reopen");
+
+        {
+            let bus = FileBackedBus::open(&path, 16).await.expect("open");
+            bus.publish(Event::new("pipeline.a", "agent", "first"))
+                .await
+                .unwrap();
+            bus.publish(Event::new("pipeline.a", "agent", "second"))
+                .await
+                .unwrap();
+        }
+
+        {
+            let bus = FileBackedBus::open(&path, 16).await.expect("reopen");
+            let events = bus.replay(Some("pipeline.")).await.unwrap();
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].payload, "first");
+            assert_eq!(events[1].payload, "second");
+
+            // New events append.
+            bus.publish(Event::new("pipeline.a", "agent", "third"))
+                .await
+                .unwrap();
+            let events = bus.replay(None).await.unwrap();
+            assert_eq!(events.len(), 3);
+        }
+
+        tokio::fs::remove_file(path).await.ok();
+    }
+
+    #[tokio::test]
+    async fn file_backed_subscriber_count() {
+        let path = temp_event_log("subcount");
+        let bus = FileBackedBus::open(&path, 16).await.expect("open");
+
+        assert_eq!(bus.subscriber_count(), 0);
+        let _s1 = bus.subscribe();
+        assert_eq!(bus.subscriber_count(), 1);
+        let _s2 = bus.subscribe();
+        assert_eq!(bus.subscriber_count(), 2);
+
+        tokio::fs::remove_file(path).await.ok();
     }
 }

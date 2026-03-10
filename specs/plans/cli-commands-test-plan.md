@@ -279,9 +279,9 @@ Complete inventory of all `agentzero` CLI commands, their test coverage, and man
 | | |
 |---|---|
 | **File** | `commands/update.rs` |
-| **Subcommands** | `openclaw` |
+| **Subcommands** | `import` |
 | **Unit tests** | 0 |
-| **Integration tests** | `migrate_openclaw_dry_run_success_path` |
+| **Integration tests** | `migrate_import_dry_run_success_path` |
 | **Manual test** | N/A |
 
 ### 28. `agentzero update`

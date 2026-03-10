@@ -738,7 +738,7 @@ async fn update_check_success_path() {
 // ── migrate ──
 
 #[tokio::test]
-async fn migrate_openclaw_dry_run_success_path() {
+async fn migrate_import_dry_run_success_path() {
     let dir = temp_dir("migrate");
     let d = dir.to_str().unwrap();
 
@@ -756,7 +756,7 @@ async fn migrate_openclaw_dry_run_success_path() {
         "--data-dir",
         d,
         "migrate",
-        "openclaw",
+        "import",
         "--source",
         source.to_str().unwrap(),
         "--dry-run",

@@ -4,9 +4,9 @@ Previous sprints archived to `specs/sprints/25-32-privacy-e2e-multi-agent-produc
 
 ---
 
-## Sprint 33: OpenClaw Multi-Agent Gaps — Queue Modes, Cascade Stop, Tool-Loop Detection
+## Sprint 33: Multi-Agent Gaps — Queue Modes, Cascade Stop, Tool-Loop Detection
 
-**Goal:** Close the remaining gaps between our multi-agent orchestration and the OpenClaw reference architecture. Sprint 32.5 (merged on `feat/examples-and-gaps`) delivered lanes, depth-gated tools, announce-back, async jobs API, and WebSocket run subscription. This sprint covers the behavioral and safety features that make multi-agent systems robust in production.
+**Goal:** Close the remaining gaps in our multi-agent orchestration. Sprint 32.5 (merged on `feat/examples-and-gaps`) delivered lanes, depth-gated tools, announce-back, async jobs API, and WebSocket run subscription. This sprint covers the behavioral and safety features that make multi-agent systems robust in production.
 
 **Baseline:** 17-crate workspace, v0.4.2, 544+ tests in modified crates, 0 clippy warnings. Lane-based queue serialization, fan-out dispatcher, JobStore with cancel/list/events, depth-gated tool filtering, announce-back pattern, and `/ws/runs/:run_id` all implemented.
 
@@ -14,7 +14,7 @@ Previous sprints archived to `specs/sprints/25-32-privacy-e2e-multi-agent-produc
 
 ### Phase A: Queue Modes (steer / followup / collect / interrupt)
 
-OpenClaw's queue system supports four message routing modes that determine how messages are delivered to agents within a lane:
+The queue system supports four message routing modes that determine how messages are delivered to agents within a lane:
 
 - **steer** (default) — Route message to a single agent based on AI router classification.
 - **followup** — Append to an existing run's conversation rather than starting a new one. Useful for multi-turn interactions with a specific agent.
@@ -44,7 +44,7 @@ When a parent agent is cancelled, all its descendant sub-agents must also be can
 
 ### Phase C: Tool-Loop Detection
 
-OpenClaw implements three detectors with tiered escalation to prevent agents from getting stuck in repetitive tool-call loops:
+Three detectors with tiered escalation prevent agents from getting stuck in repetitive tool-call loops:
 
 1. **Exact repeat detector** — Same tool + same arguments N times in a row (default N=3). Escalation: inject a system message telling the agent to try a different approach.
 2. **Semantic similarity detector** — Tool calls with >90% argument similarity over a sliding window. Escalation: reduce available tools (remove the looping tool for the next iteration).
@@ -61,7 +61,7 @@ OpenClaw implements three detectors with tiered escalation to prevent agents fro
 
 ### Phase D: Persistent Event Log & Presence Tracking
 
-Currently job events are reconstructed from `JobRecord` state. OpenClaw stores a persistent event log per run and tracks agent presence with TTL.
+Currently job events are reconstructed from `JobRecord` state. A persistent event log per run with agent presence tracking via TTL is needed.
 
 **Tasks:**
 
@@ -73,7 +73,7 @@ Currently job events are reconstructed from `JobRecord` state. OpenClaw stores a
 
 ### Phase E: Block Streaming (Markdown-Aware Chunking)
 
-OpenClaw's streaming doesn't just forward raw SSE tokens — it groups them into semantic blocks (paragraphs, code fences, lists) so subscribers receive coherent chunks.
+Streaming doesn't just forward raw SSE tokens — it groups them into semantic blocks (paragraphs, code fences, lists) so subscribers receive coherent chunks.
 
 **Tasks:**
 
@@ -100,7 +100,7 @@ OpenClaw's streaming doesn't just forward raw SSE tokens — it groups them into
 
 ## Sprint 34: Delegation Security Hardening
 
-**Goal:** Close the Layer 1 delegation security gaps identified in the OpenClaw gap analysis. Prevent privilege escalation, cost amplification, credential exfiltration, and resource exhaustion when delegating to sub-agents.
+**Goal:** Close the Layer 1 delegation security gaps. Prevent privilege escalation, cost amplification, credential exfiltration, and resource exhaustion when delegating to sub-agents.
 
 **Baseline:** Sprint 33 complete (1,360 tests), all orchestration behavioral features shipped.
 
@@ -154,9 +154,9 @@ OpenClaw's streaming doesn't just forward raw SSE tokens — it groups them into
 
 ---
 
-### Phase 0: Canopy-Inspired Hardening (Message TTL, Claim Locks, Directive Integrity)
+### Phase 0: Production Hardening (Message TTL, Claim Locks, Directive Integrity)
 
-Inspired by [Canopy](https://github.com/kwalus/Canopy)'s security-forward design. Three targeted hardening features.
+Three targeted hardening features for multi-agent coordination and security.
 
 - [x] **Message TTL / ephemeral messages** — `MemoryEntry.expires_at: Option<i64>` (unix timestamp). Expired entries excluded from all queries (`WHERE expires_at IS NULL OR expires_at > unixepoch()`). `MemoryStore::gc_expired()` trait method deletes expired rows. Migration, SqliteMemoryStore, PooledMemoryStore all updated. 4 tests.
 - [x] **Job claim locks** — `JobStore::try_claim(run_id, agent_id) -> bool` atomically transitions Pending→Running with agent attribution. Prevents Steer-mode race between routing and execution. `JobRecord.claimed_by: Option<String>` for audit. 5 tests.

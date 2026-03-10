@@ -1,6 +1,6 @@
 # AgentZero
 
-AgentZero is a lightweight, Rust-first agent runtime and CLI inspired by OpenClaw, built incrementally with strong module boundaries, security-first defaults, and test-driven delivery.
+AgentZero is a lightweight, Rust-first agent runtime and CLI built incrementally with strong module boundaries, security-first defaults, and test-driven delivery.
 
 ## Why this project
 

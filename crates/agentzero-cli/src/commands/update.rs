@@ -17,7 +17,7 @@ impl AgentZeroCommand for MigrateCommand {
 
     async fn run(ctx: &CommandContext, opts: Self::Options) -> anyhow::Result<()> {
         match opts {
-            MigrateCommands::Openclaw { source, dry_run } => {
+            MigrateCommands::Import { source, dry_run } => {
                 let source = resolve_migration_source(source)?;
                 let inspect = inspect_source(&source)?;
                 println!("Migration source: {}", inspect.source.display());
@@ -147,7 +147,7 @@ fn resolve_migration_source(source: Option<String>) -> anyhow::Result<PathBuf> {
     let home = std::env::var("HOME")
         .map(PathBuf::from)
         .map_err(|_| anyhow::anyhow!("HOME is not set; pass --source explicitly"))?;
-    Ok(home.join(".openclaw").join("workspace"))
+    Ok(home.join(".agentzero").join("workspace"))
 }
 
 #[cfg(test)]
@@ -191,7 +191,7 @@ mod tests {
 
         MigrateCommand::run(
             &ctx,
-            MigrateCommands::Openclaw {
+            MigrateCommands::Import {
                 source: Some(source_dir.to_string_lossy().to_string()),
                 dry_run: false,
             },
@@ -232,7 +232,7 @@ mod tests {
 
         let err = MigrateCommand::run(
             &ctx,
-            MigrateCommands::Openclaw {
+            MigrateCommands::Import {
                 source: Some(data_dir.join("missing").to_string_lossy().to_string()),
                 dry_run: false,
             },

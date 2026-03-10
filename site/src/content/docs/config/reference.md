@@ -155,7 +155,7 @@ warn_at_percent = 80
 
 # ─── Identity ────────────────────────────────────────────
 [identity]
-format = "openclaw"                              # openclaw or aieos
+format = "markdown"                              # markdown or aieos
 # aieos_path = "identity.json"
 
 # ─── Runtime ─────────────────────────────────────────────

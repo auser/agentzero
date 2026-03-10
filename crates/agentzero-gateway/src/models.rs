@@ -190,7 +190,7 @@ impl IntoResponse for GatewayError {
 }
 
 // ---------------------------------------------------------------------------
-// Async job submission (OpenClaw-style /v1/runs)
+// Async job submission (/v1/runs)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]

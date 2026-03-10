@@ -25,7 +25,7 @@ pub use agentzero_tools::{
     ToolSecurityPolicy, UrlValidationTool, WasmModuleTool, WasmToolExecTool, WebFetchTool,
     WebSearchTool, WriteFilePolicy, WriteFileTool,
 };
-pub use mcp::McpTool;
+pub use mcp::create_mcp_tools;
 pub use plugin::ProcessPluginTool;
 #[cfg(feature = "wasm-plugins")]
 pub use wasm_bridge::WasmTool;
@@ -128,9 +128,9 @@ pub fn default_tools(
         tools.push(Box::new(AgentsIpcTool));
     }
 
-    if policy.enable_mcp {
-        let mcp_tool = McpTool::from_env(&policy.allowed_mcp_servers)?;
-        tools.push(Box::new(mcp_tool));
+    if policy.enable_mcp && !policy.mcp_servers.is_empty() {
+        let mcp_tools = create_mcp_tools(&policy.mcp_servers)?;
+        tools.extend(mcp_tools);
     }
 
     if policy.enable_process_plugin {

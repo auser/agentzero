@@ -1621,8 +1621,8 @@ agentzero tunnel stop
 Migrate data from external runtimes.
 
 ```bash
-agentzero migrate openclaw --source /path/to/openclaw
-agentzero migrate openclaw --source /path/to/openclaw --dry-run
+agentzero migrate import --source /path/to/source
+agentzero migrate import --source /path/to/source --dry-run
 ```
 
 | Flag | Description |

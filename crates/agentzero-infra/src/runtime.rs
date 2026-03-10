@@ -371,9 +371,6 @@ async fn resolve_api_key(
             apply_provider_defaults(config, &cred.provider);
         }
         info!("using auth profile (provider '{}')", cred.provider);
-        if cred.provider == "anthropic" && cred.token.starts_with("sk-ant-oat") {
-            return exchange_anthropic_oauth_token(&cred.token).await;
-        }
         return Ok(cred.token);
     }
 
@@ -431,11 +428,6 @@ async fn resolve_api_key(
                     apply_provider_defaults(config, &cred.provider);
                 }
                 info!("using auth credential for provider '{}'", cred.provider);
-                // Anthropic OAuth tokens (sk-ant-oat) must be exchanged for
-                // a short-lived API key before use with the Messages API.
-                if config.provider.kind == "anthropic" && cred.token.starts_with("sk-ant-oat") {
-                    return exchange_anthropic_oauth_token(&cred.token).await;
-                }
                 return Ok(cred.token);
             }
         }
@@ -450,52 +442,6 @@ async fn resolve_api_key(
          set {env_hint} (env var or .env) or use a provider that supports your auth method",
         config.provider.kind
     )
-}
-
-/// Exchange an Anthropic OAuth access token (`sk-ant-oat...`) for a
-/// short-lived API key via the same endpoint Claude Code uses.
-async fn exchange_anthropic_oauth_token(oauth_token: &str) -> anyhow::Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-
-    let response = client
-        .post("https://api.anthropic.com/api/oauth/claude_cli/create_api_key")
-        .bearer_auth(oauth_token)
-        .header("content-type", "application/json")
-        .header("anthropic-version", "2023-06-01")
-        .json(&serde_json::json!({
-            "name": "agentzero-session"
-        }))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to exchange OAuth token for API key: {e}"))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("failed to exchange OAuth token for API key ({status}): {body}");
-    }
-
-    let body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to parse API key response: {e}"))?;
-
-    let api_key = body
-        .get("api_key")
-        .or_else(|| body.get("key"))
-        .or_else(|| body.get("token"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "OAuth token exchange succeeded but response has no API key field: {body}"
-            )
-        })?;
-
-    info!("exchanged OAuth token for short-lived API key");
-    Ok(api_key.to_string())
 }
 
 /// Core key resolution by provider kind (env var -> auth profile -> error).

@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::event_bus::EventBus;
 
 // ---------------------------------------------------------------------------
-// Multi-agent orchestration types (OpenClaw-inspired)
+// Multi-agent orchestration types
 // ---------------------------------------------------------------------------
 
 /// Unique identifier for an async job / agent run.

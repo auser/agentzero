@@ -39,7 +39,7 @@ References:
 
 ## Phase A: Tool Parity
 
-Remaining tools from the OpenClaw tool parity checklist that are not yet implemented.
+Remaining tools from the tool parity checklist that are not yet implemented.
 
 ### A1. CLI and Config Discovery Tools
 - [x] `cli_discovery.rs` — Discover available CLI tools and capabilities at runtime

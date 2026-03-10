@@ -5,6 +5,7 @@ pub const ENV_CONFIG_PATH: &str = "AGENTZERO_CONFIG";
 pub const DEFAULT_DATA_DIR_NAME: &str = ".agentzero";
 pub const DEFAULT_CONFIG_FILE: &str = "agentzero.toml";
 pub const DEFAULT_SQLITE_FILE: &str = "agentzero.db";
+pub const MCP_CONFIG_FILE: &str = "mcp.json";
 
 pub fn data_dir_for_home(home_dir: &Path) -> PathBuf {
     home_dir.join(DEFAULT_DATA_DIR_NAME)
