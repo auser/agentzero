@@ -225,7 +225,7 @@ Tools are enabled/disabled via config. Key toggles:
 | `git_operations` | `security.enable_git = true` |
 | `web_search` | `web_search.enabled = true` |
 | `browser` | `browser.enabled = true` |
-| `mcp_tool` | `security.mcp.enabled = true` |
+| `mcp__{server}__{tool}` | `security.mcp.enabled = true` + `mcp.json` |
 
 ---
 

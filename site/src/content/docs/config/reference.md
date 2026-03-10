@@ -69,7 +69,7 @@ context_aware_parsing = true
 
 [security.mcp]
 enabled = false
-allowed_servers = []                             # must be non-empty when enabled
+allowed_servers = []                             # empty = allow all servers from mcp.json; non-empty = allowlist filter
 
 [security.plugin]
 enabled = false

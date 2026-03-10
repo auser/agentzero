@@ -485,7 +485,7 @@ These tools are disabled by default and must be enabled in `agentzero.toml`:
 | `web_search` | `web_search.enabled = true` | Search the web (DuckDuckGo, Brave, Jina) |
 | `browser` | `browser.enabled = true` | Browse web pages |
 | `browser_open` | `browser.enabled = true` | Open a URL in the browser |
-| `mcp_tool` | `security.mcp.enabled = true` | Call MCP (Model Context Protocol) servers |
+| `mcp__{server}__{tool}` | `security.mcp.enabled = true` + `mcp.json` | MCP server tools (one per remote tool) |
 | `process_plugin` | `security.plugin.enabled = true` | Execute process-based plugins |
 | `composio` | `composio.enabled = true` | Use Composio integrations |
 | `pushover` | `security.enable_pushover = true` | Send push notifications via Pushover |

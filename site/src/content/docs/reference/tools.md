@@ -70,7 +70,7 @@ AgentZero ships with 50+ built-in tools and supports extension via WASM plugins,
 | Tool | Description | Condition |
 |---|---|---|
 | `agents_ipc` | Inter-process communication between agents | `enable_agents_ipc` (default: true) |
-| `mcp` | Model Context Protocol bridge | `[security.mcp]` |
+| `mcp__{server}__{tool}` | MCP server tools (one per remote tool) | `[security.mcp]` + `mcp.json` |
 | `model_routing_config` | Query model routing configuration | When router is configured |
 | `delegate` | Spawn sub-agent with scoped tools | When `[agents.*]` configured |
 
@@ -520,19 +520,62 @@ agentzero skill remove --name my-skill
 
 ## MCP (Model Context Protocol)
 
-MCP tool servers can be integrated when enabled. Servers must be explicitly allowlisted.
+MCP servers are integrated as **first-class tools**. Each tool exposed by an MCP server is registered individually with a namespaced name (`mcp__{server}__{tool}`), its real description, and its full input schema. The LLM sees and invokes them just like any built-in tool.
+
+### Configuration
+
+MCP server definitions live in dedicated `mcp.json` files, discovered from two locations:
+
+| Location | Path | Scope |
+|---|---|---|
+| **Global** | `~/.agentzero/mcp.json` | Available to all projects |
+| **Project** | `{workspace}/.agentzero/mcp.json` | Project-specific servers |
+
+Both files are optional. Project servers override global ones with the same name. The `AGENTZERO_MCP_SERVERS` env var is supported as a final override layer.
+
+**`mcp.json` format** (matches Claude Code / VS Code convention):
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-filesystem", "/tmp"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "ghp_..." }
+    }
+  }
+}
+```
+
+Enable MCP in `agentzero.toml` (the kill-switch):
 
 ```toml
 [security.mcp]
 enabled = true
-allowed_servers = ["filesystem", "github"]
+allowed_servers = []  # empty = allow all configured servers
 ```
 
-### Connection Caching
+When `allowed_servers` is non-empty, only those named servers are loaded.
 
-MCP server connections are cached in an `McpSession` for the lifetime of the tool instance. The first call to a server spawns the subprocess and caches the stdin/stdout handles. Subsequent calls reuse the existing connection, avoiding process startup overhead on every tool invocation.
+### How It Works
 
-Tool schemas from each server's `tools/list` response are also cached and used for structured tool definitions. If a connection error occurs, the session is cleared and retried once automatically.
+At startup, AgentZero connects to each configured MCP server, calls `tools/list`, and registers every discovered tool as its own `Box<dyn Tool>`:
+
+- **Name**: `mcp__filesystem__read_file`, `mcp__github__create_issue`, etc.
+- **Description**: From the MCP server's tool metadata
+- **Schema**: The `inputSchema` from `tools/list`, passed directly to the LLM
+
+### Session Sharing
+
+Multiple tools from the same server share a single `McpServerConnection` (subprocess + stdin/stdout handles). The first tool call spawns the process; subsequent calls reuse it. If a connection error occurs, the session is cleared and retried once automatically.
+
+### Graceful Degradation
+
+If a server fails to connect at startup (e.g. missing binary, timeout), it is skipped with a warning — other servers and all built-in tools continue to work normally.
 
 ---
 

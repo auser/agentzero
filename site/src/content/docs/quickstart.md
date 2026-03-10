@@ -467,7 +467,7 @@ agentzero doctor traces --limit 10
 | `AGENTZERO_ENV` | Select an env-specific `.env.{env}` overlay file | No |
 | `BRAVE_API_KEY` | Enable Brave web search | No |
 | `JINA_API_KEY` | Enable Jina web fetch | No |
-| `AGENTZERO_MCP_SERVERS` | JSON map of MCP server configs | No |
+| `AGENTZERO_MCP_SERVERS` | JSON map of MCP server configs (override layer; prefer `mcp.json` files) | No |
 
 ---
 

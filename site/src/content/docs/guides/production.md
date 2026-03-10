@@ -148,7 +148,7 @@ max_alerts_per_minute = 30
 
 [security.mcp]
 enabled = false                                  # enable only if needed
-allowed_servers = []
+allowed_servers = []                             # restrict to specific servers by name
 
 [security.plugin]
 enabled = false                                  # enable only if needed

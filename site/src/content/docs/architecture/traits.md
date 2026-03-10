@@ -68,7 +68,7 @@ pub trait Tool: Send + Sync {
 }
 ```
 
-All 50+ built-in tools implement this trait with `input_schema()` for structured tool-use APIs. WASM plugins, process plugins, and MCP servers are wrapped in `Tool` adapters.
+All 50+ built-in tools implement this trait with `input_schema()` for structured tool-use APIs. WASM plugins and process plugins are wrapped in `Tool` adapters. MCP servers are registered as first-class tools — each remote tool gets its own `McpIndividualTool` with a namespaced name (`mcp__{server}__{tool}`), the tool's real description, and its real input schema.
 
 ## Crate Boundaries
 
