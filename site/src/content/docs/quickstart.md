@@ -319,7 +319,96 @@ agentzero -vvvv agent -m "your task"  # trace: see full request/response
 
 ---
 
-## 8. Manage Skills
+## 8. Connect MCP Servers
+
+AgentZero supports the [Model Context Protocol](https://modelcontextprotocol.io/) — each MCP tool is registered individually with its real name, description, and schema.
+
+### Configure servers
+
+Create an `mcp.json` file (global or per-project):
+
+```bash
+# Global — available to all projects
+mkdir -p ~/.agentzero
+cat > ~/.agentzero/mcp.json << 'EOF'
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-filesystem", "/tmp"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "ghp_..." }
+    }
+  }
+}
+EOF
+```
+
+For project-specific servers, place the file at `.agentzero/mcp.json` in your workspace root. Project servers override global ones with the same name.
+
+### Enable MCP in your config
+
+```toml
+[security.mcp]
+enabled = true
+# allowed_servers = ["filesystem"]  # optional filter; empty = all servers
+```
+
+### Verify
+
+```bash
+agentzero tools list | grep mcp
+```
+
+You should see tools like `mcp__filesystem__read_file`, `mcp__github__create_issue`, etc.
+
+---
+
+## 9. Add Channel Integrations
+
+Connect the agent to messaging platforms. Enable the `channels-standard` feature when building from source, or use the pre-built binary (includes all channels).
+
+### Telegram
+
+```toml
+[channels.telegram]
+bot_token = "YOUR_TELEGRAM_BOT_TOKEN"
+allowed_users = []                    # empty = allow all
+```
+
+### Slack
+
+```toml
+[channels.slack]
+bot_token = "xoxb-YOUR-SLACK-BOT-TOKEN"
+app_token = "xapp-YOUR-SLACK-APP-TOKEN"
+```
+
+### Discord
+
+```toml
+[channels.discord]
+bot_token = "YOUR_DISCORD_BOT_TOKEN"
+```
+
+### More channels
+
+AgentZero also supports Matrix, Email (SMTP/IMAP), IRC, Mattermost, Nostr, Webhook, and more. See [Configuration Reference](/agentzero/config/reference/) for all channel options.
+
+Manage channels:
+
+```bash
+agentzero channel list
+agentzero channel enable telegram
+agentzero channel test telegram
+```
+
+---
+
+## 10. Manage Skills
 
 Skills are pre-built tool bundles that extend what the agent can do.
 
@@ -332,7 +421,7 @@ agentzero skill remove <name>     # Uninstall
 
 ---
 
-## 9. Add a New Tool
+## 11. Add a New Tool
 
 Tools are Rust structs that implement the `Tool` trait from `agentzero-core`.
 
@@ -395,7 +484,7 @@ cargo clippy -p agentzero-infra
 
 ---
 
-## 10. Explore More Commands
+## 12. Explore More Commands
 
 ```bash
 # Interactive terminal dashboard

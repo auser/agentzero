@@ -4,12 +4,25 @@
 
 [provider]
 kind = "openrouter"                        # openrouter | openai | anthropic | ollama
-model = "anthropic/claude-sonnet-4-6"    # model identifier for the provider
-# api_key is read from AGENTZERO_API_KEY or OPENAI_API_KEY env var
+model = "anthropic/claude-sonnet-4-6"      # model identifier for the provider
+# api_key is read from OPENAI_API_KEY env var, .env file, or `agentzero auth`
 
 [security]
 allowed_root = "."                         # restrict file access to this directory
 allowed_commands = ["ls", "pwd", "cat", "echo", "grep", "find", "git", "cargo"]
+
+# [security.write_file]
+# enabled = true                           # uncomment to let the agent write files
+
+# [security.mcp]
+# enabled = true                           # uncomment to enable MCP server tools
+# Server definitions go in mcp.json files:
+#   Global:  ~/.agentzero/mcp.json
+#   Project: .agentzero/mcp.json
+
+# [web_search]
+# enabled = true                           # uncomment to enable web search
+# provider = "duckduckgo"                  # no API key needed
 
 [gateway]
 port = 42617                               # local HTTP gateway port
