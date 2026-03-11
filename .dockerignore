@@ -48,6 +48,6 @@ specs/
 # FFI bindings output
 crates/agentzero-ffi/bindings/
 
-# Test and bench crates (not needed for production build)
-crates/agentzero-bench/
-crates/agentzero-testkit/
+# Note: testkit and bench are workspace members referenced in Cargo.toml,
+# so they must be included in the Docker context even though they aren't
+# built in production. They add ~40 KB total.

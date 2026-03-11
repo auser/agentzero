@@ -728,9 +728,11 @@ async fn update_check_success_path() {
     let dir = temp_dir("update-check");
     let d = dir.to_str().unwrap();
 
-    run_cmd(&["agentzero", "--data-dir", d, "update", "check"])
-        .await
-        .expect("update check should succeed");
+    // Bypass the real GitHub API to avoid anonymous rate-limit (403) in CI.
+    std::env::set_var("AGENTZERO_UPDATE_LATEST", "99.0.0");
+    let result = run_cmd(&["agentzero", "--data-dir", d, "update", "check"]).await;
+    std::env::remove_var("AGENTZERO_UPDATE_LATEST");
+    result.expect("update check should succeed");
 
     cleanup(dir);
 }
