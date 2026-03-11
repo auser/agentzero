@@ -7,6 +7,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.5.5] - 2026-03-11
+
+### Fixed
+- Pin Swatinem/rust-cache to node24 commit SHA — The FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 env var only works at runner
+
 ## [0.5.4] - 2026-03-11
 
 ### Fixed
