@@ -5,7 +5,7 @@ use crate::types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ConversationMessage,
     HookEvent, HookFailureMode, HookRiskTier, HookSink, LoopAction, MemoryEntry, MemoryStore,
     MetricsSink, Provider, ResearchTrigger, StopReason, StreamSink, Tool, ToolContext,
-    ToolDefinition, ToolResultMessage, UserMessage,
+    ToolDefinition, ToolResultMessage, ToolUseRequest, UserMessage,
 };
 use crate::validation::validate_json;
 use serde_json::json;
@@ -69,6 +69,90 @@ fn parse_tool_calls(prompt: &str) -> Vec<(&str, &str)> {
             })
         })
         .collect()
+}
+
+/// Attempt to extract a tool call from LLM text output.
+///
+/// Many local models (llama.cpp, ollama, etc.) don't return structured `tool_calls`
+/// in the OpenAI response format. Instead, they emit the tool invocation as a JSON
+/// code block or raw JSON in the `content` field. This function detects common
+/// patterns and converts them into a proper `ToolUseRequest` so the agent loop
+/// can dispatch the tool.
+///
+/// Recognized formats:
+/// - ```json\n{"name": "tool", "arguments": {...}}\n```
+/// - {"name": "tool", "arguments": {...}}
+/// - {"name": "tool", "parameters": {...}}
+fn extract_tool_call_from_text(
+    text: &str,
+    known_tools: &[ToolDefinition],
+) -> Option<ToolUseRequest> {
+    // Try to find JSON in a code block first, then raw JSON.
+    let json_str = extract_json_block(text).or_else(|| extract_bare_json(text))?;
+    let obj: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let name = obj.get("name")?.as_str()?;
+
+    // Only extract if the name matches a known tool — avoids false positives.
+    if !known_tools.iter().any(|t| t.name == name) {
+        return None;
+    }
+
+    let args = obj
+        .get("arguments")
+        .or_else(|| obj.get("parameters"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Object(Default::default()));
+
+    Some(ToolUseRequest {
+        id: format!("text_extracted_{}", name),
+        name: name.to_string(),
+        input: args,
+    })
+}
+
+/// Extract JSON from a fenced code block (```json ... ``` or ``` ... ```).
+fn extract_json_block(text: &str) -> Option<&str> {
+    let start = text.find("```")?;
+    let after_fence = &text[start + 3..];
+    // Skip optional language tag on the same line.
+    let content_start = after_fence.find('\n')? + 1;
+    let content = &after_fence[content_start..];
+    let end = content.find("```")?;
+    let block = content[..end].trim();
+    if block.starts_with('{') {
+        Some(block)
+    } else {
+        None
+    }
+}
+
+/// Extract the first top-level `{...}` JSON object from text.
+fn extract_bare_json(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let candidate = &text[start..];
+    // Find the matching closing brace by counting depth.
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escape_next = false;
+    for (i, ch) in candidate.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_string => escape_next = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => depth += 1,
+            '}' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&candidate[..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// If the JSON schema declares exactly one required string property, return its name.
@@ -954,35 +1038,58 @@ impl Agent {
             )
             .await?;
 
-            // No tool calls or EndTurn → return final response.
+            // No tool calls or EndTurn → check for text-based tool calls from
+            // local models before returning the final response.
+            let mut chat_result = chat_result;
             if chat_result.tool_calls.is_empty()
                 || chat_result.stop_reason == Some(StopReason::EndTurn)
             {
-                let response_text = chat_result.output_text;
-                self.write_to_memory(
-                    "assistant",
-                    &response_text,
-                    request_id,
-                    ctx.source_channel.as_deref(),
-                    ctx.conversation_id.as_deref().unwrap_or(""),
-                )
-                .await?;
-                self.audit("respond_success", json!({"request_id": request_id}))
-                    .await;
-                self.hook(
-                    "before_response_emit",
-                    json!({"request_id": request_id, "response_len": response_text.len()}),
-                )
-                .await?;
-                let response = AssistantMessage {
-                    text: response_text,
-                };
-                self.hook(
-                    "after_response_emit",
-                    json!({"request_id": request_id, "response_len": response.text.len()}),
-                )
-                .await?;
-                return Ok(response);
+                // Fallback: local models (llama.cpp, ollama, etc.) often emit tool
+                // calls as JSON text instead of structured tool_calls. Try to extract
+                // and dispatch them so the agent loop continues.
+                if chat_result.tool_calls.is_empty() && !chat_result.output_text.is_empty() {
+                    if let Some(extracted) =
+                        extract_tool_call_from_text(&chat_result.output_text, &effective_tools)
+                    {
+                        info!(
+                            request_id = %request_id,
+                            tool = %extracted.name,
+                            "extracted tool call from text output (local model fallback)"
+                        );
+                        chat_result.tool_calls = vec![extracted];
+                        chat_result.stop_reason = Some(StopReason::ToolUse);
+                        // Fall through to tool dispatch below instead of returning.
+                    }
+                }
+
+                // If still no tool calls after extraction attempt, return text.
+                if chat_result.tool_calls.is_empty() {
+                    let response_text = chat_result.output_text;
+                    self.write_to_memory(
+                        "assistant",
+                        &response_text,
+                        request_id,
+                        ctx.source_channel.as_deref(),
+                        ctx.conversation_id.as_deref().unwrap_or(""),
+                    )
+                    .await?;
+                    self.audit("respond_success", json!({"request_id": request_id}))
+                        .await;
+                    self.hook(
+                        "before_response_emit",
+                        json!({"request_id": request_id, "response_len": response_text.len()}),
+                    )
+                    .await?;
+                    let response = AssistantMessage {
+                        text: response_text,
+                    };
+                    self.hook(
+                        "after_response_emit",
+                        json!({"request_id": request_id, "response_len": response.text.len()}),
+                    )
+                    .await?;
+                    return Ok(response);
+                }
             }
 
             // Record assistant message with tool calls in conversation history.
@@ -4947,5 +5054,246 @@ mod tests {
         let stored = entries.lock().expect("memory lock poisoned");
         assert!(stored[0].source_channel.is_none());
         assert!(stored[1].source_channel.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Text-based tool call extraction tests (local model fallback)
+    // -----------------------------------------------------------------------
+
+    fn sample_tools() -> Vec<ToolDefinition> {
+        vec![
+            ToolDefinition {
+                name: "web_search".to_string(),
+                description: "Search the web".to_string(),
+                input_schema: serde_json::json!({"type": "object"}),
+            },
+            ToolDefinition {
+                name: "read_file".to_string(),
+                description: "Read a file".to_string(),
+                input_schema: serde_json::json!({"type": "object"}),
+            },
+        ]
+    }
+
+    #[test]
+    fn extract_tool_call_from_json_code_block() {
+        let text = "I'll search for that.\n```json\n{\"name\": \"web_search\", \"arguments\": {\"query\": \"AI regulation EU\"}}\n```";
+        let tools = sample_tools();
+        let result = extract_tool_call_from_text(text, &tools).expect("should extract");
+        assert_eq!(result.name, "web_search");
+        assert_eq!(result.input["query"], "AI regulation EU");
+    }
+
+    #[test]
+    fn extract_tool_call_from_bare_code_block() {
+        let text = "```\n{\"name\": \"web_search\", \"arguments\": {\"query\": \"test\"}}\n```";
+        let tools = sample_tools();
+        let result = extract_tool_call_from_text(text, &tools).expect("should extract");
+        assert_eq!(result.name, "web_search");
+    }
+
+    #[test]
+    fn extract_tool_call_from_bare_json() {
+        let text = "{\"name\": \"web_search\", \"arguments\": {\"query\": \"test\"}}";
+        let tools = sample_tools();
+        let result = extract_tool_call_from_text(text, &tools).expect("should extract");
+        assert_eq!(result.name, "web_search");
+        assert_eq!(result.input["query"], "test");
+    }
+
+    #[test]
+    fn extract_tool_call_with_parameters_key() {
+        let text = "{\"name\": \"web_search\", \"parameters\": {\"query\": \"test\"}}";
+        let tools = sample_tools();
+        let result = extract_tool_call_from_text(text, &tools).expect("should extract");
+        assert_eq!(result.name, "web_search");
+        assert_eq!(result.input["query"], "test");
+    }
+
+    #[test]
+    fn extract_tool_call_ignores_unknown_tool() {
+        let text = "{\"name\": \"unknown_tool\", \"arguments\": {}}";
+        let tools = sample_tools();
+        assert!(extract_tool_call_from_text(text, &tools).is_none());
+    }
+
+    #[test]
+    fn extract_tool_call_returns_none_for_plain_text() {
+        let text = "I don't know how to help with that.";
+        let tools = sample_tools();
+        assert!(extract_tool_call_from_text(text, &tools).is_none());
+    }
+
+    #[test]
+    fn extract_tool_call_returns_none_for_non_tool_json() {
+        let text = "{\"message\": \"hello\", \"status\": \"ok\"}";
+        let tools = sample_tools();
+        assert!(extract_tool_call_from_text(text, &tools).is_none());
+    }
+
+    #[test]
+    fn extract_tool_call_with_surrounding_text() {
+        let text = "Sure, let me search for that.\n{\"name\": \"web_search\", \"arguments\": {\"query\": \"AI regulation\"}}\nI'll get back to you.";
+        let tools = sample_tools();
+        let result = extract_tool_call_from_text(text, &tools).expect("should extract");
+        assert_eq!(result.name, "web_search");
+    }
+
+    #[test]
+    fn extract_tool_call_no_arguments_field() {
+        let text = "{\"name\": \"web_search\"}";
+        let tools = sample_tools();
+        let result = extract_tool_call_from_text(text, &tools).expect("should extract");
+        assert_eq!(result.name, "web_search");
+        assert!(result.input.is_object());
+    }
+
+    #[test]
+    fn extract_json_block_handles_nested_braces() {
+        let text =
+            "```json\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"/tmp/{test}\"}}\n```";
+        let tools = sample_tools();
+        let result = extract_tool_call_from_text(text, &tools).expect("should extract");
+        assert_eq!(result.name, "read_file");
+        assert_eq!(result.input["path"], "/tmp/{test}");
+    }
+
+    #[test]
+    fn extract_bare_json_handles_escaped_quotes() {
+        let text =
+            "{\"name\": \"web_search\", \"arguments\": {\"query\": \"test \\\"quoted\\\" word\"}}";
+        let tools = sample_tools();
+        let result = extract_tool_call_from_text(text, &tools).expect("should extract");
+        assert_eq!(result.name, "web_search");
+    }
+
+    #[test]
+    fn extract_tool_call_empty_string() {
+        let tools = sample_tools();
+        assert!(extract_tool_call_from_text("", &tools).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Integration test: local model text fallback through agent loop
+    // -----------------------------------------------------------------------
+
+    /// Provider that returns a tool call as text (simulating local model behavior)
+    /// on the first call, then returns a final response on subsequent calls.
+    struct TextToolCallProvider {
+        call_count: AtomicUsize,
+    }
+
+    impl TextToolCallProvider {
+        fn new() -> Self {
+            Self {
+                call_count: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for TextToolCallProvider {
+        async fn complete(&self, _prompt: &str) -> anyhow::Result<ChatResult> {
+            Ok(ChatResult::default())
+        }
+
+        async fn complete_with_tools(
+            &self,
+            messages: &[ConversationMessage],
+            _tools: &[ToolDefinition],
+            _reasoning: &ReasoningConfig,
+        ) -> anyhow::Result<ChatResult> {
+            let n = self.call_count.fetch_add(1, Ordering::Relaxed);
+            if n == 0 {
+                // Simulate local model: returns tool call as text, not structured.
+                Ok(ChatResult {
+                    output_text: "```json\n{\"name\": \"echo\", \"arguments\": {\"message\": \"hello from text\"}}\n```".to_string(),
+                    tool_calls: vec![],
+                    stop_reason: Some(StopReason::EndTurn),
+                    ..Default::default()
+                })
+            } else {
+                // After tool result is fed back, return a final text response.
+                let tool_output = messages
+                    .iter()
+                    .rev()
+                    .find_map(|m| match m {
+                        ConversationMessage::ToolResult(r) => Some(r.content.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("no tool result");
+                Ok(ChatResult {
+                    output_text: format!("Got it: {tool_output}"),
+                    tool_calls: vec![],
+                    stop_reason: Some(StopReason::EndTurn),
+                    ..Default::default()
+                })
+            }
+        }
+    }
+
+    /// Echo tool with schema (needed for structured tool path).
+    struct TestEchoTool;
+
+    #[async_trait]
+    impl crate::types::Tool for TestEchoTool {
+        fn name(&self) -> &'static str {
+            "echo"
+        }
+        fn description(&self) -> &'static str {
+            "Echo back the message"
+        }
+        fn input_schema(&self) -> Option<serde_json::Value> {
+            Some(serde_json::json!({
+                "type": "object",
+                "required": ["message"],
+                "properties": {
+                    "message": {"type": "string"}
+                }
+            }))
+        }
+        async fn execute(
+            &self,
+            input: &str,
+            _ctx: &ToolContext,
+        ) -> anyhow::Result<crate::types::ToolResult> {
+            let v: serde_json::Value =
+                serde_json::from_str(input).unwrap_or(Value::String(input.to_string()));
+            let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or(input);
+            Ok(crate::types::ToolResult {
+                output: format!("echoed:{msg}"),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn text_tool_extraction_dispatches_through_agent_loop() {
+        let agent = Agent::new(
+            AgentConfig {
+                model_supports_tool_use: true,
+                max_tool_iterations: 5,
+                request_timeout_ms: 10_000,
+                ..AgentConfig::default()
+            },
+            Box::new(TextToolCallProvider::new()),
+            Box::new(TestMemory::default()),
+            vec![Box::new(TestEchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "echo hello".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed with text-extracted tool call");
+
+        assert!(
+            response.text.contains("echoed:hello from text"),
+            "expected tool result in response, got: {}",
+            response.text
+        );
     }
 }
