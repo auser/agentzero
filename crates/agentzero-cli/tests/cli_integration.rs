@@ -729,9 +729,15 @@ async fn update_check_success_path() {
     let d = dir.to_str().unwrap();
 
     // Bypass the real GitHub API to avoid anonymous rate-limit (403) in CI.
-    std::env::set_var("AGENTZERO_UPDATE_LATEST", "99.0.0");
+    // SAFETY: this test binary runs each tokio::test on a single-threaded
+    // runtime so no other thread reads env vars concurrently.
+    unsafe {
+        std::env::set_var("AGENTZERO_UPDATE_LATEST", "99.0.0");
+    }
     let result = run_cmd(&["agentzero", "--data-dir", d, "update", "check"]).await;
-    std::env::remove_var("AGENTZERO_UPDATE_LATEST");
+    unsafe {
+        std::env::remove_var("AGENTZERO_UPDATE_LATEST");
+    }
     result.expect("update check should succeed");
 
     cleanup(dir);
