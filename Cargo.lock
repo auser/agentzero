@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-cli",
  "agentzero-core",
@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-auth"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-bench"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-channels"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-config",
  "agentzero-core",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-cli"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-auth",
  "agentzero-channels",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-config"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-core",
  "agentzero-tools",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-ffi"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-core",
  "agentzero-infra",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-gateway"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-channels",
  "agentzero-config",
@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-infra"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-auth",
  "agentzero-config",
@@ -273,7 +273,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-orchestrator"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-channels",
  "agentzero-config",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-plugin-sdk"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -300,7 +300,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-plugins"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "fd-lock",
@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-providers"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-storage"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -363,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-testkit"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-core",
  "agentzero-providers",
@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-tools"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "agentzero-core",
  "agentzero-providers",
