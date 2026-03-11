@@ -235,6 +235,12 @@ const PROVIDER_CATALOG: &[ProviderDescriptor] = &[
         aliases: &["ovh"],
         default_base_url: None,
     },
+    ProviderDescriptor {
+        id: "builtin",
+        description: "Built-in local model (llama.cpp) [local]",
+        aliases: &["local", "embedded"],
+        default_base_url: None,
+    },
 ];
 
 pub fn supported_providers() -> &'static [ProviderDescriptor] {

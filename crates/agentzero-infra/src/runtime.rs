@@ -209,7 +209,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
                     .transpose()?
                     .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
             },
-            model_supports_tool_use: caps.is_some_and(|c| c.tool_use),
+            model_supports_tool_use: caps.map_or(true, |c| c.tool_use),
             model_supports_vision: caps.is_some_and(|c| c.vision),
             system_prompt: config.agent.system_prompt.clone(),
             privacy_boundary: config.privacy.mode.clone(),

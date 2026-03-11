@@ -34,6 +34,7 @@ vendored-openssl = ["agentzero-cli/vendored-openssl"]
 privacy = ["agentzero-cli/privacy"]
 telemetry = ["agentzero-cli/telemetry"]
 document-tools = ["agentzero-cli/document-tools"]
+local-model = ["agentzero-cli/local-model"]
 
 [dependencies]
 anyhow.workspace = true

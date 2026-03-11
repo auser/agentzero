@@ -312,7 +312,7 @@ mod tests {
         let output = String::from_utf8(out).expect("output should be utf8");
         let plain = strip_ansi_codes(&output);
 
-        assert!(plain.contains("Supported providers (36 total):"));
+        assert!(plain.contains("Supported providers (37 total):"));
         assert!(plain.contains("  ID (use in config)  DESCRIPTION"));
         assert!(plain.contains("  openrouter          OpenRouter (active)"));
     }
@@ -369,7 +369,7 @@ mod tests {
         assert!(!output.contains("\u{1b}["));
 
         let value: Value = serde_json::from_str(&output).expect("json output should parse");
-        assert_eq!(value["total"].as_u64(), Some(36));
+        assert_eq!(value["total"].as_u64(), Some(37));
         assert_eq!(value["active_provider"].as_str(), Some("openrouter"));
         assert!(value["providers"]
             .as_array()

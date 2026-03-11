@@ -5,7 +5,11 @@
 //! and provider-specific quirks (reasoning tokens, system prompts).
 
 mod anthropic;
+#[cfg(feature = "local-model")]
+pub mod builtin;
 mod catalog;
+#[cfg(feature = "local-model")]
+pub mod model_manager;
 mod models;
 mod openai;
 pub(crate) mod transport;
@@ -68,6 +72,15 @@ register_providers! {
     _ => OpenAiCompatibleProvider,
 }
 
+/// Build a builtin (in-process llama.cpp) provider.
+///
+/// Available only when compiled with the `local-model` feature.
+/// The `base_url` and `api_key` parameters are ignored.
+#[cfg(feature = "local-model")]
+pub fn build_builtin_provider(model: String) -> Box<dyn agentzero_core::Provider> {
+    Box::new(builtin::BuiltinProvider::new(model))
+}
+
 /// Build a provider with privacy enforcement.
 ///
 /// - `"local_only"` — rejects cloud providers entirely.
@@ -105,6 +118,8 @@ pub fn build_provider_with_transport(
     transport: TransportConfig,
 ) -> Box<dyn agentzero_core::Provider> {
     match kind {
+        #[cfg(feature = "local-model")]
+        "builtin" => build_builtin_provider(model),
         "anthropic" => Box::new(AnthropicProvider::with_config(
             base_url, api_key, model, transport,
         )),

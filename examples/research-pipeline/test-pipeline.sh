@@ -293,6 +293,12 @@ while true; do
       echo ""
       ERROR=$(echo "$STATUS_JSON" | jq -r '.error // "unknown error"')
       red "  Pipeline failed: $ERROR"
+      if echo "$ERROR" | grep -qi "timeout"; then
+        echo ""
+        yellow "  Hint: the LLM provider request timed out."
+        echo "  Check /tmp/agentzero-test-gateway.log for 429 (rate limit) errors."
+        echo "  If rate-limited, wait a minute and try again."
+      fi
       exit 1
       ;;
     cancelled)

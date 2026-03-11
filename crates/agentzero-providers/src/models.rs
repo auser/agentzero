@@ -26,7 +26,7 @@ impl Default for ModelCapabilities {
     fn default() -> Self {
         Self {
             vision: false,
-            tool_use: false,
+            tool_use: true,
             streaming: true,
             max_output_tokens: 0,
         }
@@ -46,7 +46,7 @@ impl ModelCapabilities {
     const fn local() -> Self {
         Self {
             vision: false,
-            tool_use: false,
+            tool_use: true,
             streaming: true,
             max_output_tokens: 0,
         }
@@ -125,6 +125,17 @@ const GEMINI_MODELS: &[ModelDescriptor] = &[
     },
 ];
 
+const BUILTIN_MODELS: &[ModelDescriptor] = &[ModelDescriptor {
+    id: "qwen2.5-coder-3b",
+    is_default: true,
+    capabilities: ModelCapabilities {
+        vision: false,
+        tool_use: true,
+        streaming: true,
+        max_output_tokens: 2048,
+    },
+}];
+
 const OLLAMA_MODELS: &[ModelDescriptor] = &[
     ModelDescriptor {
         id: "llama3.1:8b",
@@ -152,6 +163,7 @@ pub fn find_models_for_provider(
         "openai" | "openai-codex" | "copilot" => OPENAI_MODELS,
         "anthropic" => ANTHROPIC_MODELS,
         "gemini" => GEMINI_MODELS,
+        "builtin" => BUILTIN_MODELS,
         "ollama" | "llamacpp" | "lmstudio" | "vllm" | "sglang" | "osaurus" => OLLAMA_MODELS,
         _ => OPENROUTER_MODELS,
     };
@@ -224,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn local_models_have_limited_capabilities() {
+    fn local_models_have_limited_vision_but_support_tools() {
         let (_, models) = find_models_for_provider("ollama").expect("ollama should resolve");
         for model in models {
             assert!(
@@ -233,8 +245,8 @@ mod tests {
                 model.id
             );
             assert!(
-                !model.capabilities.tool_use,
-                "{} should not have tool_use",
+                model.capabilities.tool_use,
+                "{} should have tool_use",
                 model.id
             );
         }
@@ -259,10 +271,10 @@ mod tests {
     }
 
     #[test]
-    fn default_capabilities_are_conservative() {
+    fn default_capabilities_enable_tool_use() {
         let caps = ModelCapabilities::default();
         assert!(!caps.vision);
-        assert!(!caps.tool_use);
+        assert!(caps.tool_use);
         assert!(caps.streaming);
         assert_eq!(caps.max_output_tokens, 0);
     }

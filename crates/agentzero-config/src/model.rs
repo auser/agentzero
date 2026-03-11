@@ -46,6 +46,10 @@ impl AgentZeroConfig {
         if self.provider.kind.trim().is_empty() {
             return Err(anyhow!("provider.kind must not be empty"));
         }
+        // The builtin provider runs in-process — no base_url needed.
+        if self.provider.kind == "builtin" {
+            return Ok(());
+        }
         if self.provider.base_url.trim().is_empty() {
             return Err(anyhow!("provider.base_url must not be empty"));
         }

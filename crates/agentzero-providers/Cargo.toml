@@ -11,6 +11,7 @@ publish = false
 [features]
 default = []
 privacy = ["agentzero-core/privacy"]
+local-model = ["dep:llama-cpp-2", "dep:hf-hub", "dep:indicatif", "dep:dirs"]
 
 [dependencies]
 anyhow.workspace = true
@@ -22,6 +23,10 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+llama-cpp-2 = { workspace = true, features = ["sampler"], optional = true }
+hf-hub = { workspace = true, optional = true }
+indicatif = { workspace = true, optional = true }
+dirs = { version = "5", optional = true }
 
 [dev-dependencies]
 base64 = "0.22"
