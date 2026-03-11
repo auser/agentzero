@@ -7,6 +7,38 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.5.0] - 2026-03-11
+
+### Added
+- OpenClaw multi-agent patterns — lanes, depth-gated tools, announce, async jobs API — Implement the core OpenClaw-inspired multi-agent orchestration stack:
+- Sprint 33 — queue modes, cascade cancel, loop detection, event log, presence, block streaming — Phase A: QueueMode enum (Steer/Followup/Collect/Interrupt) in core types,
+- Sprints 34-35 — delegation security hardening + hierarchical budgeting — Sprint 34: Delegation security — AutonomyPolicy::intersect() with
+- Sprint 36 — production hardening (transcript, pooling, auth, telemetry, event bus, API keys) — Phase A: Sub-agent transcript archival via GET /v1/runs/:run_id/transcript
+- First-class MCP server tools, test fixes, and sqlite migration guard — - Register each MCP server tool as its own Box<dyn Tool> with namespaced
+- Add gateway smoke test scripts with gz() curl helper — Shell scripts to validate gateway endpoints work end-to-end without
+- Add built-in local LLM provider (llama.cpp) and enable tool use for all providers — Adds a self-contained local model provider using llama-cpp-2 behind the
+- Add ConverseTool for bidirectional agent-to-agent conversations — Enable multi-turn conversations between agents (and agent-to-human via
+
+### Fixed
+- Update quinn-proto to 0.11.14 to resolve RUSTSEC-2026-0037
+- Update metrics grid layout for 4 items instead of 6
+- Test-pipeline.sh ignores stale PAIRING_CODE when starting its own gateway — When the script starts a new gateway with --new-pairing, it now always
+- Increase request_timeout_ms to 120s in example configs — The default 30s timeout is too short for research pipelines that do
+- Repair .gitignore missing newline
+
+### Changed
+- Update site documentation for first-class MCP server tools — Update all MCP references across 7 doc pages to reflect the new
+- Comprehensive README rewrite with quickstart for all options — - Rewrite README with provider-specific quickstarts (OpenRouter, Anthropic,
+- Add MCP, Channels, and Multi-Agent guide pages to site
+- Correct landing page metrics to match actual codebase — - Minimal Binary: ~5MB → <8MB (CI budget is 8MB)
+- Remove platform targets and workspace crates from landing metrics
+- Add local model documentation and improve builtin provider UX — Add builtin provider docs to providers guide, installation page, and
+
+### Changed
+- Archive Sprints 25-32, plan Sprint 33 (OpenClaw queue modes, cascade stop, loop detection) — Archive completed sprints to specs/sprints/25-32-privacy-e2e-multi-agent-production.md.
+- Deploy GitHub Pages after every successful CI run on main — Changed trigger from push with path filters to workflow_run, so the
+- Add e2e mock provider test and feature validation plan
+
 ## [0.4.2] - 2026-03-07
 
 ### Added
