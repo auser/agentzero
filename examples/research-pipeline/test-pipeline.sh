@@ -167,23 +167,16 @@ echo ""
 
 bold "3. Pairing client"
 
-# Extract pairing code from log (preserve env var if already set)
-PAIRING_CODE="${PAIRING_CODE:-}"
-if [ -z "$PAIRING_CODE" ] && [ -n "$GATEWAY_PID" ]; then
-  # Give log a moment to flush
+# Extract pairing code from log when we started the gateway ourselves.
+# If the gateway was already running, use PAIRING_CODE from the environment.
+PAIRING_CODE=""
+if [ -n "$GATEWAY_PID" ]; then
+  # We started the gateway — extract its pairing code from the log
   sleep 1
   PAIRING_CODE=$(grep -oE 'X-Pairing-Code: [A-Za-z0-9_-]+' /tmp/agentzero-test-gateway.log \
     | head -1 | awk '{print $NF}') || true
-fi
-
-if [ -z "$PAIRING_CODE" ] && [ -n "${PAIRING_CODE_OVERRIDE:-}" ]; then
+elif [ -n "${PAIRING_CODE_OVERRIDE:-}" ]; then
   PAIRING_CODE="$PAIRING_CODE_OVERRIDE"
-fi
-
-if [ -z "$PAIRING_CODE" ]; then
-  # Try getting it from gateway state
-  PAIRING_CODE=$(grep -oE '[a-z0-9]{8,}' /tmp/agentzero-test-gateway.log \
-    | tail -1) || true
 fi
 
 if [ -z "$PAIRING_CODE" ]; then
