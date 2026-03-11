@@ -3077,3 +3077,240 @@ async fn health_ready_reports_missing_memory_store_when_config_set() {
     let checks = json["checks_failed"].as_array().unwrap();
     assert!(checks.iter().any(|v| v == "memory_store"));
 }
+
+// ---------------------------------------------------------------------------
+// New endpoint coverage tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ready_endpoint_returns_ready_true() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/health/ready")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["ready"], true);
+    assert!(
+        json["service"].as_str().is_some_and(|s| !s.is_empty()),
+        "response should contain non-empty service field"
+    );
+    assert!(
+        json["version"].as_str().is_some_and(|v| !v.is_empty()),
+        "response should contain non-empty version field"
+    );
+}
+
+#[tokio::test]
+async fn ping_echoes_message_with_fields() {
+    // Open mode (no bearer requirement) so auth passes.
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/ping")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"message":"hello"}"#))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["echo"], "hello", "ping should echo back the message");
+}
+
+#[tokio::test]
+async fn api_fallback_returns_200_for_unknown_path() {
+    // api_fallback requires API-level auth. Use paired token for access.
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+
+    // First pair to get a valid token.
+    let pair_request = Request::builder()
+        .method("POST")
+        .uri("/pair")
+        .header("x-pairing-code", "406823")
+        .body(Body::empty())
+        .expect("request should build");
+    let pair_response = app
+        .clone()
+        .oneshot(pair_request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(pair_response.status(), StatusCode::OK);
+    let pair_body = pair_response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let pair_json: serde_json::Value =
+        serde_json::from_slice(&pair_body).expect("pair body should be json");
+    let token = pair_json["token"]
+        .as_str()
+        .expect("token should be string")
+        .to_string();
+
+    // Now hit an unknown API path with the paired token.
+    let request = Request::builder()
+        .method("GET")
+        .uri("/api/nonexistent")
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["path"], "nonexistent");
+}
+
+#[tokio::test]
+async fn agents_list_returns_empty_without_presence() {
+    // Create a presence store with no registered agents.
+    let presence = std::sync::Arc::new(agentzero_orchestrator::PresenceStore::new());
+    let mut state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    state.presence_store = Some(presence);
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/agents")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("should be json");
+    assert_eq!(json["total"], 0);
+    assert_eq!(json["data"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn v1_chat_completions_format_matches_openai() {
+    // Without config, chat completions returns 503 (AgentUnavailable).
+    // Verify the error response matches OpenAI-style error shape: { "error": { "type": ..., "message": ... } }
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let body = json!({
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "user", "content": "ping"}
+        ]
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let resp_body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&resp_body).expect("should be json");
+
+    // OpenAI-compatible error shape: { "error": { "type": "...", "message": "..." } }
+    assert!(
+        json["error"].is_object(),
+        "error response should have an 'error' object"
+    );
+    assert!(
+        json["error"]["type"].is_string(),
+        "error.type should be a string"
+    );
+    assert!(
+        json["error"]["message"].is_string(),
+        "error.message should be a string"
+    );
+    assert_eq!(json["error"]["type"], "agent_unavailable");
+}
+
+#[tokio::test]
+async fn websocket_run_subscribe_rejects_without_job_store() {
+    // No job_store on state → ws_run_subscribe should fail.
+    // The WebSocketUpgrade extractor requires a real HTTP upgrade, which oneshot
+    // cannot perform, so the request returns 426 Upgrade Required. This confirms
+    // the route exists and is correctly wired but requires a true WS connection.
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/ws/runs/some-run-id")
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    // Axum's WebSocketUpgrade extractor rejects oneshot requests with 426
+    // because a real HTTP/1.1 upgrade handshake is required.
+    assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+}

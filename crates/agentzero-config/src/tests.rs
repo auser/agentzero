@@ -2440,3 +2440,175 @@ fn mcp_env_field_in_server_entry() {
 
     fs::remove_dir_all(dir).ok();
 }
+
+// ---------------------------------------------------------------------------
+// Example config smoke tests
+// ---------------------------------------------------------------------------
+// Each test copies an example config to an isolated temp directory and
+// verifies it loads and validates without error.
+
+fn examples_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples")
+        .canonicalize()
+        .expect("examples directory should exist")
+}
+
+fn smoke_test_example(config_path_in_examples: &str) {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let source = examples_dir().join(config_path_in_examples);
+    let content = fs::read_to_string(&source)
+        .unwrap_or_else(|e| panic!("should read {}: {e}", source.display()));
+    let dest = dir.join("agentzero.toml");
+    fs::write(&dest, &content).expect("should write temp config");
+
+    with_clean_agentzero_env(|| {
+        let cfg =
+            load(&dest).unwrap_or_else(|e| panic!("{config_path_in_examples} should load: {e}"));
+
+        // Basic structural checks that apply to every example
+        assert!(!cfg.provider.kind.is_empty(), "provider.kind must be set");
+        assert!(!cfg.provider.model.is_empty(), "provider.model must be set");
+        assert!(
+            !cfg.security.allowed_root.is_empty(),
+            "security.allowed_root must be set"
+        );
+        assert!(
+            !cfg.security.allowed_commands.is_empty(),
+            "security.allowed_commands must be set"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn example_config_basic_loads_and_validates() {
+    smoke_test_example("config-basic.toml");
+}
+
+#[test]
+fn example_config_full_loads_and_validates() {
+    smoke_test_example("config-full.toml");
+}
+
+#[test]
+fn example_business_office_loads_and_validates() {
+    smoke_test_example("business-office/agentzero.toml");
+}
+
+#[test]
+fn example_research_pipeline_loads_and_validates() {
+    smoke_test_example("research-pipeline/agentzero.toml");
+}
+
+#[test]
+fn example_config_basic_has_expected_provider() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let source = examples_dir().join("config-basic.toml");
+    let dest = dir.join("agentzero.toml");
+    fs::copy(&source, &dest).expect("should copy config");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&dest).expect("basic config should load");
+        assert_eq!(cfg.provider.kind, "openrouter");
+        assert_eq!(cfg.provider.model, "anthropic/claude-sonnet-4-6");
+        assert_eq!(cfg.gateway.port, 42617);
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn example_business_office_has_swarm_agents() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let source = examples_dir().join("business-office/agentzero.toml");
+    let dest = dir.join("agentzero.toml");
+    fs::copy(&source, &dest).expect("should copy config");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&dest).expect("business-office config should load");
+        let swarm = &cfg.swarm;
+        assert!(swarm.enabled, "swarm should be enabled");
+        assert!(
+            !swarm.agents.is_empty(),
+            "swarm should have at least one agent"
+        );
+        assert!(
+            swarm.agents.len() >= 7,
+            "expected at least 7 swarm agents, got {}",
+            swarm.agents.len()
+        );
+        assert!(
+            !cfg.swarm.pipelines.is_empty(),
+            "should have at least one pipeline"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn example_research_pipeline_has_pipeline_steps() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let source = examples_dir().join("research-pipeline/agentzero.toml");
+    let dest = dir.join("agentzero.toml");
+    fs::copy(&source, &dest).expect("should copy config");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&dest).expect("research-pipeline config should load");
+        let swarm = &cfg.swarm;
+        assert!(swarm.enabled, "swarm should be enabled");
+        assert!(
+            swarm.agents.len() >= 4,
+            "expected at least 4 swarm agents, got {}",
+            swarm.agents.len()
+        );
+        assert!(
+            !cfg.swarm.pipelines.is_empty(),
+            "should have at least one pipeline"
+        );
+
+        let research_pipeline = cfg
+            .swarm
+            .pipelines
+            .iter()
+            .find(|p| p.name == "research-to-brief")
+            .expect("should have a 'research-to-brief' pipeline");
+        assert_eq!(
+            research_pipeline.steps.len(),
+            4,
+            "research pipeline should have 4 steps"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn example_config_full_exercises_all_sections() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let source = examples_dir().join("config-full.toml");
+    let dest = dir.join("agentzero.toml");
+    fs::copy(&source, &dest).expect("should copy config");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&dest).expect("full config should load");
+
+        assert_eq!(cfg.provider.kind, "openrouter");
+        assert!(!cfg.provider.model.is_empty());
+        assert_eq!(cfg.memory.backend, "sqlite");
+        assert!(!cfg.security.allowed_root.is_empty());
+        assert!(!cfg.security.allowed_commands.is_empty());
+        assert!(cfg.gateway.port > 0);
+        assert!(cfg.agent.max_tool_iterations > 0);
+        assert!(cfg.agent.request_timeout_ms > 0);
+    });
+
+    fs::remove_dir_all(dir).ok();
+}

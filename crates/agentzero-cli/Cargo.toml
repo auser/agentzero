@@ -9,8 +9,10 @@ repository.workspace = true
 publish = false
 
 [features]
-default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive"]
-memory-sqlite = ["agentzero-infra/memory-sqlite"]
+default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "document-tools"]
+memory-sqlite = ["agentzero-infra/memory-sqlite", "agentzero-storage/storage-encrypted"]
+memory-sqlite-plain = ["agentzero-infra/memory-sqlite", "agentzero-storage/storage-plain"]
+document-tools = ["agentzero-infra/document-tools"]
 memory-turso = ["agentzero-storage/memory-turso", "agentzero-infra/memory-turso"]
 rag = []
 hardware = []

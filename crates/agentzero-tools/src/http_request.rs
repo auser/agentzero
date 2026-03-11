@@ -151,4 +151,135 @@ mod tests {
         // Should fail with connection error, NOT policy error
         assert!(!err.to_string().contains("URL access denied"));
     }
+
+    // ---- Mock HTTP server tests ----
+
+    async fn start_mock_server(response: &'static str) -> (tokio::task::JoinHandle<()>, u16) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        (handle, port)
+    }
+
+    /// Echo server: reads the full request, extracts the body after \r\n\r\n, and echoes it back.
+    async fn start_echo_server() -> (tokio::task::JoinHandle<()>, u16) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = vec![0u8; 8192];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let body = request
+                    .find("\r\n\r\n")
+                    .map(|i| &request[i + 4..])
+                    .unwrap_or("")
+                    .to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body,
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        (handle, port)
+    }
+
+    #[tokio::test]
+    async fn http_request_get_success() {
+        let (handle, port) =
+            start_mock_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
+        let tool = HttpRequestTool::default().with_url_policy(UrlAccessPolicy {
+            allow_loopback: true,
+            ..Default::default()
+        });
+        let result = tool
+            .execute(
+                &format!("GET http://127.0.0.1:{port}"),
+                &ToolContext::new("/tmp".to_string()),
+            )
+            .await
+            .expect("GET should succeed");
+        assert!(
+            result.output.contains("status=200"),
+            "status missing: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("ok"),
+            "body missing: {}",
+            result.output
+        );
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn http_request_post_with_body() {
+        let (handle, port) = start_echo_server().await;
+        let tool = HttpRequestTool::default().with_url_policy(UrlAccessPolicy {
+            allow_loopback: true,
+            ..Default::default()
+        });
+        let result = tool
+            .execute(
+                &format!("POST http://127.0.0.1:{port} {{\"key\":\"value\"}}"),
+                &ToolContext::new("/tmp".to_string()),
+            )
+            .await
+            .expect("POST should succeed");
+        assert!(
+            result.output.contains("status=200"),
+            "status missing: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("key"),
+            "echoed body missing: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("value"),
+            "echoed body missing: {}",
+            result.output
+        );
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn http_request_server_error_returns_500() {
+        let (handle, port) = start_mock_server(
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 5\r\n\r\nerror",
+        )
+        .await;
+        let tool = HttpRequestTool::default().with_url_policy(UrlAccessPolicy {
+            allow_loopback: true,
+            ..Default::default()
+        });
+        let result = tool
+            .execute(
+                &format!("GET http://127.0.0.1:{port}"),
+                &ToolContext::new("/tmp".to_string()),
+            )
+            .await
+            .expect("request should succeed even on 500");
+        assert!(
+            result.output.contains("status=500"),
+            "status missing: {}",
+            result.output
+        );
+        handle.abort();
+    }
 }

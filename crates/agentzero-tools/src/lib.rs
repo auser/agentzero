@@ -16,12 +16,14 @@ pub mod cron_store;
 pub mod cron_tools;
 pub mod delegate;
 pub mod delegate_coordination_status;
+#[cfg(feature = "document-tools")]
 pub mod docx_read;
 pub mod file_edit;
 pub mod git_operations;
 pub mod glob_search;
 pub mod hardware;
 pub mod hardware_tools;
+#[cfg(feature = "document-tools")]
 pub mod html_extract;
 pub mod http_request;
 pub mod image_info;
@@ -62,11 +64,13 @@ pub use cron_tools::{
 };
 pub use delegate::{DelegateTool, ToolBuilder};
 pub use delegate_coordination_status::DelegateCoordinationStatusTool;
+#[cfg(feature = "document-tools")]
 pub use docx_read::DocxReadTool;
 pub use file_edit::FileEditTool;
 pub use git_operations::GitOperationsTool;
 pub use glob_search::GlobSearchTool;
 pub use hardware_tools::{HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool};
+#[cfg(feature = "document-tools")]
 pub use html_extract::HtmlExtractTool;
 pub use http_request::HttpRequestTool;
 pub use image_info::ImageInfoTool;

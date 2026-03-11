@@ -100,22 +100,6 @@ const PROVIDER_CATALOG: &[ProviderDescriptor] = &[
         default_base_url: None,
     },
     ProviderDescriptor {
-        id: "minimax",
-        description: "MiniMax",
-        aliases: &[
-            "minimax-intl",
-            "minimax-io",
-            "minimax-global",
-            "minimax-cn",
-            "minimaxi",
-            "minimax-oauth",
-            "minimax-oauth-cn",
-            "minimax-portal",
-            "minimax-portal-cn",
-        ],
-        default_base_url: None,
-    },
-    ProviderDescriptor {
         id: "bedrock",
         description: "Amazon Bedrock",
         aliases: &["aws-bedrock"],

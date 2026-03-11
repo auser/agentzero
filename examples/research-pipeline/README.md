@@ -119,7 +119,7 @@ Or as a variable:
 
 ```bash
 # Fill in CODE, get TOKEN
-CODE= TOKEN=$(curl -X POST http://localhost:42617/pair -H "X-Pairing-Code: $CODE" | jq -r .token)
+TOKEN=$(curl -X POST http://localhost:42617/pair -H "X-Pairing-Code: <code>" | jq -r .token)
 ```
 
 ### 4. Send a research request

@@ -1999,3 +1999,49 @@ pub struct PipelineTriggerConfig {
     /// Trigger when the AI router classifies the message with this label.
     pub ai_classified: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cost_config_defaults() {
+        let cfg = CostConfig::default();
+        assert!(!cfg.enabled);
+        assert!((cfg.daily_limit_usd - 10.0).abs() < f64::EPSILON);
+        assert!((cfg.monthly_limit_usd - 100.0).abs() < f64::EPSILON);
+        assert_eq!(cfg.warn_at_percent, 80);
+        assert!(!cfg.allow_override);
+    }
+
+    #[test]
+    fn cost_config_deserialize_from_toml() {
+        let toml_str = r#"
+            enabled = true
+            daily_limit_usd = 25.0
+            monthly_limit_usd = 250.0
+            warn_at_percent = 90
+            allow_override = true
+        "#;
+        let cfg: CostConfig = toml::from_str(toml_str).unwrap();
+        assert!(cfg.enabled);
+        assert!((cfg.daily_limit_usd - 25.0).abs() < f64::EPSILON);
+        assert!((cfg.monthly_limit_usd - 250.0).abs() < f64::EPSILON);
+        assert_eq!(cfg.warn_at_percent, 90);
+        assert!(cfg.allow_override);
+    }
+
+    #[test]
+    fn cost_config_partial_override() {
+        let toml_str = r#"
+            enabled = true
+        "#;
+        let cfg: CostConfig = toml::from_str(toml_str).unwrap();
+        assert!(cfg.enabled);
+        // Rest should be defaults
+        assert!((cfg.daily_limit_usd - 10.0).abs() < f64::EPSILON);
+        assert!((cfg.monthly_limit_usd - 100.0).abs() < f64::EPSILON);
+        assert_eq!(cfg.warn_at_percent, 80);
+        assert!(!cfg.allow_override);
+    }
+}

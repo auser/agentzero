@@ -15,16 +15,17 @@ use std::sync::Arc;
 pub use agentzero_tools::{
     AgentsIpcTool, ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool, ComposioTool,
     ContentSearchTool, CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool,
-    CronUpdateTool, DelegateCoordinationStatusTool, DelegateTool, DocxReadTool, FileEditTool,
-    GitOperationsTool, GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool,
-    HardwareMemoryReadTool, HtmlExtractTool, HttpRequestTool, ImageInfoTool, MemoryForgetTool,
-    MemoryRecallTool, MemoryStoreTool, ModelRoutingConfigTool, PdfReadTool, ProcessTool,
-    ProxyConfigTool, PushoverTool, ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool,
-    ShellPolicy, ShellTool, SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool,
-    SopStatusTool, SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool,
-    ToolSecurityPolicy, UrlValidationTool, WasmModuleTool, WasmToolExecTool, WebFetchTool,
-    WebSearchTool, WriteFilePolicy, WriteFileTool,
+    CronUpdateTool, DelegateCoordinationStatusTool, DelegateTool, FileEditTool, GitOperationsTool,
+    GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool,
+    HttpRequestTool, ImageInfoTool, MemoryForgetTool, MemoryRecallTool, MemoryStoreTool,
+    ModelRoutingConfigTool, PdfReadTool, ProcessTool, ProxyConfigTool, PushoverTool,
+    ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool, ShellPolicy, ShellTool,
+    SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, SubAgentListTool,
+    SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool, ToolSecurityPolicy, UrlValidationTool,
+    WasmModuleTool, WasmToolExecTool, WebFetchTool, WebSearchTool, WriteFilePolicy, WriteFileTool,
 };
+#[cfg(feature = "document-tools")]
+pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
 pub use mcp::create_mcp_tools;
 pub use plugin::ProcessPluginTool;
 #[cfg(feature = "wasm-plugins")]
@@ -44,6 +45,7 @@ pub fn default_tools(
         Box::new(MemoryRecallTool),
         Box::new(MemoryForgetTool),
         Box::new(ImageInfoTool),
+        #[cfg(feature = "document-tools")]
         Box::new(DocxReadTool),
         Box::new(PdfReadTool),
         Box::new(ScreenshotTool),
@@ -114,6 +116,7 @@ pub fn default_tools(
         ));
     }
 
+    #[cfg(feature = "document-tools")]
     if policy.enable_html_extract {
         tools.push(Box::new(HtmlExtractTool));
     }

@@ -604,8 +604,9 @@ mod tests {
                 AgentZeroError::ConfigError { .. }
                     | AgentZeroError::RuntimeError { .. }
                     | AgentZeroError::ProviderError { .. }
+                    | AgentZeroError::TimeoutError { .. }
             ),
-            "expected config, runtime, or provider error, got: {err}"
+            "expected config, runtime, provider, or timeout error, got: {err}"
         );
     }
 

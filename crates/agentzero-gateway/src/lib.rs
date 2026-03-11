@@ -338,6 +338,10 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
                     tracing::info!("swarm coordinator built, spawning");
                     let shutdown_rx = shutdown_tx.subscribe();
                     Some(tokio::spawn(async move {
+                        // Hold shutdown_tx for the coordinator's lifetime so
+                        // run_channel_ingestion doesn't see an immediate
+                        // sender-dropped signal and abort all listeners.
+                        let _shutdown_tx = shutdown_tx;
                         if let Err(e) = coord.run(shutdown_rx).await {
                             tracing::error!(error = %e, "swarm coordinator exited with error");
                         }

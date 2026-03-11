@@ -41,4 +41,32 @@ mod tests {
         assert_eq!(summary.total_tokens, 0);
         assert_eq!(summary.total_usd, 0.0);
     }
+
+    #[test]
+    fn cost_summary_default_zero() {
+        let summary = CostSummary::default();
+        assert_eq!(summary.total_tokens, 0);
+        assert!((summary.total_usd - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cost_summary_record_accumulates() {
+        let mut summary = CostSummary::default();
+        summary.record(100, 0.01);
+        summary.record(100, 0.01);
+        assert_eq!(summary.total_tokens, 200);
+        assert!((summary.total_usd - 0.02).abs() < 1e-12);
+    }
+
+    #[test]
+    fn cost_summary_serialization_roundtrip() {
+        let mut summary = CostSummary::default();
+        summary.record(500, 0.05);
+
+        let json = serde_json::to_string(&summary).unwrap();
+        let parsed: CostSummary = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.total_tokens, summary.total_tokens);
+        assert!((parsed.total_usd - summary.total_usd).abs() < 1e-12);
+    }
 }

@@ -29,6 +29,7 @@ impl SqliteMemoryStore {
 
         let conn = Connection::open(path)?;
 
+        #[cfg(feature = "storage-encrypted")]
         if let Some(k) = key {
             let hex_key = hex_encode_key(k);
             conn.execute_batch(&format!("PRAGMA key = \"x'{hex_key}'\""))?;
@@ -62,6 +63,9 @@ impl SqliteMemoryStore {
                 });
             }
         }
+
+        #[cfg(not(feature = "storage-encrypted"))]
+        let _ = key; // suppress unused warning for plain SQLite builds
 
         conn.execute(MEMORY_SCHEMA, [])
             .context("failed to create memory table")?;
@@ -122,6 +126,7 @@ fn migrate_ttl_column(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "storage-encrypted")]
 fn hex_encode_key(key: &StorageKey) -> String {
     key.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -129,6 +134,7 @@ fn hex_encode_key(key: &StorageKey) -> String {
 /// Returns `true` if the file at `path` starts with the SQLite magic header,
 /// indicating it is an unencrypted (plaintext) SQLite database.
 /// Encrypted (SQLCipher) databases have random bytes in the header.
+#[cfg(feature = "storage-encrypted")]
 fn is_plaintext_sqlite(path: &Path) -> bool {
     const SQLITE_MAGIC: &[u8] = b"SQLite format 3\0";
     let Ok(mut f) = fs::File::open(path) else {
@@ -150,6 +156,7 @@ fn is_plaintext_sqlite(path: &Path) -> bool {
 /// If the export fails (e.g. `sqlcipher_export` is not available or the DB is
 /// corrupt), falls back to deleting the plaintext file when it contains no
 /// conversation data worth preserving.
+#[cfg(feature = "storage-encrypted")]
 fn migrate_plaintext_to_encrypted(path: &Path, key: &StorageKey) -> anyhow::Result<()> {
     let hex_key = hex_encode_key(key);
     let tmp = path.with_extension("db.encrypting");
@@ -442,6 +449,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "storage-encrypted")]
     async fn sqlite_encrypted_roundtrip() {
         let db_path = temp_db_path();
         let key = test_key();
@@ -483,6 +491,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "storage-encrypted")]
     async fn sqlite_encrypted_rejects_wrong_key() {
         let db_path = temp_db_path();
         let key_a = test_key();
@@ -513,6 +522,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "storage-encrypted")]
     async fn sqlite_plaintext_migration_preserves_data() {
         let db_path = temp_db_path();
 

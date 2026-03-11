@@ -252,13 +252,16 @@ fn sqlite_conn_for_cli(ctx: &CommandContext) -> anyhow::Result<Connection> {
 
     let conn = Connection::open(&sqlite_path)?;
 
-    let config_dir = ctx
-        .config_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    let key = StorageKey::from_config_dir(config_dir)?;
-    let hex_key: String = key.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
-    conn.execute_batch(&format!("PRAGMA key = \"x'{hex_key}'\""))?;
+    #[cfg(feature = "memory-sqlite")]
+    {
+        let config_dir = ctx
+            .config_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let key = StorageKey::from_config_dir(config_dir)?;
+        let hex_key: String = key.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        conn.execute_batch(&format!("PRAGMA key = \"x'{hex_key}'\""))?;
+    }
 
     ensure_memory_schema(&conn)?;
     Ok(conn)

@@ -43,21 +43,21 @@ agentzero-config = { path = "crates/agentzero-config", version = "0.4.2" }
 agentzero-core = { path = "crates/agentzero-core", version = "0.4.2" }
 agentzero-gateway = { path = "crates/agentzero-gateway", version = "0.4.2" }
 agentzero-orchestrator = { path = "crates/agentzero-orchestrator", version = "0.4.2" }
-agentzero-infra = { path = "crates/agentzero-infra", version = "0.4.2" }
+agentzero-infra = { path = "crates/agentzero-infra", default-features = false, version = "0.4.2" }
 agentzero-plugins = { path = "crates/agentzero-plugins", default-features = false, version = "0.4.2" }
 agentzero-providers = { path = "crates/agentzero-providers", version = "0.4.2" }
-agentzero-storage = { path = "crates/agentzero-storage", version = "0.4.2" }
+agentzero-storage = { path = "crates/agentzero-storage", default-features = false, version = "0.4.2" }
 agentzero-testkit = { path = "crates/agentzero-testkit", version = "0.4.2" }
-agentzero-tools = { path = "crates/agentzero-tools", version = "0.4.2" }
+agentzero-tools = { path = "crates/agentzero-tools", default-features = false, version = "0.4.2" }
 agentzero-ffi = { path = "crates/agentzero-ffi", version = "0.4.2" }
 agentzero-plugin-sdk = { path = "crates/agentzero-plugin-sdk", version = "0.4.2" }
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart"] }
-rusqlite = { version = "0.31", features = ["bundled-sqlcipher"] }
+rusqlite = { version = "0.31", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "fs", "process", "sync", "io-util", "io-std", "signal"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "fs", "process", "sync", "io-util", "io-std", "signal", "net"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 glob = "0.3"

@@ -1291,4 +1291,53 @@ mod tests {
         assert_ne!(actions[1], actions[2]);
         assert_ne!(actions[2], actions[3]);
     }
+
+    #[test]
+    fn tool_context_tracks_tokens_used() {
+        let ctx = ToolContext::new("/tmp/test".to_string());
+        assert_eq!(ctx.current_tokens(), 0);
+        let total = ctx.add_tokens(150);
+        assert_eq!(total, 150);
+        let total = ctx.add_tokens(50);
+        assert_eq!(total, 200);
+        assert_eq!(ctx.current_tokens(), 200);
+    }
+
+    #[test]
+    fn tool_context_tracks_cost_microdollars() {
+        let ctx = ToolContext::new("/tmp/test".to_string());
+        assert_eq!(ctx.current_cost(), 0);
+        let total = ctx.add_cost(5000);
+        assert_eq!(total, 5000);
+        let total = ctx.add_cost(3000);
+        assert_eq!(total, 8000);
+        assert_eq!(ctx.current_cost(), 8000);
+    }
+
+    #[test]
+    fn tool_context_budget_limits_set() {
+        let mut ctx = ToolContext::new("/tmp/test".to_string());
+        ctx.max_tokens = 1000;
+        ctx.max_cost_microdollars = 50_000;
+
+        // Under budget — no exceeded
+        ctx.add_tokens(500);
+        ctx.add_cost(25_000);
+        assert!(ctx.budget_exceeded().is_none());
+
+        // Exceed token budget
+        ctx.add_tokens(600);
+        let reason = ctx.budget_exceeded();
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("token budget exceeded"));
+
+        // Reset and test cost budget exceeded
+        let mut ctx2 = ToolContext::new("/tmp/test".to_string());
+        ctx2.max_tokens = 0; // unlimited
+        ctx2.max_cost_microdollars = 10_000;
+        ctx2.add_cost(15_000);
+        let reason = ctx2.budget_exceeded();
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("cost budget exceeded"));
+    }
 }

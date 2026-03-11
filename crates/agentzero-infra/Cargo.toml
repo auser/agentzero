@@ -9,8 +9,9 @@ repository.workspace = true
 publish = false
 
 [features]
-default = ["memory-sqlite"]
+default = ["memory-sqlite", "document-tools"]
 memory-sqlite = []
+document-tools = ["agentzero-tools/document-tools"]
 memory-turso = ["agentzero-storage/memory-turso"]
 wasm-plugins = ["dep:agentzero-plugins"]
 wasm-jit = ["wasm-plugins", "agentzero-plugins/wasm-jit"]

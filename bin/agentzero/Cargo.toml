@@ -13,9 +13,11 @@ publish = false
 autobins = false
 
 [features]
-default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "tls-rustls"]
+default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "tls-rustls", "document-tools"]
 minimal = ["memory-sqlite"]
+embedded = ["memory-sqlite", "plugins"]
 memory-sqlite = ["agentzero-cli/memory-sqlite"]
+memory-sqlite-plain = ["agentzero-cli/memory-sqlite-plain"]
 interactive = ["agentzero-cli/interactive"]
 memory-turso = ["agentzero-cli/memory-turso"]
 rag = ["agentzero-cli/rag"]
@@ -31,6 +33,7 @@ tls-native = ["agentzero-cli/tls-native"]
 vendored-openssl = ["agentzero-cli/vendored-openssl"]
 privacy = ["agentzero-cli/privacy"]
 telemetry = ["agentzero-cli/telemetry"]
+document-tools = ["agentzero-cli/document-tools"]
 
 [dependencies]
 anyhow.workspace = true

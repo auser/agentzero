@@ -134,4 +134,104 @@ mod tests {
             .expect_err("blocklisted domain should be blocked");
         assert!(err.to_string().contains("URL access denied"));
     }
+
+    // ---- Mock HTTP server tests ----
+
+    async fn start_mock_server(response: &'static str) -> (tokio::task::JoinHandle<()>, u16) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        (handle, port)
+    }
+
+    #[tokio::test]
+    async fn web_fetch_success_returns_body() {
+        use agentzero_core::common::url_policy::UrlAccessPolicy;
+        let (handle, port) =
+            start_mock_server("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello").await;
+        let tool = WebFetchTool::default().with_url_policy(UrlAccessPolicy {
+            allow_loopback: true,
+            ..Default::default()
+        });
+        let result = tool
+            .execute(
+                &format!("http://127.0.0.1:{port}/"),
+                &ToolContext::new("/tmp".to_string()),
+            )
+            .await
+            .expect("request should succeed");
+        assert!(
+            result.output.contains("hello"),
+            "body missing: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("status=200"),
+            "status missing: {}",
+            result.output
+        );
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn web_fetch_404_returns_status() {
+        use agentzero_core::common::url_policy::UrlAccessPolicy;
+        let (handle, port) =
+            start_mock_server("HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nnot found").await;
+        let tool = WebFetchTool::default().with_url_policy(UrlAccessPolicy {
+            allow_loopback: true,
+            ..Default::default()
+        });
+        let result = tool
+            .execute(
+                &format!("http://127.0.0.1:{port}/missing"),
+                &ToolContext::new("/tmp".to_string()),
+            )
+            .await
+            .expect("request should succeed even on 404");
+        assert!(
+            result.output.contains("status=404"),
+            "status missing: {}",
+            result.output
+        );
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn web_fetch_truncates_large_response() {
+        use agentzero_core::common::url_policy::UrlAccessPolicy;
+        // Build a response larger than 64KB
+        let body_size = 70_000;
+        let body: String = "A".repeat(body_size);
+        let response_str = format!("HTTP/1.1 200 OK\r\nContent-Length: {body_size}\r\n\r\n{body}");
+        // Leak the string so we get a &'static str for the mock server
+        let response_static: &'static str = Box::leak(response_str.into_boxed_str());
+        let (handle, port) = start_mock_server(response_static).await;
+        let tool = WebFetchTool::default().with_url_policy(UrlAccessPolicy {
+            allow_loopback: true,
+            ..Default::default()
+        });
+        let result = tool
+            .execute(
+                &format!("http://127.0.0.1:{port}/big"),
+                &ToolContext::new("/tmp".to_string()),
+            )
+            .await
+            .expect("request should succeed");
+        assert!(
+            result.output.contains("truncated"),
+            "truncation missing: {}",
+            result.output
+        );
+        handle.abort();
+    }
 }

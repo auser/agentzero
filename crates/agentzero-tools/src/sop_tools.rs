@@ -608,6 +608,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sop_advance_wrong_plan_fails() {
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        let err = SopAdvanceTool
+            .execute(r#"{"id": "no-such-plan", "step_index": 0}"#, &ctx)
+            .await
+            .expect_err("non-existent plan should fail");
+        assert!(err.to_string().contains("not found"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
     async fn sop_advance_out_of_range() {
         let dir = temp_dir();
         let ctx = ToolContext::new(dir.to_string_lossy().to_string());
@@ -622,6 +636,152 @@ mod tests {
             .await
             .expect_err("out of range should fail");
         assert!(err.to_string().contains("out of range"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn sop_execute_creates_plan() {
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        let result = SopExecuteTool
+            .execute(
+                r#"{"id":"test-plan","steps":["step1","step2","step3"]}"#,
+                &ctx,
+            )
+            .await
+            .expect("execute should succeed");
+        assert!(result.output.contains("created sop=test-plan"));
+        assert!(result.output.contains("steps=3"));
+        assert!(result.output.contains("approval_required=0"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn sop_list_shows_created_plan() {
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        SopExecuteTool
+            .execute(
+                r#"{"id":"test-plan","steps":["step1","step2","step3"]}"#,
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        let result = SopListTool
+            .execute("{}", &ctx)
+            .await
+            .expect("list should succeed");
+        assert!(result.output.contains("id=test-plan"));
+        assert!(result.output.contains("progress=0/3"));
+        assert!(result.output.contains("status=pending"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn sop_status_shows_steps() {
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        SopExecuteTool
+            .execute(
+                r#"{"id":"test-plan","steps":["step1","step2","step3"]}"#,
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        let result = SopStatusTool
+            .execute(r#"{"id":"test-plan"}"#, &ctx)
+            .await
+            .expect("status should succeed");
+        assert!(result.output.contains("sop_id=test-plan"));
+        assert!(result.output.contains("step[0]"));
+        assert!(result.output.contains("step[1]"));
+        assert!(result.output.contains("step[2]"));
+        assert!(result.output.contains("pending"));
+        // All steps should be pending
+        assert!(!result.output.contains("completed"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn sop_advance_marks_step_complete() {
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        SopExecuteTool
+            .execute(
+                r#"{"id":"test-plan","steps":["step1","step2","step3"]}"#,
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        let result = SopAdvanceTool
+            .execute(r#"{"id":"test-plan","step_index":0}"#, &ctx)
+            .await
+            .expect("advance should succeed");
+        assert!(result.output.contains("advanced sop=test-plan step=0"));
+        assert!(result.output.contains("title=\"step1\""));
+
+        // Verify via status that step 0 is completed and step 1 is still pending
+        let status = SopStatusTool
+            .execute(r#"{"id":"test-plan"}"#, &ctx)
+            .await
+            .unwrap();
+        assert!(status.output.contains("step[0]"));
+        assert!(status.output.contains("completed"));
+        assert!(status.output.contains("step[1]"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn sop_approve_then_advance() {
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        // Create plan with step 1 requiring approval
+        SopExecuteTool
+            .execute(
+                r#"{"id":"test-plan","steps":["step1","step2","step3"],"approval_required":[1]}"#,
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        // Advance step 0 (no approval needed)
+        SopAdvanceTool
+            .execute(r#"{"id":"test-plan","step_index":0}"#, &ctx)
+            .await
+            .expect("step 0 should advance without approval");
+
+        // Try to advance step 1 without approval — should fail
+        let err = SopAdvanceTool
+            .execute(r#"{"id":"test-plan","step_index":1}"#, &ctx)
+            .await
+            .expect_err("unapproved step should fail");
+        assert!(err.to_string().contains("requires approval"));
+
+        // Approve step 1
+        SopApproveTool
+            .execute(r#"{"id":"test-plan","step_index":1}"#, &ctx)
+            .await
+            .expect("approve should succeed");
+
+        // Now advance step 1 — should succeed
+        let result = SopAdvanceTool
+            .execute(r#"{"id":"test-plan","step_index":1}"#, &ctx)
+            .await
+            .expect("approved step should advance");
+        assert!(result.output.contains("advanced sop=test-plan step=1"));
 
         fs::remove_dir_all(dir).ok();
     }

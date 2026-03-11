@@ -7,3 +7,7 @@ One usecase pattern I want is to have a 1-click business where we can support a 
 I also want a few examples in the `examples/` directory with READMEs
 
 I'd love for you to help me figure out the gaps in workload 2
+
+---
+
+Can we make it so the lightweight version just runs the orchestrator? Is that a good idea? We want to be able to run it on a lightweight device, but don't necessarily need the full package where the runners use the queue?
