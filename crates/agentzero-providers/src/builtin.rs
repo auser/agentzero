@@ -134,8 +134,9 @@ impl BuiltinProvider {
             .as_ref()
             .context("model not loaded after ensure_loaded")?;
 
-        let ctx_params =
-            LlamaContextParams::default().with_n_ctx(std::num::NonZeroU32::new(self.n_ctx));
+        let ctx_params = LlamaContextParams::default()
+            .with_n_ctx(std::num::NonZeroU32::new(self.n_ctx))
+            .with_n_batch(self.n_ctx);
 
         let mut ctx = loaded
             .model
@@ -149,7 +150,6 @@ impl BuiltinProvider {
             .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
 
         let input_tokens = tokens.len() as u64;
-        debug!(input_tokens, n_ctx = self.n_ctx, "tokenized prompt");
 
         // Guard: prompt must fit in the context window with room for output.
         let max_input = self.n_ctx.saturating_sub(256) as usize; // reserve 256 for generation
