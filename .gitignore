@@ -31,3 +31,4 @@ auth_profiles.json
 .claude/
 
 examples/**/*.key
+examples/research-pipeline/research/
