@@ -7,6 +7,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.5.3] - 2026-03-11
+
+### Fixed
+- Bump Dockerfile Rust to 1.86 for wasmi/wiggle MSRV — wasmi 1.0.9, wasi-common 36.0.6, and wiggle 36.0.6 all require
+
 ## [0.5.2] - 2026-03-11
 
 ### Fixed
