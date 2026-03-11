@@ -52,6 +52,7 @@ Project-level operating rules for all contributors and coding agents working in 
 - `cargo fmt --all`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
+- **Clippy is mandatory**: Agents must run clippy after every code change and fix all warnings/errors before committing. Do not leave clippy issues for later — they block all other work. If a pre-commit hook catches clippy failures, fix them immediately and create a new commit (do not amend).
 
 ### 5) Architecture and scope discipline
 - Follow current scope in `docs/adr/0001-scope.md`.

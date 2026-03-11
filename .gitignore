@@ -33,3 +33,5 @@ auth_profiles.json
 examples/**/*.key
 examples/research-pipeline/research/
 **/*.jsonl
+research/events.jsonl
+**/*.jsonl
