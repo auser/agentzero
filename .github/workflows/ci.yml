@@ -6,16 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
       - name: fmt
         run: cargo fmt --all --check
       - name: clippy
@@ -44,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
       - name: install cargo-audit
         run: cargo install cargo-audit --locked
       - name: install cargo-deny
@@ -57,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
       - name: install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
       - name: generate coverage

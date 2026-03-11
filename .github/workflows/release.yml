@@ -15,16 +15,13 @@ permissions:
   contents: write
   packages: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
       - name: Resolve version
         id: version
         shell: bash
@@ -115,7 +112,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
       - name: Setup Strawberry Perl (Windows)
         if: matrix.os == 'windows-latest'
         shell: bash
@@ -306,7 +303,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
       - name: Publish all workspace crates to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
