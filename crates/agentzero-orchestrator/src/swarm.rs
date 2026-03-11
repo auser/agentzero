@@ -2,16 +2,91 @@
 //!
 //! Reads `[swarm]` config, builds an InMemoryBus, creates agent workers
 //! for each configured agent, and returns a ready-to-run Coordinator.
+//!
+//! Uses a two-pass registration process so that the `ConverseTool` can be
+//! injected with references to all agents' task channels before workers start.
 
 use crate::agent_router::{AgentDescriptor, AgentRouter};
-use crate::coordinator::Coordinator;
+use crate::coordinator::{Coordinator, TaskMessage};
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
-use agentzero_core::event_bus::{FileBackedBus, InMemoryBus};
-use agentzero_core::Agent;
+use agentzero_core::event_bus::{Event, FileBackedBus, InMemoryBus};
+use agentzero_core::{Agent, AgentEndpoint};
 use agentzero_infra::runtime::{build_runtime_execution, RunAgentRequest};
+use agentzero_tools::ConverseTool;
+use async_trait::async_trait;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{mpsc, oneshot};
+
+// ─── SwarmAgentEndpoint ─────────────────────────────────────────────────────
+
+/// Wraps a coordinator agent worker's `task_tx` channel as an [`AgentEndpoint`].
+///
+/// When `send()` is called, it creates a `TaskMessage` with a oneshot result
+/// channel, sends it to the agent worker, and waits for the response.
+struct SwarmAgentEndpoint {
+    id: String,
+    task_tx: mpsc::Sender<TaskMessage>,
+    timeout_secs: u64,
+}
+
+#[async_trait]
+impl AgentEndpoint for SwarmAgentEndpoint {
+    async fn send(&self, message: &str, conversation_id: &str) -> anyhow::Result<String> {
+        let (result_tx, result_rx) = oneshot::channel();
+        let event = Event::new(format!("converse.{}", self.id), "converse", message);
+        self.task_tx
+            .send(TaskMessage {
+                event,
+                correlation_id: conversation_id.to_string(),
+                result_tx: Some(result_tx),
+                cancelled: Arc::new(AtomicBool::new(false)),
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("agent `{}` worker channel closed", self.id))?;
+
+        let result = tokio::time::timeout(Duration::from_secs(self.timeout_secs), result_rx)
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "agent `{}` did not respond within {}s",
+                    self.id,
+                    self.timeout_secs
+                )
+            })?
+            .map_err(|_| {
+                anyhow::anyhow!("agent `{}` worker dropped the result channel", self.id)
+            })?;
+
+        Ok(result.payload)
+    }
+
+    fn agent_id(&self) -> &str {
+        &self.id
+    }
+}
+
+// ─── Intermediate build state ───────────────────────────────────────────────
+
+/// Holds a built agent and its pre-created task channel before registration.
+struct BuiltAgent {
+    descriptor: AgentDescriptor,
+    agent: Agent,
+    workspace_root: String,
+    task_tx: mpsc::Sender<TaskMessage>,
+    task_rx: mpsc::Receiver<TaskMessage>,
+    /// Whether this agent has "converse" in its allowed_tools.
+    wants_converse: bool,
+    /// Conversation config from the agent's TOML.
+    max_turns: usize,
+    turn_timeout_secs: u64,
+}
+
+// ─── build_swarm ────────────────────────────────────────────────────────────
 
 /// Build a swarm coordinator from config.
 ///
@@ -63,7 +138,6 @@ pub async fn build_swarm(
 
     // 2. Build the AI router
     let router = if !swarm_config.router.provider.is_empty() {
-        // Build a provider for the router's classification model.
         let router_req = RunAgentRequest {
             workspace_root: workspace_root.to_path_buf(),
             config_path: config_path.to_path_buf(),
@@ -103,7 +177,11 @@ pub async fn build_swarm(
         swarm_config.shutdown_grace_ms,
     );
 
-    // 4. Register each agent
+    // ── Pass 1: Build all agents and create task channels ───────────────
+
+    let mut built_agents: Vec<BuiltAgent> = Vec::new();
+    let mut any_wants_converse = false;
+
     for (agent_id, agent_cfg) in &swarm_config.agents {
         tracing::info!(
             agent = %agent_id,
@@ -123,7 +201,6 @@ pub async fn build_swarm(
             privacy_boundary: agent_cfg.privacy_boundary.clone(),
         };
 
-        // Build a runtime execution for this agent.
         let req = RunAgentRequest {
             workspace_root: workspace_root.to_path_buf(),
             config_path: config_path.to_path_buf(),
@@ -165,11 +242,22 @@ pub async fn build_swarm(
 
                 let agent = Agent::new(agent_config, exec.provider, exec.memory, tools);
 
-                coord.register_agent(
+                let (task_tx, task_rx) = mpsc::channel::<TaskMessage>(32);
+                let wants_converse = agent_cfg.allowed_tools.iter().any(|t| t == "converse");
+                if wants_converse {
+                    any_wants_converse = true;
+                }
+
+                built_agents.push(BuiltAgent {
                     descriptor,
                     agent,
-                    workspace_root.to_string_lossy().to_string(),
-                );
+                    workspace_root: workspace_root.to_string_lossy().to_string(),
+                    task_tx,
+                    task_rx,
+                    wants_converse,
+                    max_turns: agent_cfg.conversation.max_turns,
+                    turn_timeout_secs: agent_cfg.conversation.turn_timeout_secs,
+                });
             }
             Err(e) => {
                 tracing::error!(
@@ -179,6 +267,48 @@ pub async fn build_swarm(
                 );
             }
         }
+    }
+
+    // ── Pass 2: Wire ConverseTool endpoints and register agents ─────────
+
+    // Build endpoint map from all agents' task senders (shared across all
+    // ConverseTool instances).
+    let endpoints: HashMap<String, Arc<dyn AgentEndpoint>> = if any_wants_converse {
+        built_agents
+            .iter()
+            .map(|ba| {
+                let ep: Arc<dyn AgentEndpoint> = Arc::new(SwarmAgentEndpoint {
+                    id: ba.descriptor.id.clone(),
+                    task_tx: ba.task_tx.clone(),
+                    timeout_secs: ba.turn_timeout_secs,
+                });
+                (ba.descriptor.id.clone(), ep)
+            })
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
+    for mut ba in built_agents {
+        if ba.wants_converse {
+            let converse = ConverseTool::new(endpoints.clone())
+                .with_max_turns(ba.max_turns)
+                .with_turn_timeout_secs(ba.turn_timeout_secs);
+            ba.agent.add_tool(Box::new(converse));
+            tracing::info!(
+                agent = %ba.descriptor.id,
+                max_turns = ba.max_turns,
+                "injected ConverseTool"
+            );
+        }
+
+        coord.register_agent_with_rx(
+            ba.descriptor,
+            ba.agent,
+            ba.workspace_root,
+            ba.task_tx,
+            ba.task_rx,
+        );
     }
 
     Ok(Some((coord, shutdown_tx)))

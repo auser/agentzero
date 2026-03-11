@@ -8,7 +8,7 @@
 //! blocks in the model output are parsed into `ToolUseRequest` objects.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -28,6 +28,18 @@ use agentzero_core::Provider;
 
 use crate::model_manager;
 
+/// Process-global llama.cpp backend singleton.
+///
+/// `LlamaBackend::init()` can only be called once per process (enforced by an
+/// `AtomicBool` in the llama-cpp-2 crate). Storing it in a `OnceLock` ensures
+/// exactly-once initialization and prevents `llama_backend_free()` from being
+/// called while any provider is still running.
+static SHARED_BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
+
+fn shared_backend() -> &'static LlamaBackend {
+    SHARED_BACKEND.get_or_init(|| LlamaBackend::init().expect("failed to init llama.cpp backend"))
+}
+
 /// A provider that runs inference locally via llama.cpp.
 pub struct BuiltinProvider {
     model_path: PathBuf,
@@ -40,14 +52,8 @@ pub struct BuiltinProvider {
 }
 
 struct LoadedModel {
-    _backend: LlamaBackend,
     model: LlamaModel,
 }
-
-// SAFETY: LlamaBackend and LlamaModel are thread-safe for our usage pattern
-// (single-threaded inference behind a Mutex).
-unsafe impl Send for LoadedModel {}
-unsafe impl Sync for LoadedModel {}
 
 impl BuiltinProvider {
     /// Create a new builtin provider.
@@ -105,20 +111,17 @@ impl BuiltinProvider {
         );
         info!(model = %model_path.display(), "loading builtin model");
 
-        let backend = LlamaBackend::init().context("failed to init llama.cpp backend")?;
+        let backend = shared_backend();
 
         let model_params = LlamaModelParams::default().with_n_gpu_layers(self.n_gpu_layers);
 
-        let model = LlamaModel::load_from_file(&backend, &model_path, &model_params)
+        let model = LlamaModel::load_from_file(backend, &model_path, &model_params)
             .map_err(|e| anyhow::anyhow!("failed to load model: {e}"))?;
 
         eprintln!("\x1b[1;32m✓ Model loaded\x1b[0m");
         info!("builtin model loaded successfully");
 
-        *guard = Some(LoadedModel {
-            _backend: backend,
-            model,
-        });
+        *guard = Some(LoadedModel { model });
         Ok(())
     }
 
@@ -136,7 +139,7 @@ impl BuiltinProvider {
 
         let mut ctx = loaded
             .model
-            .new_context(&loaded._backend, ctx_params)
+            .new_context(shared_backend(), ctx_params)
             .map_err(|e| anyhow::anyhow!("failed to create context: {e}"))?;
 
         // Tokenize input

@@ -904,6 +904,41 @@ pub trait MetricsSink: Send + Sync {
     fn observe_histogram(&self, _name: &'static str, _value: f64) {}
 }
 
+/// Abstraction for sending a message to an agent and getting a response.
+///
+/// Implemented by the orchestrator (e.g. wrapping an mpsc task channel +
+/// oneshot result channel). Consumed by `ConverseTool` in `agentzero-tools`.
+#[async_trait]
+pub trait AgentEndpoint: Send + Sync {
+    /// Send a conversational message to the target agent and wait for its response.
+    ///
+    /// The `conversation_id` groups multiple turns together so the target agent
+    /// can retrieve prior context from its memory store.
+    async fn send(&self, message: &str, conversation_id: &str) -> anyhow::Result<String>;
+
+    /// The identifier of the target agent.
+    fn agent_id(&self) -> &str;
+}
+
+/// Abstraction for sending a message to a human via a channel and waiting for
+/// their reply.
+///
+/// Implemented by the orchestrator using `ChannelRegistry` + event bus
+/// subscription. Consumed by `ConverseTool` for human-in-the-loop flows.
+#[async_trait]
+pub trait ChannelEndpoint: Send + Sync {
+    /// Send a message through `channel` to `recipient` and block until a human
+    /// reply arrives (or `timeout_secs` elapses).
+    async fn send_and_wait(
+        &self,
+        channel: &str,
+        recipient: &str,
+        message: &str,
+        conversation_id: &str,
+        timeout_secs: u64,
+    ) -> anyhow::Result<String>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

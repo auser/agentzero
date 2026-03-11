@@ -232,6 +232,11 @@ impl Agent {
         self
     }
 
+    /// Add a tool to this agent after construction.
+    pub fn add_tool(&mut self, tool: Box<dyn Tool>) {
+        self.tools.push(tool);
+    }
+
     /// Build tool definitions for all registered tools that have an input schema.
     fn build_tool_definitions(&self) -> Vec<ToolDefinition> {
         self.tools

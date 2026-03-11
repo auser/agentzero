@@ -165,6 +165,48 @@ impl Coordinator {
         );
     }
 
+    /// Register an agent worker with a pre-created task channel.
+    ///
+    /// This variant is used by the swarm builder when it needs the `task_tx`
+    /// before registration (e.g. to wire up `ConverseTool` endpoints).
+    pub fn register_agent_with_rx(
+        &mut self,
+        descriptor: AgentDescriptor,
+        agent: Agent,
+        workspace_root: String,
+        task_tx: mpsc::Sender<TaskMessage>,
+        task_rx: mpsc::Receiver<TaskMessage>,
+    ) {
+        let status = Arc::new(AtomicU8::new(STATUS_IDLE));
+        let id = descriptor.id.clone();
+
+        let bus = self.bus.clone();
+        let desc = descriptor.clone();
+        let worker_status = status.clone();
+        let presence = self.presence.clone();
+
+        let join_handle = tokio::spawn(agent_worker(
+            agent,
+            task_rx,
+            bus,
+            desc,
+            worker_status,
+            workspace_root,
+            presence,
+        ));
+
+        self.agents.insert(
+            id.clone(),
+            AgentWorker {
+                id,
+                descriptor,
+                task_tx,
+                join_handle,
+                status,
+            },
+        );
+    }
+
     /// Descriptors for all registered agents (used by the router).
     fn agent_descriptors(&self) -> Vec<AgentDescriptor> {
         self.agents.values().map(|w| w.descriptor.clone()).collect()

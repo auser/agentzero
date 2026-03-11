@@ -70,6 +70,7 @@ AgentZero ships with 50+ built-in tools and supports extension via WASM plugins,
 | Tool | Description | Condition |
 |---|---|---|
 | `agents_ipc` | Inter-process communication between agents | `enable_agents_ipc` (default: true) |
+| `converse` | Multi-turn conversations between agents or with humans | When `"converse"` in `allowed_tools` |
 | `mcp__{server}__{tool}` | MCP server tools (one per remote tool) | `[security.mcp]` + `mcp.json` |
 | `model_routing_config` | Query model routing configuration | When router is configured |
 | `delegate` | Spawn sub-agent with scoped tools | When `[agents.*]` configured |
@@ -345,6 +346,57 @@ max_depth = 2
 agentic = true
 max_iterations = 10
 allowed_tools = ["read_file", "web_search", "memory"]
+```
+
+### `converse`
+
+Multi-turn bidirectional conversations between agents or with humans via channels. Each call is one turn — the calling agent controls the flow.
+
+**Input:**
+
+```json
+{
+  "agent": "analyst",
+  "message": "What do you think about these findings?",
+  "conversation_id": "conv-researcher-analyst-001"
+}
+```
+
+For human-in-the-loop:
+
+```json
+{
+  "channel": "slack",
+  "recipient": "#engineering",
+  "message": "Should we proceed with approach A or B?",
+  "conversation_id": "conv-approval-001"
+}
+```
+
+**Parameters:**
+
+| Parameter | Required | Description |
+|---|---|---|
+| `agent` | One of `agent`/`channel` | Target agent ID |
+| `channel` | One of `agent`/`channel` | Target channel for human conversation |
+| `recipient` | With `channel` | Channel recipient |
+| `message` | Yes | The message to send |
+| `conversation_id` | Yes | Shared across turns (generate on first turn, reuse for follow-ups) |
+
+**Safety controls:**
+
+- **Turn limit** — configurable `max_turns` per conversation (default: 10)
+- **Per-turn timeout** — `turn_timeout_secs` (default: 120s)
+- **Budget limits** — inherited token/cost limits
+- **Loop detection** — catches repetitive conversation patterns
+- **Leak guard** — responses scanned for credential leaks
+
+**Configuration:**
+
+```toml
+[swarm.agents.researcher.conversation]
+max_turns = 15
+turn_timeout_secs = 120
 ```
 
 ### `agents_ipc`

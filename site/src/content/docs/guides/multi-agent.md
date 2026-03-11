@@ -64,6 +64,76 @@ Each sub-agent:
 
 ---
 
+## Agent Conversations
+
+For back-and-forth dialogue between agents (or between an agent and a human), the `converse` tool enables multi-turn conversations. Unlike delegation (which is one-shot), conversations let agents discuss, negotiate, ask clarifying questions, and iterate.
+
+### Configuration
+
+Any swarm agent with `"converse"` in its `allowed_tools` gets access to the `converse` tool. Configure conversation limits per agent:
+
+```toml
+[swarm.agents.researcher]
+name = "Researcher"
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+system_prompt = "You research topics. Use converse to discuss findings with the analyst."
+allowed_tools = ["converse", "web_search", "web_fetch"]
+
+[swarm.agents.researcher.conversation]
+max_turns = 15                             # max turns per conversation (default: 10)
+turn_timeout_secs = 120                    # per-turn timeout (default: 120)
+
+[swarm.agents.analyst]
+name = "Analyst"
+provider = "openai"
+model = "gpt-4o"
+system_prompt = "You analyze research. Ask clarifying questions when needed."
+allowed_tools = ["converse", "read_file", "write_file"]
+
+[swarm.agents.analyst.conversation]
+max_turns = 10
+```
+
+### How It Works
+
+The calling agent controls the conversation flow. Each `converse` call is one turn:
+
+```
+converse(agent="analyst", message="Here are my findings on X...", conversation_id="conv-123")
+```
+
+1. Agent A calls `converse` with a message and a `conversation_id`
+2. The message is dispatched to Agent B
+3. Agent B processes it (with full context from prior turns via shared `conversation_id`)
+4. Agent B's response is returned to Agent A as the tool result
+5. Agent A decides whether to send another message or stop
+
+The `conversation_id` groups turns together — Agent B remembers prior messages in the same conversation. Agent A generates the ID on the first turn and reuses it for follow-ups.
+
+### Human-in-the-Loop
+
+Agents can also converse with humans through channels:
+
+```
+converse(channel="slack", recipient="#engineering", message="Should we proceed with approach A or B?", conversation_id="conv-456")
+```
+
+The agent's turn blocks until the human replies (or the timeout elapses).
+
+### Safety
+
+| Protection | Mechanism |
+|---|---|
+| Turn limit | `max_turns` per conversation (configurable per agent) |
+| Per-turn timeout | `turn_timeout_secs` (default: 120s) |
+| Budget limits | Inherited token and cost limits from parent context |
+| Loop detection | Built-in tool loop detector catches repetitive calls |
+| Cancellation | Conversations respect the cancellation token |
+| Leak guard | Responses are scanned for credential leaks before returning |
+
+---
+
 ## Swarm Coordination
 
 For more complex patterns, the swarm system provides an event bus, AI-powered message routing, and sequential pipelines.
@@ -262,3 +332,6 @@ See [examples/business-office/](https://github.com/auser/agentzero/tree/main/exa
 | Swarm router misclassifies | Vague agent descriptions | Write specific descriptions for each agent |
 | Pipeline hangs | Step timeout too short | Increase `step_timeout_secs` |
 | Agent can't use a tool | Tool not in `allowed_tools` | Add the tool name to the agent's allowlist |
+| `converse` tool not available | Not in `allowed_tools` | Add `"converse"` to the agent's `allowed_tools` |
+| Conversation stops unexpectedly | Turn limit reached | Increase `max_turns` in `[*.conversation]` |
+| Conversation timeout | Agent takes too long to respond | Increase `turn_timeout_secs` |

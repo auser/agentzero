@@ -280,6 +280,7 @@ dependencies = [
  "agentzero-core",
  "agentzero-infra",
  "agentzero-testkit",
+ "agentzero-tools",
  "anyhow",
  "async-trait",
  "regex",

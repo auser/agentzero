@@ -1863,6 +1863,26 @@ impl Default for SwarmRouterConfig {
     }
 }
 
+/// Settings for the `converse` tool — bidirectional agent-to-agent (or
+/// agent-to-human) multi-turn conversations.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ConversationConfig {
+    /// Maximum turns allowed per conversation (0 = default of 10).
+    pub max_turns: usize,
+    /// Per-turn timeout in seconds (0 = default of 120).
+    pub turn_timeout_secs: u64,
+}
+
+impl Default for ConversationConfig {
+    fn default() -> Self {
+        Self {
+            max_turns: 10,
+            turn_timeout_secs: 120,
+        }
+    }
+}
+
 /// Configuration for a single agent in the swarm.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -1898,6 +1918,9 @@ pub struct SwarmAgentConfig {
     pub system_prompt: Option<String>,
     /// Maximum tool iterations per request.
     pub max_iterations: usize,
+    /// Conversation settings for bidirectional agent-to-agent interactions.
+    #[serde(default)]
+    pub conversation: ConversationConfig,
 }
 
 impl Default for SwarmAgentConfig {
@@ -1916,6 +1939,7 @@ impl Default for SwarmAgentConfig {
             produces: Vec::new(),
             system_prompt: None,
             max_iterations: 20,
+            conversation: ConversationConfig::default(),
         }
     }
 }

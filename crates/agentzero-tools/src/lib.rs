@@ -12,6 +12,7 @@ pub mod browser_open;
 pub mod cli_discovery;
 pub mod composio;
 pub mod content_search;
+pub mod converse;
 pub mod cron_store;
 pub mod cron_tools;
 pub mod delegate;
@@ -59,6 +60,7 @@ pub use browser_open::BrowserOpenTool;
 pub use cli_discovery::CliDiscoveryTool;
 pub use composio::ComposioTool;
 pub use content_search::ContentSearchTool;
+pub use converse::ConverseTool;
 pub use cron_tools::{
     CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool,
 };

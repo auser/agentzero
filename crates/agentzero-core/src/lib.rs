@@ -26,11 +26,12 @@ pub use event_bus::{Event, EventBus, EventSubscriber, FileBackedBus, InMemoryBus
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{
-    AgentConfig, AgentError, AnnounceMessage, AssistantMessage, AuditEvent, AuditSink, ChatResult,
-    ContentPart, ConversationMessage, DepthPolicy, DepthRule, HookEvent, HookFailureMode,
-    HookPolicy, HookRiskTier, HookSink, JobStatus, Lane, LoopAction, MemoryEntry, MemoryStore,
-    MergeStrategy, MetricsSink, Provider, QueueMode, ReasoningConfig, ResearchPolicy,
-    ResearchTrigger, RunId, StopReason, StreamChunk, StreamSink, Tool, ToolCallDelta, ToolContext,
-    ToolDefinition, ToolResult, ToolResultMessage, ToolUseRequest, UserMessage,
+    AgentConfig, AgentEndpoint, AgentError, AnnounceMessage, AssistantMessage, AuditEvent,
+    AuditSink, ChannelEndpoint, ChatResult, ContentPart, ConversationMessage, DepthPolicy,
+    DepthRule, HookEvent, HookFailureMode, HookPolicy, HookRiskTier, HookSink, JobStatus, Lane,
+    LoopAction, MemoryEntry, MemoryStore, MergeStrategy, MetricsSink, Provider, QueueMode,
+    ReasoningConfig, ResearchPolicy, ResearchTrigger, RunId, StopReason, StreamChunk, StreamSink,
+    Tool, ToolCallDelta, ToolContext, ToolDefinition, ToolResult, ToolResultMessage,
+    ToolUseRequest, UserMessage,
 };
 pub use validation::validate_json;
