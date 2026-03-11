@@ -295,44 +295,58 @@ impl BuiltinProvider {
 
 /// Build the tool-definition block appended to the system prompt.
 ///
-/// Uses Qwen's expected format:
-/// ```text
-/// \n\n# Tools
-/// You may call one or more functions to assist with the user query.
-/// ...
-/// <tools>
-/// {"type": "function", "function": {"name": "...", ...}}
-/// </tools>
-/// ```
+/// Uses a compact, model-agnostic format optimised for small (3B-7B) models:
+/// - Markdown list of tool names, descriptions, and parameter signatures
+/// - Simple `<tool_call>` JSON instruction (one tool at a time)
+///
+/// This is deliberately shorter and less nested than OpenAI/Qwen XML schemas
+/// to stay within the attention budget of small local models.
 fn format_tools_system_block(tools: &[ToolDefinition]) -> String {
-    let mut block = String::from(
-        "\n\n# Tools\n\
-         You may call one or more functions to assist with the user query.\n\n\
-         You are provided with function signatures within <tools></tools> XML tags:\n<tools>\n",
-    );
+    let mut block = String::from("\n\n# Available Tools\n\n");
 
     for tool in tools {
-        let tool_json = serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.input_schema,
+        // Tool name and description
+        block.push_str(&format!("- **{}**: {}\n", tool.name, tool.description));
+
+        // Extract required params with types from JSON schema (compact format)
+        if let Some(props) = tool
+            .input_schema
+            .get("properties")
+            .and_then(|p| p.as_object())
+        {
+            let required: Vec<&str> = tool
+                .input_schema
+                .get("required")
+                .and_then(|r| r.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+
+            let params: Vec<String> = props
+                .iter()
+                .map(|(name, schema)| {
+                    let typ = schema.get("type").and_then(|t| t.as_str()).unwrap_or("any");
+                    let opt = if required.contains(&name.as_str()) {
+                        ""
+                    } else {
+                        "?"
+                    };
+                    format!("{name}{opt}: {typ}")
+                })
+                .collect();
+
+            if !params.is_empty() {
+                block.push_str(&format!("  Parameters: {}\n", params.join(", ")));
             }
-        });
-        if let Ok(s) = serde_json::to_string(&tool_json) {
-            block.push_str(&s);
-            block.push('\n');
         }
     }
 
     block.push_str(
-        "</tools>\n\n\
-         For each function call, return a json object with function name and arguments \
-         within <tool_call></tool_call> XML tags:\n\
+        "\n## How to call a tool\n\
+         To use a tool, write ONLY a JSON object inside <tool_call> tags. Example:\n\
          <tool_call>\n\
-         {\"name\": <function-name>, \"arguments\": <args-json-object>}\n\
-         </tool_call>",
+         {\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n\
+         </tool_call>\n\
+         Call ONE tool at a time. Wait for the result before calling another.",
     );
 
     block
@@ -546,8 +560,8 @@ mod tests {
         let formatted = provider.format_messages_with_tools(&messages, &tools);
 
         assert!(
-            formatted.contains("<tools>"),
-            "should contain <tools> block"
+            formatted.contains("# Available Tools"),
+            "should contain tools header"
         );
         assert!(formatted.contains("web_search"), "should contain tool name");
         assert!(
@@ -581,7 +595,7 @@ mod tests {
 
         // The system message should contain both the original content and the tools block
         assert!(formatted.contains("You are a researcher."));
-        assert!(formatted.contains("<tools>"));
+        assert!(formatted.contains("# Available Tools"));
         // There should only be ONE system block, not two
         assert_eq!(
             formatted.matches("<|im_start|>system").count(),
@@ -608,7 +622,40 @@ mod tests {
             formatted.contains("You are a helpful assistant."),
             "should inject synthetic system prompt"
         );
-        assert!(formatted.contains("<tools>"));
+        assert!(formatted.contains("# Available Tools"));
+    }
+
+    #[test]
+    fn format_tools_system_block_compact_format() {
+        let tools = vec![ToolDefinition {
+            name: "web_search".to_string(),
+            description: "Search the web".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer"}
+                },
+                "required": ["query"]
+            }),
+        }];
+        let block = format_tools_system_block(&tools);
+
+        // Should use markdown list, not XML <tools> wrapper
+        assert!(block.contains("**web_search**"));
+        assert!(block.contains("Search the web"));
+        assert!(!block.contains("<tools>"), "should NOT use old XML wrapper");
+
+        // Should show compact parameter signatures
+        assert!(block.contains("query: string"));
+        assert!(
+            block.contains("max_results?:"),
+            "optional param should have ?"
+        );
+
+        // Should have tool_call instruction
+        assert!(block.contains("<tool_call>"));
+        assert!(block.contains("Call ONE tool at a time"));
     }
 
     #[test]

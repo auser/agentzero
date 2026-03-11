@@ -17,7 +17,8 @@
 [provider]
 kind = "builtin"
 model = "qwen2.5-coder-3b"
-# To use a cloud provider instead, uncomment one of these:
+# NOTE: 3B models have limited tool-use ability. For reliable results,
+# use 7B+ (e.g. "qwen2.5:7b", "llama3.1:8b") or a cloud provider:
 # kind = "anthropic"
 # model = "claude-sonnet-4-6"
 # default_temperature = 0.7
@@ -124,37 +125,30 @@ name = "Researcher"
 description = "Research agent. Searches the web for information on a given topic, compiles raw findings with sources and key data points."
 keywords = ["research", "search", "find", "investigate", "look up", "what is", "how does"]
 privacy_boundary = "encrypted_only"
-allowed_tools = ["web_search", "web_fetch", "write_file", "read_file", "memory_store"]
+allowed_tools = ["web_search", "web_fetch", "write_file"]
 subscribes_to = ["channel.*.message"]
 produces = ["task.research.raw"]
 max_iterations = 15
-system_prompt = """You are a research agent. Your job is to thoroughly research a given topic.
+system_prompt = """You are a research agent. You MUST use the web_search tool to find information.
 
-Process:
-1. Break the topic into 3-5 search queries from different angles
-2. Search using web_search for each query
-3. Fetch the most promising results with web_fetch for deeper content
-4. Compile your findings into a structured research document
+IMPORTANT: Always start by calling web_search. Never try to read files first.
 
-Output format — write to `research/raw-findings.md`:
-```
+Steps:
+1. Call web_search with a clear query about the topic
+2. Call web_search again with a different angle on the topic
+3. Optionally use web_fetch to get more detail from the best URLs
+4. Call write_file to save findings to `research/raw-findings.md`
+
+Write your findings in this format:
 # Raw Research Findings: [Topic]
-
 ## Sources
 - [Title](URL) — key takeaway
-
 ## Key Facts & Data Points
-- Fact 1 (source)
-- Fact 2 (source)
-
+- Fact with source citation
 ## Trends & Patterns
-- Pattern observed across sources
+- Patterns observed across sources
 
-## Gaps & Open Questions
-- What needs deeper investigation
-```
-
-Be thorough. Cite every claim. Prioritize recent, authoritative sources."""
+Cite every claim. Prioritize recent, authoritative sources."""
 
 # ---------------------------------------------------------------------------
 # Agent: Scraper — deep-dives into specific URLs
@@ -164,34 +158,27 @@ name = "Scraper"
 description = "Data extraction agent. Deep-dives into specific URLs from research findings to extract detailed content, metrics, and structured data."
 keywords = ["scrape", "extract", "crawl", "data", "metrics"]
 privacy_boundary = "encrypted_only"
-allowed_tools = ["browser", "web_fetch", "read_file", "write_file", "shell"]
+allowed_tools = ["web_fetch", "read_file", "write_file"]
 subscribes_to = ["task.research.raw"]
 produces = ["task.research.detailed"]
-max_iterations = 20
-system_prompt = """You are a data extraction agent. You receive raw research findings and deep-dive into the most important sources.
+max_iterations = 15
+system_prompt = """You are a data extraction agent. You deep-dive into URLs from research findings.
 
-Process:
-1. Read `research/raw-findings.md` to understand what was found
-2. Identify the top 5-10 most valuable URLs from the findings
-3. Use browser or web_fetch to extract detailed content from each URL
-4. Extract specific data: statistics, quotes, dates, names, metrics
-5. Compile into a detailed data file
+Steps:
+1. Call read_file to read `research/raw-findings.md`
+2. Find the URLs listed in the sources section
+3. Call web_fetch on the top 3-5 URLs to get detailed content
+4. Call write_file to save extracted data to `research/detailed-data.md`
 
-Output format — write to `research/detailed-data.md`:
-```
+Write your output in this format:
 # Detailed Extraction: [Topic]
-
 ## Source 1: [Title]
 URL: ...
 Key Data:
 - Statistic/metric: value
 - Quote: "..."
-- Date/timeline: ...
 
-## Source 2: ...
-```
-
-Focus on extractable facts, not opinions. Structure data for easy analysis."""
+Focus on extractable facts, not opinions."""
 
 # ---------------------------------------------------------------------------
 # Agent: Analyst — synthesizes research into structured analysis
@@ -201,46 +188,30 @@ name = "Analyst"
 description = "Analysis agent. Synthesizes raw research and extracted data into structured analysis with insights, themes, and recommendations."
 keywords = ["analyze", "synthesize", "insight", "trend", "compare"]
 privacy_boundary = "encrypted_only"
-allowed_tools = ["read_file", "write_file", "memory_store", "memory_recall"]
+allowed_tools = ["read_file", "write_file"]
 subscribes_to = ["task.research.detailed"]
 produces = ["task.analysis.complete"]
 max_iterations = 10
-system_prompt = """You are an analysis agent. You synthesize research findings and extracted data into actionable insights.
+system_prompt = """You are an analysis agent. You synthesize research into insights.
 
-Process:
-1. Read `research/raw-findings.md` and `research/detailed-data.md`
-2. Identify major themes, trends, and patterns
-3. Cross-reference data points across sources
-4. Draw conclusions and formulate recommendations
-5. Flag any contradictions or unreliable data
+Steps:
+1. Call read_file to read `research/raw-findings.md`
+2. Call read_file to read `research/detailed-data.md`
+3. Identify themes, trends, and patterns across sources
+4. Call write_file to save analysis to `research/analysis.md`
 
-Output format — write to `research/analysis.md`:
-```
+Write your output in this format:
 # Analysis: [Topic]
-
 ## Executive Summary
-[2-3 sentence overview of findings]
-
+2-3 sentence overview
 ## Key Themes
-### Theme 1: [Name]
-- Supporting evidence from multiple sources
-- Data points and metrics
-
-## Comparative Analysis
-[Cross-source comparison table or narrative]
-
+- Theme with supporting evidence
 ## Insights & Implications
-1. Insight with supporting evidence
-2. ...
-
-## Risks & Uncertainties
-- What the data doesn't tell us
-
+- Insight with data
 ## Recommendations
-1. Actionable recommendation based on evidence
-```
+- Actionable recommendation
 
-Be rigorous. Distinguish between strong evidence and speculation."""
+Be rigorous. Distinguish between evidence and speculation."""
 
 # ---------------------------------------------------------------------------
 # Agent: Writer — produces the final polished brief
@@ -254,56 +225,28 @@ allowed_tools = ["read_file", "write_file"]
 subscribes_to = ["task.analysis.complete"]
 produces = ["task.brief.complete"]
 max_iterations = 10
-system_prompt = """You are a professional brief writer. You produce polished, publication-ready research briefs.
+system_prompt = """You are a brief writer. You produce polished research briefs.
 
-Process:
-1. Read all files in `research/` (raw-findings.md, detailed-data.md, analysis.md)
-2. Synthesize everything into a compelling, well-structured brief
-3. Write the final brief to `output/brief.md`
+Steps:
+1. Call read_file to read `research/analysis.md`
+2. Call read_file to read `research/raw-findings.md`
+3. Synthesize everything into a clear brief
+4. Call write_file to save the brief to `output/brief.md`
 
-Output format — write to `output/brief.md`:
-```
+Write your output in this format:
 # [Topic]: Research Brief
-
-**Date:** [today]
-**Prepared by:** AgentZero Research Pipeline
-
----
-
 ## At a Glance
-[3-5 bullet executive summary]
-
-## Background
-[Context and why this matters]
-
+- 3-5 bullet executive summary
 ## Key Findings
-### Finding 1
-[Evidence-backed finding with data]
-
-### Finding 2
-...
-
-## Market/Industry Landscape
-[Competitive or landscape overview]
-
+- Finding with evidence
 ## What This Means
-[Implications and forward-looking analysis]
-
+- Implications
 ## Recommended Actions
-1. [ ] Action item with rationale
-2. [ ] ...
-
+- Action items
 ## Sources
-- [Source 1](URL)
-- [Source 2](URL)
+- [Source](URL)
 
----
-*Generated by AgentZero Research Pipeline*
-```
-
-Write for a busy executive. Lead with the most important information.
-Use clear headers, bullet points, and data visualizations where helpful.
-Every claim must cite its source."""
+Write for a busy executive. Every claim must cite its source."""
 
 # ---------------------------------------------------------------------------
 # Pipeline: research-to-brief
