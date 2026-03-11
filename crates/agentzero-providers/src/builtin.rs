@@ -71,7 +71,7 @@ impl BuiltinProvider {
                 model.clone()
             },
             inner: Mutex::new(None),
-            n_ctx: 4096,
+            n_ctx: 8192,       // tool definitions can easily consume 2-3k tokens
             n_gpu_layers: 999, // offload all layers to GPU when available
         }
     }
@@ -149,7 +149,19 @@ impl BuiltinProvider {
             .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
 
         let input_tokens = tokens.len() as u64;
-        debug!(input_tokens, "tokenized prompt");
+        debug!(input_tokens, n_ctx = self.n_ctx, "tokenized prompt");
+
+        // Guard: prompt must fit in the context window with room for output.
+        let max_input = self.n_ctx.saturating_sub(256) as usize; // reserve 256 for generation
+        if tokens.len() > max_input {
+            anyhow::bail!(
+                "prompt too large for context window: {} tokens exceeds limit of {} \
+                 (n_ctx={}). Try reducing tool count or prompt length.",
+                tokens.len(),
+                max_input,
+                self.n_ctx,
+            );
+        }
 
         // Create batch with all input tokens
         let mut batch = LlamaBatch::new(self.n_ctx as usize, 1);
@@ -207,6 +219,7 @@ impl BuiltinProvider {
     }
 
     /// Format conversation messages into a ChatML prompt string (no tools).
+    #[cfg(test)]
     fn format_messages(&self, messages: &[ConversationMessage]) -> String {
         self.format_messages_with_tools(messages, &[])
     }
