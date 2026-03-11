@@ -120,6 +120,14 @@ pub fn build_provider_with_transport(
     match kind {
         #[cfg(feature = "local-model")]
         "builtin" => build_builtin_provider(model),
+        #[cfg(not(feature = "local-model"))]
+        "builtin" => {
+            eprintln!(
+                "\x1b[1;31merror:\x1b[0m provider 'builtin' requires the 'local-model' feature."
+            );
+            eprintln!("       Rebuild with: cargo run --features local-model");
+            std::process::exit(1);
+        }
         "anthropic" => Box::new(AnthropicProvider::with_config(
             base_url, api_key, model, transport,
         )),

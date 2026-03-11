@@ -3,25 +3,25 @@
 # A multi-step pipeline that turns a topic into a polished research brief.
 # Four agents work in sequence: Researcher → Scraper → Analyst → Writer.
 #
-# Each agent uses a different model optimized for its role:
-#   - Researcher: fast model for broad search
-#   - Scraper: fast model for data extraction
-#   - Analyst: powerful model for deep analysis
-#   - Writer: powerful model for polished output
+# All agents inherit the default provider unless overridden per-agent.
 #
 # Quick start:
 #   1. Copy this file to your project root as `agentzero.toml`
-#   2. Set AGENTZERO_API_KEY
+#   2. Set the provider below (builtin needs --features local-model)
 #   3. Run `agentzero gateway`
 #   4. Send: "Research the current state of AI regulation in the EU"
 
 # ---------------------------------------------------------------------------
-# Provider — default LLM
+# Provider — default LLM (all agents inherit this unless overridden)
 # ---------------------------------------------------------------------------
 [provider]
-kind = "anthropic"
-model = "claude-sonnet-4-6"
-default_temperature = 0.7
+kind = "builtin"
+model = "qwen2.5-coder-3b"
+# To use a cloud provider instead, uncomment one of these:
+# kind = "anthropic"
+# model = "claude-sonnet-4-6"
+# default_temperature = 0.7
+
 
 # ---------------------------------------------------------------------------
 # Memory
@@ -110,10 +110,11 @@ event_log_path = "./research/events.jsonl"   # persist events so research surviv
 shutdown_grace_ms = 10000
 
 # Fast router for message classification
-[swarm.router]
-provider = "anthropic"
-model = "claude-haiku-4-5"
-fallback_to_keywords = true
+# [swarm.router]
+# provider = "anthropic"
+# model = "claude-haiku-4-5"
+# fallback_to_keywords = true
+
 
 # ---------------------------------------------------------------------------
 # Agent: Researcher — broad web search and initial data gathering
@@ -122,8 +123,6 @@ fallback_to_keywords = true
 name = "Researcher"
 description = "Research agent. Searches the web for information on a given topic, compiles raw findings with sources and key data points."
 keywords = ["research", "search", "find", "investigate", "look up", "what is", "how does"]
-provider = "anthropic"
-model = "claude-haiku-4-5"                 # fast + cheap for broad search
 privacy_boundary = "encrypted_only"
 allowed_tools = ["web_search", "web_fetch", "write_file", "read_file", "memory_store"]
 subscribes_to = ["channel.*.message"]
@@ -164,8 +163,6 @@ Be thorough. Cite every claim. Prioritize recent, authoritative sources."""
 name = "Scraper"
 description = "Data extraction agent. Deep-dives into specific URLs from research findings to extract detailed content, metrics, and structured data."
 keywords = ["scrape", "extract", "crawl", "data", "metrics"]
-provider = "anthropic"
-model = "claude-haiku-4-5"                 # fast for extraction
 privacy_boundary = "encrypted_only"
 allowed_tools = ["browser", "web_fetch", "read_file", "write_file", "shell"]
 subscribes_to = ["task.research.raw"]
@@ -203,8 +200,6 @@ Focus on extractable facts, not opinions. Structure data for easy analysis."""
 name = "Analyst"
 description = "Analysis agent. Synthesizes raw research and extracted data into structured analysis with insights, themes, and recommendations."
 keywords = ["analyze", "synthesize", "insight", "trend", "compare"]
-provider = "anthropic"
-model = "claude-sonnet-4-6"                # powerful model for deep analysis
 privacy_boundary = "encrypted_only"
 allowed_tools = ["read_file", "write_file", "memory_store", "memory_recall"]
 subscribes_to = ["task.research.detailed"]
@@ -254,8 +249,6 @@ Be rigorous. Distinguish between strong evidence and speculation."""
 name = "Writer"
 description = "Brief writer. Produces polished, publication-ready research briefs from analysis with clear structure, compelling narrative, and actionable takeaways."
 keywords = ["write", "brief", "report", "document", "summarize", "draft"]
-provider = "anthropic"
-model = "claude-sonnet-4-6"                # powerful model for quality writing
 privacy_boundary = "encrypted_only"
 allowed_tools = ["read_file", "write_file"]
 subscribes_to = ["task.analysis.complete"]

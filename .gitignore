@@ -4,7 +4,7 @@
 # Local runtime artifacts
 *.db
 *.sqlite
-agentzero.toml
+# agentzero.toml
 
 # Environment/config secrets
 .env

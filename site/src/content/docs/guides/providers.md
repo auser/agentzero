@@ -103,6 +103,62 @@ model = "anthropic/claude-sonnet-4-6"
 
 ---
 
+## Built-in Local Model (recommended for local)
+
+AgentZero includes a built-in local LLM provider powered by llama.cpp. No external server or API key needed — the model runs entirely in-process.
+
+**Default model:** Qwen2.5-Coder-3B-Instruct (Q4_K_M quantization, ~2 GB download on first run)
+
+### Setup
+
+1. Build with the `local-model` feature:
+
+```bash
+cargo build --release --features local-model
+```
+
+2. Configure:
+
+```toml
+[provider]
+kind = "builtin"
+model = "qwen2.5-coder-3b"
+```
+
+That's it. On first run, AgentZero automatically downloads the model from HuggingFace Hub to `~/.agentzero/models/` and shows a progress bar.
+
+### Custom GGUF models
+
+You can use any GGUF model file:
+
+```toml
+# Local file path
+model = "/path/to/my-model.gguf"
+
+# HuggingFace repo (org/repo/filename.gguf)
+model = "TheBloke/Mistral-7B-Instruct-v0.2-GGUF/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+```
+
+### Tool use
+
+The builtin provider supports tool calling via Qwen's `<tool_call>` prompt format. Tool definitions are automatically injected into the system prompt and model outputs are parsed for tool invocations. All built-in tools and plugin tools work with the builtin provider.
+
+### GPU acceleration
+
+On macOS (Apple Silicon), the model automatically offloads to the GPU via Metal. On Linux with CUDA, GPU offloading is used when available.
+
+### Limitations
+
+- The default 3B model is best for simple tasks — coding assistance, file operations, basic research
+- For complex multi-step pipelines, consider using a larger model or a cloud provider
+- Vision/image inputs are not supported
+
+:::note
+The `local-model` feature requires a C++ compiler for llama.cpp bindings. On macOS this is included with Xcode Command Line Tools. On Linux, install `build-essential` or equivalent.
+:::
+
+---
+
 ## Ollama (local)
 
 Ollama runs models locally. No API key needed.

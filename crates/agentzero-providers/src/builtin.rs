@@ -99,6 +99,10 @@ impl BuiltinProvider {
             }
         };
 
+        eprintln!(
+            "\x1b[1;36m⟐ Loading builtin model:\x1b[0m {}",
+            model_path.display()
+        );
         info!(model = %model_path.display(), "loading builtin model");
 
         let backend = LlamaBackend::init().context("failed to init llama.cpp backend")?;
@@ -108,6 +112,7 @@ impl BuiltinProvider {
         let model = LlamaModel::load_from_file(&backend, &model_path, &model_params)
             .map_err(|e| anyhow::anyhow!("failed to load model: {e}"))?;
 
+        eprintln!("\x1b[1;32m✓ Model loaded\x1b[0m");
         info!("builtin model loaded successfully");
 
         *guard = Some(LoadedModel {

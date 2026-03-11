@@ -154,10 +154,15 @@ Some functionality requires compile-time feature flags (only applies to source b
 
 | Feature | Description |
 |---|---|
+| `local-model` | Built-in local LLM via llama.cpp (no external server needed) |
 | `hardware` | Hardware discovery and peripheral commands |
 | `whatsapp-web` | WhatsApp Web channel support |
 
 ```bash
+# Build with built-in local model support
+cargo build -p agentzero --release --features local-model
+
+# Build with hardware discovery
 cargo build -p agentzero --release --features hardware
 ```
 

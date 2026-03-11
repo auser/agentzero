@@ -39,6 +39,9 @@ pub fn ensure_model(repo: &str, filename: &str) -> Result<PathBuf> {
         return Ok(cached_path);
     }
 
+    eprintln!(
+        "\x1b[1;33m⟐ Downloading model {filename}\x1b[0m from {repo} (~2 GB, first run only)"
+    );
     info!(repo, filename, "downloading model from HuggingFace Hub");
 
     let pb = ProgressBar::new(0);

@@ -10,12 +10,15 @@ AgentZero uses a single `agentzero.toml` file located in the data directory (def
 ```toml
 # ─── Provider ────────────────────────────────────────────
 [provider]
-kind = "openrouter"                              # openai, openrouter, anthropic, ollama, custom
-base_url = "https://openrouter.ai/api/v1"        # provider API endpoint
+kind = "openrouter"                              # openai, openrouter, anthropic, ollama, builtin, custom
+base_url = "https://openrouter.ai/api/v1"        # provider API endpoint (not needed for builtin)
 model = "anthropic/claude-sonnet-4-6"         # model identifier
 default_temperature = 0.7                        # 0.0 – 2.0
 # provider_api = "openai-chat-completions"       # or "openai-responses"
 # model_support_vision = true                    # enable vision/multimodal
+# For local inference with no external server (requires --features local-model):
+# kind = "builtin"
+# model = "qwen2.5-coder-3b"
 
 # ─── Memory ──────────────────────────────────────────────
 [memory]
