@@ -7,6 +7,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.5.1] - 2026-03-11
+
+### Fixed
+- Repair release container build and CI rate-limit flake — Stop excluding testkit/bench from Docker context since Cargo needs their
+
 ## [0.5.0] - 2026-03-11
 
 ### Added
