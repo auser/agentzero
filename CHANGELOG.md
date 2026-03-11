@@ -7,6 +7,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.5.4] - 2026-03-11
+
+### Fixed
+- Replace flaky ollama e2e tests with deterministic mock providers — Rewrite e2e_local_llm tests to use scripted mock providers instead of
+
 ## [0.5.3] - 2026-03-11
 
 ### Fixed
