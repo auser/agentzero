@@ -1,0 +1,368 @@
+# AgentZero — 1-Click Business Office
+#
+# A swarm of AI agents that form a complete business office.
+# Each agent has a specialized role, its own model, tool access, and privacy
+# boundary. Messages are routed by an AI classifier (with keyword fallback),
+# and multi-step workflows run as pipelines.
+#
+# Quick start:
+#   1. Copy this file to your project root as `agentzero.toml`
+#   2. Set AGENTZERO_API_KEY (or per-provider keys in .env)
+#   3. Run `agentzero serve`
+#   4. Send a message via Telegram / Slack / the gateway API
+
+# ---------------------------------------------------------------------------
+# Provider — default LLM (used when agents don't specify their own)
+# ---------------------------------------------------------------------------
+[provider]
+kind = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+model = "anthropic/claude-sonnet-4-6"
+default_temperature = 0.7
+
+# ---------------------------------------------------------------------------
+# Memory
+# ---------------------------------------------------------------------------
+[memory]
+backend = "sqlite"
+sqlite_path = "./office.db"
+
+# ---------------------------------------------------------------------------
+# Agent loop
+# ---------------------------------------------------------------------------
+[agent]
+mode = "production"
+max_tool_iterations = 20
+parallel_tools = false
+request_timeout_ms = 120_000  # 2 min — LLM calls need headroom
+
+# ---------------------------------------------------------------------------
+# Security — enable the tools agents will need
+# ---------------------------------------------------------------------------
+[security]
+allowed_root = "."
+allowed_commands = [
+  "ls", "pwd", "cat", "echo", "grep", "find", "head", "tail",
+  "wc", "sort", "uniq", "diff", "file", "which", "mkdir", "cp",
+  "mv", "rm", "touch", "date", "env", "git", "cargo", "npm",
+  "node", "python3", "pip3",
+]
+
+[security.write_file]
+enabled = true
+max_write_bytes = 65536
+
+[security.shell]
+max_output_bytes = 65536
+context_aware_parsing = true
+
+[security.outbound_leak_guard]
+enabled = true
+action = "redact"
+
+# ---------------------------------------------------------------------------
+# Autonomy — full autonomy for unattended operation
+# ---------------------------------------------------------------------------
+[autonomy]
+level = "autonomous"
+workspace_only = true
+max_actions_per_hour = 500
+max_cost_per_day_cents = 5000
+
+# ---------------------------------------------------------------------------
+# Web tools
+# ---------------------------------------------------------------------------
+[web_search]
+enabled = true
+provider = "duckduckgo"
+max_results = 5
+
+[web_fetch]
+enabled = true
+allowed_domains = ["*"]
+
+[http_request]
+enabled = true
+timeout_secs = 30
+
+# ---------------------------------------------------------------------------
+# Channels — uncomment and configure to receive messages
+# ---------------------------------------------------------------------------
+# [channels.telegram]
+# bot_token = "YOUR_TELEGRAM_BOT_TOKEN"
+# allowed_users = []                        # empty = allow all
+
+# [channels.slack]
+# bot_token = "xoxb-YOUR-SLACK-BOT-TOKEN"
+# app_token = "xapp-YOUR-SLACK-APP-TOKEN"
+
+# [channels.discord]
+# bot_token = "YOUR_DISCORD_BOT_TOKEN"
+
+[channels_config]
+message_timeout_secs = 300
+stream_mode = "off"
+interrupt_on_new_message = false
+
+# ---------------------------------------------------------------------------
+# Swarm — the AI business office
+# ---------------------------------------------------------------------------
+[swarm]
+enabled = true
+max_agents = 10
+event_bus_capacity = 512
+shutdown_grace_ms = 10000
+
+# --- AI Router: classifies incoming messages to the right agent ---
+[swarm.router]
+provider = "openrouter"
+model = "anthropic/claude-haiku-4-5"       # fast + cheap for classification
+base_url = "https://openrouter.ai/api/v1"
+api_key = ""                                # falls back to AGENTZERO_API_KEY
+fallback_to_keywords = true
+
+# ---------------------------------------------------------------------------
+# Agent: CEO — high-level orchestrator and decision-maker
+# ---------------------------------------------------------------------------
+[swarm.agents.ceo]
+name = "CEO"
+description = "Chief Executive Officer. Handles high-level strategy, cross-functional decisions, and delegates to specialist agents. Routes ambiguous requests to the right department."
+keywords = ["strategy", "decision", "plan", "roadmap", "vision", "priority", "delegate", "business"]
+provider = "openrouter"
+model = "anthropic/claude-opus-4-6"         # most capable model for leadership
+base_url = "https://openrouter.ai/api/v1"
+api_key = ""
+privacy_boundary = "encrypted_only"
+allowed_tools = ["delegate", "agents_ipc", "memory_store", "memory_recall", "read_file", "write_file"]
+subscribes_to = ["channel.*.message"]
+produces = ["task.ceo.directive"]
+max_iterations = 15
+system_prompt = """You are the CEO of a fully AI-operated business office. Your role:
+
+1. Receive incoming requests and decide which department should handle them
+2. Make high-level strategic decisions
+3. Coordinate cross-functional initiatives by delegating to specialist agents
+4. Maintain the company's strategic direction and priorities
+
+When a request is ambiguous, classify it and delegate to the right agent via IPC.
+When a request spans multiple departments, break it into sub-tasks and coordinate.
+
+Available departments: CTO (technical), CSO (security), Marketing, Legal, Finance, HR.
+Use the delegate tool to assign work to them. Use memory_store to track decisions."""
+
+# ---------------------------------------------------------------------------
+# Agent: CTO — technical leadership
+# ---------------------------------------------------------------------------
+[swarm.agents.cto]
+name = "CTO"
+description = "Chief Technology Officer. Handles technical architecture, code reviews, infrastructure decisions, and engineering planning."
+keywords = ["technical", "architecture", "code", "engineering", "infrastructure", "api", "database", "deploy", "build", "debug"]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4-6"
+base_url = "https://openrouter.ai/api/v1"
+api_key = ""
+privacy_boundary = "encrypted_only"
+allowed_tools = ["shell", "read_file", "write_file", "file_edit", "glob_search", "content_search", "git", "web_search", "web_fetch", "agents_ipc", "memory_store", "memory_recall"]
+subscribes_to = ["task.ceo.directive", "channel.*.message"]
+produces = ["task.cto.complete"]
+max_iterations = 20
+system_prompt = """You are the CTO of an AI-operated business. Your role:
+
+1. Make technical architecture decisions
+2. Review and write code when needed
+3. Plan engineering sprints and infrastructure
+4. Evaluate technical feasibility of business initiatives
+
+You have access to shell, file, and git tools. Write clean, secure, well-tested code.
+Use web_search to research technical solutions. Report findings back via IPC."""
+
+# ---------------------------------------------------------------------------
+# Agent: CSO — security officer
+# ---------------------------------------------------------------------------
+[swarm.agents.cso]
+name = "CSO"
+description = "Chief Security Officer. Handles security audits, vulnerability assessments, compliance reviews, and threat modeling."
+keywords = ["security", "vulnerability", "audit", "threat", "compliance", "encryption", "access", "permission", "breach", "risk"]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4-6"
+base_url = "https://openrouter.ai/api/v1"
+api_key = ""
+privacy_boundary = "local_only"             # security reviews stay local
+allowed_tools = ["read_file", "glob_search", "content_search", "shell", "agents_ipc", "memory_store", "memory_recall"]
+subscribes_to = ["task.ceo.directive", "channel.*.message"]
+produces = ["task.security.review"]
+max_iterations = 15
+system_prompt = """You are the CSO (Chief Security Officer). Your role:
+
+1. Conduct security audits and vulnerability assessments
+2. Review code and infrastructure for security issues
+3. Perform threat modeling for new features
+4. Ensure compliance with security standards (OWASP, SOC2, etc.)
+5. Respond to security incidents
+
+You operate with local_only privacy — your analysis never leaves the device.
+Be thorough, flag risks with severity levels (Critical/High/Medium/Low)."""
+
+# ---------------------------------------------------------------------------
+# Agent: Marketing
+# ---------------------------------------------------------------------------
+[swarm.agents.marketing]
+name = "Marketing"
+description = "Marketing agent. Handles content creation, social media strategy, campaign planning, brand messaging, and market research."
+keywords = ["marketing", "campaign", "social", "brand", "content", "seo", "analytics", "audience", "launch", "promotion", "copy"]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4-6"
+base_url = "https://openrouter.ai/api/v1"
+api_key = ""
+privacy_boundary = "encrypted_only"
+allowed_tools = ["web_search", "web_fetch", "write_file", "read_file", "agents_ipc", "memory_store", "memory_recall"]
+subscribes_to = ["task.ceo.directive", "channel.*.message"]
+produces = ["task.marketing.complete"]
+max_iterations = 15
+system_prompt = """You are the Marketing department. Your role:
+
+1. Create compelling marketing copy and content
+2. Research competitors and market trends
+3. Plan marketing campaigns and social media strategy
+4. Analyze audience engagement and suggest improvements
+5. Generate brand messaging and positioning
+
+Use web_search to research trends and competitors.
+Write deliverables to files (e.g., campaigns/, content/, briefs/).
+Be data-driven and creative."""
+
+# ---------------------------------------------------------------------------
+# Agent: Legal
+# ---------------------------------------------------------------------------
+[swarm.agents.legal]
+name = "Legal"
+description = "Legal counsel. Handles contract review, compliance, regulatory analysis, terms of service, privacy policy, and legal risk assessment."
+keywords = ["legal", "contract", "compliance", "regulation", "terms", "privacy", "policy", "liability", "license", "ip", "gdpr"]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4-6"
+base_url = "https://openrouter.ai/api/v1"
+api_key = ""
+privacy_boundary = "encrypted_only"
+allowed_tools = ["read_file", "write_file", "web_search", "web_fetch", "agents_ipc", "memory_store", "memory_recall"]
+subscribes_to = ["task.ceo.directive", "channel.*.message"]
+produces = ["task.legal.complete"]
+max_iterations = 15
+system_prompt = """You are the Legal department. Your role:
+
+1. Review contracts and legal documents
+2. Assess regulatory compliance (GDPR, CCPA, SOC2, etc.)
+3. Draft terms of service, privacy policies, and legal agreements
+4. Evaluate legal risks for business decisions
+5. Research relevant laws and precedents
+
+Always flag potential legal risks. Be precise and cite relevant regulations.
+Write legal documents to files (e.g., legal/contracts/, legal/policies/)."""
+
+# ---------------------------------------------------------------------------
+# Agent: Finance
+# ---------------------------------------------------------------------------
+[swarm.agents.finance]
+name = "Finance"
+description = "Finance department. Handles budgeting, invoicing, expense tracking, financial projections, and cost analysis."
+keywords = ["finance", "budget", "invoice", "expense", "revenue", "cost", "pricing", "forecast", "profit", "accounting", "payment"]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4-6"
+base_url = "https://openrouter.ai/api/v1"
+api_key = ""
+privacy_boundary = "encrypted_only"
+allowed_tools = ["read_file", "write_file", "shell", "agents_ipc", "memory_store", "memory_recall"]
+subscribes_to = ["task.ceo.directive", "channel.*.message"]
+produces = ["task.finance.complete"]
+max_iterations = 15
+system_prompt = """You are the Finance department. Your role:
+
+1. Create and manage budgets
+2. Generate financial projections and forecasts
+3. Track expenses and revenue
+4. Analyze costs and suggest optimizations
+5. Prepare financial reports
+
+Use shell for calculations. Write reports to files (e.g., finance/reports/).
+Be precise with numbers. Always show your work."""
+
+# ---------------------------------------------------------------------------
+# Agent: HR
+# ---------------------------------------------------------------------------
+[swarm.agents.hr]
+name = "HR"
+description = "Human Resources. Handles hiring, onboarding, team management, culture, and organizational planning."
+keywords = ["hire", "hiring", "onboard", "onboarding", "team", "culture", "hr", "recruit", "interview", "employee", "talent", "people"]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4-6"
+base_url = "https://openrouter.ai/api/v1"
+api_key = ""
+privacy_boundary = "local_only"             # HR data stays local
+allowed_tools = ["read_file", "write_file", "agents_ipc", "memory_store", "memory_recall"]
+subscribes_to = ["task.ceo.directive", "channel.*.message"]
+produces = ["task.hr.complete"]
+max_iterations = 10
+system_prompt = """You are the HR department. Your role:
+
+1. Manage hiring processes and job descriptions
+2. Create onboarding plans for new team members
+3. Handle organizational planning and team structure
+4. Develop company culture initiatives
+5. Track team capacity and workload
+
+You operate with local_only privacy — employee data never leaves the device.
+Write HR documents to files (e.g., hr/onboarding/, hr/job-descriptions/)."""
+
+# ---------------------------------------------------------------------------
+# Pipelines — multi-step automated workflows
+# ---------------------------------------------------------------------------
+
+# Employee Onboarding: HR creates the plan → CTO sets up tech access → Finance handles payroll
+[[swarm.pipelines]]
+name = "employee-onboarding"
+channel_reply = true
+on_step_error = "abort"
+max_retries = 1
+step_timeout_secs = 180
+steps = ["hr", "cto", "finance"]
+
+[swarm.pipelines.trigger]
+keywords = ["onboard", "new hire", "new employee", "onboarding"]
+
+# Product Launch: CTO prepares release → Marketing creates launch campaign → Legal reviews
+[[swarm.pipelines]]
+name = "product-launch"
+channel_reply = true
+on_step_error = "skip"
+max_retries = 1
+step_timeout_secs = 180
+steps = ["cto", "marketing", "legal"]
+
+[swarm.pipelines.trigger]
+keywords = ["launch", "release", "ship", "go live"]
+
+# Security Audit: CSO reviews → CTO implements fixes → Legal checks compliance
+[[swarm.pipelines]]
+name = "security-audit"
+channel_reply = true
+on_step_error = "abort"
+max_retries = 0
+step_timeout_secs = 300
+steps = ["cso", "cto", "legal"]
+
+[swarm.pipelines.trigger]
+keywords = ["security audit", "vulnerability scan", "pentest", "security review"]
+
+# ---------------------------------------------------------------------------
+# Gateway
+# ---------------------------------------------------------------------------
+[gateway]
+host = "127.0.0.1"
+port = 42617
+require_pairing = true
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+[logging]
+format = "text"
+level = "info"

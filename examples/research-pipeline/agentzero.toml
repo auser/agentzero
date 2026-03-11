@@ -1,0 +1,343 @@
+# AgentZero — Research-to-Brief Pipeline
+#
+# A multi-step pipeline that turns a topic into a polished research brief.
+# Four agents work in sequence: Researcher → Scraper → Analyst → Writer.
+#
+# Each agent uses a different model optimized for its role:
+#   - Researcher: fast model for broad search
+#   - Scraper: fast model for data extraction
+#   - Analyst: powerful model for deep analysis
+#   - Writer: powerful model for polished output
+#
+# Quick start:
+#   1. Copy this file to your project root as `agentzero.toml`
+#   2. Set AGENTZERO_API_KEY
+#   3. Run `agentzero gateway`
+#   4. Send: "Research the current state of AI regulation in the EU"
+
+# ---------------------------------------------------------------------------
+# Provider — default LLM
+# ---------------------------------------------------------------------------
+[provider]
+kind = "anthropic"
+model = "claude-sonnet-4-6"
+default_temperature = 0.7
+
+# ---------------------------------------------------------------------------
+# Memory
+# ---------------------------------------------------------------------------
+[memory]
+backend = "sqlite"
+sqlite_path = "./research.db"
+
+# ---------------------------------------------------------------------------
+# Agent loop
+# ---------------------------------------------------------------------------
+[agent]
+mode = "production"
+max_tool_iterations = 25
+parallel_tools = false
+request_timeout_ms = 120_000  # 2 min — web search + LLM calls need headroom
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+[security]
+allowed_root = "."
+allowed_commands = [
+  "ls", "pwd", "cat", "echo", "grep", "find", "head", "tail",
+  "wc", "sort", "uniq", "diff", "file", "which", "mkdir", "cp",
+  "mv", "touch", "date", "jq", "python3",
+]
+
+[security.write_file]
+enabled = true
+max_write_bytes = 131072                   # 128 KiB — briefs can be long
+
+[security.shell]
+max_output_bytes = 65536
+context_aware_parsing = true
+
+[security.outbound_leak_guard]
+enabled = true
+action = "redact"
+
+# ---------------------------------------------------------------------------
+# Autonomy
+# ---------------------------------------------------------------------------
+[autonomy]
+level = "autonomous"
+workspace_only = true
+max_actions_per_hour = 500
+max_cost_per_day_cents = 3000
+
+# ---------------------------------------------------------------------------
+# Web tools — all enabled for the research pipeline
+# ---------------------------------------------------------------------------
+[web_search]
+enabled = true
+provider = "duckduckgo"                    # no API key needed
+# provider = "brave"                      # better results, needs BRAVE_API_KEY
+# provider = "perplexity"                 # AI-enhanced search, needs PERPLEXITY_API_KEY
+max_results = 10
+timeout_secs = 15
+
+[web_fetch]
+enabled = true
+allowed_domains = ["*"]
+max_response_size = 500000
+timeout_secs = 30
+
+[http_request]
+enabled = true
+timeout_secs = 30
+
+[browser]
+enabled = true
+backend = "agent_browser"
+agent_browser_command = "./scripts/agent-browser/index.js"
+agent_browser_timeout_ms = 30000
+# allowed_domains = []                    # empty = all domains
+
+# ---------------------------------------------------------------------------
+# Swarm — the research pipeline
+# ---------------------------------------------------------------------------
+[swarm]
+enabled = true
+max_agents = 5
+event_bus_capacity = 256
+event_log_path = "./research/events.jsonl"   # persist events so research survives restarts
+shutdown_grace_ms = 10000
+
+# Fast router for message classification
+[swarm.router]
+provider = "anthropic"
+model = "claude-haiku-4-5"
+fallback_to_keywords = true
+
+# ---------------------------------------------------------------------------
+# Agent: Researcher — broad web search and initial data gathering
+# ---------------------------------------------------------------------------
+[swarm.agents.researcher]
+name = "Researcher"
+description = "Research agent. Searches the web for information on a given topic, compiles raw findings with sources and key data points."
+keywords = ["research", "search", "find", "investigate", "look up", "what is", "how does"]
+provider = "anthropic"
+model = "claude-haiku-4-5"                 # fast + cheap for broad search
+privacy_boundary = "encrypted_only"
+allowed_tools = ["web_search", "web_fetch", "write_file", "read_file", "memory_store"]
+subscribes_to = ["channel.*.message"]
+produces = ["task.research.raw"]
+max_iterations = 15
+system_prompt = """You are a research agent. Your job is to thoroughly research a given topic.
+
+Process:
+1. Break the topic into 3-5 search queries from different angles
+2. Search using web_search for each query
+3. Fetch the most promising results with web_fetch for deeper content
+4. Compile your findings into a structured research document
+
+Output format — write to `research/raw-findings.md`:
+```
+# Raw Research Findings: [Topic]
+
+## Sources
+- [Title](URL) — key takeaway
+
+## Key Facts & Data Points
+- Fact 1 (source)
+- Fact 2 (source)
+
+## Trends & Patterns
+- Pattern observed across sources
+
+## Gaps & Open Questions
+- What needs deeper investigation
+```
+
+Be thorough. Cite every claim. Prioritize recent, authoritative sources."""
+
+# ---------------------------------------------------------------------------
+# Agent: Scraper — deep-dives into specific URLs
+# ---------------------------------------------------------------------------
+[swarm.agents.scraper]
+name = "Scraper"
+description = "Data extraction agent. Deep-dives into specific URLs from research findings to extract detailed content, metrics, and structured data."
+keywords = ["scrape", "extract", "crawl", "data", "metrics"]
+provider = "anthropic"
+model = "claude-haiku-4-5"                 # fast for extraction
+privacy_boundary = "encrypted_only"
+allowed_tools = ["browser", "web_fetch", "read_file", "write_file", "shell"]
+subscribes_to = ["task.research.raw"]
+produces = ["task.research.detailed"]
+max_iterations = 20
+system_prompt = """You are a data extraction agent. You receive raw research findings and deep-dive into the most important sources.
+
+Process:
+1. Read `research/raw-findings.md` to understand what was found
+2. Identify the top 5-10 most valuable URLs from the findings
+3. Use browser or web_fetch to extract detailed content from each URL
+4. Extract specific data: statistics, quotes, dates, names, metrics
+5. Compile into a detailed data file
+
+Output format — write to `research/detailed-data.md`:
+```
+# Detailed Extraction: [Topic]
+
+## Source 1: [Title]
+URL: ...
+Key Data:
+- Statistic/metric: value
+- Quote: "..."
+- Date/timeline: ...
+
+## Source 2: ...
+```
+
+Focus on extractable facts, not opinions. Structure data for easy analysis."""
+
+# ---------------------------------------------------------------------------
+# Agent: Analyst — synthesizes research into structured analysis
+# ---------------------------------------------------------------------------
+[swarm.agents.analyst]
+name = "Analyst"
+description = "Analysis agent. Synthesizes raw research and extracted data into structured analysis with insights, themes, and recommendations."
+keywords = ["analyze", "synthesize", "insight", "trend", "compare"]
+provider = "anthropic"
+model = "claude-sonnet-4-6"                # powerful model for deep analysis
+privacy_boundary = "encrypted_only"
+allowed_tools = ["read_file", "write_file", "memory_store", "memory_recall"]
+subscribes_to = ["task.research.detailed"]
+produces = ["task.analysis.complete"]
+max_iterations = 10
+system_prompt = """You are an analysis agent. You synthesize research findings and extracted data into actionable insights.
+
+Process:
+1. Read `research/raw-findings.md` and `research/detailed-data.md`
+2. Identify major themes, trends, and patterns
+3. Cross-reference data points across sources
+4. Draw conclusions and formulate recommendations
+5. Flag any contradictions or unreliable data
+
+Output format — write to `research/analysis.md`:
+```
+# Analysis: [Topic]
+
+## Executive Summary
+[2-3 sentence overview of findings]
+
+## Key Themes
+### Theme 1: [Name]
+- Supporting evidence from multiple sources
+- Data points and metrics
+
+## Comparative Analysis
+[Cross-source comparison table or narrative]
+
+## Insights & Implications
+1. Insight with supporting evidence
+2. ...
+
+## Risks & Uncertainties
+- What the data doesn't tell us
+
+## Recommendations
+1. Actionable recommendation based on evidence
+```
+
+Be rigorous. Distinguish between strong evidence and speculation."""
+
+# ---------------------------------------------------------------------------
+# Agent: Writer — produces the final polished brief
+# ---------------------------------------------------------------------------
+[swarm.agents.writer]
+name = "Writer"
+description = "Brief writer. Produces polished, publication-ready research briefs from analysis with clear structure, compelling narrative, and actionable takeaways."
+keywords = ["write", "brief", "report", "document", "summarize", "draft"]
+provider = "anthropic"
+model = "claude-sonnet-4-6"                # powerful model for quality writing
+privacy_boundary = "encrypted_only"
+allowed_tools = ["read_file", "write_file"]
+subscribes_to = ["task.analysis.complete"]
+produces = ["task.brief.complete"]
+max_iterations = 10
+system_prompt = """You are a professional brief writer. You produce polished, publication-ready research briefs.
+
+Process:
+1. Read all files in `research/` (raw-findings.md, detailed-data.md, analysis.md)
+2. Synthesize everything into a compelling, well-structured brief
+3. Write the final brief to `output/brief.md`
+
+Output format — write to `output/brief.md`:
+```
+# [Topic]: Research Brief
+
+**Date:** [today]
+**Prepared by:** AgentZero Research Pipeline
+
+---
+
+## At a Glance
+[3-5 bullet executive summary]
+
+## Background
+[Context and why this matters]
+
+## Key Findings
+### Finding 1
+[Evidence-backed finding with data]
+
+### Finding 2
+...
+
+## Market/Industry Landscape
+[Competitive or landscape overview]
+
+## What This Means
+[Implications and forward-looking analysis]
+
+## Recommended Actions
+1. [ ] Action item with rationale
+2. [ ] ...
+
+## Sources
+- [Source 1](URL)
+- [Source 2](URL)
+
+---
+*Generated by AgentZero Research Pipeline*
+```
+
+Write for a busy executive. Lead with the most important information.
+Use clear headers, bullet points, and data visualizations where helpful.
+Every claim must cite its source."""
+
+# ---------------------------------------------------------------------------
+# Pipeline: research-to-brief
+# ---------------------------------------------------------------------------
+[[swarm.pipelines]]
+name = "research-to-brief"
+channel_reply = true
+on_step_error = "skip"                     # skip scraper if it fails (browser may not be available)
+max_retries = 1
+step_timeout_secs = 120
+steps = ["researcher", "scraper", "analyst", "writer"]
+
+[swarm.pipelines.trigger]
+keywords = ["research", "brief", "analyze", "investigate", "report on"]
+regex = "(?i)(research|write a brief|analyze|report on)\\s+"
+
+# ---------------------------------------------------------------------------
+# Gateway
+# ---------------------------------------------------------------------------
+[gateway]
+host = "127.0.0.1"
+port = 42617
+require_pairing = true
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+[logging]
+format = "text"
+level = "info"
