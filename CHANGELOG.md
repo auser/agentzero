@@ -7,6 +7,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.5.2] - 2026-03-11
+
+### Fixed
+- Force Node.js 24 for GitHub Actions and wrap unsafe env mutations — Add FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 env to ci and release workflows
+- Bump Dockerfile Rust version to 1.85 for edition2024 support — wiggle-macro v36.0.6 (wasmtime dependency via plugins feature) requires
+
 ## [0.5.1] - 2026-03-11
 
 ### Fixed
