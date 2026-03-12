@@ -667,6 +667,18 @@ async fn agent_worker(
         ctx.privacy_boundary = descriptor.privacy_boundary.clone();
         ctx.cancelled = task.cancelled.clone();
 
+        // Give each task a unique conversation ID so pipeline agents don't
+        // see each other's tool call history in shared memory.
+        ctx.conversation_id = Some(format!(
+            "{}-{}-{}",
+            descriptor.id,
+            task.correlation_id,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+
         // Extract source channel from event if available.
         if task.event.topic.starts_with("channel.") {
             let parts: Vec<&str> = task.event.topic.splitn(3, '.').collect();

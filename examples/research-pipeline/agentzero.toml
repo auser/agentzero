@@ -3,9 +3,9 @@
 # A multi-step pipeline that turns a topic into a polished research brief.
 # Four agents work in sequence: Researcher → Scraper → Analyst → Writer.
 #
-# Hybrid mode: agents that need strong reasoning (researcher, analyst) use
-# a cloud model, while data-handling agents (scraper, writer) stay local
-# for privacy. Each agent inherits the default provider unless overridden.
+# All pipeline agents use a cloud model (Haiku) for reliable tool use.
+# The default provider is local (builtin) for non-pipeline / simple chat.
+# Each agent inherits the default provider unless overridden per-agent.
 #
 # Quick start:
 #   1. Copy this file to your project root as `agentzero.toml`
@@ -79,9 +79,11 @@ max_cost_per_day_cents = 3000
 # ---------------------------------------------------------------------------
 [web_search]
 enabled = true
-provider = "duckduckgo"                    # no API key needed
-# provider = "brave"                      # better results, needs BRAVE_API_KEY
-# provider = "perplexity"                 # AI-enhanced search, needs PERPLEXITY_API_KEY
+# DuckDuckGo frequently blocks automated requests with CAPTCHAs.
+# Use Brave or Jina for reliable search in pipelines:
+provider = "brave"                         # set BRAVE_API_KEY env var
+# provider = "jina"                       # alternative: set JINA_API_KEY
+# provider = "duckduckgo"                 # free but unreliable (CAPTCHA blocks)
 max_results = 10
 timeout_secs = 15
 
@@ -159,13 +161,15 @@ Cite every claim. Prioritize recent, authoritative sources."""
 
 # ---------------------------------------------------------------------------
 # Agent: Scraper — deep-dives into specific URLs
-# Stays local: just fetches URLs and extracts text, no complex reasoning.
+# Uses cloud model: needs to call read_file → parse URLs → call web_fetch,
+# which requires reliable multi-step tool use.
 # ---------------------------------------------------------------------------
 [swarm.agents.scraper]
 name = "Scraper"
 description = "Data extraction agent. Deep-dives into specific URLs from research findings to extract detailed content, metrics, and structured data."
 keywords = ["scrape", "extract", "crawl", "data", "metrics"]
-# No provider override — inherits builtin (local)
+provider = "anthropic"                     # cloud — needs reliable tool use
+model = "claude-haiku-4-5"
 privacy_boundary = "encrypted_only"
 allowed_tools = ["web_fetch", "read_file", "write_file"]
 subscribes_to = ["task.research.raw"]
@@ -227,13 +231,15 @@ Be rigorous. Distinguish between evidence and speculation."""
 
 # ---------------------------------------------------------------------------
 # Agent: Writer — produces the final polished brief
-# Stays local: just reads files and formats text, no web access needed.
+# Uses cloud model: needs to call read_file on multiple files then synthesize
+# and call write_file, which requires reliable multi-step tool use.
 # ---------------------------------------------------------------------------
 [swarm.agents.writer]
 name = "Writer"
 description = "Brief writer. Produces polished, publication-ready research briefs from analysis with clear structure, compelling narrative, and actionable takeaways."
 keywords = ["write", "brief", "report", "document", "summarize", "draft"]
-# No provider override — inherits builtin (local)
+provider = "anthropic"                     # cloud — needs reliable tool use
+model = "claude-haiku-4-5"
 privacy_boundary = "encrypted_only"
 allowed_tools = ["read_file", "write_file"]
 subscribes_to = ["task.analysis.complete"]
