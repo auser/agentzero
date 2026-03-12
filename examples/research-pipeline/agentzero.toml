@@ -245,7 +245,7 @@ Steps:
 1. Call read_file to read `research/analysis.md`
 2. Call read_file to read `research/raw-findings.md`
 3. Synthesize everything into a clear brief
-4. Call write_file to save the brief to `output/brief.md`
+4. Call write_file to save the brief to `research/brief.md`
 
 Write your output in this format:
 # [Topic]: Research Brief
