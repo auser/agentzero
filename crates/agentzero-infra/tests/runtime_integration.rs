@@ -45,6 +45,10 @@ fn static_execution(response: &str) -> RuntimeExecution {
         hook_sink: None,
         conversation_id: None,
         audio_config: None,
+        max_tokens: 0,
+        max_cost_microdollars: 0,
+        cost_config: Default::default(),
+        data_dir: std::path::PathBuf::from("/tmp"),
     }
 }
 
@@ -63,6 +67,10 @@ fn streaming_execution(response: &str) -> RuntimeExecution {
         hook_sink: None,
         conversation_id: None,
         audio_config: None,
+        max_tokens: 0,
+        max_cost_microdollars: 0,
+        cost_config: Default::default(),
+        data_dir: std::path::PathBuf::from("/tmp"),
     }
 }
 
@@ -158,6 +166,10 @@ async fn run_agent_once_records_audit_events() {
         hook_sink: None,
         conversation_id: None,
         audio_config: None,
+        max_tokens: 0,
+        max_cost_microdollars: 0,
+        cost_config: Default::default(),
+        data_dir: std::path::PathBuf::from("/tmp"),
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "test".to_string())
@@ -184,6 +196,10 @@ async fn run_agent_once_provider_error_propagates() {
         hook_sink: None,
         conversation_id: None,
         audio_config: None,
+        max_tokens: 0,
+        max_cost_microdollars: 0,
+        cost_config: Default::default(),
+        data_dir: std::path::PathBuf::from("/tmp"),
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hello".to_string())
@@ -383,6 +399,10 @@ async fn full_loop_agent_with_tool_call_round_trip() {
         hook_sink: None,
         conversation_id: None,
         audio_config: None,
+        max_tokens: 0,
+        max_cost_microdollars: 0,
+        cost_config: Default::default(),
+        data_dir: std::path::PathBuf::from("/tmp"),
     };
 
     let output = run_agent_with_runtime(

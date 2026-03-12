@@ -12,6 +12,7 @@ mod catalog;
 pub mod model_manager;
 mod models;
 mod openai;
+mod pricing;
 pub(crate) mod transport;
 
 #[cfg(feature = "privacy")]
@@ -24,6 +25,7 @@ pub use models::{
     ModelDescriptor,
 };
 pub use openai::OpenAiCompatibleProvider;
+pub use pricing::{compute_cost_microdollars, model_pricing, ModelPricing};
 pub use transport::{
     health_probe, CircuitBreaker, CircuitBreakerStatus, HealthProbeResult, TransportConfig,
 };

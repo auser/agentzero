@@ -182,7 +182,7 @@ pub enum MergeStrategy {
     WaitQuorum { min: usize },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentConfig {
     pub max_tool_iterations: usize,
     pub request_timeout_ms: u64,
@@ -210,6 +210,9 @@ pub struct AgentConfig {
     /// Per-tool privacy boundaries. Keys are tool names, values are boundary
     /// strings that override the agent-level boundary for that tool.
     pub tool_boundaries: HashMap<String, String>,
+    /// Optional function to compute cost in microdollars from (input_tokens, output_tokens).
+    /// Injected at construction time so the core crate doesn't depend on providers.
+    pub cost_calculator: Option<Arc<dyn Fn(u64, u64) -> u64 + Send + Sync>>,
 }
 
 impl Default for AgentConfig {
@@ -232,7 +235,28 @@ impl Default for AgentConfig {
             system_prompt: None,
             privacy_boundary: String::new(),
             tool_boundaries: HashMap::new(),
+            cost_calculator: None,
         }
+    }
+}
+
+impl std::fmt::Debug for AgentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentConfig")
+            .field("max_tool_iterations", &self.max_tool_iterations)
+            .field("request_timeout_ms", &self.request_timeout_ms)
+            .field("memory_window_size", &self.memory_window_size)
+            .field("max_prompt_chars", &self.max_prompt_chars)
+            .field("parallel_tools", &self.parallel_tools)
+            .field("model_supports_tool_use", &self.model_supports_tool_use)
+            .field("model_supports_vision", &self.model_supports_vision)
+            .field("system_prompt", &self.system_prompt.is_some())
+            .field("privacy_boundary", &self.privacy_boundary)
+            .field(
+                "cost_calculator",
+                &self.cost_calculator.as_ref().map(|_| "..."),
+            )
+            .finish()
     }
 }
 

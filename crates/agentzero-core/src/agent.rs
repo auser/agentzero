@@ -1059,6 +1059,14 @@ impl Agent {
                 ctx.add_tokens(iter_tokens);
             }
 
+            // Calculate and accumulate cost from this provider call.
+            if let Some(ref calc) = self.config.cost_calculator {
+                let cost = calc(chat_result.input_tokens, chat_result.output_tokens);
+                if cost > 0 {
+                    ctx.add_cost(cost);
+                }
+            }
+
             // Check budget limits.
             if let Some(reason) = ctx.budget_exceeded() {
                 warn!(
@@ -1077,6 +1085,7 @@ impl Agent {
                 tool_calls = chat_result.tool_calls.len(),
                 tokens_this_call = iter_tokens,
                 total_tokens = ctx.current_tokens(),
+                cost_microdollars = ctx.current_cost(),
                 "structured provider call finished"
             );
             self.hook(
@@ -1661,9 +1670,14 @@ impl Agent {
                 "duration_ms": run_started.elapsed().as_millis(),
             }),
         };
+        let total_cost = ctx.current_cost();
+        let cost_usd = total_cost as f64 / 1_000_000.0;
         info!(
             request_id = %request_id,
             duration_ms = %run_started.elapsed().as_millis(),
+            total_tokens = ctx.current_tokens(),
+            cost_microdollars = total_cost,
+            cost_usd = format!("{:.4}", cost_usd),
             "agent run completed"
         );
         self.hook("after_run", after_detail).await?;

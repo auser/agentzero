@@ -148,6 +148,10 @@ async fn e2e_basic_completion() {
         hook_sink: None,
         conversation_id: None,
         audio_config: None,
+        max_tokens: 0,
+        max_cost_microdollars: 0,
+        cost_config: Default::default(),
+        data_dir: std::path::PathBuf::from("/tmp"),
     };
 
     let output = run_agent_with_runtime(execution, workspace_root(), "Say hello.".to_string())
@@ -173,6 +177,10 @@ async fn e2e_agent_with_echo_tool() {
         hook_sink: None,
         conversation_id: None,
         audio_config: None,
+        max_tokens: 0,
+        max_cost_microdollars: 0,
+        cost_config: Default::default(),
+        data_dir: std::path::PathBuf::from("/tmp"),
     };
 
     let output = run_agent_with_runtime(
@@ -210,6 +218,10 @@ async fn e2e_multi_turn_memory() {
         hook_sink: None,
         conversation_id: None,
         audio_config: None,
+        max_tokens: 0,
+        max_cost_microdollars: 0,
+        cost_config: Default::default(),
+        data_dir: std::path::PathBuf::from("/tmp"),
     };
 
     let output1 = run_agent_with_runtime(
@@ -245,6 +257,10 @@ async fn e2e_multi_turn_memory() {
         hook_sink: None,
         conversation_id: None,
         audio_config: None,
+        max_tokens: 0,
+        max_cost_microdollars: 0,
+        cost_config: Default::default(),
+        data_dir: std::path::PathBuf::from("/tmp"),
     };
 
     let output2 =

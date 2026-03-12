@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing::info;
+use tracing::{info, warn};
 
 pub struct RunAgentRequest {
     pub workspace_root: PathBuf,
@@ -56,6 +56,14 @@ pub struct RuntimeExecution {
     pub conversation_id: Option<String>,
     /// Audio transcription config; `None` → audio markers are stripped.
     pub audio_config: Option<AudioConfig>,
+    /// Per-run token budget (0 = unlimited).
+    pub max_tokens: u64,
+    /// Per-run cost budget in micro-dollars (0 = unlimited).
+    pub max_cost_microdollars: u64,
+    /// Cost tracking configuration from `[cost]` TOML section.
+    pub cost_config: agentzero_config::CostConfig,
+    /// Data directory for persistent cost tracking.
+    pub data_dir: PathBuf,
 }
 
 struct AuditHookSink {
@@ -123,6 +131,17 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
 
     // Look up model capabilities for the agent loop.
     let caps = model_capabilities(&config.provider.kind, &config.provider.model);
+
+    // Build cost calculator closure if pricing is available for this model.
+    let cost_calculator = agentzero_providers::model_pricing(
+        &config.provider.kind,
+        &config.provider.model,
+    )
+    .map(|pricing| {
+        std::sync::Arc::new(move |input_tokens: u64, output_tokens: u64| -> u64 {
+            agentzero_providers::compute_cost_microdollars(&pricing, input_tokens, output_tokens)
+        }) as std::sync::Arc<dyn Fn(u64, u64) -> u64 + Send + Sync>
+    });
 
     let provider = if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
         agentzero_providers::build_provider_with_privacy(
@@ -214,6 +233,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             system_prompt: config.agent.system_prompt.clone(),
             privacy_boundary: config.privacy.mode.clone(),
             tool_boundaries: config.security.tool_boundaries.clone(),
+            cost_calculator,
         },
         provider,
         memory,
@@ -236,6 +256,18 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         } else {
             None
         },
+        max_tokens: config.agent.max_tokens.unwrap_or(0),
+        max_cost_microdollars: config
+            .agent
+            .max_cost_usd
+            .map(|usd| (usd * 1_000_000.0) as u64)
+            .unwrap_or(0),
+        cost_config: config.cost.clone(),
+        data_dir: req
+            .config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf(),
     })
 }
 
@@ -269,7 +301,21 @@ pub fn run_agent_streaming(
 ) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let handle = tokio::spawn(async move {
+        // Pre-run cost limit check.
+        if execution.cost_config.enabled {
+            if let Ok(tracker) = crate::cost_tracker::CostTracker::load(&execution.data_dir) {
+                if let Some(reason) = tracker.check_limits(&execution.cost_config) {
+                    anyhow::bail!("{reason}");
+                }
+                if let Some(warning) = tracker.check_warnings(&execution.cost_config) {
+                    warn!("{warning}");
+                }
+            }
+        }
+
         let privacy_boundary = execution.config.privacy_boundary.clone();
+        let cost_config = execution.cost_config.clone();
+        let data_dir = execution.data_dir.clone();
         let mut agent = Agent::new(
             execution.config,
             execution.provider,
@@ -289,12 +335,24 @@ pub fn run_agent_streaming(
         let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
         ctx.privacy_boundary = privacy_boundary;
         ctx.conversation_id = execution.conversation_id.clone();
+        ctx.max_tokens = execution.max_tokens;
+        ctx.max_cost_microdollars = execution.max_cost_microdollars;
 
         let response = agent
             .respond_streaming(UserMessage { text: message }, &ctx, tx)
             .await?;
         let metrics_snapshot = runtime_metrics.export_json();
         info!(metrics = %metrics_snapshot, "streaming runtime metrics snapshot");
+
+        // Post-run: persist cost for daily/monthly tracking.
+        let run_cost = ctx.current_cost();
+        if cost_config.enabled && run_cost > 0 {
+            if let Ok(mut tracker) = crate::cost_tracker::CostTracker::load(&data_dir) {
+                if let Err(e) = tracker.record_cost(run_cost) {
+                    warn!(error = %e, "failed to persist cost tracking");
+                }
+            }
+        }
 
         Ok(RunAgentOutput {
             response_text: response.text,
@@ -309,7 +367,21 @@ pub async fn run_agent_with_runtime(
     workspace_root: PathBuf,
     message: String,
 ) -> anyhow::Result<RunAgentOutput> {
+    // Pre-run cost limit check.
+    if execution.cost_config.enabled {
+        if let Ok(tracker) = crate::cost_tracker::CostTracker::load(&execution.data_dir) {
+            if let Some(reason) = tracker.check_limits(&execution.cost_config) {
+                anyhow::bail!("{reason}");
+            }
+            if let Some(warning) = tracker.check_warnings(&execution.cost_config) {
+                warn!("{warning}");
+            }
+        }
+    }
+
     let privacy_boundary = execution.config.privacy_boundary.clone();
+    let cost_config = execution.cost_config.clone();
+    let data_dir = execution.data_dir.clone();
     let mut agent = Agent::new(
         execution.config,
         execution.provider,
@@ -328,6 +400,8 @@ pub async fn run_agent_with_runtime(
 
     let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
     ctx.privacy_boundary = privacy_boundary;
+    ctx.max_tokens = execution.max_tokens;
+    ctx.max_cost_microdollars = execution.max_cost_microdollars;
 
     // Transcribe [AUDIO:path] markers before the message reaches the LLM.
     let message = process_audio_markers(&message, execution.audio_config.as_ref()).await?;
@@ -335,6 +409,16 @@ pub async fn run_agent_with_runtime(
     let response = agent.respond(UserMessage { text: message }, &ctx).await?;
     let metrics_snapshot = runtime_metrics.export_json();
     info!(metrics = %metrics_snapshot, "runtime metrics snapshot");
+
+    // Post-run: persist cost for daily/monthly tracking.
+    let run_cost = ctx.current_cost();
+    if cost_config.enabled && run_cost > 0 {
+        if let Ok(mut tracker) = crate::cost_tracker::CostTracker::load(&data_dir) {
+            if let Err(e) = tracker.record_cost(run_cost) {
+                warn!(error = %e, "failed to persist cost tracking");
+            }
+        }
+    }
 
     Ok(RunAgentOutput {
         response_text: response.text,
@@ -639,8 +723,11 @@ fn build_delegate_agents(
                     allowed_tools: agent.allowed_tools.iter().cloned().collect(),
                     max_iterations: agent.max_iterations,
                     privacy_boundary: resolved_boundary,
-                    max_tokens: 0,
-                    max_cost_microdollars: 0,
+                    max_tokens: agent.max_tokens.unwrap_or(0),
+                    max_cost_microdollars: agent
+                        .max_cost_usd
+                        .map(|usd| (usd * 1_000_000.0) as u64)
+                        .unwrap_or(0),
                     system_prompt_hash: None,
                 },
             )
@@ -1002,6 +1089,10 @@ mod tests {
             hook_sink: None,
             conversation_id: None,
             audio_config: None,
+            max_tokens: 0,
+            max_cost_microdollars: 0,
+            cost_config: Default::default(),
+            data_dir: std::path::PathBuf::from("/tmp"),
         }
     }
 

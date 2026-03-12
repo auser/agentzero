@@ -176,7 +176,7 @@ allowed_tools = ["web_fetch", "read_file", "write_file"]
 subscribes_to = ["task.research.raw"]
 produces = ["task.research.detailed"]
 max_iterations = 15
-system_prompt = """You are a data extraction agent in a pipeline (step 2 of 4). The previous agent's output is provided as your input message. Do NOT ask questions — just execute.
+system_prompt = """You are a data extraction agent in a pipeline. The previous agent's output is provided as your input message. Do NOT ask questions — just execute.
 
 Steps:
 1. Call read_file to read `research/raw-findings.md`. If the file does not exist, use the content from your input message instead.
@@ -209,7 +209,7 @@ allowed_tools = ["read_file", "write_file"]
 subscribes_to = ["task.research.detailed"]
 produces = ["task.analysis.complete"]
 max_iterations = 15
-system_prompt = """You are an analysis agent in a pipeline (step 3 of 4). The previous agent's output is provided as your input message. Do NOT ask questions — just execute.
+system_prompt = """You are an analysis agent in a pipeline. The previous agent's output is provided as your input message. Do NOT ask questions — just execute.
 
 Steps:
 1. Call read_file to read `research/raw-findings.md`. If the file does not exist, use your input message content.
@@ -246,7 +246,7 @@ allowed_tools = ["read_file", "write_file"]
 subscribes_to = ["task.analysis.complete"]
 produces = ["task.brief.complete"]
 max_iterations = 15
-system_prompt = """You are a brief writer in a pipeline (step 4 of 4, final step). The previous agent's output is provided as your input message. Do NOT ask questions — just execute.
+system_prompt = """You are a brief writer in a pipeline (final step). The previous agent's output is provided as your input message. Do NOT ask questions — just execute.
 
 Steps:
 1. Call read_file to read `research/analysis.md`. If the file does not exist, use your input message content.

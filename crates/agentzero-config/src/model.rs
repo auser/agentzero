@@ -463,6 +463,12 @@ pub struct AgentSettings {
     pub loop_detection_failure_streak: usize,
     /// Optional system prompt sent to the LLM at the start of each conversation.
     pub system_prompt: Option<String>,
+    /// Per-run cost limit in USD. When exceeded, the agent stops.
+    #[serde(default)]
+    pub max_cost_usd: Option<f64>,
+    /// Per-run token limit. When exceeded, the agent stops.
+    #[serde(default)]
+    pub max_tokens: Option<u64>,
 }
 
 impl Default for AgentSettings {
@@ -481,6 +487,8 @@ impl Default for AgentSettings {
             loop_detection_ping_pong_cycles: 2,
             loop_detection_failure_streak: 3,
             system_prompt: None,
+            max_cost_usd: None,
+            max_tokens: None,
         }
     }
 }
@@ -1424,6 +1432,12 @@ pub struct DelegateAgentConfig {
     /// Block this agent from using these provider kinds.
     #[serde(default)]
     pub blocked_providers: Vec<String>,
+    /// Per-run cost limit in USD for this sub-agent.
+    #[serde(default)]
+    pub max_cost_usd: Option<f64>,
+    /// Per-run token limit for this sub-agent.
+    #[serde(default)]
+    pub max_tokens: Option<u64>,
 }
 
 impl Default for DelegateAgentConfig {
@@ -1441,6 +1455,8 @@ impl Default for DelegateAgentConfig {
             privacy_boundary: String::new(),
             allowed_providers: Vec::new(),
             blocked_providers: Vec::new(),
+            max_cost_usd: None,
+            max_tokens: None,
         }
     }
 }
