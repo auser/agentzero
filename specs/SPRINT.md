@@ -296,9 +296,68 @@ Wire the existing `[observability]` config skeleton to a real OTLP exporter with
 
 ---
 
+## Sprint 38: Scaling & Operational Readiness
+
+**Goal:** Enable multi-instance scaling (per-identity rate limiting, provider fallback chains), add operational tooling (backup/restore, OpenAPI spec), and harden production deployment (config validation, Docker resource limits).
+
+**Baseline:** Sprint 37 complete (2,132 tests, 0 clippy warnings). All security and reliability gaps closed.
+
+**Plan:** `specs/plans/09-scaling-and-ops.md`
+
+---
+
+### Phase A: Per-Identity Rate Limiting (HIGH)
+
+- [ ] **Refactor `RateLimiter`** — Replace global `AtomicU64` with `DashMap<String, SlidingWindowCounter>` for per-identity tracking. Identity extracted from API key (`key_id`), bearer token (`"bearer"`), or unauthenticated (`"global"`).
+- [ ] **Per-identity config** — `rate_limit_per_identity` field (default: 100/min). Global limit remains as fallback.
+- [ ] **Rate limit headers** — `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` on all responses.
+- [ ] **Bucket GC** — Periodic cleanup of expired identity buckets to prevent unbounded memory growth.
+- [ ] **Tests** — Per-key isolation, key A at limit doesn't block key B, global fallback, header values.
+
+### Phase B: Provider Fallback Chain (HIGH)
+
+- [ ] **`FallbackProvider`** — Wrapper that chains multiple providers. On primary failure (circuit open, 5xx, timeout), tries next in chain.
+- [ ] **Config** — `fallback_providers` ordered list in provider config.
+- [ ] **Metrics** — `provider_fallback_total` counter with `from`/`to` labels.
+- [ ] **Tests** — Primary fails → fallback succeeds, all fail → error, circuit open triggers fallback.
+
+### Phase C: OpenAPI Spec Generation (MEDIUM)
+
+- [ ] **`utoipa` integration** — Annotate request/response types with `ToSchema`, handlers with `#[utoipa::path]`.
+- [ ] **`GET /v1/openapi.json`** — Serves auto-generated OpenAPI 3.0 spec.
+- [ ] **Tests** — Endpoint returns valid JSON, schema includes key endpoints.
+
+### Phase D: Backup/Restore CLI (MEDIUM)
+
+- [ ] **`backup export <output-dir>`** — Exports encrypted stores (API keys, cost tracker, conversation memory) to portable tar.gz archive.
+- [ ] **`backup restore <archive-path>`** — Imports archive with integrity validation. Re-encrypts on import.
+- [ ] **Tests** — Round-trip export → restore preserves data, corrupt archive rejected.
+
+### Phase E: Production Config & Docker Hardening (MEDIUM)
+
+- [ ] **`AGENTZERO_ENV` support** — `development` / `production` environment modes.
+- [ ] **Production validation** — Require TLS or explicit `allow_insecure`, require auth (no open mode), warn on localhost with public bind.
+- [ ] **Docker resource limits** — `deploy.resources` in docker-compose.yml (512MB memory, 1.0 CPU).
+- [ ] **Tests** — Prod validation rejects insecure config, dev mode permissive.
+
+---
+
+### Acceptance Criteria
+
+- [ ] Per-identity rate limiting isolates API keys from each other
+- [ ] Rate limit response headers present on all responses
+- [ ] Provider fallback chain recovers from primary provider failure
+- [ ] OpenAPI 3.0 spec served at `/v1/openapi.json`
+- [ ] Backup export → restore round-trip preserves all data
+- [ ] Production mode rejects insecure configuration
+- [ ] Docker compose includes resource limits
+- [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
+
+---
+
 ## Backlog
 
-### Distributed Event Bus (was Sprint 36 Phase E)
+### Distributed Event Bus
 
 Redis-backed `EventBus` for horizontal scaling — multiple gateway/orchestrator instances share job state and events. Requires external Redis dependency.
 
@@ -306,12 +365,17 @@ Redis-backed `EventBus` for horizontal scaling — multiple gateway/orchestrator
 - `RedisJobStore` backed by Redis hashes + pub/sub
 - Config: `[orchestrator] event_bus = "memory" | "redis"` with `redis_url`
 
-### Multi-Tenancy & RBAC Foundations (was Sprint 36 Phase F)
+### Multi-Tenancy Deepening
 
-User identity, API key scoping, and organization isolation.
+Org isolation on data stores and deeper RBAC.
 
-- `ApiKey` model with `key_id`, `key_hash`, `org_id`, `scopes`, `expires_at`
-- `ApiKeyStore` trait with SQLite impl
-- Org isolation on `JobStore` queries
-- Scope enforcement middleware (403 on insufficient scope)
+- Org isolation on `JobStore` queries (filter by `org_id` from API key)
+- Per-org conversation memory isolation
 - CLI: `auth api-key create/revoke/list`
+
+### Additional Hardening
+
+- Fuzzing targets (`cargo-fuzz`) for HTTP handlers and provider parsers
+- Container image scanning (Trivy/Grype) in CI
+- SBOM generation (CycloneDX) in release pipeline
+- Operational runbooks for incident response
