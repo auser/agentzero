@@ -1,8 +1,8 @@
 use crate::handlers::{
     agents_list, api_chat, api_fallback, async_submit, dashboard, emergency_stop, health,
-    health_ready, job_cancel, job_events, job_list, job_result, job_status, job_transcript,
-    legacy_webhook, metrics, openapi_spec, pair, ping, sse_run_stream, v1_chat_completions,
-    v1_models, webhook, ws_chat, ws_run_subscribe,
+    health_live, health_ready, job_cancel, job_events, job_list, job_result, job_status,
+    job_transcript, legacy_webhook, metrics, openapi_spec, pair, ping, sse_run_stream,
+    v1_chat_completions, v1_models, webhook, ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -27,6 +27,7 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/", get(dashboard))
         .route("/health", get(health))
         .route("/health/ready", get(health_ready))
+        .route("/health/live", get(health_live))
         .route("/metrics", get(metrics))
         .route("/pair", post(pair))
         .route("/webhook", post(legacy_webhook))

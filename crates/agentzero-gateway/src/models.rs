@@ -253,6 +253,109 @@ pub(crate) struct JobListQuery {
     pub(crate) status: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Typed response structs (replace ad-hoc json!() in handlers)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CancelResponse {
+    pub(crate) run_id: String,
+    pub(crate) cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cascade_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cancelled_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct JobListResponse {
+    pub(crate) object: &'static str,
+    pub(crate) data: Vec<JobListItem>,
+    pub(crate) total: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct JobListItem {
+    pub(crate) run_id: String,
+    pub(crate) status: &'static str,
+    pub(crate) agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
+    pub(crate) tokens_used: u64,
+    pub(crate) cost_microdollars: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct EventListResponse {
+    pub(crate) object: &'static str,
+    pub(crate) run_id: String,
+    pub(crate) events: Vec<EventItem>,
+    pub(crate) total: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct EventItem {
+    #[serde(rename = "type")]
+    pub(crate) event_type: &'static str,
+    pub(crate) run_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tool: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TranscriptResponse {
+    pub(crate) object: &'static str,
+    pub(crate) run_id: String,
+    pub(crate) entries: Vec<TranscriptEntry>,
+    pub(crate) total: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AgentListResponse {
+    pub(crate) object: &'static str,
+    pub(crate) data: Vec<AgentListItem>,
+    pub(crate) total: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AgentListItem {
+    pub(crate) agent_id: String,
+    pub(crate) status: &'static str,
+    pub(crate) ttl_secs: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct EstopResponse {
+    pub(crate) emergency_stop: bool,
+    pub(crate) cancelled_count: usize,
+    pub(crate) cancelled_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ApiFallbackResponse {
+    pub(crate) ok: bool,
+    pub(crate) path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct LivenessResponse {
+    pub(crate) alive: bool,
+}
+
+/// Typed wrapper for webhook payloads. Webhook payloads are intentionally
+/// unstructured (arbitrary JSON from external systems).
+#[derive(Debug, Deserialize)]
+pub(crate) struct WebhookPayload {
+    #[serde(flatten)]
+    pub(crate) inner: Value,
+}
+
 impl From<StatusCode> for GatewayError {
     fn from(status: StatusCode) -> Self {
         match status {

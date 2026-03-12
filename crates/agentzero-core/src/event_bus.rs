@@ -78,6 +78,23 @@ pub trait EventBus: Send + Sync {
 
     /// Number of active subscribers.
     fn subscriber_count(&self) -> usize;
+
+    /// Replay events since a given event ID (exclusive). Returns events in order.
+    /// If `since_id` is `None`, replays all events. If the bus does not support
+    /// persistence, returns an empty vec.
+    async fn replay_since(
+        &self,
+        _topic: Option<&str>,
+        _since_id: Option<&str>,
+    ) -> anyhow::Result<Vec<Event>> {
+        Ok(Vec::new())
+    }
+
+    /// Delete events older than the given age. Returns count of deleted events.
+    /// No-op for buses that don't support persistence.
+    async fn gc_older_than(&self, _max_age: std::time::Duration) -> anyhow::Result<usize> {
+        Ok(0)
+    }
 }
 
 /// Subscriber that can filter and receive events.
@@ -256,6 +273,24 @@ impl EventBus for FileBackedBus {
     fn subscriber_count(&self) -> usize {
         self.inner.subscriber_count()
     }
+
+    async fn replay_since(
+        &self,
+        topic: Option<&str>,
+        since_id: Option<&str>,
+    ) -> anyhow::Result<Vec<Event>> {
+        let all = self.replay(topic).await?;
+        if let Some(sid) = since_id {
+            // Find the position after the given event ID.
+            if let Some(pos) = all.iter().position(|e| e.id == sid) {
+                Ok(all[pos + 1..].to_vec())
+            } else {
+                Ok(all)
+            }
+        } else {
+            Ok(all)
+        }
+    }
 }
 
 /// Glob-style topic matching: "task.image.*" matches "task.image.complete".
@@ -281,6 +316,11 @@ fn new_event_id() -> String {
 }
 
 fn now_ms() -> u64 {
+    now_ms_public()
+}
+
+/// Public helper for current time in milliseconds (used by storage crate for GC).
+pub fn now_ms_public() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

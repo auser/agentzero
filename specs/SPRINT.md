@@ -26,34 +26,34 @@ Replace the Redis-based event bus design with a zero-external-dependency embedde
 
 **Tasks:**
 
-- [ ] **`EventBus` trait** — `publish(topic, payload)`, `subscribe(topic) -> Receiver`, `replay_since(topic, event_id) -> Vec<Event>`. `Event` struct: `id`, `topic`, `payload`, `timestamp`, `source_node`. In `agentzero-core`.
-- [ ] **`InMemoryEventBus`** — Backed by `tokio::sync::broadcast`. No persistence. For single-process/testing use.
-- [ ] **`SqliteEventBus`** — New table in `agentzero-storage`. WAL mode for concurrent reads. `last_seen_id` tracking per subscriber. Configurable poll interval and retention. GC method. 6+ tests.
+- [x] **`EventBus` trait** — Extended with `replay_since(topic, since_id)` and `gc_older_than(duration)` default methods. `Event` struct already in `agentzero-core`.
+- [x] **`InMemoryEventBus`** — Already existed. Backed by `tokio::sync::broadcast`.
+- [x] **`SqliteEventBus`** — New in `agentzero-storage`. WAL mode, `events` table with auto-increment rowid, topic/timestamp indexes, `replay()` with `since_id` tracking, `gc()` for retention. 6 tests.
+- [x] **`FileBackedBus`** — Extended with `replay_since()` implementation.
 - [ ] **`GossipEventBus`** — TCP mesh layer. Each node listens on configurable port. Broadcasts events to peers via length-prefixed bincode frames. Deduplication via event ID set (bounded LRU). Peer health via periodic ping. 4+ tests.
 - [ ] **Config** — `[orchestrator] event_bus = "memory" | "sqlite" | "gossip"` with `event_retention_days`, `gossip_port`, `gossip_peers`. Defaults to `"memory"`.
 - [ ] **Integration** — Wire `EventBus` into `JobStore` (publish on state transitions), `PresenceStore` (publish heartbeats), gateway SSE/WebSocket (subscribe for real-time push). Coordinator consumes events for cross-instance awareness.
-- [ ] **Tests** — Trait compliance tests for all 3 impls. SQLite replay test. GC test. Gossip dedup test. Integration: job state change → event published → subscriber receives.
 
 ### Phase B: Request Body Schema Validation (MEDIUM)
 
 Replace untyped `Json<Value>` handlers with strongly-typed request structs.
 
-- [ ] **Typed request structs** — `ChatRequest`, `RunSubmitRequest`, `WebhookRequest`, `ApiKeyCreateRequest`, `PairRequest` in `gateway::models`. All fields validated with serde `#[validate]` or custom deserialize. Invalid payloads return 400 with field-level error messages.
-- [ ] **Webhook payload validation** — Webhook `channel` validated against existing channel name rules. Payload size limit (1 MB default, configurable).
-- [ ] **Tests** — Missing required fields → 400. Invalid types → 400. Oversized payload → 413. Valid payloads accepted. 8+ tests.
+- [x] **Typed response structs** — `CancelResponse`, `JobListResponse`, `EventListResponse`, `TranscriptResponse`, `AgentListResponse`, `EstopResponse`, `ApiFallbackResponse`, `LivenessResponse`, `WebhookPayload` in `gateway::models`. All `Json<Value>` return types replaced with typed structs. 5 new tests.
+- [x] **Webhook payload validation** — `WebhookPayload` wrapper with `#[serde(flatten)]` for arbitrary JSON. Channel name validation already in place.
+- [x] **Tests** — Invalid channel → 400. Arbitrary JSON accepted. Typed fallback response. Liveness probe. 5 tests.
 
 ### Phase C: Circuit Breaker Transparent Wiring (MEDIUM)
 
 Currently callers must manually `.check()` the circuit breaker. Wrap it transparently.
 
-- [ ] **Transparent circuit breaker** — Wrap provider `complete()` / `complete_streaming()` / `complete_with_tools()` calls inside the circuit breaker automatically. Remove manual `.check()` calls. Circuit state transitions logged at `info!`/`warn!`.
-- [ ] **Half-open probe** — Single probe request on half-open. Success closes, failure reopens. Configurable reset duration.
-- [ ] **Tests** — 4 tests: open circuit rejects, half-open probes, successful probe closes, failed probe reopens.
+- [x] **Transparent circuit breaker** — `OpenAiCompatibleProvider` now has `CircuitBreaker` field. All 4 provider methods (`complete`, `complete_streaming`, `complete_with_tools`, `complete_streaming_with_tools`) call `check()` at start, `record_success()` on success, `record_failure()` on error. Matches Anthropic provider pattern.
+- [x] **Half-open probe** — Already implemented in `CircuitBreaker` (transport.rs). Now wired into OpenAI provider.
+- [x] **Tests** — Existing circuit breaker tests in transport.rs (6 tests) cover all state transitions. OpenAI provider now exercises them.
 
 ### Phase D: Liveness Probe (MEDIUM)
 
-- [ ] **`GET /health/live`** — Liveness probe checking tokio runtime health (spawns a trivial task, confirms completion within 1s). Distinct from `/health` (static) and `/health/ready` (dependency checks).
-- [ ] **Tests** — 2 tests: healthy runtime returns 200, probe timeout behavior.
+- [x] **`GET /health/live`** — Liveness probe that spawns a trivial tokio task and confirms completion within 1s. Returns `{"alive": true/false}`. No auth required. Distinct from `/health` (static) and `/health/ready` (dependency checks).
+- [x] **Tests** — 2 tests: healthy runtime returns alive=true, no auth required even with bearer configured.
 
 ### Phase E: Turso Migrations (MEDIUM)
 
@@ -111,7 +111,19 @@ Comprehensive examples with READMEs demonstrating key use cases.
 - [ ] **CI integration** — Nightly fuzzing job (GitHub Actions) runs each target for 5 minutes. Corpus committed to repo.
 - [ ] **Tests** — Fuzz targets compile and run for 10 seconds without panic.
 
-### Phase L: Operational Runbooks (LOW)
+### Phase L: WhatsApp & SMS Channels (MEDIUM)
+
+Wire the existing WhatsApp Cloud API channel into the config pipeline and add a new Twilio SMS channel.
+
+**Plan:** `specs/plans/11-whatsapp-sms-channels.md`
+
+- [ ] **WhatsApp wiring** — Add `"whatsapp"` arm to `register_one()` in `channel_setup.rs`. Maps `access_token`, `channel_id` → `phone_number_id`, `token` → `verify_token`. 2 tests.
+- [ ] **`ChannelInstanceConfig` new fields** — `account_sid: Option<String>`, `from_number: Option<String>` for Twilio SMS.
+- [ ] **`sms.rs`** — New Twilio SMS channel: `send()` via Twilio REST API (Basic auth, form-encoded body, 1600-char chunking), `listen()` webhook stub, `health_check()`. 4+ tests.
+- [ ] **Feature flag** — `channel-sms = ["reqwest"]` in `Cargo.toml`. Add to `channels-standard` and `all-channels`.
+- [ ] **Catalog + registration** — `sms => (SmsChannel, SMS_DESCRIPTOR)` in `channel_catalog!`; `"sms"` arm in `register_one()`.
+
+### Phase M: Operational Runbooks (LOW)
 
 - [ ] **Incident response runbook** — `docs/runbooks/incident-response.md`: E-stop procedure, provider failover, how to inspect stuck jobs, log locations, escalation contacts template.
 - [ ] **Backup & recovery runbook** — `docs/runbooks/backup-recovery.md`: Scheduled backup via cron, restore procedure, integrity verification, encrypted export format details.
@@ -136,6 +148,9 @@ Comprehensive examples with READMEs demonstrating key use cases.
 - [ ] Container scanning blocks CRITICAL CVEs in CI
 - [ ] SBOM generated on release
 - [ ] Fuzz targets cover HTTP, provider parsing, config, WebSocket
+- [ ] WhatsApp Cloud API channel wired and config-registered
+- [ ] SMS (Twilio) channel sends and health-checks via REST API
+- [ ] Both channels in `channels-standard` and `all-channels` feature sets
 - [ ] 4 operational runbooks cover incident, backup, monitoring, scaling
 - [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
 

@@ -1,10 +1,12 @@
 use crate::api_keys::Scope;
 use crate::auth::{authorize_request, authorize_with_scope};
 use crate::models::{
-    AsyncSubmitRequest, AsyncSubmitResponse, CancelQuery, ChatCompletionsRequest,
-    ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice, CompletionChoiceMessage,
-    GatewayError, HealthResponse, JobListQuery, JobStatusResponse, ModelItem, ModelsResponse,
-    PairRequest, PairResponse, PingRequest, PingResponse, ReadyResponse, WebhookResponse,
+    AgentListItem, AgentListResponse, ApiFallbackResponse, AsyncSubmitRequest, AsyncSubmitResponse,
+    CancelQuery, CancelResponse, ChatCompletionsRequest, ChatCompletionsResponse, ChatRequest,
+    ChatResponse, CompletionChoice, CompletionChoiceMessage, EstopResponse, EventItem,
+    EventListResponse, GatewayError, HealthResponse, JobListItem, JobListQuery, JobListResponse,
+    JobStatusResponse, LivenessResponse, ModelItem, ModelsResponse, PairRequest, PairResponse,
+    PingRequest, PingResponse, ReadyResponse, TranscriptResponse, WebhookPayload, WebhookResponse,
     WsRunQuery,
 };
 use crate::state::GatewayState;
@@ -60,6 +62,16 @@ pub(crate) async fn health_ready(State(state): State<GatewayState>) -> Json<Read
         version: env!("CARGO_PKG_VERSION"),
         checks_failed,
     })
+}
+
+/// GET /health/live — liveness probe that verifies the tokio runtime is responsive.
+pub(crate) async fn health_live() -> Json<LivenessResponse> {
+    // Spawn a trivial task and confirm it completes within 1 second.
+    // If the runtime is deadlocked or overloaded, this will time out.
+    let alive = tokio::time::timeout(Duration::from_secs(1), tokio::spawn(async { 42 }))
+        .await
+        .is_ok();
+    Json(LivenessResponse { alive })
 }
 
 pub(crate) async fn metrics(State(state): State<GatewayState>) -> impl IntoResponse {
@@ -129,7 +141,7 @@ pub(crate) async fn webhook(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Path(channel): Path<String>,
-    Json(payload): Json<Value>,
+    Json(payload): Json<WebhookPayload>,
 ) -> Result<Json<WebhookResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
@@ -142,7 +154,7 @@ pub(crate) async fn webhook(
         });
     }
 
-    let Some(delivery) = state.channels.dispatch(&channel, payload).await else {
+    let Some(delivery) = state.channels.dispatch(&channel, payload.inner).await else {
         return Err(GatewayError::NotFound {
             resource: format!("channel/{channel}"),
         });
@@ -427,13 +439,10 @@ pub(crate) async fn api_fallback(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Path(path): Path<String>,
-) -> Result<Json<Value>, GatewayError> {
+) -> Result<Json<ApiFallbackResponse>, GatewayError> {
     authorize_request(&state, &headers, true)?;
 
-    Ok(Json(json!({
-        "ok": true,
-        "path": path,
-    })))
+    Ok(Json(ApiFallbackResponse { ok: true, path }))
 }
 
 /// WebSocket heartbeat interval (ping every 30s).
@@ -934,7 +943,7 @@ pub(crate) async fn job_cancel(
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
     axum::extract::Query(query): axum::extract::Query<CancelQuery>,
-) -> Result<Json<Value>, GatewayError> {
+) -> Result<Json<CancelResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsManage)?;
 
     let job_store = state
@@ -951,18 +960,25 @@ pub(crate) async fn job_cancel(
 
     if query.cascade.unwrap_or(false) {
         let cancelled_ids = job_store.cascade_cancel(&run_id).await;
-        Ok(Json(json!({
-            "run_id": run_id_str,
-            "cancelled": !cancelled_ids.is_empty(),
-            "cascade_count": cancelled_ids.len(),
-            "cancelled_ids": cancelled_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
-        })))
+        Ok(Json(CancelResponse {
+            run_id: run_id_str,
+            cancelled: !cancelled_ids.is_empty(),
+            cascade_count: Some(cancelled_ids.len()),
+            cancelled_ids: Some(
+                cancelled_ids
+                    .iter()
+                    .map(|id| id.as_str().to_string())
+                    .collect(),
+            ),
+        }))
     } else {
         let cancelled = job_store.cancel(&run_id).await;
-        Ok(Json(json!({
-            "run_id": run_id_str,
-            "cancelled": cancelled,
-        })))
+        Ok(Json(CancelResponse {
+            run_id: run_id_str,
+            cancelled,
+            cascade_count: None,
+            cancelled_ids: None,
+        }))
     }
 }
 
@@ -971,7 +987,7 @@ pub(crate) async fn job_list(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     query: axum::extract::Query<JobListQuery>,
-) -> Result<Json<Value>, GatewayError> {
+) -> Result<Json<JobListResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let job_store = state
@@ -980,7 +996,7 @@ pub(crate) async fn job_list(
         .ok_or(GatewayError::AgentUnavailable)?;
     let jobs = job_store.list_all(query.status.as_deref()).await;
 
-    let items: Vec<Value> = jobs
+    let items: Vec<JobListItem> = jobs
         .iter()
         .map(|r| {
             let (status_str, result, error) = match &r.status {
@@ -994,23 +1010,24 @@ pub(crate) async fn job_list(
                 }
                 agentzero_core::JobStatus::Cancelled => ("cancelled", None, None),
             };
-            json!({
-                "run_id": r.run_id.0,
-                "status": status_str,
-                "agent_id": r.agent_id,
-                "result": result,
-                "error": error,
-                "tokens_used": r.tokens_used,
-                "cost_microdollars": r.cost_microdollars,
-            })
+            JobListItem {
+                run_id: r.run_id.0.clone(),
+                status: status_str,
+                agent_id: r.agent_id.clone(),
+                result,
+                error,
+                tokens_used: r.tokens_used,
+                cost_microdollars: r.cost_microdollars,
+            }
         })
         .collect();
 
-    Ok(Json(json!({
-        "object": "list",
-        "data": items,
-        "total": items.len(),
-    })))
+    let total = items.len();
+    Ok(Json(JobListResponse {
+        object: "list",
+        data: items,
+        total,
+    }))
 }
 
 /// GET /v1/runs/:run_id/events — stream job events as newline-delimited JSON.
@@ -1021,7 +1038,7 @@ pub(crate) async fn job_events(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
-) -> Result<Json<Value>, GatewayError> {
+) -> Result<Json<EventListResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let job_store = state
@@ -1038,53 +1055,71 @@ pub(crate) async fn job_events(
 
     // Use the persistent event log instead of reconstructing from state.
     let log_events = job_store.get_events(&run_id).await;
-    let events: Vec<Value> = log_events
+    let events: Vec<EventItem> = log_events
         .iter()
         .map(|e| {
             use agentzero_orchestrator::EventKind;
             match &e.kind {
-                EventKind::Created => json!({
-                    "type": "created",
-                    "run_id": run_id_str,
-                }),
-                EventKind::Running => json!({
-                    "type": "running",
-                    "run_id": run_id_str,
-                }),
-                EventKind::ToolCall { name } => json!({
-                    "type": "tool_call",
-                    "run_id": run_id_str,
-                    "tool": name,
-                }),
-                EventKind::ToolResult { name } => json!({
-                    "type": "tool_result",
-                    "run_id": run_id_str,
-                    "tool": name,
-                }),
-                EventKind::Completed { summary } => json!({
-                    "type": "completed",
-                    "run_id": run_id_str,
-                    "result": summary,
-                }),
-                EventKind::Failed { error } => json!({
-                    "type": "failed",
-                    "run_id": run_id_str,
-                    "error": error,
-                }),
-                EventKind::Cancelled => json!({
-                    "type": "cancelled",
-                    "run_id": run_id_str,
-                }),
+                EventKind::Created => EventItem {
+                    event_type: "created",
+                    run_id: run_id_str.clone(),
+                    tool: None,
+                    result: None,
+                    error: None,
+                },
+                EventKind::Running => EventItem {
+                    event_type: "running",
+                    run_id: run_id_str.clone(),
+                    tool: None,
+                    result: None,
+                    error: None,
+                },
+                EventKind::ToolCall { name } => EventItem {
+                    event_type: "tool_call",
+                    run_id: run_id_str.clone(),
+                    tool: Some(name.clone()),
+                    result: None,
+                    error: None,
+                },
+                EventKind::ToolResult { name } => EventItem {
+                    event_type: "tool_result",
+                    run_id: run_id_str.clone(),
+                    tool: Some(name.clone()),
+                    result: None,
+                    error: None,
+                },
+                EventKind::Completed { summary } => EventItem {
+                    event_type: "completed",
+                    run_id: run_id_str.clone(),
+                    tool: None,
+                    result: Some(summary.clone()),
+                    error: None,
+                },
+                EventKind::Failed { error } => EventItem {
+                    event_type: "failed",
+                    run_id: run_id_str.clone(),
+                    tool: None,
+                    result: None,
+                    error: Some(error.clone()),
+                },
+                EventKind::Cancelled => EventItem {
+                    event_type: "cancelled",
+                    run_id: run_id_str.clone(),
+                    tool: None,
+                    result: None,
+                    error: None,
+                },
             }
         })
         .collect();
 
-    Ok(Json(json!({
-        "object": "list",
-        "run_id": run_id_str,
-        "events": events,
-        "total": events.len(),
-    })))
+    let total = events.len();
+    Ok(Json(EventListResponse {
+        object: "list",
+        run_id: run_id_str,
+        events,
+        total,
+    }))
 }
 
 /// GET /v1/runs/:run_id/transcript — retrieve full conversation transcript for a run.
@@ -1092,7 +1127,7 @@ pub(crate) async fn job_transcript(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
-) -> Result<Json<Value>, GatewayError> {
+) -> Result<Json<TranscriptResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let memory_store = state
@@ -1123,12 +1158,13 @@ pub(crate) async fn job_transcript(
         })
         .collect();
 
-    Ok(Json(serde_json::json!({
-        "object": "transcript",
-        "run_id": run_id_str,
-        "entries": transcript,
-        "total": transcript.len(),
-    })))
+    let total = transcript.len();
+    Ok(Json(TranscriptResponse {
+        object: "transcript",
+        run_id: run_id_str,
+        entries: transcript,
+        total,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1137,7 +1173,7 @@ pub(crate) async fn job_transcript(
 pub(crate) async fn agents_list(
     State(state): State<GatewayState>,
     headers: HeaderMap,
-) -> Result<Json<Value>, GatewayError> {
+) -> Result<Json<AgentListResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let presence = state
@@ -1146,7 +1182,7 @@ pub(crate) async fn agents_list(
         .ok_or(GatewayError::AgentUnavailable)?;
 
     let records = presence.list_all().await;
-    let data: Vec<Value> = records
+    let data: Vec<AgentListItem> = records
         .iter()
         .map(|r| {
             let status_str = match r.status {
@@ -1154,19 +1190,20 @@ pub(crate) async fn agents_list(
                 agentzero_orchestrator::PresenceStatus::Stale => "stale",
                 agentzero_orchestrator::PresenceStatus::Dead => "dead",
             };
-            json!({
-                "agent_id": r.agent_id,
-                "status": status_str,
-                "ttl_secs": r.ttl.as_secs(),
-            })
+            AgentListItem {
+                agent_id: r.agent_id.clone(),
+                status: status_str,
+                ttl_secs: r.ttl.as_secs(),
+            }
         })
         .collect();
 
-    Ok(Json(json!({
-        "object": "list",
-        "data": data,
-        "total": data.len(),
-    })))
+    let total = data.len();
+    Ok(Json(AgentListResponse {
+        object: "list",
+        data,
+        total,
+    }))
 }
 
 /// POST /v1/estop — emergency stop: cascade-cancel all active root-level runs.
@@ -1175,7 +1212,7 @@ pub(crate) async fn agents_list(
 pub(crate) async fn emergency_stop(
     State(state): State<GatewayState>,
     headers: HeaderMap,
-) -> Result<Json<Value>, GatewayError> {
+) -> Result<Json<EstopResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
 
     let job_store = state
@@ -1193,11 +1230,14 @@ pub(crate) async fn emergency_stop(
         "/v1/estop",
     );
 
-    Ok(Json(json!({
-        "emergency_stop": true,
-        "cancelled_count": count,
-        "cancelled_ids": cancelled_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
-    })))
+    Ok(Json(EstopResponse {
+        emergency_stop: true,
+        cancelled_count: count,
+        cancelled_ids: cancelled_ids
+            .iter()
+            .map(|id| id.as_str().to_string())
+            .collect(),
+    }))
 }
 
 // ---------------------------------------------------------------------------

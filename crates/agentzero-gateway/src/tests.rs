@@ -3675,3 +3675,148 @@ async fn e2e_session_ttl_enforcement() {
         .expect("response");
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+// ---------------------------------------------------------------------------
+// Liveness probe tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn health_live_returns_alive_true() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/health/live")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("body should be json");
+    assert_eq!(json["alive"], true);
+}
+
+#[tokio::test]
+async fn health_live_no_auth_required() {
+    let app = build_router(
+        GatewayState::test_with_bearer(Some("secret-token")),
+        &default_config(),
+    );
+    let request = Request::builder()
+        .method("GET")
+        .uri("/health/live")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+// ---------------------------------------------------------------------------
+// Typed response struct tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn api_fallback_returns_typed_response() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+
+    let pair_request = Request::builder()
+        .method("POST")
+        .uri("/pair")
+        .header("x-pairing-code", "406823")
+        .body(Body::empty())
+        .expect("request should build");
+    let pair_response = app
+        .clone()
+        .oneshot(pair_request)
+        .await
+        .expect("response should be returned");
+    let pair_body = pair_response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let pair_json: serde_json::Value = serde_json::from_slice(&pair_body).expect("should parse");
+    let token = pair_json["token"].as_str().expect("token").to_string();
+
+    let request = Request::builder()
+        .method("GET")
+        .uri("/api/some-path")
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .expect("request should build");
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("body should be json");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["path"], "some-path");
+}
+
+#[tokio::test]
+async fn webhook_invalid_channel_returns_400() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+
+    let pair_request = Request::builder()
+        .method("POST")
+        .uri("/pair")
+        .header("x-pairing-code", "406823")
+        .body(Body::empty())
+        .expect("request should build");
+    let pair_response = app
+        .clone()
+        .oneshot(pair_request)
+        .await
+        .expect("response should be returned");
+    let pair_body = pair_response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let pair_json: serde_json::Value = serde_json::from_slice(&pair_body).expect("should parse");
+    let token = pair_json["token"].as_str().expect("token").to_string();
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/webhook/invalid%20channel!")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"event":"test"}"#))
+        .expect("request should build");
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn webhook_payload_accepts_arbitrary_json() {
+    let payload = serde_json::from_str::<crate::models::WebhookPayload>(
+        r#"{"event":"push","repo":"my-repo","nested":{"key":42}}"#,
+    )
+    .expect("should deserialize arbitrary JSON");
+    assert_eq!(payload.inner["event"], "push");
+    assert_eq!(payload.inner["nested"]["key"], 42);
+}

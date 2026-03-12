@@ -1,7 +1,7 @@
 use crate::transport::{
     jittered_backoff, log_request, log_response, log_retry, map_reqwest_error, map_status_error,
-    parse_retry_after, should_retry_status, should_retry_transport, TransportError,
-    TransportErrorKind, TransportResponse, MAX_ATTEMPTS,
+    parse_retry_after, should_retry_status, should_retry_transport, CircuitBreaker,
+    TransportConfig, TransportError, TransportErrorKind, TransportResponse, MAX_ATTEMPTS,
 };
 use agentzero_core::{
     ChatResult, ConversationMessage, Provider, ReasoningConfig, StopReason, StreamChunk,
@@ -94,15 +94,33 @@ pub struct OpenAiCompatibleProvider {
     api_key: String,
     model: String,
     transport: Arc<dyn HttpTransport>,
+    circuit_breaker: Arc<CircuitBreaker>,
 }
 
 impl OpenAiCompatibleProvider {
     pub fn new(base_url: String, api_key: String, model: String) -> Self {
+        let config = TransportConfig::default();
         Self {
             base_url,
             api_key,
             model,
             transport: Arc::new(ReqwestTransport::new()),
+            circuit_breaker: Arc::new(CircuitBreaker::from_config(&config)),
+        }
+    }
+
+    pub fn with_config(
+        base_url: String,
+        api_key: String,
+        model: String,
+        config: &TransportConfig,
+    ) -> Self {
+        Self {
+            base_url,
+            api_key,
+            model,
+            transport: Arc::new(ReqwestTransport::new()),
+            circuit_breaker: Arc::new(CircuitBreaker::from_config(config)),
         }
     }
 
@@ -113,11 +131,13 @@ impl OpenAiCompatibleProvider {
         model: String,
         transport: Arc<dyn HttpTransport>,
     ) -> Self {
+        let config = TransportConfig::default();
         Self {
             base_url,
             api_key,
             model,
             transport,
+            circuit_breaker: Arc::new(CircuitBreaker::from_config(&config)),
         }
     }
 }
@@ -309,6 +329,8 @@ impl Provider for OpenAiCompatibleProvider {
     ) -> anyhow::Result<ChatResult> {
         let span = info_span!("openai_complete", provider = "openai-compat", model = %self.model);
         async {
+            self.circuit_breaker.check().await?;
+
             let url = format!(
                 "{}/v1/chat/completions",
                 self.base_url.trim_end_matches('/')
@@ -375,6 +397,7 @@ impl Provider for OpenAiCompatibleProvider {
                             &self.model,
                             start.elapsed().as_secs_f64(),
                         );
+                        self.circuit_breaker.record_success();
                         let output_text = parse_output_text(&response.body)
                             .with_context(|| "failed to parse provider response".to_string())?;
                         return Ok(ChatResult {
@@ -389,6 +412,7 @@ impl Provider for OpenAiCompatibleProvider {
                             "transport",
                             start.elapsed().as_secs_f64(),
                         );
+                        self.circuit_breaker.record_failure().await;
                         let mapped = anyhow!("provider request failed: {}", error.message);
                         if attempt + 1 < MAX_ATTEMPTS && should_retry_transport(error.kind) {
                             log_retry("openai-compat", attempt, &error.message);
@@ -414,6 +438,8 @@ impl Provider for OpenAiCompatibleProvider {
     ) -> anyhow::Result<ChatResult> {
         let span = info_span!("openai_stream", provider = "openai-compat", model = %self.model);
         async {
+            self.circuit_breaker.check().await?;
+
             let url = format!(
                 "{}/v1/chat/completions",
                 self.base_url.trim_end_matches('/')
@@ -444,6 +470,7 @@ impl Provider for OpenAiCompatibleProvider {
                         "transport",
                         start.elapsed().as_secs_f64(),
                     );
+                    self.circuit_breaker.record_failure().await;
                     return Err(anyhow!("streaming request failed: {e}"));
                 }
             };
@@ -457,6 +484,7 @@ impl Provider for OpenAiCompatibleProvider {
                     &error_type,
                     start.elapsed().as_secs_f64(),
                 );
+                self.circuit_breaker.record_failure().await;
                 let body = response.text().await.unwrap_or_default();
                 return Err(map_status_error(status, &body));
             }
@@ -489,6 +517,7 @@ impl Provider for OpenAiCompatibleProvider {
                 &self.model,
                 start.elapsed().as_secs_f64(),
             );
+            self.circuit_breaker.record_success();
             log_response("openai-compat", 200, accumulated.len(), start.elapsed());
 
             let _ = sender.send(StreamChunk {
@@ -515,6 +544,8 @@ impl Provider for OpenAiCompatibleProvider {
         let span =
             info_span!("openai_complete_tools", provider = "openai-compat", model = %self.model);
         async {
+            self.circuit_breaker.check().await?;
+
             let url = format!(
                 "{}/v1/chat/completions",
                 self.base_url.trim_end_matches('/')
@@ -589,6 +620,7 @@ impl Provider for OpenAiCompatibleProvider {
                             &self.model,
                             elapsed,
                         );
+                        self.circuit_breaker.record_success();
                         let result = parse_tool_chat_response(&response.body)
                             .with_context(|| "failed to parse provider tool response")?;
                         crate::provider_metrics::record_token_usage(
@@ -606,6 +638,7 @@ impl Provider for OpenAiCompatibleProvider {
                             "transport",
                             start.elapsed().as_secs_f64(),
                         );
+                        self.circuit_breaker.record_failure().await;
                         let mapped = anyhow!("provider request failed: {}", error.message);
                         if attempt + 1 < MAX_ATTEMPTS && should_retry_transport(error.kind) {
                             log_retry("openai-compat", attempt, &error.message);
@@ -634,6 +667,8 @@ impl Provider for OpenAiCompatibleProvider {
         let span =
             info_span!("openai_stream_tools", provider = "openai-compat", model = %self.model);
         async {
+            self.circuit_breaker.check().await?;
+
             let url = format!(
                 "{}/v1/chat/completions",
                 self.base_url.trim_end_matches('/')
@@ -674,6 +709,7 @@ impl Provider for OpenAiCompatibleProvider {
                         "transport",
                         start.elapsed().as_secs_f64(),
                     );
+                    self.circuit_breaker.record_failure().await;
                     return Err(anyhow!("streaming request failed: {e}"));
                 }
             };
@@ -687,6 +723,7 @@ impl Provider for OpenAiCompatibleProvider {
                     &error_type,
                     start.elapsed().as_secs_f64(),
                 );
+                self.circuit_breaker.record_failure().await;
                 let body = response.text().await.unwrap_or_default();
                 return Err(map_status_error(status, &body));
             }
@@ -767,6 +804,7 @@ impl Provider for OpenAiCompatibleProvider {
                 &self.model,
                 start.elapsed().as_secs_f64(),
             );
+            self.circuit_breaker.record_success();
             log_response(
                 "openai-compat",
                 200,
