@@ -143,24 +143,58 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         }) as std::sync::Arc<dyn Fn(u64, u64) -> u64 + Send + Sync>
     });
 
-    let provider = if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
-        agentzero_providers::build_provider_with_privacy(
-            &config.provider.kind,
-            config.provider.base_url.clone(),
-            key,
-            config.provider.model.clone(),
-            transport_config,
-            &config.privacy.mode,
-        )?
-    } else {
-        agentzero_providers::build_provider_with_transport(
-            &config.provider.kind,
-            config.provider.base_url.clone(),
-            key,
-            config.provider.model.clone(),
-            transport_config,
-        )
-    };
+    let primary_provider: Box<dyn agentzero_core::Provider> =
+        if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
+            agentzero_providers::build_provider_with_privacy(
+                &config.provider.kind,
+                config.provider.base_url.clone(),
+                key,
+                config.provider.model.clone(),
+                transport_config.clone(),
+                &config.privacy.mode,
+            )?
+        } else {
+            agentzero_providers::build_provider_with_transport(
+                &config.provider.kind,
+                config.provider.base_url.clone(),
+                key,
+                config.provider.model.clone(),
+                transport_config.clone(),
+            )
+        };
+
+    // Wrap with fallback chain if configured.
+    let provider: Box<dyn agentzero_core::Provider> =
+        if config.provider.fallback_providers.is_empty() {
+            primary_provider
+        } else {
+            let mut chain: Vec<(String, Box<dyn agentzero_core::Provider>)> =
+                Vec::with_capacity(1 + config.provider.fallback_providers.len());
+            chain.push((config.provider.kind.clone(), primary_provider));
+
+            for entry in &config.provider.fallback_providers {
+                let fb_key = entry
+                    .api_key_env
+                    .as_ref()
+                    .and_then(|env_var| std::env::var(env_var).ok())
+                    .unwrap_or_default();
+                let fb_provider = agentzero_providers::build_provider_with_transport(
+                    &entry.kind,
+                    entry.base_url.clone(),
+                    fb_key,
+                    entry.model.clone(),
+                    transport_config.clone(),
+                );
+                let label = format!("{}:{}", entry.kind, entry.model);
+                chain.push((label, fb_provider));
+            }
+
+            tracing::info!(
+                chain_len = chain.len(),
+                "provider fallback chain configured"
+            );
+            Box::new(agentzero_providers::FallbackProvider::new(chain))
+        };
     let memory = build_memory_store(&req.config_path).await?;
     let tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
     let mut tools: Vec<Box<dyn Tool>> = default_tools(&tool_policy, router, delegate_agents)?;

@@ -314,6 +314,9 @@ impl AgentZeroConfig {
             }
         }
 
+        // Production mode validation (AGENTZERO_ENV=production).
+        self.validate_production_mode()?;
+
         // Non-fatal validation warnings for routing config.
         if self.query_classification.enabled && self.query_classification.rules.is_empty() {
             warn!(
@@ -364,6 +367,54 @@ impl AgentZeroConfig {
         }
         copy
     }
+
+    /// Check if the runtime environment is production (`AGENTZERO_ENV=production`).
+    pub fn is_production() -> bool {
+        std::env::var("AGENTZERO_ENV")
+            .map(|v| v.eq_ignore_ascii_case("production"))
+            .unwrap_or(false)
+    }
+
+    /// Strict validation rules enforced only when `AGENTZERO_ENV=production`.
+    ///
+    /// Production mode requires:
+    /// - TLS enabled **or** explicit `gateway.allow_insecure = true`
+    /// - Authentication enabled (require_pairing or API key auth)
+    /// - Non-localhost bind with `allow_public_bind` acknowledged
+    fn validate_production_mode(&self) -> anyhow::Result<()> {
+        if !Self::is_production() {
+            return Ok(());
+        }
+
+        // TLS or explicit allow_insecure.
+        let tls_configured = self.gateway.tls.is_some();
+        if !tls_configured && !self.gateway.allow_insecure {
+            return Err(anyhow!(
+                "production mode requires TLS (gateway.tls) or explicit gateway.allow_insecure = true"
+            ));
+        }
+
+        // Authentication must be required (pairing or API key enforcement).
+        if !self.gateway.require_pairing {
+            return Err(anyhow!(
+                "production mode requires gateway.require_pairing = true (authentication required)"
+            ));
+        }
+
+        // Warn about localhost bind in production.
+        let is_localhost = matches!(
+            self.gateway.host.as_str(),
+            "127.0.0.1" | "::1" | "localhost"
+        );
+        if is_localhost {
+            warn!(
+                "production mode with localhost bind ({}) — gateway will not be reachable externally",
+                self.gateway.host
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -378,6 +429,30 @@ pub struct ProviderConfig {
     pub model_support_vision: Option<bool>,
     #[serde(default)]
     pub transport: TransportSettings,
+    /// Ordered fallback providers tried when the primary fails.
+    /// Empty list (default) means no fallback.
+    #[serde(default)]
+    pub fallback_providers: Vec<FallbackProviderEntry>,
+}
+
+/// A fallback provider entry in the provider config.
+///
+/// Configured as `[[provider.fallback_providers]]` in TOML:
+/// ```toml
+/// [[provider.fallback_providers]]
+/// kind = "openai"
+/// base_url = "https://api.openai.com"
+/// model = "gpt-4o"
+/// api_key_env = "OPENAI_API_KEY"
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FallbackProviderEntry {
+    pub kind: String,
+    pub base_url: String,
+    pub model: String,
+    /// Environment variable name containing the API key for this fallback provider.
+    /// If unset, the primary provider's API key is used.
+    pub api_key_env: Option<String>,
 }
 
 /// Transport-level settings loaded from `[provider.transport]` in TOML.
@@ -411,6 +486,7 @@ impl Default for ProviderConfig {
             provider_api: None,
             model_support_vision: None,
             transport: TransportSettings::default(),
+            fallback_providers: vec![],
         }
     }
 }
@@ -1258,6 +1334,10 @@ pub struct GatewayConfig {
     pub relay: RelayConfig,
     /// TLS configuration. When present, the gateway serves HTTPS.
     pub tls: Option<TlsConfig>,
+    /// When true, allows running without TLS in production mode.
+    /// Must be explicitly set to acknowledge the security implications.
+    #[serde(default)]
+    pub allow_insecure: bool,
 }
 
 /// TLS certificate configuration for the gateway.
@@ -1280,6 +1360,7 @@ impl Default for GatewayConfig {
             relay_mode: false,
             relay: RelayConfig::default(),
             tls: None,
+            allow_insecure: false,
         }
     }
 }
@@ -2105,5 +2186,106 @@ mod tests {
         assert!((cfg.monthly_limit_usd - 100.0).abs() < f64::EPSILON);
         assert_eq!(cfg.warn_at_percent, 80);
         assert!(!cfg.allow_override);
+    }
+
+    // --- Production mode validation tests ---
+    //
+    // These tests manipulate the `AGENTZERO_ENV` env var, so they must run
+    // sequentially.  We use a static mutex instead of `serial_test` to avoid
+    // an extra dev-dependency.
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Run `body` while `AGENTZERO_ENV` is set to `value` (or removed if `None`).
+    /// The env var is always cleaned up afterwards, even on panic.
+    fn with_env(value: Option<&str>, body: impl FnOnce()) {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+        struct Cleanup;
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                std::env::remove_var("AGENTZERO_ENV");
+            }
+        }
+        let _cleanup = Cleanup;
+        match value {
+            Some(v) => std::env::set_var("AGENTZERO_ENV", v),
+            None => std::env::remove_var("AGENTZERO_ENV"),
+        }
+        body();
+    }
+
+    fn prod_config() -> AgentZeroConfig {
+        AgentZeroConfig::default()
+    }
+
+    #[test]
+    fn production_rejects_no_tls_and_no_allow_insecure() {
+        with_env(Some("production"), || {
+            let config = prod_config();
+            let result = config.validate_production_mode();
+            assert!(result.is_err());
+            let err = result.expect_err("should fail");
+            assert!(
+                err.to_string().contains("TLS"),
+                "expected TLS error, got: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn production_allows_explicit_allow_insecure() {
+        with_env(Some("production"), || {
+            let mut config = prod_config();
+            config.gateway.allow_insecure = true;
+            let result = config.validate_production_mode();
+            assert!(
+                result.is_ok(),
+                "allow_insecure should bypass TLS requirement"
+            );
+        });
+    }
+
+    #[test]
+    fn production_rejects_no_pairing() {
+        with_env(Some("production"), || {
+            let mut config = prod_config();
+            config.gateway.allow_insecure = true;
+            config.gateway.require_pairing = false;
+            let result = config.validate_production_mode();
+            assert!(result.is_err());
+            let err = result.expect_err("should fail");
+            assert!(
+                err.to_string().contains("require_pairing"),
+                "expected pairing error, got: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn dev_mode_permissive() {
+        with_env(None, || {
+            let config = prod_config();
+            let result = config.validate_production_mode();
+            assert!(
+                result.is_ok(),
+                "dev mode should not enforce production rules"
+            );
+        });
+    }
+
+    #[test]
+    fn production_allows_tls_configured() {
+        with_env(Some("production"), || {
+            let mut config = prod_config();
+            config.gateway.tls = Some(TlsConfig {
+                cert_path: "/etc/ssl/cert.pem".to_string(),
+                key_path: "/etc/ssl/key.pem".to_string(),
+            });
+            let result = config.validate_production_mode();
+            assert!(
+                result.is_ok(),
+                "TLS configured should satisfy production mode"
+            );
+        });
     }
 }

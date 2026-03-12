@@ -16,6 +16,12 @@ model = "anthropic/claude-sonnet-4-6"         # model identifier
 default_temperature = 0.7                        # 0.0 – 2.0
 # provider_api = "openai-chat-completions"       # or "openai-responses"
 # model_support_vision = true                    # enable vision/multimodal
+# Fallback providers — tried in order when primary fails
+# [[provider.fallback_providers]]
+# kind = "openai"
+# base_url = "https://api.openai.com/v1"
+# model = "gpt-4o"
+# api_key_env = "OPENAI_API_KEY"                 # env var holding the API key
 # For local inference with no external server (requires --features local-model):
 # kind = "builtin"
 # model = "qwen2.5-coder-3b"
@@ -128,6 +134,7 @@ host = "127.0.0.1"
 port = 42617
 require_pairing = true
 allow_public_bind = false
+# allow_insecure = false                          # set true to bypass TLS requirement in production mode
 # relay_mode = false                              # when true, only relay routes active (agent endpoints → 503)
 
 # TLS configuration (requires --features tls). When present, gateway serves HTTPS.

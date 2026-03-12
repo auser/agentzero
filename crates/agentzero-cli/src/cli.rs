@@ -299,6 +299,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: PrivacyCommands,
     },
+    /// Export and import encrypted data stores for backup and disaster recovery.
+    Backup {
+        #[command(subcommand)]
+        command: BackupCommands,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1444,5 +1449,24 @@ pub enum PrivacyCommands {
         /// Emit machine-readable JSON output.
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BackupCommands {
+    /// Export encrypted stores to a portable tar.gz archive.
+    Export {
+        /// Output directory for the backup archive.
+        #[arg()]
+        output_dir: String,
+    },
+    /// Import a backup archive, restoring encrypted stores.
+    Restore {
+        /// Path to the backup archive (.tar.gz).
+        #[arg()]
+        archive_path: String,
+        /// Overwrite existing stores without prompting.
+        #[arg(long)]
+        force: bool,
     },
 }

@@ -155,6 +155,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Template { .. } => "template",
         Commands::Tools { .. } => "tools",
         Commands::Privacy { .. } => "privacy",
+        Commands::Backup { .. } => "backup",
     }
 }
 

@@ -18,6 +18,7 @@ mod models;
 mod noise_handshake;
 #[cfg(feature = "privacy")]
 mod noise_middleware;
+mod openapi;
 #[cfg(feature = "privacy")]
 pub mod privacy_state;
 #[cfg(feature = "privacy")]

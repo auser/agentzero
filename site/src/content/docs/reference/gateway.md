@@ -32,6 +32,7 @@ The gateway binds to `127.0.0.1` (localhost only) by default. Setting `allow_pub
 | `GET` | `/v1/models` | Bearer | List available models (OpenAI-compatible) |
 | `GET` | `/ws/chat` | Bearer | WebSocket chat with streaming agent responses |
 | `POST` | `/webhook` | Bearer | Legacy webhook endpoint |
+| `GET` | `/v1/openapi.json` | None | OpenAPI 3.1 specification |
 | `GET` | `/v1/privacy/info` | None | Privacy capabilities discovery (feature-gated) |
 | `POST` | `/v1/noise/handshake/step1` | None | Noise XX handshake step 1 (feature-gated) |
 | `POST` | `/v1/noise/handshake/step2` | None | Noise XX handshake step 2 (feature-gated) |
@@ -224,6 +225,10 @@ The `/metrics` endpoint exposes Prometheus-compatible metrics for monitoring:
 - `agentzero_provider_errors_total{provider, model, error_type}` — Error counter by type (e.g., `http_429`, `http_500`, `transport`)
 - `agentzero_provider_tokens_total{provider, model, type}` — Token usage counter (input/output)
 
+**Fallback metrics** (when provider fallback chains are configured):
+
+- `provider_fallback_total{from, to}` — Fallback events by source and target provider
+
 **Privacy metrics** (when `privacy` feature is enabled):
 
 - `agentzero_noise_sessions_active` — Active Noise sessions (gauge)
@@ -298,6 +303,18 @@ The gateway includes built-in middleware for production hardening:
 
 **Rate Limiting** — Sliding window counter that rejects excess requests with `429 Too Many Requests`. Default: 600 requests per 60-second window (10 req/s). Set `rate_limit_max = 0` in config to disable.
 
+**Per-Identity Rate Limiting** — When `rate_limit_per_identity` is set (default: 0 = disabled), each API key gets its own rate limit bucket. Identity is extracted from the `Authorization` header: API keys use `key:<prefix>`, bearer tokens use `"bearer"`, unauthenticated requests use `"_anonymous"`. Expired identity buckets are garbage-collected automatically.
+
+All rate-limited responses include these headers:
+
+| Header | Description |
+|---|---|
+| `X-RateLimit-Limit` | Maximum requests allowed in the window |
+| `X-RateLimit-Remaining` | Requests remaining in the current window |
+| `X-RateLimit-Reset` | Unix timestamp when the window resets |
+
+These headers are present on both successful (200) and rate-limited (429) responses.
+
 **Request Size Limits** — Rejects requests with `Content-Length` exceeding the configured maximum (default: 1 MB) with `413 Payload Too Large`.
 
 **CORS** — Configurable origin allowlist for browser clients. Supports exact origin matching and wildcard (`*`). Handles preflight `OPTIONS` requests automatically.
@@ -310,6 +327,14 @@ The gateway includes built-in middleware for production hardening:
 
 **Graceful Shutdown** — On `SIGTERM` or `SIGINT`, the gateway drains active connections before exiting.
 
+## OpenAPI Specification
+
+The full OpenAPI 3.1 spec is available at `/v1/openapi.json`. It covers all 20+ endpoints with request/response schemas and Bearer auth security scheme.
+
+```bash
+curl http://127.0.0.1:42617/v1/openapi.json | jq .info
+```
+
 ## Configuration
 
 ```toml
@@ -318,6 +343,7 @@ host = "127.0.0.1"          # bind interface
 port = 42617                 # bind port
 require_pairing = true       # require OTP pairing
 allow_public_bind = false    # allow non-loopback bind
+allow_insecure = false       # must be true to run production mode without TLS
 
 # TLS configuration (requires --features tls)
 # [gateway.tls]

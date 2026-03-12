@@ -187,6 +187,20 @@ monthly_limit_usd = 200.0
 warn_at_percent = 80
 ```
 
+### Production mode validation
+
+Set `AGENTZERO_ENV=production` to enforce strict startup validation:
+
+```bash
+export AGENTZERO_ENV=production
+```
+
+In production mode, the gateway validates on startup that:
+- TLS is configured (`[gateway.tls]`) **or** `allow_insecure = true` is explicitly set
+- Authentication is enabled (`require_pairing = true`)
+
+If validation fails, the gateway refuses to start with a clear error message. In development mode (default), these checks are skipped.
+
 Verify your config:
 
 ```bash
@@ -525,6 +539,7 @@ services:
       - .env.production                        # API keys, AGENTZERO_DATA_KEY
     environment:
       - AGENTZERO_DATA_DIR=/data
+      - AGENTZERO_ENV=production                 # enforce TLS + auth validation
     restart: unless-stopped
     read_only: true                            # read-only root filesystem
     tmpfs:
@@ -601,6 +616,16 @@ When running in Docker, set `allow_public_bind = true` in your gateway config si
 ### Cost
 - [ ] Daily and monthly limits set
 - [ ] Warning threshold configured
+
+### Backup & Recovery
+- [ ] Encryption key backed up to secrets manager
+- [ ] Regular encrypted backups via `agentzero backup export`
+- [ ] Backup restore tested via `agentzero backup restore --force`
+- [ ] OpenAPI spec available at `/v1/openapi.json`
+
+### Environment
+- [ ] `AGENTZERO_ENV=production` set in deployment environment
+- [ ] Production validation passing (TLS + auth enforced)
 
 ### Verification commands
 

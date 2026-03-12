@@ -1538,3 +1538,12 @@ fn block_status_frame(
         other => status_frame(run_id, other),
     }
 }
+
+// ---------------------------------------------------------------------------
+// OpenAPI spec endpoint
+// ---------------------------------------------------------------------------
+
+/// `GET /v1/openapi.json` — serves the auto-generated OpenAPI 3.1 specification.
+pub(crate) async fn openapi_spec() -> Json<serde_json::Value> {
+    Json(crate::openapi::build_openapi_spec())
+}

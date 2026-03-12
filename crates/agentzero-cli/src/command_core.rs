@@ -190,7 +190,7 @@ mod tests {
                 );
             },
         );
-        fs::remove_dir_all(home).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(home);
     }
 
     #[test]
@@ -209,9 +209,9 @@ mod tests {
                 assert_eq!(ctx.data_dir, flag_dir);
             },
         );
-        fs::remove_dir_all(home).expect("temp dir should be removed");
-        fs::remove_dir_all(env_dir).expect("temp dir should be removed");
-        fs::remove_dir_all(flag_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(env_dir);
+        let _ = fs::remove_dir_all(flag_dir);
     }
 
     #[test]
@@ -237,8 +237,8 @@ mod tests {
                 assert_eq!(ctx.data_dir, configured_dir);
             },
         );
-        fs::remove_dir_all(home).expect("temp dir should be removed");
-        fs::remove_dir_all(configured_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(configured_dir);
     }
 
     #[test]
@@ -260,6 +260,6 @@ mod tests {
                 assert!(err.to_string().contains("failed to parse"));
             },
         );
-        fs::remove_dir_all(home).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(home);
     }
 }

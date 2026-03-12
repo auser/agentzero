@@ -10,7 +10,7 @@ publish = false
 
 [features]
 default = []
-privacy = ["agentzero-core/privacy", "dep:dashmap", "dep:base64"]
+privacy = ["agentzero-core/privacy", "dep:base64"]
 telemetry = ["agentzero-infra/telemetry"]
 tls = ["dep:axum-server"]
 
@@ -24,7 +24,7 @@ agentzero-channels = { workspace = true }
 agentzero-orchestrator = { workspace = true }
 agentzero-providers = { workspace = true }
 base64 = { version = "0.22", optional = true }
-dashmap = { workspace = true, optional = true }
+dashmap = { workspace = true }
 async-trait = { workspace = true }
 rand = "0.8"
 async-stream = "0.3"

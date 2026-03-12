@@ -180,5 +180,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Privacy { command } => {
             commands::privacy::PrivacyCommand::run(&ctx, command).await
         }
+        Commands::Backup { command } => commands::backup::BackupCommand::run(&ctx, command).await,
     }
 }

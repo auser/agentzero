@@ -295,6 +295,46 @@ circuit_breaker_reset_ms = 30000 # time before half-open retry (default: 30s)
 
 ---
 
+## Provider Fallback Chains
+
+Configure backup providers that activate automatically when the primary provider fails (circuit breaker open, 5xx errors, timeouts):
+
+```toml
+[provider]
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "claude-sonnet-4-6"
+
+[[provider.fallback_providers]]
+kind = "openai"
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o"
+api_key_env = "OPENAI_API_KEY"
+
+[[provider.fallback_providers]]
+kind = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+model = "anthropic/claude-sonnet-4-6"
+api_key_env = "OPENROUTER_API_KEY"
+```
+
+Providers are tried in order. The first successful response is used. Each fallback entry requires:
+
+| Field | Description |
+|---|---|
+| `kind` | Provider type (`openai`, `anthropic`, `openrouter`, etc.) |
+| `base_url` | API endpoint URL |
+| `model` | Model identifier for this provider |
+| `api_key_env` | Environment variable name holding the API key |
+
+Fallback events emit the `provider_fallback_total{from, to}` Prometheus metric so you can monitor how often failover occurs.
+
+:::note
+Streaming requests fall back to non-streaming on secondary providers to avoid duplicate partial chunks. The response is still returned correctly — just not streamed incrementally from the fallback provider.
+:::
+
+---
+
 ## Checking Provider Status
 
 ```bash

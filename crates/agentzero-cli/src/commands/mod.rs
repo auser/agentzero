@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod approval;
 pub mod auth;
+pub mod backup;
 pub mod channel;
 pub mod completions;
 pub mod config;

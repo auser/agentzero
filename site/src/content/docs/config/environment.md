@@ -25,6 +25,7 @@ CWD files take priority over config-dir files. Process environment variables (`e
 | Variable | Description | Default |
 |---|---|---|
 | `OPENAI_API_KEY` | API key for OpenAI-compatible providers | — |
+| `AGENTZERO_ENV` | Environment mode (`development` or `production`). When `production`, startup validates TLS and auth are configured | `development` |
 | `AGENTZERO_DATA_DIR` | Override data/config directory | `~/.agentzero` |
 | `AGENTZERO_CONFIG` | Override config file path | `$DATA_DIR/agentzero.toml` |
 | `AGENTZERO_MEMORY_BACKEND` | Memory backend (`sqlite` or `turso`) | `sqlite` |

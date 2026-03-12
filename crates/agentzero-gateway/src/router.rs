@@ -1,8 +1,8 @@
 use crate::handlers::{
     agents_list, api_chat, api_fallback, async_submit, dashboard, emergency_stop, health,
     health_ready, job_cancel, job_events, job_list, job_result, job_status, job_transcript,
-    legacy_webhook, metrics, pair, ping, sse_run_stream, v1_chat_completions, v1_models, webhook,
-    ws_chat, ws_run_subscribe,
+    legacy_webhook, metrics, openapi_spec, pair, ping, sse_run_stream, v1_chat_completions,
+    v1_models, webhook, ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -17,10 +17,10 @@ use std::sync::Arc;
 
 pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Router {
     let max_bytes = config.max_body_bytes;
-    let limiter = Arc::new(RateLimiter::new(
-        config.rate_limit_max,
-        config.rate_limit_window_secs,
-    ));
+    let limiter = Arc::new(
+        RateLimiter::new(config.rate_limit_max, config.rate_limit_window_secs)
+            .with_per_identity(config.rate_limit_per_identity),
+    );
     let cors_origins = config.cors_allowed_origins.clone();
 
     let mut router = Router::new()
@@ -43,6 +43,7 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/runs/:run_id/stream", get(sse_run_stream))
         .route("/v1/agents", get(agents_list))
         .route("/v1/estop", post(emergency_stop))
+        .route("/v1/openapi.json", get(openapi_spec))
         .route("/ws/chat", get(ws_chat))
         .route("/ws/runs/:run_id", get(ws_run_subscribe))
         .route("/api/*path", get(api_fallback));

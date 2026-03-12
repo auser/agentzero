@@ -8,6 +8,7 @@ mod anthropic;
 #[cfg(feature = "local-model")]
 pub mod builtin;
 mod catalog;
+mod fallback;
 #[cfg(feature = "local-model")]
 pub mod model_manager;
 mod models;
@@ -21,6 +22,7 @@ mod noise_transport;
 
 pub use anthropic::AnthropicProvider;
 pub use catalog::{find_provider, supported_providers, ProviderDescriptor};
+pub use fallback::FallbackProvider;
 pub use models::{
     find_models_for_provider, model_capabilities, provider_config_fingerprint, ModelCapabilities,
     ModelDescriptor,

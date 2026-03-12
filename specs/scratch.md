@@ -11,3 +11,7 @@ I'd love for you to help me figure out the gaps in workload 2
 ---
 
 Can we make it so the lightweight version just runs the orchestrator? Is that a good idea? We want to be able to run it on a lightweight device, but don't necessarily need the full package where the runners use the queue?
+
+---
+
+Can we have it so that available tools are selected by AI by their name and description as well as configuring them?

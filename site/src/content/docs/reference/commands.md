@@ -303,6 +303,42 @@ agentzero config schema --json                   # JSON schema
 
 ---
 
+## Backup & Restore
+
+### `backup`
+
+Export and restore encrypted data stores. Backups are copied as-is (never decrypted) with SHA-256 integrity verification.
+
+#### `backup export`
+
+Export all encrypted store files to a directory with a checksummed manifest.
+
+```bash
+agentzero backup export /path/to/backup-dir
+```
+
+| Flag | Description |
+|---|---|
+| `<output-dir>` | **(Required)** Directory to write backup files and manifest |
+
+Exports 10 known stores (api-keys, cost data, identities, coordination status, goals, estop state, auth profiles, hooks, channel config). Each file is copied with its raw encrypted bytes and a SHA-256 checksum recorded in `manifest.json`. An integrity chain hash (SHA-256 of all individual hashes) ensures tamper detection.
+
+#### `backup restore`
+
+Restore encrypted store files from a backup directory. Validates manifest version, verifies all checksums, and enforces file permissions (0600 on Unix).
+
+```bash
+agentzero backup restore /path/to/backup-dir
+agentzero backup restore /path/to/backup-dir --force
+```
+
+| Flag | Description |
+|---|---|
+| `<archive-path>` | **(Required)** Directory containing backup files and manifest |
+| `--force` | Overwrite existing store files (default: skip if present) |
+
+---
+
 ## Authentication
 
 ### `auth`

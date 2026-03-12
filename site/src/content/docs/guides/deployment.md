@@ -148,6 +148,26 @@ just docker-up      # docker compose up -d
 just docker-down    # docker compose down
 ```
 
+### Resource limits and production mode
+
+The default `docker-compose.yml` includes resource constraints (512 MB memory, 1.0 CPU) and supports `AGENTZERO_ENV=production` for startup validation:
+
+```yaml
+environment:
+  - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+  - AGENTZERO_ENV=production    # enforces TLS + auth on startup
+deploy:
+  resources:
+    limits:
+      memory: 512M
+      cpus: "1.0"
+    reservations:
+      memory: 128M
+      cpus: "0.25"
+```
+
+The healthcheck automatically falls back to HTTPS if HTTP fails, supporting both TLS and non-TLS deployments.
+
 ### Custom configuration
 
 The image ships with a minimal default config that sets `allow_public_bind = true` (required for Docker networking). To use your own config, mount it into the container:

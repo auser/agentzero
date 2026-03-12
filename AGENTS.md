@@ -14,6 +14,9 @@ Project-level operating rules for all contributors and coding agents working in 
 7. **Slim binaries** — server and CI binaries stay as small as possible; feature-gate optional functionality, avoid bloating the dependency tree.
 8. **Idiomatic Rust** — always follow Rust best-practices; prefer generated code, builder patterns, trait-based dispatch, and macros over manual boilerplate.
 
+## Core Principle: Privacy & Security First
+Privacy and security are foundational to every decision in this project. They are not optional, not deferrable, and not someone else's concern. Every contributor and agent must consider the privacy and security implications of every change — whether it touches authentication, data handling, network calls, CLI output, logging, error messages, or any other surface. When in doubt, fail closed, encrypt by default, and ask before exposing. This principle applies at all times, in all contexts, without exception.
+
 ## Required Workflow Rules
 
 ### 1) Comprehensive tests for every functionality change
