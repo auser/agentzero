@@ -2,7 +2,8 @@ use crate::loader::load;
 use crate::model::{McpServerEntry, McpServersFile};
 use agentzero_core::common::paths::MCP_CONFIG_FILE;
 use agentzero_tools::{
-    McpServerDef, ReadFilePolicy, ShellPolicy, ToolSecurityPolicy, UrlAccessPolicy, WriteFilePolicy,
+    McpServerDef, ReadFilePolicy, ShellPolicy, ToolSecurityPolicy, UrlAccessPolicy,
+    WebSearchConfig, WriteFilePolicy,
 };
 use anyhow::Context;
 use std::collections::HashMap;
@@ -72,10 +73,16 @@ pub fn load_tool_security_policy(
             &config.security.mcp.allowed_servers,
         ),
         allowed_mcp_servers: config.security.mcp.allowed_servers,
-        enable_process_plugin: config.security.plugin.enabled,
         enable_git,
         enable_cron: true,
         enable_web_search: config.web_search.enabled,
+        web_search_config: WebSearchConfig {
+            provider: config.web_search.provider.clone(),
+            brave_api_key: config.web_search.brave_api_key.clone(),
+            jina_api_key: config.web_search.jina_api_key.clone(),
+            timeout_secs: config.web_search.timeout_secs,
+            user_agent: config.web_search.user_agent.clone(),
+        },
         enable_browser: config.browser.enabled,
         enable_browser_open: config.browser.enabled,
         enable_http_request: config.http_request.enabled,

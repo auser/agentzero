@@ -541,7 +541,7 @@ fn loads_config_backed_tool_policy() {
     let config_path = dir.join("agentzero.toml");
     fs::write(
         &config_path,
-        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[security.read_file]\nmax_read_bytes = 1024\nallow_binary = false\n\n[security.write_file]\nenabled = true\nmax_write_bytes = 2048\n\n[security.shell]\nmax_args = 2\nmax_arg_length = 12\nmax_output_bytes = 256\nforbidden_chars = \";&\"\n\n[security.mcp]\nenabled = true\nallowed_servers = [\"filesystem\"]\n\n[security.plugin]\nenabled = true\n",
+        "[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n\n[security.read_file]\nmax_read_bytes = 1024\nallow_binary = false\n\n[security.write_file]\nenabled = true\nmax_write_bytes = 2048\n\n[security.shell]\nmax_args = 2\nmax_arg_length = 12\nmax_output_bytes = 256\nforbidden_chars = \";&\"\n\n[security.mcp]\nenabled = true\nallowed_servers = [\"filesystem\"]\n",
     )
     .expect("config should be written");
 
@@ -555,7 +555,6 @@ fn loads_config_backed_tool_policy() {
         assert!(policy.enable_write_file);
         assert!(policy.enable_mcp);
         assert_eq!(policy.allowed_mcp_servers, vec!["filesystem".to_string()]);
-        assert!(policy.enable_process_plugin);
     });
 
     fs::remove_dir_all(dir).expect("temp dir should be removed");

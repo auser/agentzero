@@ -99,6 +99,11 @@ echo "Topic:   $TOPIC"
 echo "Timeout: ${TIMEOUT}s"
 echo ""
 
+# Clean up stale data from previous runs
+rm -f research.db
+rm -rf research/
+mkdir -p research
+
 # ── 1. Check API key ──────────────────────────────────────────────────────
 
 bold "1. Checking API credentials"
@@ -124,42 +129,49 @@ echo ""
 
 bold "2. Starting gateway"
 
-# Check if already running
+# Check if already running — kill and restart so we get a fresh pairing code
 if gz /health -sf > /dev/null 2>&1; then
-  yellow "Gateway already running at $GATEWAY"
-  GATEWAY_PID=""
-else
-  "$AZ" gateway \
-    --config "$SCRIPT_DIR/agentzero.toml" \
-    --host 127.0.0.1 \
-    --port "$PORT" \
-    --new-pairing \
-    > /tmp/agentzero-test-gateway.log 2>&1 &
-  GATEWAY_PID=$!
+  yellow "Gateway already running at $GATEWAY — restarting for fresh pairing..."
+  # Try to find and kill the existing process
+  pkill -f 'agentzero.*gateway' 2>/dev/null || true
+  sleep 2
+  if gz /health -sf > /dev/null 2>&1; then
+    red "Could not stop existing gateway. Kill it manually and retry."
+    exit 1
+  fi
+  green "Old gateway stopped."
+fi
 
-  # Wait for gateway to start
-  echo -n "Waiting for gateway..."
-  for i in $(seq 1 30); do
-    if gz /health -sf > /dev/null 2>&1; then
-      echo ""
-      green "Gateway started (pid $GATEWAY_PID)"
-      break
-    fi
-    if ! kill -0 "$GATEWAY_PID" 2>/dev/null; then
-      echo ""
-      red "Gateway process died. Log:"
-      cat /tmp/agentzero-test-gateway.log
-      exit 1
-    fi
-    echo -n "."
-    sleep 1
-  done
-  if ! gz /health -sf > /dev/null 2>&1; then
+RUST_LOG="${RUST_LOG:-info}" "$AZ" gateway \
+  --config "$SCRIPT_DIR/agentzero.toml" \
+  --host 127.0.0.1 \
+  --port "$PORT" \
+  --new-pairing \
+  > /tmp/agentzero-test-gateway.log 2>&1 &
+GATEWAY_PID=$!
+
+# Wait for gateway to start
+echo -n "Waiting for gateway..."
+for i in $(seq 1 30); do
+  if gz /health -sf > /dev/null 2>&1; then
     echo ""
-    red "Gateway failed to start within 30s"
+    green "Gateway started (pid $GATEWAY_PID)"
+    break
+  fi
+  if ! kill -0 "$GATEWAY_PID" 2>/dev/null; then
+    echo ""
+    red "Gateway process died. Log:"
     cat /tmp/agentzero-test-gateway.log
     exit 1
   fi
+  echo -n "."
+  sleep 1
+done
+if ! gz /health -sf > /dev/null 2>&1; then
+  echo ""
+  red "Gateway failed to start within 30s"
+  cat /tmp/agentzero-test-gateway.log
+  exit 1
 fi
 echo ""
 
@@ -167,44 +179,36 @@ echo ""
 
 bold "3. Pairing client"
 
-# Extract pairing code from log when we started the gateway ourselves.
-# If the gateway was already running, use PAIRING_CODE from the environment.
-PAIRING_CODE=""
-if [ -n "$GATEWAY_PID" ]; then
-  # We started the gateway — extract its pairing code from the log
-  sleep 1
-  PAIRING_CODE=$(grep -oE 'X-Pairing-Code: [A-Za-z0-9_-]+' /tmp/agentzero-test-gateway.log \
-    | head -1 | awk '{print $NF}') || true
-elif [ -n "${PAIRING_CODE_OVERRIDE:-}" ]; then
-  PAIRING_CODE="$PAIRING_CODE_OVERRIDE"
+# Extract pairing code from log (we always start a fresh gateway above).
+sleep 1
+PAIRING_CODE=$(grep -oE 'X-Pairing-Code: [A-Za-z0-9_-]+' /tmp/agentzero-test-gateway.log \
+  | head -1 | awk '{print $NF}') || true
+
+if [ -z "$PAIRING_CODE" ]; then
+  # Fallback: try to read the 6-digit code from the box in the log
+  PAIRING_CODE=$(grep -oE '[0-9]{6}' /tmp/agentzero-test-gateway.log \
+    | head -1) || true
 fi
 
 if [ -z "$PAIRING_CODE" ]; then
-  yellow "Could not extract pairing code from log."
-  echo "Looking for bearer token in environment..."
-  if [ -n "${AGENTZERO_GATEWAY_BEARER_TOKEN:-}" ]; then
-    TOKEN="$AGENTZERO_GATEWAY_BEARER_TOKEN"
-    green "Using AGENTZERO_GATEWAY_BEARER_TOKEN"
-  else
-    red "Cannot authenticate. Set AGENTZERO_GATEWAY_BEARER_TOKEN or restart with --new-pairing"
-    echo ""
-    echo "Gateway log:"
-    cat /tmp/agentzero-test-gateway.log
-    exit 1
-  fi
-else
-  PAIR_RESPONSE=$(gz /pair -sf -X POST \
-    -H "X-Pairing-Code: $PAIRING_CODE") || {
-    red "Pairing failed. Code: $PAIRING_CODE"
-    exit 1
-  }
-  TOKEN=$(echo "$PAIR_RESPONSE" | jq -r '.token // empty')
-  if [ -z "$TOKEN" ]; then
-    red "Pairing succeeded but no token returned: $PAIR_RESPONSE"
-    exit 1
-  fi
-  green "Paired (token: ${TOKEN:0:16}...)"
+  red "Could not extract pairing code from gateway log."
+  echo ""
+  echo "Gateway log:"
+  cat /tmp/agentzero-test-gateway.log
+  exit 1
 fi
+
+PAIR_RESPONSE=$(gz /pair -sf -X POST \
+  -H "X-Pairing-Code: $PAIRING_CODE") || {
+  red "Pairing failed. Code: $PAIRING_CODE"
+  exit 1
+}
+TOKEN=$(echo "$PAIR_RESPONSE" | jq -r '.token // empty')
+if [ -z "$TOKEN" ]; then
+  red "Pairing succeeded but no token returned: $PAIR_RESPONSE"
+  exit 1
+fi
+green "Paired (token: ${TOKEN:0:16}...)"
 echo ""
 
 # ── 4. Quick health checks ────────────────────────────────────────────────
@@ -231,113 +235,46 @@ green "  /v1/agents: $AGENTS_TOTAL registered"
 
 echo ""
 
-# ── 5. Submit research job ─────────────────────────────────────────────────
+# ── 5. Submit research job via /api/chat (routes through swarm pipeline) ───
 
-bold "5. Submitting research job"
+bold "5. Submitting research job via /api/chat (swarm pipeline)"
 echo "   Topic: $TOPIC"
-
-SUBMIT_RESPONSE=$(gz /v1/runs -sf -X POST \
-  -d "$(jq -n --arg msg "Research: $TOPIC" '{message: $msg}')") || {
-  red "Job submission failed"
-  exit 1
-}
-
-RUN_ID=$(echo "$SUBMIT_RESPONSE" | jq -r '.run_id // empty')
-if [ -z "$RUN_ID" ]; then
-  red "No run_id in response: $SUBMIT_RESPONSE"
-  exit 1
-fi
-green "  Submitted: $RUN_ID"
+echo "   This is synchronous — it waits for the full pipeline to complete."
+echo "   Timeout: ${TIMEOUT}s"
 echo ""
-
-# ── 6. Poll for completion ─────────────────────────────────────────────────
-
-bold "6. Waiting for pipeline to complete (timeout: ${TIMEOUT}s)"
 
 START_TIME=$(date +%s)
-LAST_STATUS=""
 
-while true; do
+RESULT=$(gz /api/chat -sf -X POST \
+  --max-time "$TIMEOUT" \
+  -d "$(jq -n --arg msg "Research: $TOPIC" '{message: $msg}')") || {
   ELAPSED=$(( $(date +%s) - START_TIME ))
-  if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
-    echo ""
-    red "Pipeline timed out after ${TIMEOUT}s (last status: $LAST_STATUS)"
-    echo ""
-    echo "Check gateway log: cat /tmp/agentzero-test-gateway.log"
-    echo "Poll manually:     gz /v1/runs/$RUN_ID -sf"
-    exit 1
-  fi
-
-  STATUS_JSON=$(gz "/v1/runs/$RUN_ID" -sf) || {
-    echo -n "?"
-    sleep 2
-    continue
-  }
-  STATUS=$(echo "$STATUS_JSON" | jq -r '.status // "unknown"')
-
-  if [ "$STATUS" != "$LAST_STATUS" ]; then
-    [ -n "$LAST_STATUS" ] && echo ""
-    echo -n "  [$STATUS] ${ELAPSED}s"
-    LAST_STATUS="$STATUS"
-  else
-    echo -n "."
-  fi
-
-  case "$STATUS" in
-    completed)
-      echo ""
-      green "  Pipeline completed in ${ELAPSED}s"
-      break
-      ;;
-    failed)
-      echo ""
-      ERROR=$(echo "$STATUS_JSON" | jq -r '.error // "unknown error"')
-      red "  Pipeline failed: $ERROR"
-      if echo "$ERROR" | grep -qi "timeout"; then
-        echo ""
-        yellow "  Hint: the LLM provider request timed out."
-        echo "  Check /tmp/agentzero-test-gateway.log for 429 (rate limit) errors."
-        echo "  If rate-limited, wait a minute and try again."
-      fi
-      exit 1
-      ;;
-    cancelled)
-      echo ""
-      red "  Pipeline was cancelled"
-      exit 1
-      ;;
-  esac
-
-  sleep 3
-done
-echo ""
-
-# ── 7. Retrieve result ────────────────────────────────────────────────────
-
-bold "7. Retrieving result"
-
-RESULT_JSON=$(gz "/v1/runs/$RUN_ID/result" -sf) || {
-  red "Failed to fetch result"
+  red "Pipeline failed or timed out after ${ELAPSED}s"
+  echo ""
+  echo "Check gateway log:"
+  echo "  cat /tmp/agentzero-test-gateway.log"
   exit 1
 }
-RESULT=$(echo "$RESULT_JSON" | jq -r '.result // empty')
 
-if [ -n "$RESULT" ]; then
-  RESULT_LEN=${#RESULT}
-  green "  Result: $RESULT_LEN chars"
+ELAPSED=$(( $(date +%s) - START_TIME ))
+RESULT_TEXT=$(echo "$RESULT" | jq -r '.message // empty')
+
+if [ -n "$RESULT_TEXT" ]; then
+  RESULT_LEN=${#RESULT_TEXT}
+  green "  Pipeline completed in ${ELAPSED}s ($RESULT_LEN chars)"
   echo ""
   echo "  --- First 500 chars ---"
-  echo "$RESULT" | head -c 500
+  echo "$RESULT_TEXT" | head -c 500
   echo ""
   echo "  --- End preview ---"
 else
-  yellow "  Result body is empty (output may be in files)"
+  yellow "  Pipeline returned empty response (check gateway log)"
 fi
 echo ""
 
-# ── 8. Check output files ─────────────────────────────────────────────────
+# ── 6. Check output files ─────────────────────────────────────────────────
 
-bold "8. Checking output files"
+bold "6. Checking output files"
 
 check_file() {
   local path="$1" label="$2"
@@ -353,7 +290,7 @@ check_file() {
 check_file "research/raw-findings.md" "Raw findings"
 check_file "research/detailed-data.md" "Detailed data"
 check_file "research/analysis.md" "Analysis"
-check_file "output/brief.md" "Final brief"
+check_file "research/brief.md" "Final brief"
 check_file "research/events.jsonl" "Event log"
 
 if [ -f "research/events.jsonl" ]; then
@@ -363,27 +300,16 @@ fi
 
 echo ""
 
-# ── 9. Fetch event log via API ─────────────────────────────────────────────
-
-bold "9. API event log"
-
-EVENTS_JSON=$(gz "/v1/runs/$RUN_ID/events" -sf) || EVENTS_JSON="{}"
-API_EVENT_COUNT=$(echo "$EVENTS_JSON" | jq '.events | length // 0' 2>/dev/null) || API_EVENT_COUNT=0
-green "  /v1/runs/$RUN_ID/events: $API_EVENT_COUNT events"
-
-echo ""
-
 # ── Summary ────────────────────────────────────────────────────────────────
 
 bold "Pipeline test complete!"
 echo ""
-echo "  Run ID:    $RUN_ID"
 echo "  Duration:  ${ELAPSED}s"
 echo "  Result:    ${RESULT_LEN:-0} chars"
 
-if [ -f "output/brief.md" ]; then
+if [ -f "research/brief.md" ]; then
   echo ""
   bold "Final brief:"
   echo ""
-  cat "output/brief.md"
+  cat "research/brief.md"
 fi

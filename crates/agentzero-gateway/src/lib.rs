@@ -326,11 +326,12 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
             }
             state = state.with_gateway_channel(gw_channel);
 
-            match agentzero_orchestrator::build_swarm(
+            match agentzero_orchestrator::build_swarm_with_presence(
                 cfg,
                 state.channels.clone(),
                 &config_path,
                 &workspace_root,
+                state.presence_store.clone(),
             )
             .await
             {

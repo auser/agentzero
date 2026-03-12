@@ -524,19 +524,30 @@ fn classify_error(e: anyhow::Error) -> AgentZeroError {
 mod tests {
     use super::*;
 
-    fn test_config() -> AgentZeroConfig {
-        AgentZeroConfig {
-            config_path: "/tmp/agentzero-ffi-test/agentzero.toml".to_string(),
-            workspace_root: "/tmp/agentzero-ffi-test".to_string(),
+    /// Create a test config with a non-existent workspace root inside a temp
+    /// directory. The `TempDir` guard must be held alive for the test's
+    /// duration; it is automatically cleaned up when dropped.
+    ///
+    /// The workspace points to a non-existent subdirectory so that the config
+    /// loader's `canonicalize(allowed_root)` always fails — regardless of env
+    /// vars like `ANTHROPIC_API_KEY` that would otherwise let defaults succeed.
+    fn test_config() -> (AgentZeroConfig, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("should create temp dir");
+        let workspace = dir.path().join("nonexistent").to_string_lossy().to_string();
+        let config = AgentZeroConfig {
+            config_path: format!("{workspace}/agentzero.toml"),
+            workspace_root: workspace,
             provider: None,
             model: None,
             profile: None,
-        }
+        };
+        (config, dir)
     }
 
     #[test]
     fn controller_creation_success_path() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         assert!(matches!(controller.status(), AgentStatus::Idle));
     }
 
@@ -551,7 +562,8 @@ mod tests {
 
     #[test]
     fn version_returns_crate_version() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         let version = controller.version();
         assert!(!version.is_empty());
         assert!(version.contains('.'));
@@ -559,13 +571,15 @@ mod tests {
 
     #[test]
     fn history_starts_empty() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         assert!(controller.get_history().is_empty());
     }
 
     #[test]
     fn clear_history_empties_messages() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         if let Ok(mut h) = controller.history.lock() {
             h.push(ChatMessage {
                 role: "user".to_string(),
@@ -580,7 +594,8 @@ mod tests {
 
     #[test]
     fn get_and_update_config_success_path() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         let mut cfg = controller.get_config().unwrap();
         assert!(cfg.provider.is_none());
 
@@ -593,7 +608,8 @@ mod tests {
 
     #[test]
     fn send_message_returns_error_for_invalid_setup() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         let result = controller.send_message("hello".to_string());
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -612,7 +628,8 @@ mod tests {
 
     #[test]
     fn status_transitions_through_send_message() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         assert!(matches!(controller.status(), AgentStatus::Idle));
 
         let _ = controller.send_message("test".to_string());
@@ -683,7 +700,8 @@ mod tests {
 
     #[test]
     fn register_tool_success() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         controller
             .register_tool("echo_tool".to_string(), Box::new(EchoCallback))
             .expect("registration should succeed");
@@ -695,7 +713,8 @@ mod tests {
 
     #[test]
     fn register_multiple_tools() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         controller
             .register_tool("tool_a".to_string(), Box::new(EchoCallback))
             .unwrap();
@@ -711,7 +730,8 @@ mod tests {
 
     #[test]
     fn register_duplicate_name_fails() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         controller
             .register_tool("dup".to_string(), Box::new(EchoCallback))
             .unwrap();
@@ -756,7 +776,8 @@ mod tests {
 
     #[test]
     fn registered_tools_starts_empty() {
-        let controller = AgentZeroController::new(test_config());
+        let (config, _dir) = test_config();
+        let controller = AgentZeroController::new(config);
         assert!(controller.registered_tool_names().is_empty());
     }
 }

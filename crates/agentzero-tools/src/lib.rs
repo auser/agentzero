@@ -92,7 +92,7 @@ pub use task_plan::TaskPlanTool;
 pub use url_validation::UrlValidationTool;
 pub use wasm_tools::{WasmModuleTool, WasmToolExecTool};
 pub use web_fetch::WebFetchTool;
-pub use web_search::WebSearchTool;
+pub use web_search::{WebSearchConfig, WebSearchTool};
 pub use write_file::{WriteFilePolicy, WriteFileTool};
 
 /// MCP server definition for the tool security policy.
@@ -116,10 +116,10 @@ pub struct ToolSecurityPolicy {
     pub enable_mcp: bool,
     pub allowed_mcp_servers: Vec<String>,
     pub mcp_servers: HashMap<String, McpServerDef>,
-    pub enable_process_plugin: bool,
     pub enable_git: bool,
     pub enable_cron: bool,
     pub enable_web_search: bool,
+    pub web_search_config: WebSearchConfig,
     pub enable_browser: bool,
     pub enable_browser_open: bool,
     pub enable_http_request: bool,
@@ -182,10 +182,10 @@ impl ToolSecurityPolicy {
             enable_mcp: false,
             allowed_mcp_servers: vec![],
             mcp_servers: HashMap::new(),
-            enable_process_plugin: false,
             enable_git: false,
             enable_cron: false,
             enable_web_search: false,
+            web_search_config: WebSearchConfig::default(),
             enable_browser: false,
             enable_browser_open: false,
             enable_http_request: false,

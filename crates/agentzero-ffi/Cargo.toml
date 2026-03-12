@@ -37,6 +37,9 @@ uniffi = { version = "0.27", optional = true }
 napi = { version = "2", features = ["async", "serde-json"], optional = true }
 napi-derive = { version = "2", optional = true }
 
+[dev-dependencies]
+tempfile = "3"
+
 [build-dependencies]
 napi-build = { version = "2", optional = true }
 

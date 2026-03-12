@@ -41,6 +41,7 @@ mode = "production"
 max_tool_iterations = 25
 parallel_tools = false
 request_timeout_ms = 120_000  # 2 min — web search + LLM calls need headroom
+max_prompt_chars = 100_000    # agents read large files; default 8K causes truncation loops
 
 # ---------------------------------------------------------------------------
 # Security
@@ -79,11 +80,11 @@ max_cost_per_day_cents = 3000
 # ---------------------------------------------------------------------------
 [web_search]
 enabled = true
-# DuckDuckGo frequently blocks automated requests with CAPTCHAs.
-# Use Brave or Jina for reliable search in pipelines:
-provider = "brave"                         # set BRAVE_API_KEY env var
-# provider = "jina"                       # alternative: set JINA_API_KEY
-# provider = "duckduckgo"                 # free but unreliable (CAPTCHA blocks)
+# DuckDuckGo is free but may hit CAPTCHAs under heavy use.
+# For more reliable search, switch to Brave or Jina:
+provider = "duckduckgo"
+# provider = "brave"                      # set BRAVE_API_KEY in .env / env
+# provider = "jina"                       # set JINA_API_KEY in .env / env
 max_results = 10
 timeout_secs = 15
 
@@ -138,15 +139,15 @@ allowed_tools = ["web_search", "web_fetch", "write_file"]
 subscribes_to = ["channel.*.message"]
 produces = ["task.research.raw"]
 max_iterations = 15
-system_prompt = """You are a research agent. You MUST use the web_search tool to find information.
-
-IMPORTANT: Always start by calling web_search. Never try to read files first.
+system_prompt = """You are a research agent in a pipeline. Other agents depend on the file you produce. Do NOT ask questions or explain what you plan to do — just execute.
 
 Steps:
 1. Call web_search with a clear query about the topic
 2. Call web_search again with a different angle on the topic
 3. Optionally use web_fetch to get more detail from the best URLs
-4. Call write_file to save findings to `research/raw-findings.md`
+4. CRITICAL: Call write_file to save findings to `research/raw-findings.md`
+
+If web_search fails or returns no results, write your best knowledge from training data instead. You MUST call write_file no matter what.
 
 Write your findings in this format:
 # Raw Research Findings: [Topic]
@@ -175,13 +176,13 @@ allowed_tools = ["web_fetch", "read_file", "write_file"]
 subscribes_to = ["task.research.raw"]
 produces = ["task.research.detailed"]
 max_iterations = 15
-system_prompt = """You are a data extraction agent. You deep-dive into URLs from research findings.
+system_prompt = """You are a data extraction agent in a pipeline (step 2 of 4). The previous agent's output is provided as your input message. Do NOT ask questions — just execute.
 
 Steps:
-1. Call read_file to read `research/raw-findings.md`
-2. Find the URLs listed in the sources section
-3. Call web_fetch on the top 3-5 URLs to get detailed content
-4. Call write_file to save extracted data to `research/detailed-data.md`
+1. Call read_file to read `research/raw-findings.md`. If the file does not exist, use the content from your input message instead.
+2. Find any URLs listed in the sources
+3. Call web_fetch on the top 3-5 URLs to get detailed content. If web_fetch fails, work with what you have.
+4. CRITICAL: Call write_file to save extracted data to `research/detailed-data.md`. You MUST write this file.
 
 Write your output in this format:
 # Detailed Extraction: [Topic]
@@ -207,14 +208,14 @@ privacy_boundary = "encrypted_only"
 allowed_tools = ["read_file", "write_file"]
 subscribes_to = ["task.research.detailed"]
 produces = ["task.analysis.complete"]
-max_iterations = 10
-system_prompt = """You are an analysis agent. You synthesize research into insights.
+max_iterations = 15
+system_prompt = """You are an analysis agent in a pipeline (step 3 of 4). The previous agent's output is provided as your input message. Do NOT ask questions — just execute.
 
 Steps:
-1. Call read_file to read `research/raw-findings.md`
-2. Call read_file to read `research/detailed-data.md`
-3. Identify themes, trends, and patterns across sources
-4. Call write_file to save analysis to `research/analysis.md`
+1. Call read_file to read `research/raw-findings.md`. If the file does not exist, use your input message content.
+2. Call read_file to read `research/detailed-data.md`. If the file does not exist, skip it.
+3. Identify themes, trends, and patterns across all available content
+4. CRITICAL: Call write_file to save analysis to `research/analysis.md`. You MUST write this file.
 
 Write your output in this format:
 # Analysis: [Topic]
@@ -244,14 +245,14 @@ privacy_boundary = "encrypted_only"
 allowed_tools = ["read_file", "write_file"]
 subscribes_to = ["task.analysis.complete"]
 produces = ["task.brief.complete"]
-max_iterations = 10
-system_prompt = """You are a brief writer. You produce polished research briefs.
+max_iterations = 15
+system_prompt = """You are a brief writer in a pipeline (step 4 of 4, final step). The previous agent's output is provided as your input message. Do NOT ask questions — just execute.
 
 Steps:
-1. Call read_file to read `research/analysis.md`
-2. Call read_file to read `research/raw-findings.md`
+1. Call read_file to read `research/analysis.md`. If the file does not exist, use your input message content.
+2. Call read_file to read `research/raw-findings.md`. If the file does not exist, skip it.
 3. Synthesize everything into a clear brief
-4. Call write_file to save the brief to `research/brief.md`
+4. CRITICAL: Call write_file to save the brief to `research/brief.md`. You MUST write this file.
 
 Write your output in this format:
 # [Topic]: Research Brief

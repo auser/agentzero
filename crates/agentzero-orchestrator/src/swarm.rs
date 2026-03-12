@@ -8,6 +8,7 @@
 
 use crate::agent_router::{AgentDescriptor, AgentRouter};
 use crate::coordinator::{Coordinator, TaskMessage};
+use crate::presence::PresenceStore;
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
 use agentzero_core::event_bus::{Event, FileBackedBus, InMemoryBus};
@@ -98,6 +99,18 @@ pub async fn build_swarm(
     config_path: &Path,
     workspace_root: &Path,
 ) -> anyhow::Result<Option<(Coordinator, tokio::sync::watch::Sender<bool>)>> {
+    build_swarm_with_presence(config, channels, config_path, workspace_root, None).await
+}
+
+/// Build a swarm coordinator from config, optionally wiring a presence store
+/// so agents can register for the `/v1/agents` endpoint.
+pub async fn build_swarm_with_presence(
+    config: &AgentZeroConfig,
+    channels: Arc<ChannelRegistry>,
+    config_path: &Path,
+    workspace_root: &Path,
+    presence: Option<Arc<PresenceStore>>,
+) -> anyhow::Result<Option<(Coordinator, tokio::sync::watch::Sender<bool>)>> {
     let swarm_config = &config.swarm;
 
     if !swarm_config.enabled {
@@ -176,6 +189,9 @@ pub async fn build_swarm(
         swarm_config.pipelines.clone(),
         swarm_config.shutdown_grace_ms,
     );
+    if let Some(ps) = presence {
+        coord = coord.with_presence(ps);
+    }
 
     // ── Pass 1: Build all agents and create task channels ───────────────
 

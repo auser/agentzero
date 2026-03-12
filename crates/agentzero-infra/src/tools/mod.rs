@@ -1,5 +1,4 @@
 mod mcp;
-mod plugin;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
 
@@ -7,8 +6,6 @@ use agentzero_core::delegation::DelegateConfig;
 use agentzero_core::routing::ModelRouter;
 use agentzero_core::{DepthPolicy, Tool};
 use agentzero_tools::ToolBuilder;
-use anyhow::Context;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -27,7 +24,6 @@ pub use agentzero_tools::{
 #[cfg(feature = "document-tools")]
 pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
 pub use mcp::create_mcp_tools;
-pub use plugin::ProcessPluginTool;
 #[cfg(feature = "wasm-plugins")]
 pub use wasm_bridge::WasmTool;
 
@@ -93,7 +89,9 @@ pub fn default_tools(
     }
 
     if policy.enable_web_search {
-        tools.push(Box::new(WebSearchTool::default()));
+        tools.push(Box::new(WebSearchTool::new(
+            policy.web_search_config.clone(),
+        )));
     }
 
     if policy.enable_browser {
@@ -134,13 +132,6 @@ pub fn default_tools(
     if policy.enable_mcp && !policy.mcp_servers.is_empty() {
         let mcp_tools = create_mcp_tools(&policy.mcp_servers)?;
         tools.extend(mcp_tools);
-    }
-
-    if policy.enable_process_plugin {
-        let plugin_tool = optional_process_plugin_tool_from_env()?.ok_or_else(|| {
-            anyhow::anyhow!("plugin tool enabled but AGENTZERO_PLUGIN_TOOL is missing")
-        })?;
-        tools.push(Box::new(plugin_tool));
     }
 
     if policy.enable_composio {
@@ -232,69 +223,11 @@ pub fn default_tools_with_depth(
     Ok(filtered)
 }
 
-#[derive(Debug, Deserialize)]
-struct PluginToolEnvConfig {
-    command: String,
-    #[serde(default)]
-    args: Vec<String>,
-}
-
-fn optional_process_plugin_tool_from_env() -> anyhow::Result<Option<ProcessPluginTool>> {
-    let raw = match std::env::var("AGENTZERO_PLUGIN_TOOL") {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-
-    let parsed: PluginToolEnvConfig =
-        serde_json::from_str(&raw).context("AGENTZERO_PLUGIN_TOOL must be valid JSON")?;
-    let tool = ProcessPluginTool::new("plugin_exec", parsed.command, parsed.args)?;
-    Ok(Some(tool))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        default_tools, default_tools_with_depth, optional_process_plugin_tool_from_env,
-        ToolSecurityPolicy,
-    };
+    use super::{default_tools, default_tools_with_depth, ToolSecurityPolicy};
     use agentzero_core::{DepthPolicy, DepthRule};
     use std::collections::HashSet;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    #[test]
-    fn optional_plugin_tool_parses_valid_env() {
-        let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
-        std::env::set_var("AGENTZERO_PLUGIN_TOOL", r#"{"command":"cat","args":[]}"#);
-        let result = optional_process_plugin_tool_from_env().expect("valid plugin env should load");
-        assert!(result.is_some());
-        std::env::remove_var("AGENTZERO_PLUGIN_TOOL");
-    }
-
-    #[test]
-    fn optional_plugin_tool_rejects_invalid_json() {
-        let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
-        std::env::set_var("AGENTZERO_PLUGIN_TOOL", r#"{"command":}"#);
-        let result = optional_process_plugin_tool_from_env();
-        assert!(result.is_err());
-        std::env::remove_var("AGENTZERO_PLUGIN_TOOL");
-    }
-
-    #[test]
-    fn default_tools_fail_when_plugin_is_enabled_without_env() {
-        let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
-        std::env::remove_var("AGENTZERO_PLUGIN_TOOL");
-        let mut policy = ToolSecurityPolicy::default_for_workspace(
-            std::env::current_dir().expect("cwd should be readable"),
-        );
-        policy.enable_process_plugin = true;
-
-        let result = default_tools(&policy, None, None);
-        assert!(result.is_err());
-        let err = result.err().expect("missing plugin env should fail closed");
-        assert!(err.to_string().contains("AGENTZERO_PLUGIN_TOOL"));
-    }
 
     #[test]
     fn default_tools_do_not_include_write_file_when_disabled() {

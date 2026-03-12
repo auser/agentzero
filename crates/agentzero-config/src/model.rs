@@ -680,8 +680,6 @@ pub struct McpServersFile {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct PluginConfig {
-    /// Enable the process-based plugin tool (legacy).
-    pub enabled: bool,
     /// Enable WASM plugin discovery and loading.
     pub wasm_enabled: bool,
     /// Override for the global plugin install directory.

@@ -206,21 +206,66 @@ fn prepare_tool_input(tool: &dyn Tool, raw_input: &serde_json::Value) -> Result<
 }
 
 /// Truncate conversation messages to fit within a character budget.
-/// Preserves the first message (user request) and drops from the middle,
-/// keeping the most recent messages that fit.
+/// Preserves the prefix (system prompt + first user message) and drops from
+/// the middle, keeping the most recent messages that fit.
+///
+/// Tool-use aware: when keeping `ToolResult` messages from the end, the
+/// preceding `Assistant` message (which contains the matching `tool_use`
+/// blocks) is always kept as well to avoid orphaned tool_result errors
+/// from the Anthropic API.
 fn truncate_messages(messages: &mut Vec<ConversationMessage>, max_chars: usize) {
     let total_chars: usize = messages.iter().map(|m| m.char_count()).sum();
     if total_chars <= max_chars || messages.len() <= 2 {
         return;
     }
 
-    let first_cost = messages[0].char_count();
-    let mut budget = max_chars.saturating_sub(first_cost);
+    // Find the prefix to always preserve: everything up to and including
+    // the first User message. This ensures the system prompt and the
+    // initial user request are never dropped (system messages are filtered
+    // out by providers, so keeping only messages[0] when it is a System
+    // would leave the first API message as a ToolResult — a protocol error).
+    let mut prefix_end = 1; // at minimum keep messages[0]
+    for (i, msg) in messages.iter().enumerate() {
+        if matches!(msg, ConversationMessage::User { .. }) {
+            prefix_end = i + 1;
+            break;
+        }
+    }
 
-    // Walk backward, accumulating messages that fit.
+    let prefix_cost: usize = messages[..prefix_end].iter().map(|m| m.char_count()).sum();
+    let mut budget = max_chars.saturating_sub(prefix_cost);
+
+    // Walk backward from the end, accumulating messages that fit.
+    // Track whether we're inside a tool_result run so we can also keep the
+    // preceding assistant message that contains the tool_use blocks.
     let mut keep_from_end = 0;
-    for msg in messages.iter().rev() {
+    let mut in_tool_result_run = false;
+    for msg in messages[prefix_end..].iter().rev() {
         let cost = msg.char_count();
+        let is_tool_result = matches!(msg, ConversationMessage::ToolResult(_));
+        let is_assistant_with_tools = matches!(
+            msg,
+            ConversationMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty()
+        );
+
+        if is_tool_result {
+            in_tool_result_run = true;
+        }
+
+        // If we're in a tool_result run and hit the assistant message that
+        // produced these tool calls, we MUST include it regardless of budget
+        // to keep the tool_use/tool_result pairing valid.
+        if in_tool_result_run && is_assistant_with_tools {
+            budget = budget.saturating_sub(cost);
+            keep_from_end += 1;
+            in_tool_result_run = false;
+            continue;
+        }
+
+        if !is_tool_result {
+            in_tool_result_run = false;
+        }
+
         if cost > budget {
             break;
         }
@@ -229,21 +274,29 @@ fn truncate_messages(messages: &mut Vec<ConversationMessage>, max_chars: usize) 
     }
 
     if keep_from_end == 0 {
-        // messages.len() >= 2 is guaranteed by the early return above
-        let last = messages
-            .pop()
-            .expect("messages must have at least 2 entries");
-        messages.truncate(1);
-        messages.push(last);
+        // Nothing from the tail fits. Keep only the prefix.
+        messages.truncate(prefix_end);
         return;
     }
 
     let split_point = messages.len() - keep_from_end;
-    if split_point <= 1 {
+    if split_point <= prefix_end {
         return;
     }
 
-    messages.drain(1..split_point);
+    messages.drain(prefix_end..split_point);
+
+    // Post-truncation cleanup: remove any leading ToolResult messages in the
+    // kept tail that have no preceding Assistant with the matching tool_use.
+    // These orphaned tool_results cause Anthropic API errors because their
+    // tool_use_ids have no corresponding tool_use block.
+    while messages.len() > prefix_end {
+        if matches!(&messages[prefix_end], ConversationMessage::ToolResult(_)) {
+            messages.remove(prefix_end);
+        } else {
+            break;
+        }
+    }
 }
 
 /// Convert recent memory entries to chronological `ConversationMessage` list.
