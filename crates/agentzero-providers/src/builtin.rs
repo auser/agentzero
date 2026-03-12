@@ -183,10 +183,14 @@ impl BuiltinProvider {
             LlamaSampler::dist(42),
         ]);
 
-        // Generate tokens
+        // Generate tokens with repetition detection.
+        // Small models often get stuck repeating the same phrase — we detect
+        // this by checking if the last N characters appear twice in a row and
+        // stop early to avoid wasting compute.
         let mut output = String::new();
         let mut output_tokens = 0u64;
         let mut n_cur = tokens.len() as i32;
+        const REPEAT_WINDOW: usize = 80; // check last 80 chars for repetition
 
         for _ in 0..max_tokens {
             let token = sampler.sample(&ctx, -1);
@@ -203,6 +207,24 @@ impl BuiltinProvider {
             let piece = String::from_utf8_lossy(&bytes);
             output.push_str(&piece);
             output_tokens += 1;
+
+            // Repetition detection: if the last REPEAT_WINDOW chars appear
+            // earlier in the output, the model is looping.
+            if output.len() > REPEAT_WINDOW * 2 {
+                let tail = &output[output.len() - REPEAT_WINDOW..];
+                let before_tail = &output[..output.len() - REPEAT_WINDOW];
+                if before_tail.contains(tail) {
+                    warn!(
+                        tokens = output_tokens,
+                        "repetition detected in builtin model output, stopping early"
+                    );
+                    // Trim the repeated content
+                    if let Some(pos) = before_tail.rfind(tail) {
+                        output.truncate(pos + REPEAT_WINDOW);
+                    }
+                    break;
+                }
+            }
 
             // Prepare next batch
             batch.clear();
