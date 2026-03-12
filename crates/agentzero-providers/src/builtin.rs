@@ -352,16 +352,22 @@ fn format_tools_system_block(tools: &[ToolDefinition]) -> String {
     block
 }
 
-/// Parse `<tool_call>...</tool_call>` blocks from model output.
+/// Parse tool calls from model output.
+///
+/// Handles three formats that local models commonly produce:
+/// 1. `<tool_call>{"name":...}</tool_call>` — Qwen/ChatML style
+/// 2. `` ```json\n{"name":...}\n``` `` — fenced code blocks
+/// 3. Bare `{"name": "...", "arguments": {...}}` JSON objects
 ///
 /// Returns `(text_output, tool_calls)` where `text_output` is the model
-/// response with tool_call blocks removed and `tool_calls` is the parsed list.
+/// response with tool call blocks removed and `tool_calls` is the parsed list.
 fn parse_tool_calls(raw: &str) -> (String, Vec<ToolUseRequest>) {
     let mut tool_calls = Vec::new();
     let mut text = String::new();
     let mut remaining = raw;
     let mut call_index = 0usize;
 
+    // Pass 1: extract <tool_call> blocks
     loop {
         match remaining.find("<tool_call>") {
             None => {
@@ -369,13 +375,11 @@ fn parse_tool_calls(raw: &str) -> (String, Vec<ToolUseRequest>) {
                 break;
             }
             Some(start) => {
-                // Text before the tag
                 text.push_str(&remaining[..start]);
 
                 let after_open = &remaining[start + "<tool_call>".len()..];
                 match after_open.find("</tool_call>") {
                     None => {
-                        // Unterminated — treat entire remainder as text
                         text.push_str(&remaining[start..]);
                         break;
                     }
@@ -386,7 +390,6 @@ fn parse_tool_calls(raw: &str) -> (String, Vec<ToolUseRequest>) {
                             tool_calls.push(tc);
                         } else {
                             warn!(json = json_str, "failed to parse tool_call JSON");
-                            // Keep it in the text output so nothing is silently lost
                             text.push_str(
                                 &remaining[start
                                     ..start + "<tool_call>".len() + end + "</tool_call>".len()],
@@ -399,17 +402,64 @@ fn parse_tool_calls(raw: &str) -> (String, Vec<ToolUseRequest>) {
         }
     }
 
+    // Pass 2: if no <tool_call> blocks found, try ```json code blocks and bare JSON
+    if tool_calls.is_empty() {
+        let cleaned = text.clone();
+        text.clear();
+        remaining = &cleaned;
+
+        loop {
+            // Try fenced code block first
+            if let Some(fence_start) = remaining.find("```") {
+                let after_fence = &remaining[fence_start + 3..];
+                // Skip optional language tag
+                if let Some(newline) = after_fence.find('\n') {
+                    let content = &after_fence[newline + 1..];
+                    if let Some(fence_end) = content.find("```") {
+                        let block = content[..fence_end].trim();
+                        if let Some(tc) = parse_single_tool_call(block, call_index) {
+                            call_index += 1;
+                            text.push_str(&remaining[..fence_start]);
+                            tool_calls.push(tc);
+                            remaining = &content[fence_end + 3..];
+                            continue;
+                        }
+                    }
+                }
+                // Not a tool call code block — keep it as text
+                text.push_str(&remaining[..fence_start + 3]);
+                remaining = &remaining[fence_start + 3..];
+                continue;
+            }
+            // No more fences
+            text.push_str(remaining);
+            break;
+        }
+
+        // Pass 3: still nothing? try bare JSON object
+        if tool_calls.is_empty() {
+            let trimmed = text.trim();
+            if trimmed.starts_with('{') && trimmed.ends_with('}') {
+                if let Some(tc) = parse_single_tool_call(trimmed, call_index) {
+                    tool_calls.push(tc);
+                    text.clear();
+                }
+            }
+        }
+    }
+
     let text = text.trim().to_string();
     (text, tool_calls)
 }
 
 /// Parse a single tool call JSON object.
-/// Accepts `{"name": "...", "arguments": {...}}`.
+/// Accepts `{"name": "...", "arguments": {...}}` or `{"name": "...", "parameters": {...}}`.
 fn parse_single_tool_call(json_str: &str, index: usize) -> Option<ToolUseRequest> {
     let v: serde_json::Value = serde_json::from_str(json_str).ok()?;
     let name = v.get("name")?.as_str()?;
     let arguments = v
         .get("arguments")
+        .or_else(|| v.get("parameters"))
         .cloned()
         .unwrap_or(serde_json::Value::Object(Default::default()));
 
@@ -782,5 +832,51 @@ mod tests {
         assert!(text.contains("First I'll search."));
         assert!(text.contains("Then I'll write."));
         assert!(text.contains("Done."));
+    }
+
+    #[test]
+    fn parse_tool_calls_extracts_from_json_code_block() {
+        let raw = "I'll search for that.\n```json\n{\"name\": \"web_search\", \"arguments\": {\"query\": \"AI regulation EU\"}}\n```";
+        let (text, calls) = parse_tool_calls(raw);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "web_search");
+        assert_eq!(calls[0].input["query"], "AI regulation EU");
+        assert_eq!(text, "I'll search for that.");
+    }
+
+    #[test]
+    fn parse_tool_calls_extracts_from_bare_json() {
+        let raw = "{\"name\": \"web_search\", \"arguments\": {\"query\": \"test\"}}";
+        let (text, calls) = parse_tool_calls(raw);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "web_search");
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_tool_calls_accepts_parameters_alias() {
+        let raw =
+            "<tool_call>{\"name\": \"web_fetch\", \"parameters\": {\"url\": \"https://example.com\"}}</tool_call>";
+        let (_, calls) = parse_tool_calls(raw);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "web_fetch");
+        assert_eq!(calls[0].input["url"], "https://example.com");
+    }
+
+    #[test]
+    fn parse_tool_calls_prefers_xml_over_code_blocks() {
+        // If both formats are present, <tool_call> wins (pass 1)
+        let raw = "<tool_call>{\"name\": \"a\", \"arguments\": {}}</tool_call>\n```json\n{\"name\": \"b\", \"arguments\": {}}\n```";
+        let (_, calls) = parse_tool_calls(raw);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "a");
+    }
+
+    #[test]
+    fn parse_tool_calls_skips_non_tool_code_blocks() {
+        let raw = "Here's some code:\n```python\nprint('hello')\n```";
+        let (text, calls) = parse_tool_calls(raw);
+        assert!(calls.is_empty());
+        assert!(text.contains("print('hello')"));
     }
 }
