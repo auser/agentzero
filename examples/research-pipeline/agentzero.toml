@@ -3,25 +3,27 @@
 # A multi-step pipeline that turns a topic into a polished research brief.
 # Four agents work in sequence: Researcher → Scraper → Analyst → Writer.
 #
-# All agents inherit the default provider unless overridden per-agent.
+# Hybrid mode: agents that need strong reasoning (researcher, analyst) use
+# a cloud model, while data-handling agents (scraper, writer) stay local
+# for privacy. Each agent inherits the default provider unless overridden.
 #
 # Quick start:
 #   1. Copy this file to your project root as `agentzero.toml`
-#   2. Set the provider below (builtin needs --features local-model)
+#   2. Set ANTHROPIC_API_KEY for cloud agents (or swap to openai/openrouter)
 #   3. Run `agentzero gateway`
 #   4. Send: "Research the current state of AI regulation in the EU"
 
 # ---------------------------------------------------------------------------
-# Provider — default LLM (all agents inherit this unless overridden)
+# Provider — default LLM (local, private — used by scraper + writer)
 # ---------------------------------------------------------------------------
 [provider]
 kind = "builtin"
 model = "qwen2.5-coder-3b"
-# NOTE: 3B models have limited tool-use ability. For reliable results,
-# use 7B+ (e.g. "qwen2.5:7b", "llama3.1:8b") or a cloud provider:
-# kind = "anthropic"
-# model = "claude-sonnet-4-6"
-# default_temperature = 0.7
+# For a fully-local setup use 7B+ for all agents:
+#   model = "qwen2.5:7b"
+# For a fully-cloud setup:
+#   kind = "anthropic"
+#   model = "claude-haiku-4-5"
 
 
 # ---------------------------------------------------------------------------
@@ -119,11 +121,16 @@ shutdown_grace_ms = 10000
 
 # ---------------------------------------------------------------------------
 # Agent: Researcher — broad web search and initial data gathering
+# Uses a cloud model because tool selection requires strong reasoning.
 # ---------------------------------------------------------------------------
 [swarm.agents.researcher]
 name = "Researcher"
 description = "Research agent. Searches the web for information on a given topic, compiles raw findings with sources and key data points."
 keywords = ["research", "search", "find", "investigate", "look up", "what is", "how does"]
+provider = "anthropic"                     # cloud — needs reliable tool use
+model = "claude-haiku-4-5"                 # fast + cheap, good enough for search
+# provider = "openai"                     # alternative cloud provider
+# model = "gpt-4.1-mini"
 privacy_boundary = "encrypted_only"
 allowed_tools = ["web_search", "web_fetch", "write_file"]
 subscribes_to = ["channel.*.message"]
@@ -152,11 +159,13 @@ Cite every claim. Prioritize recent, authoritative sources."""
 
 # ---------------------------------------------------------------------------
 # Agent: Scraper — deep-dives into specific URLs
+# Stays local: just fetches URLs and extracts text, no complex reasoning.
 # ---------------------------------------------------------------------------
 [swarm.agents.scraper]
 name = "Scraper"
 description = "Data extraction agent. Deep-dives into specific URLs from research findings to extract detailed content, metrics, and structured data."
 keywords = ["scrape", "extract", "crawl", "data", "metrics"]
+# No provider override — inherits builtin (local)
 privacy_boundary = "encrypted_only"
 allowed_tools = ["web_fetch", "read_file", "write_file"]
 subscribes_to = ["task.research.raw"]
@@ -182,11 +191,14 @@ Focus on extractable facts, not opinions."""
 
 # ---------------------------------------------------------------------------
 # Agent: Analyst — synthesizes research into structured analysis
+# Uses a cloud model because synthesis requires strong reasoning.
 # ---------------------------------------------------------------------------
 [swarm.agents.analyst]
 name = "Analyst"
 description = "Analysis agent. Synthesizes raw research and extracted data into structured analysis with insights, themes, and recommendations."
 keywords = ["analyze", "synthesize", "insight", "trend", "compare"]
+provider = "anthropic"                     # cloud — needs reasoning for synthesis
+model = "claude-haiku-4-5"
 privacy_boundary = "encrypted_only"
 allowed_tools = ["read_file", "write_file"]
 subscribes_to = ["task.research.detailed"]
@@ -215,11 +227,13 @@ Be rigorous. Distinguish between evidence and speculation."""
 
 # ---------------------------------------------------------------------------
 # Agent: Writer — produces the final polished brief
+# Stays local: just reads files and formats text, no web access needed.
 # ---------------------------------------------------------------------------
 [swarm.agents.writer]
 name = "Writer"
 description = "Brief writer. Produces polished, publication-ready research briefs from analysis with clear structure, compelling narrative, and actionable takeaways."
 keywords = ["write", "brief", "report", "document", "summarize", "draft"]
+# No provider override — inherits builtin (local)
 privacy_boundary = "encrypted_only"
 allowed_tools = ["read_file", "write_file"]
 subscribes_to = ["task.analysis.complete"]
