@@ -234,6 +234,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             privacy_boundary: config.privacy.mode.clone(),
             tool_boundaries: config.security.tool_boundaries.clone(),
             cost_calculator,
+            tool_timeout_ms: config.agent.tool_timeout_ms,
         },
         provider,
         memory,

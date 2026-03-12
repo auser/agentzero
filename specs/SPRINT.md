@@ -234,6 +234,68 @@ Wire the existing `[observability]` config skeleton to a real OTLP exporter with
 
 ---
 
+## Sprint 37: Production Hardening II — Security, TLS, Observability, Data Integrity
+
+**Goal:** Close all CRITICAL and HIGH gaps that block external deployment. Harden security boundaries, wire TLS, add observability instrumentation, fix data integrity gaps, and add targeted production test coverage.
+
+**Baseline:** Sprint 36 complete (production hardening), 1,400+ tests, 0 clippy warnings.
+
+**Plan:** `specs/plans/08-production-hardening-ii.md`
+
+---
+
+### Phase A: Security Essentials (CRITICAL)
+
+- [x] **API key scope enforcement** — Scope-checking on all `/v1/*` handler routes. API keys carry scopes (RunsRead, RunsWrite, RunsManage, Admin). Insufficient scope returns 403.
+- [x] **Session TTL** — Paired tokens expire after configurable TTL (default 7 days). Legacy tokens without timestamps remain valid for backward compatibility.
+- [x] **Persistent API key store** — `ApiKeyStore` backed by `EncryptedJsonStore` from `agentzero-storage`. Keys survive restarts. Encrypted at rest with XChaCha20Poly1305.
+- [x] **OTP secret log level** — Moved from `println!` to `tracing::debug!` / `tracing::info!`. No longer leaks to stdout in production.
+- [x] **`.unwrap()` prohibition** — Added to AGENTS.md rule 10: never use `.unwrap()` in production code, use `.expect()` with descriptive message.
+
+### Phase B: TLS & Input Hardening (CRITICAL/HIGH)
+
+- [x] **TLS support** — Feature-gated `tls` feature wires `axum-server` with `tls-rustls`. `[gateway.tls]` config with `cert_path` and `key_path`. Clear error when TLS configured without feature.
+- [x] **HSTS middleware** — `Strict-Transport-Security: max-age=31536000; includeSubDomains` added to all responses when TLS is active.
+- [x] **WebSocket message size limit** — 2 MB max frame size on both `/ws/chat` and `/ws/runs/:run_id`.
+- [x] **Channel name validation** — Webhook channel names validated: alphanumeric + hyphens + underscores, 1–64 chars. Invalid names return 400.
+
+### Phase C: Observability & Audit (HIGH)
+
+- [x] **Per-provider metrics** — `agentzero_provider_requests_total`, `agentzero_provider_request_duration_seconds`, `agentzero_provider_errors_total`, `agentzero_provider_tokens_total`. Injected into all Anthropic and OpenAI provider methods (complete, streaming, tool-calling).
+- [x] **Correlation ID propagation** — `X-Request-Id` header middleware. Propagates incoming ID or generates UUID v4. Added to tracing span and returned in response header.
+- [x] **Structured audit log** — `AuditEvent` enum with 8 variants (AuthFailure, ScopeDenied, PairSuccess/Failure, ApiKeyCreated/Revoked, Estop, RateLimited). Emitted to `target: "audit"` at INFO level with consistent structured fields.
+- [x] **`#[instrument]` on key paths** — Added `#[instrument]` to `execute_tool` and `respond_with_tools` in agent.rs.
+
+### Phase D: Data Integrity (HIGH)
+
+- [x] **Schema version table** — `_schema_version` table with versioned migration tracking. Backward-compatible with pre-versioned databases. 4 tests.
+- [x] **Cost tracker migration** — `CostTracker` now uses `EncryptedJsonStore` from `agentzero-storage`. Automatic plaintext→encrypted migration. Fixes AGENTS.md rule 9.
+- [x] **Per-tool execution timeout** — `tool_timeout_ms` config field (default 120s, 0 = disabled). `tokio::time::timeout` wraps `tool.execute()`. Timeout emits `tool_timeouts_total` counter. 2 tests.
+
+### Phase E: Testing (HIGH)
+
+- [x] **E2E security integration test** — 4 tests: full API key lifecycle (create → auth → scope enforcement → revoke → 401), admin scope access, expired key rejection, session TTL enforcement.
+- [x] **Gateway load test** — 2 tests: 100 concurrent /health requests, 50 concurrent authenticated /v1/models requests. All succeed, no panics.
+- [x] **WebSocket relay tests** — 2 tests: non-upgrade rejection (400 on both /ws/chat and /ws/runs), WS_MAX_MESSAGE_SIZE constant assertion (2 MB).
+
+---
+
+### Acceptance Criteria
+
+- [x] API key scopes enforced on all authenticated endpoints
+- [x] TLS terminates correctly when configured (feature-gated)
+- [x] HSTS active when TLS is enabled
+- [x] Per-provider metrics emitted for all LLM calls
+- [x] Correlation IDs propagated through request lifecycle
+- [x] Structured audit log captures security events
+- [x] Schema migrations tracked with version table
+- [x] Cost tracker uses `agentzero-storage` encrypted backend
+- [x] Per-tool timeout prevents runaway tool execution
+- [x] E2E security test covers full auth lifecycle
+- [x] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings (2,132 tests)
+
+---
+
 ## Backlog
 
 ### Distributed Event Bus (was Sprint 36 Phase E)

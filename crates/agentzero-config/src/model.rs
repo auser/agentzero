@@ -469,6 +469,13 @@ pub struct AgentSettings {
     /// Per-run token limit. When exceeded, the agent stops.
     #[serde(default)]
     pub max_tokens: Option<u64>,
+    /// Per-tool execution timeout in milliseconds (0 = no timeout). Default: 120_000 (2 min).
+    #[serde(default = "default_tool_timeout_ms")]
+    pub tool_timeout_ms: u64,
+}
+
+fn default_tool_timeout_ms() -> u64 {
+    120_000
 }
 
 impl Default for AgentSettings {
@@ -489,6 +496,7 @@ impl Default for AgentSettings {
             system_prompt: None,
             max_cost_usd: None,
             max_tokens: None,
+            tool_timeout_ms: default_tool_timeout_ms(),
         }
     }
 }
@@ -1248,6 +1256,17 @@ pub struct GatewayConfig {
     pub relay_mode: bool,
     /// Relay-specific configuration.
     pub relay: RelayConfig,
+    /// TLS configuration. When present, the gateway serves HTTPS.
+    pub tls: Option<TlsConfig>,
+}
+
+/// TLS certificate configuration for the gateway.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TlsConfig {
+    /// Path to the PEM-encoded certificate file (or certificate chain).
+    pub cert_path: String,
+    /// Path to the PEM-encoded private key file.
+    pub key_path: String,
 }
 
 impl Default for GatewayConfig {
@@ -1260,6 +1279,7 @@ impl Default for GatewayConfig {
             node_control: NodeControlConfig::default(),
             relay_mode: false,
             relay: RelayConfig::default(),
+            tls: None,
         }
     }
 }

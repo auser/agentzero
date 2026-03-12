@@ -213,6 +213,8 @@ pub struct AgentConfig {
     /// Optional function to compute cost in microdollars from (input_tokens, output_tokens).
     /// Injected at construction time so the core crate doesn't depend on providers.
     pub cost_calculator: Option<Arc<dyn Fn(u64, u64) -> u64 + Send + Sync>>,
+    /// Per-tool execution timeout in milliseconds (0 = no timeout). Default: 120_000 (2 min).
+    pub tool_timeout_ms: u64,
 }
 
 impl Default for AgentConfig {
@@ -236,6 +238,7 @@ impl Default for AgentConfig {
             privacy_boundary: String::new(),
             tool_boundaries: HashMap::new(),
             cost_calculator: None,
+            tool_timeout_ms: 120_000,
         }
     }
 }

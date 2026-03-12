@@ -1,4 +1,5 @@
-use crate::auth::authorize_request;
+use crate::api_keys::Scope;
+use crate::auth::{authorize_request, authorize_with_scope};
 use crate::models::{
     AsyncSubmitRequest, AsyncSubmitResponse, CancelQuery, ChatCompletionsRequest,
     ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice, CompletionChoiceMessage,
@@ -82,6 +83,12 @@ pub(crate) async fn pair(
         return Err(GatewayError::AuthRequired);
     };
     if code.trim() != expected_code {
+        crate::audit::audit(
+            crate::audit::AuditEvent::PairFailure,
+            "invalid pairing code",
+            "",
+            "/pair",
+        );
         return Err(GatewayError::AuthFailed);
     }
 
@@ -91,6 +98,13 @@ pub(crate) async fn pair(
             message: "failed to persist pairing token".to_string(),
         });
     }
+
+    crate::audit::audit(
+        crate::audit::AuditEvent::PairSuccess,
+        "pairing code exchanged for token",
+        "",
+        "/pair",
+    );
 
     Ok(Json(PairResponse {
         paired: true,
@@ -103,7 +117,7 @@ pub(crate) async fn ping(
     headers: HeaderMap,
     Json(req): Json<PingRequest>,
 ) -> Result<Json<PingResponse>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
     Ok(Json(PingResponse {
         ok: true,
@@ -117,7 +131,16 @@ pub(crate) async fn webhook(
     Path(channel): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<WebhookResponse>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
+
+    // Validate channel name: only alphanumeric, hyphens, and underscores.
+    if !is_valid_channel_name(&channel) {
+        return Err(GatewayError::BadRequest {
+            message: format!(
+                "invalid channel name '{channel}': must be 1-64 chars, alphanumeric/hyphen/underscore only"
+            ),
+        });
+    }
 
     let Some(delivery) = state.channels.dispatch(&channel, payload).await else {
         return Err(GatewayError::NotFound {
@@ -137,7 +160,7 @@ pub(crate) async fn legacy_webhook(
     headers: HeaderMap,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
     if let Some(reason) = check_perplexity(&req.message, &state.effective_perplexity_filter()) {
         tracing::warn!(reason = %reason, "gateway legacy_webhook blocked by perplexity filter");
@@ -188,7 +211,7 @@ pub(crate) async fn api_chat(
     headers: HeaderMap,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
     if let Some(reason) = check_perplexity(&req.message, &state.effective_perplexity_filter()) {
         tracing::warn!(reason = %reason, "gateway api_chat blocked by perplexity filter");
@@ -236,7 +259,7 @@ pub(crate) async fn v1_chat_completions(
     headers: HeaderMap,
     Json(req): Json<ChatCompletionsRequest>,
 ) -> Result<Response, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
     let last_user = req
         .messages
@@ -377,7 +400,7 @@ pub(crate) async fn v1_models(
     State(state): State<GatewayState>,
     headers: HeaderMap,
 ) -> Result<Json<ModelsResponse>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let mut models = Vec::new();
     for provider in agentzero_providers::supported_providers() {
@@ -419,13 +442,15 @@ const WS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const WS_PONG_TIMEOUT: Duration = Duration::from_secs(60);
 /// Close WebSocket if no client message received within this duration.
 const WS_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// Maximum WebSocket message size (2 MB).
+pub(crate) const WS_MAX_MESSAGE_SIZE: usize = 2 * 1024 * 1024;
 
 pub(crate) async fn ws_chat(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<Response, GatewayError> {
-    authorize_request(&state, &headers, true)?;
+    authorize_with_scope(&state, &headers, true, &Scope::RunsWrite)?;
     let config_path = state
         .config_path
         .clone()
@@ -436,6 +461,7 @@ pub(crate) async fn ws_chat(
         .ok_or(GatewayError::AgentUnavailable)?;
     crate::gateway_metrics::record_ws_connection();
     Ok(ws
+        .max_message_size(WS_MAX_MESSAGE_SIZE)
         .on_upgrade(move |socket| handle_socket(socket, config_path, workspace_root))
         .into_response())
 }
@@ -572,7 +598,7 @@ pub(crate) async fn async_submit(
     headers: HeaderMap,
     Json(req): Json<AsyncSubmitRequest>,
 ) -> Result<Response, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
     let job_store = state
         .job_store
@@ -813,7 +839,7 @@ pub(crate) async fn job_status(
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
 ) -> Result<Json<JobStatusResponse>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let job_store = state
         .job_store
@@ -850,7 +876,7 @@ pub(crate) async fn job_result(
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
 ) -> Result<Response, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let job_store = state
         .job_store
@@ -909,7 +935,7 @@ pub(crate) async fn job_cancel(
     Path(run_id_str): Path<String>,
     axum::extract::Query(query): axum::extract::Query<CancelQuery>,
 ) -> Result<Json<Value>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsManage)?;
 
     let job_store = state
         .job_store
@@ -946,7 +972,7 @@ pub(crate) async fn job_list(
     headers: HeaderMap,
     query: axum::extract::Query<JobListQuery>,
 ) -> Result<Json<Value>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let job_store = state
         .job_store
@@ -996,7 +1022,7 @@ pub(crate) async fn job_events(
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
 ) -> Result<Json<Value>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let job_store = state
         .job_store
@@ -1067,7 +1093,7 @@ pub(crate) async fn job_transcript(
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
 ) -> Result<Json<Value>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let memory_store = state
         .memory_store
@@ -1112,7 +1138,7 @@ pub(crate) async fn agents_list(
     State(state): State<GatewayState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let presence = state
         .presence_store
@@ -1150,7 +1176,7 @@ pub(crate) async fn emergency_stop(
     State(state): State<GatewayState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
 
     let job_store = state
         .job_store
@@ -1160,9 +1186,11 @@ pub(crate) async fn emergency_stop(
     let cancelled_ids = job_store.emergency_stop_all().await;
     let count = cancelled_ids.len();
 
-    tracing::warn!(
-        cancelled_count = count,
-        "emergency stop triggered — cancelled all active runs"
+    crate::audit::audit(
+        crate::audit::AuditEvent::Estop,
+        &format!("cancelled {} active runs", count),
+        "",
+        "/v1/estop",
     );
 
     Ok(Json(json!({
@@ -1192,7 +1220,7 @@ pub(crate) async fn ws_run_subscribe(
     query: axum::extract::Query<WsRunQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let job_store = state
         .job_store
@@ -1212,6 +1240,7 @@ pub(crate) async fn ws_run_subscribe(
     let use_blocks = query.format.as_deref() == Some("blocks");
 
     Ok(ws
+        .max_message_size(WS_MAX_MESSAGE_SIZE)
         .on_upgrade(move |socket| handle_run_socket(socket, job_store, run_id, use_blocks))
         .into_response())
 }
@@ -1365,7 +1394,7 @@ pub(crate) async fn sse_run_stream(
     Path(run_id_str): Path<String>,
     query: axum::extract::Query<WsRunQuery>,
 ) -> Result<Response, GatewayError> {
-    authorize_request(&state, &headers, false)?;
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let job_store = state
         .job_store
@@ -1444,11 +1473,21 @@ pub(crate) async fn sse_run_stream(
         .header("cache-control", "no-cache")
         .header("connection", "keep-alive")
         .body(body)
-        .unwrap()
+        .expect("valid SSE response builder")
         .into_response())
 }
 
 // ---------------------------------------------------------------------------
+
+/// Validate that a channel name contains only safe characters.
+/// Accepts 1–64 characters from `[a-zA-Z0-9_-]`.
+pub(crate) fn is_valid_channel_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
 
 /// Build a block-level JSON frame for completed results.
 ///

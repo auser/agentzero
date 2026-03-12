@@ -85,7 +85,10 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         }
     }
 
-    // Request metrics middleware (outermost — records all requests).
+    // Correlation ID middleware (outermost — propagates or generates X-Request-Id).
+    router = router.layer(from_fn(middleware::correlation_id));
+
+    // Request metrics middleware (records all requests).
     router = router.layer(from_fn(middleware::request_metrics));
 
     // Request size limit middleware.
@@ -114,6 +117,11 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
                 async move { middleware::cors_middleware(req, next, o).await }
             },
         ));
+    }
+
+    // HSTS middleware (only when TLS is active).
+    if config.tls_enabled {
+        router = router.layer(from_fn(middleware::hsts_middleware));
     }
 
     router.with_state(state)

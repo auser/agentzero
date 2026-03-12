@@ -21,8 +21,8 @@ pub use model::{
     PerplexityFilterConfig, PipelineConfig, PipelineTriggerConfig, PluginConfig, ProviderConfig,
     ProviderOptionsConfig, QueryClassificationConfig, QueryClassificationRule, ReadFileConfig,
     ResearchConfig, RuntimeConfig, SecurityConfig, ShellConfig, SkillsConfig, SwarmAgentConfig,
-    SwarmConfig, SwarmRouterConfig, SyscallAnomalyConfig, UrlAccessConfig, WasmRuntimeConfig,
-    WasmSecurityConfig, WebFetchConfig, WebSearchConfig, WriteFileConfig,
+    SwarmConfig, SwarmRouterConfig, SyscallAnomalyConfig, TlsConfig, UrlAccessConfig,
+    WasmRuntimeConfig, WasmSecurityConfig, WebFetchConfig, WebSearchConfig, WriteFileConfig,
 };
 pub use policy::{load_audit_policy, load_tool_security_policy, AuditPolicy};
 pub use templates::{

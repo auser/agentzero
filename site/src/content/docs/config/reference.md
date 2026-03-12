@@ -130,6 +130,11 @@ require_pairing = true
 allow_public_bind = false
 # relay_mode = false                              # when true, only relay routes active (agent endpoints → 503)
 
+# TLS configuration (requires --features tls). When present, gateway serves HTTPS.
+# [gateway.tls]
+# cert_path = "/path/to/cert.pem"                # PEM certificate or chain
+# key_path = "/path/to/key.pem"                  # PEM private key
+
 [gateway.node_control]
 enabled = false
 # auth_token = "****"

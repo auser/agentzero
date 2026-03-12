@@ -12,6 +12,7 @@ publish = false
 default = []
 privacy = ["agentzero-core/privacy", "dep:dashmap", "dep:base64"]
 telemetry = ["agentzero-infra/telemetry"]
+tls = ["dep:axum-server"]
 
 [dependencies]
 anyhow.workspace = true
@@ -35,8 +36,10 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 subtle = "2"
+axum-server = { workspace = true, features = ["tls-rustls"], optional = true }
 tokio.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 http-body-util = "0.1"

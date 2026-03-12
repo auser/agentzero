@@ -108,6 +108,7 @@ All code must follow idiomatic Rust. These are not suggestions — they are mand
 - **Plugin vs. nested implementation**: When adding new functionality, evaluate whether it belongs as a WASM plugin (isolated, user-installable, sandboxed) or as a native nested implementation (performance-critical, tightly coupled to core). Default to plugin for user-facing extensions; use native only when the plugin boundary adds unacceptable overhead or complexity.
 - **Zero clippy warnings**: All code must pass `cargo clippy --workspace --all-targets -- -D warnings` with no exceptions. The pre-commit hook auto-fixes warnings via `cargo clippy --fix --allow-staged` and re-stages the changes; any warnings that cannot be auto-fixed must be resolved manually before committing. Do not `#[allow(clippy::...)]` without a justifying comment.
 - **Error handling conventions**: Use `thiserror` for domain-specific error enums; use `anyhow` for ad-hoc error propagation and context. Always add `.context()` or `.with_context()` when propagating errors across crate boundaries.
+- **Never use `.unwrap()` in production code**: Always use `.expect("descriptive message")` instead. `.unwrap()` is only acceptable in test code (`#[cfg(test)]`). In production paths, prefer `?` propagation or `.expect()` with a message explaining why the invariant holds.
 - **Derive discipline**: Apply standard derives consistently — `Debug, Clone` on most types; add `Serialize, Deserialize` only when the type crosses a serialization boundary; add `Copy, PartialEq, Eq` on small enums.
 - **Trait design**: All async traits use `#[async_trait]` and require `Send + Sync` bounds. Trait methods should return `anyhow::Result` unless a domain-specific error type is warranted.
 - **Prefer `impl` blocks over free functions**: Attach behavior to the type it operates on. Use free functions only for true module-level utilities with no obvious owning type.
@@ -131,6 +132,24 @@ All code must follow idiomatic Rust. These are not suggestions — they are mand
 - Agent enforcement:
   - Agents must identify affected doc pages and update them in the same PR as the code change.
   - If no documentation update is needed, the agent must explicitly state why.
+
+### 13) Holistic problem-solving (no band-aids)
+- When encountering a bug, failure, or design problem, **do not patch the immediate symptom**. Step back, identify the root cause, and propose a solution that addresses the underlying issue.
+- Think like a principal systems architect:
+  - Map the full blast radius of the problem — what else does it affect?
+  - Identify why the current design allowed the problem to occur.
+  - Propose a fix that eliminates the class of problem, not just the instance.
+- Forbidden patterns:
+  - Applying a quick fix to silence an error without understanding why it happens.
+  - Adding special-case `if` checks or workarounds that mask deeper structural issues.
+  - Fixing one symptom only to create a new one elsewhere (whack-a-mole).
+  - Suppressing warnings, skipping tests, or loosening constraints to make a problem "go away."
+- Required approach:
+  - **Diagnose first**: read the relevant code paths, trace the data flow, understand the invariants before proposing any change.
+  - **Project-wide view**: consider how the fix interacts with the rest of the system — will it hold up as the codebase evolves?
+  - **Production-ready quality**: every fix should be something you'd confidently ship, not a stopgap that needs revisiting later.
+  - **Explain the "why"**: when proposing a solution, articulate why this approach solves the root cause and why simpler/narrower fixes are insufficient.
+- If the proper fix is large, scope it explicitly and propose a phased plan — but never substitute a band-aid for phase 1.
 
 ## Preferred PR Checklist
 - [ ] Functionality implemented

@@ -345,6 +345,13 @@ impl Provider for OpenAiCompatibleProvider {
                         let status =
                             StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
                         if !status.is_success() {
+                            let error_type = format!("http_{}", response.status);
+                            crate::provider_metrics::record_provider_error(
+                                "openai-compat",
+                                &self.model,
+                                &error_type,
+                                start.elapsed().as_secs_f64(),
+                            );
                             let mapped = map_status_error(status, &response.body);
                             if attempt + 1 < MAX_ATTEMPTS && should_retry_status(status) {
                                 log_retry(
@@ -363,6 +370,11 @@ impl Provider for OpenAiCompatibleProvider {
                             return Err(mapped);
                         }
 
+                        crate::provider_metrics::record_provider_success(
+                            "openai-compat",
+                            &self.model,
+                            start.elapsed().as_secs_f64(),
+                        );
                         let output_text = parse_output_text(&response.body)
                             .with_context(|| "failed to parse provider response".to_string())?;
                         return Ok(ChatResult {
@@ -371,6 +383,12 @@ impl Provider for OpenAiCompatibleProvider {
                         });
                     }
                     Err(error) => {
+                        crate::provider_metrics::record_provider_error(
+                            "openai-compat",
+                            &self.model,
+                            "transport",
+                            start.elapsed().as_secs_f64(),
+                        );
                         let mapped = anyhow!("provider request failed: {}", error.message);
                         if attempt + 1 < MAX_ATTEMPTS && should_retry_transport(error.kind) {
                             log_retry("openai-compat", attempt, &error.message);
@@ -417,13 +435,28 @@ impl Provider for OpenAiCompatibleProvider {
                 request = request.bearer_auth(&self.api_key);
             }
 
-            let response = request
-                .send()
-                .await
-                .map_err(|e| anyhow!("streaming request failed: {e}"))?;
+            let response = match request.send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    crate::provider_metrics::record_provider_error(
+                        "openai-compat",
+                        &self.model,
+                        "transport",
+                        start.elapsed().as_secs_f64(),
+                    );
+                    return Err(anyhow!("streaming request failed: {e}"));
+                }
+            };
 
             if !response.status().is_success() {
                 let status = response.status();
+                let error_type = format!("http_{}", status.as_u16());
+                crate::provider_metrics::record_provider_error(
+                    "openai-compat",
+                    &self.model,
+                    &error_type,
+                    start.elapsed().as_secs_f64(),
+                );
                 let body = response.text().await.unwrap_or_default();
                 return Err(map_status_error(status, &body));
             }
@@ -451,6 +484,11 @@ impl Provider for OpenAiCompatibleProvider {
                 }
             }
 
+            crate::provider_metrics::record_provider_success(
+                "openai-compat",
+                &self.model,
+                start.elapsed().as_secs_f64(),
+            );
             log_response("openai-compat", 200, accumulated.len(), start.elapsed());
 
             let _ = sender.send(StreamChunk {
@@ -520,6 +558,13 @@ impl Provider for OpenAiCompatibleProvider {
                         let status =
                             StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
                         if !status.is_success() {
+                            let error_type = format!("http_{}", response.status);
+                            crate::provider_metrics::record_provider_error(
+                                "openai-compat",
+                                &self.model,
+                                &error_type,
+                                start.elapsed().as_secs_f64(),
+                            );
                             let mapped = map_status_error(status, &response.body);
                             if attempt + 1 < MAX_ATTEMPTS && should_retry_status(status) {
                                 log_retry(
@@ -538,10 +583,29 @@ impl Provider for OpenAiCompatibleProvider {
                             return Err(mapped);
                         }
 
-                        return parse_tool_chat_response(&response.body)
-                            .with_context(|| "failed to parse provider tool response");
+                        let elapsed = start.elapsed().as_secs_f64();
+                        crate::provider_metrics::record_provider_success(
+                            "openai-compat",
+                            &self.model,
+                            elapsed,
+                        );
+                        let result = parse_tool_chat_response(&response.body)
+                            .with_context(|| "failed to parse provider tool response")?;
+                        crate::provider_metrics::record_token_usage(
+                            "openai-compat",
+                            &self.model,
+                            result.input_tokens as u32,
+                            result.output_tokens as u32,
+                        );
+                        return Ok(result);
                     }
                     Err(error) => {
+                        crate::provider_metrics::record_provider_error(
+                            "openai-compat",
+                            &self.model,
+                            "transport",
+                            start.elapsed().as_secs_f64(),
+                        );
                         let mapped = anyhow!("provider request failed: {}", error.message);
                         if attempt + 1 < MAX_ATTEMPTS && should_retry_transport(error.kind) {
                             log_retry("openai-compat", attempt, &error.message);
@@ -601,13 +665,28 @@ impl Provider for OpenAiCompatibleProvider {
                 request = request.bearer_auth(&self.api_key);
             }
 
-            let response = request
-                .send()
-                .await
-                .map_err(|e| anyhow!("streaming request failed: {e}"))?;
+            let response = match request.send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    crate::provider_metrics::record_provider_error(
+                        "openai-compat",
+                        &self.model,
+                        "transport",
+                        start.elapsed().as_secs_f64(),
+                    );
+                    return Err(anyhow!("streaming request failed: {e}"));
+                }
+            };
 
             if !response.status().is_success() {
                 let status = response.status();
+                let error_type = format!("http_{}", status.as_u16());
+                crate::provider_metrics::record_provider_error(
+                    "openai-compat",
+                    &self.model,
+                    &error_type,
+                    start.elapsed().as_secs_f64(),
+                );
                 let body = response.text().await.unwrap_or_default();
                 return Err(map_status_error(status, &body));
             }
@@ -683,6 +762,11 @@ impl Provider for OpenAiCompatibleProvider {
                 }
             }
 
+            crate::provider_metrics::record_provider_success(
+                "openai-compat",
+                &self.model,
+                start.elapsed().as_secs_f64(),
+            );
             log_response(
                 "openai-compat",
                 200,

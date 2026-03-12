@@ -3,9 +3,11 @@
 //! Foundation layer for RBAC: API keys carry organization isolation,
 //! user identity, and permission scopes.
 
+use agentzero_storage::EncryptedJsonStore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Scopes that can be assigned to an API key.
@@ -74,15 +76,42 @@ impl ApiKeyInfo {
     }
 }
 
-/// In-memory API key store.
-#[derive(Default)]
+const API_KEYS_FILE: &str = "api-keys.json";
+
+/// API key store with optional encrypted-at-rest persistence.
+///
+/// When constructed with `persistent()`, every mutation (create/revoke) is
+/// atomically flushed to an encrypted JSON file via `agentzero-storage`.
+/// When constructed with `new()`, operates purely in-memory (useful for tests).
 pub struct ApiKeyStore {
     keys: std::sync::RwLock<Vec<ApiKeyRecord>>,
+    backing: Option<EncryptedJsonStore>,
+}
+
+impl Default for ApiKeyStore {
+    fn default() -> Self {
+        Self {
+            keys: std::sync::RwLock::new(Vec::new()),
+            backing: None,
+        }
+    }
 }
 
 impl ApiKeyStore {
+    /// Create an in-memory-only store (no persistence). Useful for tests.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a persistent store backed by an encrypted JSON file.
+    /// Loads any existing keys from disk on construction.
+    pub fn persistent(data_dir: &Path) -> anyhow::Result<Self> {
+        let store = EncryptedJsonStore::in_config_dir(data_dir, API_KEYS_FILE)?;
+        let keys: Vec<ApiKeyRecord> = store.load_or_default()?;
+        Ok(Self {
+            keys: std::sync::RwLock::new(keys),
+            backing: Some(store),
+        })
     }
 
     /// Create a new API key. Returns the raw key string (only available at creation time).
@@ -92,7 +121,7 @@ impl ApiKeyStore {
         user_id: &str,
         scopes: HashSet<Scope>,
         expires_at: Option<u64>,
-    ) -> (String, ApiKeyRecord) {
+    ) -> anyhow::Result<(String, ApiKeyRecord)> {
         let raw_key = generate_api_key();
         let key_hash = hash_key(&raw_key);
         let key_id = format!("azk_{}", &key_hash[..12]);
@@ -107,12 +136,20 @@ impl ApiKeyStore {
             expires_at,
         };
 
-        self.keys
-            .write()
-            .expect("api key store lock")
-            .push(record.clone());
+        {
+            let mut keys = self.keys.write().expect("api key store lock");
+            keys.push(record.clone());
+            self.flush(&keys)?;
+        }
 
-        (raw_key, record)
+        crate::audit::audit(
+            crate::audit::AuditEvent::ApiKeyCreated,
+            &format!("key_id={}, org={}", key_id, org_id),
+            &key_id,
+            "",
+        );
+
+        Ok((raw_key, record))
     }
 
     /// Validate a raw API key. Returns `Some(ApiKeyInfo)` if valid, `None` if not found or expired.
@@ -140,11 +177,21 @@ impl ApiKeyStore {
     }
 
     /// Revoke a key by key_id.
-    pub fn revoke(&self, key_id: &str) -> bool {
+    pub fn revoke(&self, key_id: &str) -> anyhow::Result<bool> {
         let mut keys = self.keys.write().expect("api key store lock");
         let before = keys.len();
         keys.retain(|r| r.key_id != key_id);
-        keys.len() < before
+        let removed = keys.len() < before;
+        if removed {
+            self.flush(&keys)?;
+            crate::audit::audit(
+                crate::audit::AuditEvent::ApiKeyRevoked,
+                &format!("key_id={}", key_id),
+                key_id,
+                "",
+            );
+        }
+        Ok(removed)
     }
 
     /// List all keys for an org.
@@ -154,6 +201,14 @@ impl ApiKeyStore {
             .filter(|r| r.org_id == org_id)
             .cloned()
             .collect()
+    }
+
+    /// Flush current key state to the encrypted backing store (if present).
+    fn flush(&self, keys: &[ApiKeyRecord]) -> anyhow::Result<()> {
+        if let Some(ref store) = self.backing {
+            store.save(&keys.to_vec())?;
+        }
+        Ok(())
     }
 }
 
@@ -188,7 +243,9 @@ mod tests {
     fn create_and_validate_roundtrip() {
         let store = ApiKeyStore::new();
         let scopes: HashSet<Scope> = [Scope::RunsRead, Scope::RunsWrite].into();
-        let (raw_key, record) = store.create("org-1", "user-1", scopes.clone(), None);
+        let (raw_key, record) = store
+            .create("org-1", "user-1", scopes.clone(), None)
+            .unwrap();
 
         assert!(raw_key.starts_with("az_"));
         assert!(record.key_id.starts_with("azk_"));
@@ -211,32 +268,42 @@ mod tests {
     fn expired_key_returns_none() {
         let store = ApiKeyStore::new();
         // Expire in the past.
-        let (raw_key, _) = store.create("org-1", "user-1", HashSet::new(), Some(0));
+        let (raw_key, _) = store
+            .create("org-1", "user-1", HashSet::new(), Some(0))
+            .unwrap();
         assert!(store.validate(&raw_key).is_none());
     }
 
     #[test]
     fn revoke_removes_key() {
         let store = ApiKeyStore::new();
-        let (raw_key, record) = store.create("org-1", "user-1", [Scope::Admin].into(), None);
+        let (raw_key, record) = store
+            .create("org-1", "user-1", [Scope::Admin].into(), None)
+            .unwrap();
 
         assert!(store.validate(&raw_key).is_some());
-        assert!(store.revoke(&record.key_id));
+        assert!(store.revoke(&record.key_id).unwrap());
         assert!(store.validate(&raw_key).is_none());
     }
 
     #[test]
     fn revoke_unknown_returns_false() {
         let store = ApiKeyStore::new();
-        assert!(!store.revoke("azk_nonexistent"));
+        assert!(!store.revoke("azk_nonexistent").unwrap());
     }
 
     #[test]
     fn list_filters_by_org() {
         let store = ApiKeyStore::new();
-        store.create("org-1", "u1", [Scope::RunsRead].into(), None);
-        store.create("org-2", "u2", [Scope::RunsRead].into(), None);
-        store.create("org-1", "u3", [Scope::Admin].into(), None);
+        store
+            .create("org-1", "u1", [Scope::RunsRead].into(), None)
+            .unwrap();
+        store
+            .create("org-2", "u2", [Scope::RunsRead].into(), None)
+            .unwrap();
+        store
+            .create("org-1", "u3", [Scope::Admin].into(), None)
+            .unwrap();
 
         let org1_keys = store.list("org-1");
         assert_eq!(org1_keys.len(), 2);
@@ -259,5 +326,82 @@ mod tests {
             assert_eq!(parsed, scope);
         }
         assert!(Scope::parse("unknown").is_none());
+    }
+
+    #[test]
+    fn persistent_store_survives_reload() {
+        let dir = unique_temp_dir();
+        let scopes: HashSet<Scope> = [Scope::RunsRead, Scope::Admin].into();
+
+        // Create a key in a persistent store.
+        let raw_key = {
+            let store = ApiKeyStore::persistent(&dir).unwrap();
+            let (raw_key, _) = store.create("org-1", "user-1", scopes, None).unwrap();
+            raw_key
+        };
+
+        // Reload from disk — key should still be valid.
+        let store2 = ApiKeyStore::persistent(&dir).unwrap();
+        let info = store2
+            .validate(&raw_key)
+            .expect("key should survive reload");
+        assert_eq!(info.org_id, "org-1");
+        assert!(info.has_scope(&Scope::Admin));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn persistent_revoke_survives_reload() {
+        let dir = unique_temp_dir();
+
+        let (raw_key, key_id) = {
+            let store = ApiKeyStore::persistent(&dir).unwrap();
+            let (raw_key, record) = store
+                .create("org-1", "user-1", [Scope::RunsWrite].into(), None)
+                .unwrap();
+            assert!(store.revoke(&record.key_id).unwrap());
+            (raw_key, record.key_id)
+        };
+
+        // Reload — revoked key should be gone.
+        let store2 = ApiKeyStore::persistent(&dir).unwrap();
+        assert!(store2.validate(&raw_key).is_none());
+        assert!(!store2.revoke(&key_id).unwrap());
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn persistent_file_is_encrypted() {
+        let dir = unique_temp_dir();
+        let store = ApiKeyStore::persistent(&dir).unwrap();
+        store
+            .create("org-secret", "user-secret", [Scope::Admin].into(), None)
+            .unwrap();
+
+        let raw = std::fs::read_to_string(dir.join(API_KEYS_FILE)).unwrap();
+        assert!(
+            !raw.contains("org-secret"),
+            "org_id should not appear in plaintext on disk"
+        );
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    fn unique_temp_dir() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static CTR: AtomicU64 = AtomicU64::new(0);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let seq = CTR.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "agentzero-apikeys-{}-{now}-{seq}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }

@@ -41,7 +41,9 @@ The gateway binds to `127.0.0.1` (localhost only) by default. Setting `allow_pub
 
 ## Authentication
 
-The gateway uses a pairing flow:
+The gateway supports two authentication methods:
+
+### Pairing Flow (Default)
 
 1. On first start, the gateway prints a one-time pairing code to the terminal
 2. POST the pairing code to `/pair` to get a bearer token
@@ -68,6 +70,23 @@ curl -X POST http://127.0.0.1:42617/v1/ping \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json"
 ```
+
+### API Keys (Scope-Based Authorization)
+
+API keys provide fine-grained RBAC for multi-tenant deployments. Each key carries a set of scopes:
+
+| Scope | Grants access to |
+|---|---|
+| `runs:read` | Read runs, results, models, agents, subscribe to events |
+| `runs:write` | Submit runs, chat, webhooks, ping |
+| `runs:manage` | Cancel runs |
+| `admin` | Emergency stop, key management |
+
+Bearer tokens from pairing have full access (all scopes). API keys are scoped and persisted with encrypted-at-rest storage.
+
+### Session TTL
+
+Paired tokens can optionally expire after a configurable TTL. Legacy tokens without timestamps remain valid for backward compatibility.
 
 ## Chat Endpoints
 
@@ -198,6 +217,13 @@ The `/metrics` endpoint exposes Prometheus-compatible metrics for monitoring:
 - `gateway_ws_connections_total` — WebSocket connection counter
 - `gateway_active_connections` — Current active connection gauge
 
+**Provider metrics** (emitted per LLM provider request):
+
+- `agentzero_provider_requests_total{provider, model, status}` — Request counter by provider, model, and status (success/error)
+- `agentzero_provider_request_duration_seconds{provider, model}` — Request latency histogram
+- `agentzero_provider_errors_total{provider, model, error_type}` — Error counter by type (e.g., `http_429`, `http_500`, `transport`)
+- `agentzero_provider_tokens_total{provider, model, type}` — Token usage counter (input/output)
+
 **Privacy metrics** (when `privacy` feature is enabled):
 
 - `agentzero_noise_sessions_active` — Active Noise sessions (gauge)
@@ -249,6 +275,7 @@ All error responses use a structured JSON format:
 |---|---|---|
 | `auth_required` | 401 | No bearer token provided |
 | `auth_failed` | 403 | Invalid token or pairing code |
+| `insufficient_scope` | 403 | API key lacks required scope |
 | `not_found` | 404 | Unknown endpoint or resource |
 | `agent_unavailable` | 503 | Gateway started without agent config |
 | `agent_execution_failed` | 500 | Agent runtime error |
@@ -262,6 +289,7 @@ The WebSocket endpoint (`/ws/chat`) includes production hardening:
 
 - **Heartbeat** — Server sends a ping every 30 seconds. If no pong is received within 60 seconds, the connection is closed.
 - **Idle timeout** — Connections with no messages for 5 minutes are automatically closed.
+- **Message size limit** — Messages larger than 2 MB are rejected.
 - **Binary rejection** — Binary WebSocket frames are rejected with an error JSON frame.
 
 ## Middleware
@@ -273,6 +301,10 @@ The gateway includes built-in middleware for production hardening:
 **Request Size Limits** — Rejects requests with `Content-Length` exceeding the configured maximum (default: 1 MB) with `413 Payload Too Large`.
 
 **CORS** — Configurable origin allowlist for browser clients. Supports exact origin matching and wildcard (`*`). Handles preflight `OPTIONS` requests automatically.
+
+**HSTS** — When TLS is enabled, `Strict-Transport-Security: max-age=31536000; includeSubDomains` is added to all responses.
+
+**Channel Validation** — Webhook channel names are validated to contain only alphanumeric characters, hyphens, and underscores (1–64 chars).
 
 **Request Metrics** — All requests are automatically instrumented with Prometheus counters and histograms.
 
@@ -287,11 +319,20 @@ port = 42617                 # bind port
 require_pairing = true       # require OTP pairing
 allow_public_bind = false    # allow non-loopback bind
 
+# TLS configuration (requires --features tls)
+# [gateway.tls]
+# cert_path = "/path/to/cert.pem"
+# key_path = "/path/to/key.pem"
+
 [gateway.node_control]
 enabled = false
 # auth_token = "your-token"
 allowed_node_ids = []
 ```
+
+:::tip
+When `[gateway.tls]` is configured, the gateway automatically enables HSTS headers on all responses.
+:::
 
 ## Daemon Mode
 

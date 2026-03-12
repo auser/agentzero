@@ -126,6 +126,7 @@ pub(crate) struct TranscriptEntry {
 pub(crate) enum GatewayError {
     AuthRequired,
     AuthFailed,
+    InsufficientScope { scope: String },
     NotFound { resource: String },
     AgentUnavailable,
     AgentExecutionFailed { message: String },
@@ -139,6 +140,7 @@ impl GatewayError {
         match self {
             Self::AuthRequired => "auth_required",
             Self::AuthFailed => "auth_failed",
+            Self::InsufficientScope { .. } => "insufficient_scope",
             Self::NotFound { .. } => "not_found",
             Self::AgentUnavailable => "agent_unavailable",
             Self::AgentExecutionFailed { .. } => "agent_execution_failed",
@@ -152,6 +154,7 @@ impl GatewayError {
         match self {
             Self::AuthRequired => StatusCode::UNAUTHORIZED,
             Self::AuthFailed => StatusCode::FORBIDDEN,
+            Self::InsufficientScope { .. } => StatusCode::FORBIDDEN,
             Self::NotFound { .. } => StatusCode::NOT_FOUND,
             Self::AgentUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::AgentExecutionFailed { .. } => StatusCode::INTERNAL_SERVER_ERROR,
@@ -165,6 +168,9 @@ impl GatewayError {
         match self {
             Self::AuthRequired => "authentication required".to_string(),
             Self::AuthFailed => "authentication failed".to_string(),
+            Self::InsufficientScope { scope } => {
+                format!("insufficient scope: requires {scope}")
+            }
             Self::NotFound { resource } => format!("not found: {resource}"),
             Self::AgentUnavailable => "agent runtime not configured".to_string(),
             Self::AgentExecutionFailed { message } => format!("agent execution failed: {message}"),

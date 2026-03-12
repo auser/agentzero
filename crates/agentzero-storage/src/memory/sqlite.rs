@@ -55,9 +55,7 @@ impl SqliteMemoryStore {
                 conn.execute_batch(&format!("PRAGMA key = \"x'{hex_key}'\""))?;
                 conn.execute(MEMORY_SCHEMA, [])
                     .context("failed to create memory table after migration")?;
-                migrate_privacy_columns(&conn)?;
-                migrate_conversation_column(&conn)?;
-                migrate_ttl_column(&conn)?;
+                run_versioned_migrations(&conn)?;
                 return Ok(Self {
                     conn: Mutex::new(conn),
                 });
@@ -69,61 +67,113 @@ impl SqliteMemoryStore {
 
         conn.execute(MEMORY_SCHEMA, [])
             .context("failed to create memory table")?;
-        migrate_privacy_columns(&conn)?;
-        migrate_conversation_column(&conn)?;
-        migrate_ttl_column(&conn)?;
+        run_versioned_migrations(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
 }
 
-/// Run all schema migrations (privacy columns + conversation_id + TTL).
+// ---------------------------------------------------------------------------
+// Schema version tracking and migrations
+// ---------------------------------------------------------------------------
+
+/// Schema version table. Created automatically on first migration run.
+const SCHEMA_VERSION_TABLE: &str = "CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    description TEXT NOT NULL,
+    applied_at INTEGER NOT NULL DEFAULT (unixepoch())
+)";
+
+/// Migration entry: version number, description, and SQL statements.
+struct Migration {
+    version: u32,
+    description: &'static str,
+    statements: &'static [&'static str],
+}
+
+/// Ordered list of all migrations. Append-only — never remove or reorder entries.
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        description: "add privacy_boundary and source_channel columns",
+        statements: &[
+            "ALTER TABLE memory ADD COLUMN privacy_boundary TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE memory ADD COLUMN source_channel TEXT DEFAULT NULL",
+        ],
+    },
+    Migration {
+        version: 2,
+        description: "add conversation_id column",
+        statements: &["ALTER TABLE memory ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''"],
+    },
+    Migration {
+        version: 3,
+        description: "add expires_at column for message TTL",
+        statements: &["ALTER TABLE memory ADD COLUMN expires_at INTEGER DEFAULT NULL"],
+    },
+];
+
+/// Run all pending migrations against the connection. Creates the version table
+/// if it doesn't exist, then applies each migration that hasn't been recorded yet.
+///
+/// Backward-compatible: on databases that already have the columns (from the old
+/// idempotent approach), the "duplicate column" error is silently ignored and the
+/// version is recorded as applied.
+pub(crate) fn run_versioned_migrations(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(SCHEMA_VERSION_TABLE)
+        .context("failed to create schema_version table")?;
+
+    let current_version: u32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    for migration in MIGRATIONS {
+        if migration.version <= current_version {
+            continue;
+        }
+        for sql in migration.statements {
+            match conn.execute_batch(sql) {
+                Ok(()) => {}
+                // Backward-compat: column already exists from pre-versioned migration.
+                Err(e) if e.to_string().contains("duplicate column") => {}
+                Err(e) => {
+                    return Err(e).context(format!(
+                        "migration v{} failed: {}",
+                        migration.version, migration.description
+                    ))
+                }
+            }
+        }
+        conn.execute(
+            "INSERT INTO schema_version (version, description) VALUES (?1, ?2)",
+            params![migration.version, migration.description],
+        )
+        .with_context(|| {
+            format!(
+                "failed to record migration v{}: {}",
+                migration.version, migration.description
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+/// Run all schema migrations. Public for pool feature.
 #[cfg(feature = "pool")]
 pub(crate) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
-    migrate_privacy_columns(conn)?;
-    migrate_conversation_column(conn)?;
-    migrate_ttl_column(conn)?;
-    Ok(())
+    run_versioned_migrations(conn)
 }
 
-/// Add privacy_boundary and source_channel columns if they don't exist yet.
-/// SQLite doesn't support `ADD COLUMN IF NOT EXISTS`, so we catch the
-/// "duplicate column" error and ignore it.
-fn migrate_privacy_columns(conn: &Connection) -> anyhow::Result<()> {
-    for sql in &[
-        "ALTER TABLE memory ADD COLUMN privacy_boundary TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE memory ADD COLUMN source_channel TEXT DEFAULT NULL",
-    ] {
-        match conn.execute_batch(sql) {
-            Ok(()) => {}
-            Err(e) if e.to_string().contains("duplicate column") => {}
-            Err(e) => return Err(e).context("failed to migrate memory table"),
-        }
-    }
-    Ok(())
-}
-
-/// Add conversation_id column if it doesn't exist yet.
-fn migrate_conversation_column(conn: &Connection) -> anyhow::Result<()> {
-    match conn
-        .execute_batch("ALTER TABLE memory ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''")
-    {
-        Ok(()) => {}
-        Err(e) if e.to_string().contains("duplicate column") => {}
-        Err(e) => return Err(e).context("failed to add conversation_id column"),
-    }
-    Ok(())
-}
-
-/// Add expires_at column for message TTL support.
-fn migrate_ttl_column(conn: &Connection) -> anyhow::Result<()> {
-    match conn.execute_batch("ALTER TABLE memory ADD COLUMN expires_at INTEGER DEFAULT NULL") {
-        Ok(()) => {}
-        Err(e) if e.to_string().contains("duplicate column") => {}
-        Err(e) => return Err(e).context("failed to add expires_at column"),
-    }
-    Ok(())
+/// Current schema version (max version in MIGRATIONS).
+#[cfg(test)]
+fn current_schema_version() -> u32 {
+    MIGRATIONS.last().map(|m| m.version).unwrap_or(0)
 }
 
 #[cfg(feature = "storage-encrypted")]
@@ -338,7 +388,7 @@ impl MemoryStore for SqliteMemoryStore {
 
 #[cfg(test)]
 mod tests {
-    use super::SqliteMemoryStore;
+    use super::{current_schema_version, SqliteMemoryStore, MEMORY_SCHEMA};
     use crate::StorageKey;
     use agentzero_core::{MemoryEntry, MemoryStore};
     use std::fs;
@@ -829,6 +879,94 @@ mod tests {
         assert!(recent[0].source_channel.is_none());
 
         fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn schema_version_table_created_on_open() {
+        let db_path = temp_db_path();
+        let _store = SqliteMemoryStore::open(&db_path, None).expect("open");
+
+        // Verify the schema_version table exists and has entries.
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let version: u32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, current_schema_version());
+
+        // Verify all migration versions are recorded.
+        let count: u32 = conn
+            .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, current_schema_version());
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn schema_version_survives_reopen() {
+        let db_path = temp_db_path();
+        {
+            let _store = SqliteMemoryStore::open(&db_path, None).expect("first open");
+        }
+        // Second open should not fail and should not duplicate version entries.
+        {
+            let _store = SqliteMemoryStore::open(&db_path, None).expect("second open");
+        }
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let count: u32 = conn
+            .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
+            .unwrap();
+        // Still exactly 3 migrations (no duplicates).
+        assert_eq!(count, current_schema_version());
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn pre_versioned_db_gets_version_table_on_upgrade() {
+        let db_path = temp_db_path();
+        // Simulate a pre-versioned DB: has all columns but no schema_version table.
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(MEMORY_SCHEMA).unwrap();
+            conn.execute_batch(
+                "ALTER TABLE memory ADD COLUMN privacy_boundary TEXT NOT NULL DEFAULT ''",
+            )
+            .unwrap();
+            conn.execute_batch("ALTER TABLE memory ADD COLUMN source_channel TEXT DEFAULT NULL")
+                .unwrap();
+            conn.execute_batch(
+                "ALTER TABLE memory ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''",
+            )
+            .unwrap();
+            conn.execute_batch("ALTER TABLE memory ADD COLUMN expires_at INTEGER DEFAULT NULL")
+                .unwrap();
+        }
+
+        // Open via SqliteMemoryStore — should create version table and record all as applied.
+        let _store = SqliteMemoryStore::open(&db_path, None).expect("upgrade open");
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let version: u32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, current_schema_version());
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn current_schema_version_equals_migration_count() {
+        assert_eq!(current_schema_version(), 3);
     }
 
     #[tokio::test]

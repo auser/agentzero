@@ -567,6 +567,13 @@ impl Provider for AnthropicProvider {
                             StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
                         if !status.is_success() {
                             self.circuit_breaker.record_failure().await;
+                            let error_type = format!("http_{}", response.status);
+                            crate::provider_metrics::record_provider_error(
+                                "anthropic",
+                                &self.model,
+                                &error_type,
+                                start.elapsed().as_secs_f64(),
+                            );
                             let mapped = map_status_error(status, &response.body);
                             if attempt + 1 < max_retries && should_retry_status(status) {
                                 log_retry(
@@ -586,6 +593,11 @@ impl Provider for AnthropicProvider {
                         }
 
                         self.circuit_breaker.record_success();
+                        crate::provider_metrics::record_provider_success(
+                            "anthropic",
+                            &self.model,
+                            start.elapsed().as_secs_f64(),
+                        );
                         let output_text = parse_output_text(&response.body)
                             .with_context(|| "failed to parse Anthropic response".to_string())?;
                         return Ok(ChatResult {
@@ -595,6 +607,12 @@ impl Provider for AnthropicProvider {
                     }
                     Err(error) => {
                         self.circuit_breaker.record_failure().await;
+                        crate::provider_metrics::record_provider_error(
+                            "anthropic",
+                            &self.model,
+                            "transport",
+                            start.elapsed().as_secs_f64(),
+                        );
                         let mapped = anyhow!("provider request failed: {}", error.message);
                         if attempt + 1 < max_retries && should_retry_transport(error.kind) {
                             log_retry("anthropic", attempt, &error.message);
@@ -657,6 +675,12 @@ impl Provider for AnthropicProvider {
                 Ok(resp) => resp,
                 Err(e) => {
                     self.circuit_breaker.record_failure().await;
+                    crate::provider_metrics::record_provider_error(
+                        "anthropic",
+                        &self.model,
+                        "transport",
+                        start.elapsed().as_secs_f64(),
+                    );
                     return Err(anyhow!("streaming request failed: {e}"));
                 }
             };
@@ -664,6 +688,13 @@ impl Provider for AnthropicProvider {
             if !response.status().is_success() {
                 self.circuit_breaker.record_failure().await;
                 let status = response.status();
+                let error_type = format!("http_{}", status.as_u16());
+                crate::provider_metrics::record_provider_error(
+                    "anthropic",
+                    &self.model,
+                    &error_type,
+                    start.elapsed().as_secs_f64(),
+                );
                 let body = response.text().await.unwrap_or_default();
                 return Err(map_status_error(status, &body));
             }
@@ -692,6 +723,11 @@ impl Provider for AnthropicProvider {
             }
 
             self.circuit_breaker.record_success();
+            crate::provider_metrics::record_provider_success(
+                "anthropic",
+                &self.model,
+                start.elapsed().as_secs_f64(),
+            );
             log_response("anthropic", 200, accumulated.len(), start.elapsed());
 
             let _ = sender.send(StreamChunk {
@@ -786,6 +822,13 @@ impl Provider for AnthropicProvider {
                             StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
                         if !status.is_success() {
                             self.circuit_breaker.record_failure().await;
+                            let error_type = format!("http_{}", response.status);
+                            crate::provider_metrics::record_provider_error(
+                                "anthropic",
+                                &self.model,
+                                &error_type,
+                                start.elapsed().as_secs_f64(),
+                            );
                             let mapped = map_status_error(status, &response.body);
                             if attempt + 1 < max_retries && should_retry_status(status) {
                                 log_retry(
@@ -805,11 +848,31 @@ impl Provider for AnthropicProvider {
                         }
 
                         self.circuit_breaker.record_success();
-                        return parse_tool_response(&response.body)
-                            .with_context(|| "failed to parse Anthropic tool response");
+                        let elapsed = start.elapsed().as_secs_f64();
+                        crate::provider_metrics::record_provider_success(
+                            "anthropic",
+                            &self.model,
+                            elapsed,
+                        );
+                        let result = parse_tool_response(&response.body)
+                            .with_context(|| "failed to parse Anthropic tool response")?;
+                        crate::provider_metrics::record_token_usage(
+                            "anthropic",
+                            &self.model,
+                            result.input_tokens as u32,
+                            result.output_tokens as u32,
+                        );
+                        return Ok(result);
                     }
                     Err(error) => {
                         self.circuit_breaker.record_failure().await;
+                        let elapsed = start.elapsed().as_secs_f64();
+                        crate::provider_metrics::record_provider_error(
+                            "anthropic",
+                            &self.model,
+                            "transport",
+                            elapsed,
+                        );
                         let mapped = anyhow!("provider request failed: {}", error.message);
                         if attempt + 1 < max_retries && should_retry_transport(error.kind) {
                             log_retry("anthropic", attempt, &error.message);
@@ -904,6 +967,12 @@ impl Provider for AnthropicProvider {
                 Ok(resp) => resp,
                 Err(e) => {
                     self.circuit_breaker.record_failure().await;
+                    crate::provider_metrics::record_provider_error(
+                        "anthropic",
+                        &self.model,
+                        "transport",
+                        start.elapsed().as_secs_f64(),
+                    );
                     return Err(anyhow!("streaming request failed: {e}"));
                 }
             };
@@ -911,6 +980,13 @@ impl Provider for AnthropicProvider {
             if !response.status().is_success() {
                 self.circuit_breaker.record_failure().await;
                 let status = response.status();
+                let error_type = format!("http_{}", status.as_u16());
+                crate::provider_metrics::record_provider_error(
+                    "anthropic",
+                    &self.model,
+                    &error_type,
+                    start.elapsed().as_secs_f64(),
+                );
                 let body = response.text().await.unwrap_or_default();
                 return Err(map_status_error(status, &body));
             }
@@ -1001,6 +1077,17 @@ impl Provider for AnthropicProvider {
             }
 
             self.circuit_breaker.record_success();
+            crate::provider_metrics::record_provider_success(
+                "anthropic",
+                &self.model,
+                start.elapsed().as_secs_f64(),
+            );
+            crate::provider_metrics::record_token_usage(
+                "anthropic",
+                &self.model,
+                stream_input_tokens as u32,
+                stream_output_tokens as u32,
+            );
             log_response("anthropic", 200, accumulated_text.len(), start.elapsed());
 
             // Build final tool calls from accumulators.

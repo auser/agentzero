@@ -1,3 +1,4 @@
+use crate::api_keys::ApiKeyStore;
 use crate::gateway_channel::GatewayChannel;
 use crate::token_store::save_paired_tokens;
 use agentzero_channels::pipeline::PerplexityFilterSettings;
@@ -7,10 +8,10 @@ use agentzero_core::MemoryStore;
 use agentzero_orchestrator::{JobStore, PresenceStore};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::watch;
 
@@ -21,6 +22,10 @@ pub(crate) struct GatewayState {
     pub(crate) channels: Arc<ChannelRegistry>,
     pub(crate) pairing_code: Option<Arc<String>>,
     pub(crate) paired_tokens: Arc<Mutex<HashSet<String>>>,
+    /// Paired token creation timestamps (token → epoch seconds).
+    pub(crate) paired_token_timestamps: Arc<Mutex<HashMap<String, u64>>>,
+    /// Session TTL for paired tokens in seconds. `None` = no expiry.
+    pub(crate) session_ttl_secs: Option<u64>,
     pub(crate) otp_secret: Arc<String>,
     pub(crate) token_store_path: Option<Arc<PathBuf>>,
     pub(crate) perplexity_filter: Arc<PerplexityFilterSettings>,
@@ -64,6 +69,8 @@ pub(crate) struct GatewayState {
     pub(crate) memory_store: Option<Arc<dyn MemoryStore>>,
     /// Gateway channel for bridging API requests into the swarm pipeline.
     pub(crate) gateway_channel: Option<Arc<GatewayChannel>>,
+    /// API key store for scope-based authorization.
+    pub(crate) api_key_store: Option<Arc<ApiKeyStore>>,
 }
 
 impl GatewayState {
@@ -83,6 +90,8 @@ impl GatewayState {
             channels: Arc::new(ChannelRegistry::with_builtin_handlers()),
             pairing_code: pairing_code.map(Arc::new),
             paired_tokens: Arc::new(Mutex::new(paired_tokens)),
+            paired_token_timestamps: Arc::new(Mutex::new(HashMap::new())),
+            session_ttl_secs: None,
             otp_secret: Arc::new(otp_secret),
             token_store_path: token_store_path.map(Arc::new),
             perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
@@ -108,7 +117,16 @@ impl GatewayState {
             presence_store: None,
             memory_store: None,
             gateway_channel: None,
+            api_key_store: None,
         }
+    }
+
+    /// Set the API key store for scope-based authorization.
+    /// Used when wiring up the gateway with multi-tenant API key management.
+    #[allow(dead_code)]
+    pub(crate) fn with_api_key_store(mut self, store: Arc<ApiKeyStore>) -> Self {
+        self.api_key_store = Some(store);
+        self
     }
 
     /// Configure Noise Protocol privacy for E2E encrypted communication.
@@ -137,6 +155,14 @@ impl GatewayState {
     #[cfg(test)]
     pub(crate) fn with_pairing_ttl(mut self, ttl_secs: u64) -> Self {
         self.pairing_ttl_secs = Some(ttl_secs);
+        self
+    }
+
+    /// Set session TTL for paired tokens (in seconds).
+    /// Tokens older than this are rejected. `None` = no expiry.
+    #[allow(dead_code)]
+    pub(crate) fn with_session_ttl(mut self, ttl_secs: u64) -> Self {
+        self.session_ttl_secs = Some(ttl_secs);
         self
     }
 
@@ -231,6 +257,15 @@ impl GatewayState {
 
     pub(crate) fn add_paired_token(&self, token: String) -> anyhow::Result<()> {
         let path = self.token_store_path.as_deref().map(PathBuf::as_path);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // Record the creation timestamp for session TTL enforcement.
+        self.paired_token_timestamps
+            .lock()
+            .expect("token timestamp lock poisoned")
+            .insert(token.clone(), now);
         let mut guard = self.paired_tokens.lock().expect("pairing lock poisoned");
         guard.insert(token);
         save_paired_tokens(path, &guard)?;
@@ -253,6 +288,8 @@ impl GatewayState {
             channels: Arc::new(ChannelRegistry::with_builtin_handlers()),
             pairing_code: Some(Arc::new("406823".to_string())),
             paired_tokens: Arc::new(Mutex::new(HashSet::new())),
+            paired_token_timestamps: Arc::new(Mutex::new(HashMap::new())),
+            session_ttl_secs: None,
             otp_secret: Arc::new("OTPSECRET".to_string()),
             token_store_path: None,
             perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
@@ -278,6 +315,7 @@ impl GatewayState {
             presence_store: None,
             memory_store: None,
             gateway_channel: None,
+            api_key_store: None,
         }
     }
 
@@ -291,6 +329,8 @@ impl GatewayState {
             channels: Arc::new(ChannelRegistry::with_builtin_handlers()),
             pairing_code: None,
             paired_tokens: Arc::new(Mutex::new(paired_tokens)),
+            paired_token_timestamps: Arc::new(Mutex::new(HashMap::new())),
+            session_ttl_secs: None,
             otp_secret: Arc::new("OTPSECRET".to_string()),
             token_store_path: None,
             perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
@@ -316,6 +356,7 @@ impl GatewayState {
             presence_store: None,
             memory_store: None,
             gateway_channel: None,
+            api_key_store: None,
         }
     }
 }

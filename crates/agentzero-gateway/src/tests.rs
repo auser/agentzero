@@ -3314,3 +3314,364 @@ async fn websocket_run_subscribe_rejects_without_job_store() {
     // because a real HTTP/1.1 upgrade handshake is required.
     assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
 }
+
+// --- Channel name validation tests ---
+
+#[test]
+fn valid_channel_names() {
+    use crate::handlers::is_valid_channel_name;
+    assert!(is_valid_channel_name("telegram"));
+    assert!(is_valid_channel_name("slack-alerts"));
+    assert!(is_valid_channel_name("my_channel_01"));
+    assert!(is_valid_channel_name("A"));
+}
+
+#[test]
+fn invalid_channel_names() {
+    use crate::handlers::is_valid_channel_name;
+    assert!(!is_valid_channel_name(""));
+    assert!(!is_valid_channel_name("../traversal"));
+    assert!(!is_valid_channel_name("spaces not ok"));
+    assert!(!is_valid_channel_name("semi;colon"));
+    assert!(!is_valid_channel_name("path/slash"));
+    let long = "a".repeat(65);
+    assert!(!is_valid_channel_name(&long));
+}
+
+#[test]
+fn channel_name_at_boundary() {
+    use crate::handlers::is_valid_channel_name;
+    let exactly_64 = "a".repeat(64);
+    assert!(is_valid_channel_name(&exactly_64));
+}
+
+// ============================================================
+// E2E Security Integration Tests
+// ============================================================
+
+/// Full auth lifecycle: create API key → use it to authenticate → verify
+/// scope enforcement (403 on insufficient scope) → revoke key → 401 on revoked key.
+#[tokio::test]
+async fn e2e_api_key_lifecycle_and_scope_enforcement() {
+    use crate::api_keys::{ApiKeyStore, Scope};
+    use std::collections::HashSet;
+
+    // Set up gateway with an API key store (no bearer token → requires API key).
+    let store = Arc::new(ApiKeyStore::new());
+    let mut state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().expect("lock").clear();
+    state.api_key_store = Some(store.clone());
+    // Disable pairing requirement for this test.
+    let state = state.with_gateway_config(false, false);
+
+    let config = default_config();
+    let app = build_router(state, &config);
+
+    // Step 1: Create an API key with only RunsRead scope.
+    let scopes: HashSet<Scope> = [Scope::RunsRead].into();
+    let (raw_key, record) = store
+        .create("org-e2e", "user-e2e", scopes, None)
+        .expect("key creation should succeed");
+
+    // Step 2: Authenticated request to /health (no scope required) should succeed.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Step 3: Authenticated request to /v1/models (requires RunsRead) should succeed.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("Authorization", format!("Bearer {raw_key}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Step 4: Request to /v1/estop (requires Admin) should return 403 Forbidden.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/estop")
+                .header("Authorization", format!("Bearer {raw_key}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from("{}"))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Step 5: Request without any token should return 401.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Step 6: Revoke the key.
+    assert!(store.revoke(&record.key_id).expect("revoke should succeed"));
+
+    // Step 7: Request with revoked key should return 401.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("Authorization", format!("Bearer {raw_key}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Verify that an API key with Admin scope can access admin-only endpoints.
+#[tokio::test]
+async fn e2e_admin_scope_grants_estop_access() {
+    use crate::api_keys::{ApiKeyStore, Scope};
+
+    let store = Arc::new(ApiKeyStore::new());
+    let mut state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().expect("lock").clear();
+    state.api_key_store = Some(store.clone());
+    let state = state.with_gateway_config(false, false);
+
+    let config = default_config();
+    let app = build_router(state, &config);
+
+    // Create key with Admin scope.
+    let (raw_key, _) = store
+        .create("org-admin", "admin-user", [Scope::Admin].into(), None)
+        .expect("key creation");
+
+    // /v1/estop should succeed with Admin scope.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/estop")
+                .header("Authorization", format!("Bearer {raw_key}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from("{}"))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    // Should not be 403 (scope check passes). May be 500 if no job store, but not 403.
+    assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+    assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Expired API key returns 401.
+#[tokio::test]
+async fn e2e_expired_api_key_returns_401() {
+    use crate::api_keys::{ApiKeyStore, Scope};
+
+    let store = Arc::new(ApiKeyStore::new());
+    let mut state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().expect("lock").clear();
+    state.api_key_store = Some(store.clone());
+    let state = state.with_gateway_config(false, false);
+
+    let config = default_config();
+    let app = build_router(state, &config);
+
+    // Create key that expired in the past (epoch 0).
+    let (raw_key, _) = store
+        .create("org-1", "user-1", [Scope::RunsRead].into(), Some(0))
+        .expect("key creation");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("Authorization", format!("Bearer {raw_key}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Sustained concurrent load: 100 parallel requests to /health, all succeed.
+#[tokio::test]
+async fn e2e_load_concurrent_health_requests() {
+    let state = GatewayState::test_with_bearer(None);
+    let config = default_config();
+    let app = build_router(state, &config);
+
+    let mut handles = Vec::new();
+    for _ in 0..100 {
+        let app = app.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .uri("/health")
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            resp.status()
+        }));
+    }
+
+    let mut ok_count = 0;
+    for handle in handles {
+        let status = handle.await.expect("task should not panic");
+        if status == StatusCode::OK {
+            ok_count += 1;
+        }
+    }
+    assert_eq!(ok_count, 100, "all 100 requests should return 200 OK");
+}
+
+/// Sustained concurrent load: 50 authenticated requests to /v1/models.
+#[tokio::test]
+async fn e2e_load_concurrent_authenticated_requests() {
+    use crate::api_keys::{ApiKeyStore, Scope};
+
+    let store = Arc::new(ApiKeyStore::new());
+    let mut state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().expect("lock").clear();
+    state.api_key_store = Some(store.clone());
+    let state = state.with_gateway_config(false, false);
+
+    let (raw_key, _) = store
+        .create("org-load", "user-load", [Scope::RunsRead].into(), None)
+        .expect("key creation");
+
+    let config = default_config();
+    let app = build_router(state, &config);
+
+    let mut handles = Vec::new();
+    for _ in 0..50 {
+        let app = app.clone();
+        let key = raw_key.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/models")
+                        .header("Authorization", format!("Bearer {key}"))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            resp.status()
+        }));
+    }
+
+    let mut ok_count = 0;
+    for handle in handles {
+        let status = handle.await.expect("task should not panic");
+        if status == StatusCode::OK {
+            ok_count += 1;
+        }
+    }
+    assert_eq!(ok_count, 50, "all 50 authenticated requests should succeed");
+}
+
+/// WebSocket endpoints reject non-upgrade HTTP requests with 400 (Bad Request).
+/// The WebSocketUpgrade extractor rejects before auth runs, which is correct —
+/// plain HTTP requests shouldn't reach WebSocket handlers.
+#[tokio::test]
+async fn e2e_ws_endpoints_reject_non_upgrade_requests() {
+    let state = GatewayState::test_with_bearer(Some("secret"));
+    let config = default_config();
+    let app = build_router(state, &config);
+
+    // /ws/chat — non-upgrade GET → 400.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ws/chat")
+                .header("Authorization", "Bearer secret")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // /ws/runs/:run_id — non-upgrade GET → 400.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/ws/runs/test-run-123")
+                .header("Authorization", "Bearer secret")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+/// WebSocket max message size constant is 2 MB.
+#[test]
+fn ws_max_message_size_is_2mb() {
+    use crate::handlers::WS_MAX_MESSAGE_SIZE;
+    assert_eq!(WS_MAX_MESSAGE_SIZE, 2 * 1024 * 1024);
+}
+
+/// Session TTL enforcement at the HTTP level.
+#[tokio::test]
+async fn e2e_session_ttl_enforcement() {
+    // Create a state with a paired token and a short TTL.
+    let mut state = GatewayState::test_with_existing_pair("session-tok");
+    state.session_ttl_secs = Some(3600); // 1 hour TTL
+
+    // Record timestamp from 2 hours ago → token should be expired.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    state
+        .paired_token_timestamps
+        .lock()
+        .expect("lock")
+        .insert("session-tok".to_string(), now - 7200);
+
+    let config = default_config();
+    let app = build_router(state, &config);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("Authorization", "Bearer session-tok")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

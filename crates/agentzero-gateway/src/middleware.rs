@@ -24,6 +24,8 @@ pub struct MiddlewareConfig {
     pub rate_limit_window_secs: u64,
     /// CORS: allowed origins. Empty = no CORS headers. "*" = allow all.
     pub cors_allowed_origins: Vec<String>,
+    /// Whether TLS is enabled. When true, HSTS headers are added to all responses.
+    pub tls_enabled: bool,
 }
 
 impl Default for MiddlewareConfig {
@@ -33,6 +35,7 @@ impl Default for MiddlewareConfig {
             rate_limit_max: 600,         // 10 req/s over 60s window
             rate_limit_window_secs: 60,
             cors_allowed_origins: vec![],
+            tls_enabled: false,
         }
     }
 }
@@ -130,6 +133,13 @@ pub async fn request_size_limit(request: Request<Body>, next: Next, max_bytes: u
 pub async fn rate_limit(request: Request<Body>, next: Next, limiter: Arc<RateLimiter>) -> Response {
     if !limiter.try_acquire() {
         let remaining = limiter.remaining();
+        let path = request.uri().path().to_string();
+        crate::audit::audit(
+            crate::audit::AuditEvent::RateLimited,
+            "rate limit exceeded",
+            "",
+            &path,
+        );
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [(header::RETRY_AFTER, "60")],
@@ -207,6 +217,57 @@ fn is_origin_allowed(allowed: &[String], origin: &str) -> bool {
         return false;
     }
     allowed.iter().any(|a| a == "*" || a == origin)
+}
+
+// ---------------------------------------------------------------------------
+// HSTS middleware
+// ---------------------------------------------------------------------------
+
+/// Middleware that adds `Strict-Transport-Security` headers to all responses.
+/// Should only be applied when TLS is active.
+pub async fn hsts_middleware(request: Request<Body>, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    // max-age=31536000 (1 year), includeSubDomains as per OWASP recommendation.
+    response.headers_mut().insert(
+        header::STRICT_TRANSPORT_SECURITY,
+        "max-age=31536000; includeSubDomains"
+            .parse()
+            .expect("valid HSTS header value"),
+    );
+    response
+}
+
+// ---------------------------------------------------------------------------
+// Correlation ID middleware
+// ---------------------------------------------------------------------------
+
+/// Header name for request correlation IDs.
+pub const X_REQUEST_ID: &str = "x-request-id";
+
+/// Middleware that propagates or generates a correlation ID (`X-Request-Id`).
+///
+/// If the incoming request contains an `X-Request-Id` header, that value is used.
+/// Otherwise a new UUID v4 is generated. The ID is:
+/// 1. Added to the current tracing span as `request_id`.
+/// 2. Returned in the `X-Request-Id` response header.
+pub async fn correlation_id(request: Request<Body>, next: Next) -> Response {
+    let request_id = request
+        .headers()
+        .get(X_REQUEST_ID)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    let span = tracing::info_span!("request", request_id = %request_id);
+    let _guard = span.enter();
+
+    let mut response = next.run(request).await;
+
+    if let Ok(header_value) = request_id.parse() {
+        response.headers_mut().insert(X_REQUEST_ID, header_value);
+    }
+
+    response
 }
 
 // ---------------------------------------------------------------------------
@@ -329,5 +390,96 @@ mod tests {
         assert_eq!(config.rate_limit_max, 600);
         assert_eq!(config.rate_limit_window_secs, 60);
         assert!(config.cors_allowed_origins.is_empty());
+        assert!(!config.tls_enabled);
+    }
+
+    // --- Correlation ID tests ---
+
+    #[tokio::test]
+    async fn correlation_id_generates_uuid_when_absent() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use axum::middleware::from_fn;
+        use axum::routing::get;
+        use axum::Router;
+        use tower::ServiceExt;
+
+        let app = Router::new()
+            .route("/", get(|| async { "ok" }))
+            .layer(from_fn(correlation_id));
+
+        let req = Request::builder()
+            .uri("/")
+            .body(Body::empty())
+            .expect("valid request");
+
+        let response = app.oneshot(req).await.expect("request should succeed");
+        let id = response
+            .headers()
+            .get(X_REQUEST_ID)
+            .expect("X-Request-Id should be present");
+        let id_str = id.to_str().expect("valid header value");
+        // Should be a valid UUID v4.
+        assert!(
+            uuid::Uuid::parse_str(id_str).is_ok(),
+            "expected UUID, got: {id_str}"
+        );
+    }
+
+    #[tokio::test]
+    async fn correlation_id_propagates_existing_header() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use axum::middleware::from_fn;
+        use axum::routing::get;
+        use axum::Router;
+        use tower::ServiceExt;
+
+        let app = Router::new()
+            .route("/", get(|| async { "ok" }))
+            .layer(from_fn(correlation_id));
+
+        let req = Request::builder()
+            .uri("/")
+            .header(X_REQUEST_ID, "my-custom-id-123")
+            .body(Body::empty())
+            .expect("valid request");
+
+        let response = app.oneshot(req).await.expect("request should succeed");
+        let id = response
+            .headers()
+            .get(X_REQUEST_ID)
+            .expect("X-Request-Id should be present");
+        assert_eq!(id.to_str().expect("valid value"), "my-custom-id-123");
+    }
+
+    // --- HSTS tests ---
+
+    #[tokio::test]
+    async fn hsts_middleware_adds_header() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use axum::middleware::from_fn;
+        use axum::routing::get;
+        use axum::Router;
+        use tower::ServiceExt;
+
+        let app = Router::new()
+            .route("/", get(|| async { "ok" }))
+            .layer(from_fn(hsts_middleware));
+
+        let req = Request::builder()
+            .uri("/")
+            .body(Body::empty())
+            .expect("valid request");
+
+        let response = app.oneshot(req).await.expect("request should succeed");
+        let hsts = response
+            .headers()
+            .get(header::STRICT_TRANSPORT_SECURITY)
+            .expect("HSTS header should be present");
+        let value = hsts.to_str().expect("valid header value");
+        assert!(value.contains("max-age=31536000"));
+        assert!(value.contains("includeSubDomains"));
     }
 }

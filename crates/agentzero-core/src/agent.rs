@@ -12,7 +12,7 @@ use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::{timeout, Duration};
-use tracing::{info, info_span, warn, Instrument};
+use tracing::{info, info_span, instrument, warn, Instrument};
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -540,6 +540,7 @@ impl Agent {
         }
     }
 
+    #[instrument(skip(self, tool, tool_input, ctx), fields(tool = tool_name, request_id, iteration))]
     async fn execute_tool(
         &self,
         tool: &dyn Tool,
@@ -594,18 +595,62 @@ impl Agent {
         );
         let _tool_guard = tool_span.enter();
         let tool_started = Instant::now();
-        let result = match tool.execute(tool_input, ctx).await {
-            Ok(result) => result,
-            Err(source) => {
-                self.observe_histogram(
-                    "tool_latency_ms",
-                    tool_started.elapsed().as_secs_f64() * 1000.0,
-                );
-                self.increment_counter("tool_errors_total");
-                return Err(AgentError::Tool {
-                    tool: tool_name.to_string(),
-                    source,
-                });
+        let tool_timeout_ms = self.config.tool_timeout_ms;
+        let result = if tool_timeout_ms > 0 {
+            match timeout(
+                Duration::from_millis(tool_timeout_ms),
+                tool.execute(tool_input, ctx),
+            )
+            .await
+            {
+                Ok(Ok(result)) => result,
+                Ok(Err(source)) => {
+                    self.observe_histogram(
+                        "tool_latency_ms",
+                        tool_started.elapsed().as_secs_f64() * 1000.0,
+                    );
+                    self.increment_counter("tool_errors_total");
+                    return Err(AgentError::Tool {
+                        tool: tool_name.to_string(),
+                        source,
+                    });
+                }
+                Err(_elapsed) => {
+                    self.observe_histogram(
+                        "tool_latency_ms",
+                        tool_started.elapsed().as_secs_f64() * 1000.0,
+                    );
+                    self.increment_counter("tool_errors_total");
+                    self.increment_counter("tool_timeouts_total");
+                    warn!(
+                        tool = %tool_name,
+                        timeout_ms = tool_timeout_ms,
+                        "tool execution timed out"
+                    );
+                    return Err(AgentError::Tool {
+                        tool: tool_name.to_string(),
+                        source: anyhow::anyhow!(
+                            "tool '{}' timed out after {}ms",
+                            tool_name,
+                            tool_timeout_ms
+                        ),
+                    });
+                }
+            }
+        } else {
+            match tool.execute(tool_input, ctx).await {
+                Ok(result) => result,
+                Err(source) => {
+                    self.observe_histogram(
+                        "tool_latency_ms",
+                        tool_started.elapsed().as_secs_f64() * 1000.0,
+                    );
+                    self.increment_counter("tool_errors_total");
+                    return Err(AgentError::Tool {
+                        tool: tool_name.to_string(),
+                        source,
+                    });
+                }
             }
         };
         self.observe_histogram(
@@ -900,6 +945,10 @@ impl Agent {
 
     /// Structured tool use loop: LLM decides which tools to call, agent executes
     /// them, feeds results back, and the LLM sees the results to decide next steps.
+    #[instrument(
+        skip(self, user_text, research_context, ctx, stream_sink),
+        fields(request_id)
+    )]
     async fn respond_with_tools(
         &self,
         request_id: &str,
@@ -2040,6 +2089,22 @@ mod tests {
 
         async fn execute(&self, _input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
             Err(anyhow::anyhow!("tool exploded"))
+        }
+    }
+
+    struct SlowTool;
+
+    #[async_trait]
+    impl Tool for SlowTool {
+        fn name(&self) -> &'static str {
+            "slow"
+        }
+
+        async fn execute(&self, _input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+            sleep(Duration::from_millis(500)).await;
+            Ok(ToolResult {
+                output: "finally done".to_string(),
+            })
         }
     }
 
@@ -5362,5 +5427,65 @@ mod tests {
             "expected tool result in response, got: {}",
             response.text
         );
+    }
+
+    #[tokio::test]
+    async fn tool_execution_timeout_fires() {
+        let memory = TestMemory::default();
+        let agent = Agent::new(
+            AgentConfig {
+                max_tool_iterations: 3,
+                tool_timeout_ms: 50, // 50ms — SlowTool sleeps 500ms
+                ..AgentConfig::default()
+            },
+            Box::new(ScriptedProvider::new(vec!["done"])),
+            Box::new(memory),
+            vec![Box::new(SlowTool)],
+        );
+
+        let result = agent
+            .respond(
+                UserMessage {
+                    text: "tool:slow go".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await;
+
+        let err = result.expect_err("should time out");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("timed out"),
+            "expected timeout error, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_execution_no_timeout_when_disabled() {
+        let memory = TestMemory::default();
+        let agent = Agent::new(
+            AgentConfig {
+                max_tool_iterations: 3,
+                tool_timeout_ms: 0, // disabled — tool should run without timeout
+                ..AgentConfig::default()
+            },
+            Box::new(ScriptedProvider::new(vec!["done"])),
+            Box::new(memory),
+            vec![Box::new(EchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo hello".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed with timeout disabled");
+
+        // ScriptedProvider returns "done" after tool executes; the tool ran
+        // without a timeout wrapper, confirming the 0 = disabled path works.
+        assert_eq!(response.text, "done");
     }
 }

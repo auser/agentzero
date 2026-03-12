@@ -13,6 +13,7 @@ pub mod model_manager;
 mod models;
 mod openai;
 mod pricing;
+pub mod provider_metrics;
 pub(crate) mod transport;
 
 #[cfg(feature = "privacy")]

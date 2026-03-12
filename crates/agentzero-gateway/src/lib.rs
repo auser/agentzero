@@ -4,6 +4,7 @@
 //! pairing-based authentication, streaming responses, and node control.
 
 pub mod api_keys;
+mod audit;
 mod auth;
 mod banner;
 pub mod gateway_channel;
@@ -30,6 +31,7 @@ mod util;
 
 use agentzero_config::watcher::ConfigWatcher;
 use anyhow::Context;
+use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -59,8 +61,8 @@ pub struct GatewayRunOptions {
 
 pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::Result<()> {
     let otp_secret = generate_base32_secret(32);
-    println!("Initialized OTP secret for AgentZero.");
-    println!(
+    tracing::info!("Initialized OTP secret for AgentZero.");
+    tracing::debug!(
         "Enrollment URI: otpauth://totp/AgentZero:agentzero?secret={otp_secret}&issuer=AgentZero&period=30"
     );
 
@@ -379,22 +381,20 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         }
     };
 
-    let app = build_router(state, &options.middleware);
+    // Resolve TLS config from the loaded TOML configuration.
+    let tls_config = full_config.as_ref().and_then(|c| c.gateway.tls.clone());
+
+    // Propagate TLS state into middleware config so HSTS headers are applied.
+    let mut middleware_config = options.middleware.clone();
+    middleware_config.tls_enabled = tls_config.is_some();
+
+    let app = build_router(state, &middleware_config);
 
     let addr: SocketAddr = format!("{host}:{port}")
         .parse()
         .context("invalid gateway host/port")?;
 
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .context("failed to bind gateway listener")?;
-
-    let base = format!("http://{}", listener.local_addr()?);
-    print_gateway_banner(&base, pairing_code.as_deref());
-
-    tracing::info!(address = %addr, "gateway listening");
-
-    // Graceful shutdown: when the signal fires, axum stops accepting new
+    // Graceful shutdown: when the signal fires, the server stops accepting new
     // connections and waits for in-flight requests.  If connections don't close
     // within the grace period (e.g. keep-alive, WebSocket), force-exit.
     let grace_ms = full_config
@@ -402,19 +402,64 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         .map(|c| c.swarm.shutdown_grace_ms)
         .unwrap_or(5_000);
 
+    // Start either a TLS or plain-TCP listener based on configuration.
+    serve_gateway(addr, app, tls_config, pairing_code.as_deref(), grace_ms).await?;
+
+    // Abort swarm coordinator on gateway shutdown.
+    if let Some(handle) = swarm_handle {
+        handle.abort();
+        let _ = handle.await;
+    }
+
+    tracing::info!("gateway shut down");
+    Ok(())
+}
+
+/// Start the gateway server, choosing TLS or plain TCP based on configuration.
+async fn serve_gateway(
+    addr: SocketAddr,
+    app: axum::Router,
+    tls_config: Option<agentzero_config::TlsConfig>,
+    pairing_code: Option<&str>,
+    grace_ms: u64,
+) -> anyhow::Result<()> {
+    match tls_config {
+        #[cfg(feature = "tls")]
+        Some(tls) => serve_tls(addr, app, tls, pairing_code, grace_ms).await,
+        #[cfg(not(feature = "tls"))]
+        Some(_) => anyhow::bail!(
+            "TLS is configured in gateway.tls but the `tls` feature is not enabled. \
+             Rebuild with `--features tls` to enable TLS support."
+        ),
+        None => serve_plain(addr, app, pairing_code, grace_ms).await,
+    }
+}
+
+/// Serve over plain TCP (no TLS).
+async fn serve_plain(
+    addr: SocketAddr,
+    app: axum::Router,
+    pairing_code: Option<&str>,
+    grace_ms: u64,
+) -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .context("failed to bind gateway listener")?;
+
+    let base = format!("http://{}", listener.local_addr()?);
+    print_gateway_banner(&base, pairing_code);
+
+    tracing::info!(address = %addr, tls = false, "gateway listening");
+
     let server = axum::serve(listener, app).with_graceful_shutdown(middleware::shutdown_signal());
 
-    // Race the server against a hard deadline: once the shutdown signal fires
-    // inside `shutdown_signal()`, axum stops accepting but may block on open
-    // connections.  A second Ctrl+C or the grace-period timeout forces exit.
     tokio::select! {
-        result = server => {
+        result = server.into_future() => {
             result.context("gateway server failed")?;
         }
         () = async {
-            // Wait for the first signal, then start a grace-period countdown.
             middleware::shutdown_signal().await;
-            tracing::info!("forcing exit in {}ms (press Ctrl+C again to exit immediately)", grace_ms);
+            tracing::info!("forcing exit in {grace_ms}ms (press Ctrl+C again to exit immediately)");
             tokio::select! {
                 () = tokio::time::sleep(Duration::from_millis(grace_ms)) => {
                     tracing::warn!("grace period expired, forcing exit");
@@ -425,14 +470,55 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
             }
         } => {}
     }
+    Ok(())
+}
 
-    // Abort swarm coordinator on gateway shutdown.
-    if let Some(handle) = swarm_handle {
-        handle.abort();
-        let _ = handle.await;
+/// Serve over TLS using rustls.
+#[cfg(feature = "tls")]
+async fn serve_tls(
+    addr: SocketAddr,
+    app: axum::Router,
+    tls: agentzero_config::TlsConfig,
+    pairing_code: Option<&str>,
+    grace_ms: u64,
+) -> anyhow::Result<()> {
+    use axum_server::tls_rustls::RustlsConfig;
+
+    let rustls_config = RustlsConfig::from_pem_file(&tls.cert_path, &tls.key_path)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to load TLS certificate from cert={} key={}",
+                tls.cert_path, tls.key_path
+            )
+        })?;
+
+    let base = format!("https://{addr}");
+    print_gateway_banner(&base, pairing_code);
+
+    tracing::info!(address = %addr, tls = true, "gateway listening (TLS)");
+
+    let server = axum_server::bind_rustls(addr, rustls_config).serve(app.into_make_service());
+
+    // axum-server doesn't have the same `with_graceful_shutdown` API as axum::serve.
+    // Use a `tokio::select!` with the shutdown signal.
+    tokio::select! {
+        result = server => {
+            result.context("TLS gateway server failed")?;
+        }
+        () = async {
+            middleware::shutdown_signal().await;
+            tracing::info!("forcing exit in {grace_ms}ms (press Ctrl+C again to exit immediately)");
+            tokio::select! {
+                () = tokio::time::sleep(Duration::from_millis(grace_ms)) => {
+                    tracing::warn!("grace period expired, forcing exit");
+                }
+                () = force_shutdown_signal() => {
+                    tracing::warn!("second interrupt received, forcing exit");
+                }
+            }
+        } => {}
     }
-
-    tracing::info!("gateway shut down");
     Ok(())
 }
 

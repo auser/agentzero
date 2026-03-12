@@ -1,12 +1,13 @@
 //! Persistent daily/monthly cost tracking.
 //!
-//! Tracks accumulated API costs in a plain JSON file at
-//! `<data_dir>/cost_usage.json`. Used to enforce the `[cost]` config limits
+//! Tracks accumulated API costs via `agentzero-storage` encrypted-at-rest
+//! persistence. Used to enforce the `[cost]` config limits
 //! (`daily_limit_usd`, `monthly_limit_usd`, `warn_at_percent`).
 
+use agentzero_storage::EncryptedJsonStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing::warn;
 
 /// Persisted cost usage record.
@@ -20,9 +21,9 @@ pub struct CostUsageRecord {
     pub monthly: HashMap<String, u64>,
 }
 
-/// Persistent cost tracker backed by a JSON file.
+/// Persistent cost tracker backed by `EncryptedJsonStore` (encrypted at rest).
 pub struct CostTracker {
-    path: PathBuf,
+    store: EncryptedJsonStore,
     record: CostUsageRecord,
 }
 
@@ -59,19 +60,14 @@ fn format_date_from_epoch(secs: u64) -> String {
 }
 
 impl CostTracker {
-    /// Load the cost tracker from `<data_dir>/cost_usage.json`.
-    /// Creates the file if it doesn't exist.
+    /// Load the cost tracker from `<data_dir>/cost_usage.json` via encrypted storage.
+    ///
+    /// Automatically migrates legacy plaintext JSON files to encrypted format.
     pub fn load(data_dir: &Path) -> anyhow::Result<Self> {
-        let path = data_dir.join("cost_usage.json");
-        let record = if path.exists() {
-            let content = std::fs::read_to_string(&path)?;
-            let mut record: CostUsageRecord = serde_json::from_str(&content).unwrap_or_default();
-            prune_old_entries(&mut record);
-            record
-        } else {
-            CostUsageRecord::default()
-        };
-        Ok(Self { path, record })
+        let store = EncryptedJsonStore::in_config_dir(data_dir, "cost_usage.json")?;
+        let mut record: CostUsageRecord = store.load_or_default()?;
+        prune_old_entries(&mut record);
+        Ok(Self { store, record })
     }
 
     /// Record cost (in microdollars) for today and the current month, then persist.
@@ -167,12 +163,7 @@ impl CostTracker {
     }
 
     fn save(&self) -> anyhow::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let json = serde_json::to_string_pretty(&self.record)?;
-        std::fs::write(&self.path, json)?;
-        Ok(())
+        self.store.save(&self.record)
     }
 }
 
@@ -221,6 +212,7 @@ fn prune_old_entries(record: &mut CostUsageRecord) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
