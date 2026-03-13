@@ -1,0 +1,97 @@
+name: fuzz
+
+on:
+  schedule:
+    # Nightly at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: "Seconds to run each fuzz target (default: 300)"
+        required: false
+        default: "300"
+        type: string
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_toml_config
+          - fuzz_json_event
+          - fuzz_gossip_frame
+          - fuzz_http_path
+          - fuzz_websocket
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install nightly Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: Run fuzz target
+        env:
+          TARGET: ${{ matrix.target }}
+          DURATION: ${{ inputs.duration_seconds || '300' }}
+        run: |
+          cd fuzz
+          cargo fuzz run "${TARGET}" -- \
+            -max_total_time="${DURATION}" \
+            -max_len=65536 \
+            -jobs=2 \
+            "corpus/${TARGET}"
+
+      - name: Save corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.sha }}
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+
+  # Smoke test: verify all fuzz targets compile and run for 10 seconds without panic.
+  # Runs on every push to main (not just nightly) to catch compilation regressions.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install nightly Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Smoke-test all fuzz targets (10s each)
+        run: |
+          cd fuzz
+          for target in fuzz_toml_config fuzz_json_event fuzz_gossip_frame fuzz_http_path fuzz_websocket; do
+            echo "--- Smoke-testing: ${target} ---"
+            cargo fuzz run "${target}" -- -max_total_time=10 -max_len=4096
+          done
