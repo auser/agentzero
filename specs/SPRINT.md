@@ -358,6 +358,86 @@ Comprehensive examples with READMEs demonstrating key use cases.
 
 ---
 
+## Sprint 43: Agent-as-a-Service — Runtime Agent CRUD, Webhook Proxy, Platform Auto-Registration
+
+**Goal:** Enable instant agent deployment via API. Users create agents at runtime through `POST /v1/agents` with a name, personality, provider, and channel tokens. Agents register with the swarm coordinator, platform webhooks are auto-configured, and messages route to the correct agent. No gateway restart required.
+
+**Baseline:** Sprint 42 planned. All prior sprints complete (AI tool selection, gossip event bus, CLI API key management, WhatsApp/SMS channels, CI/CD hardening, security/observability, persistent API keys).
+
+**Plan:** `specs/plans/12-agent-as-a-service.md`
+
+---
+
+### Phase A: AgentStore + Runtime Agent CRUD (HIGH)
+
+Persistent store for dynamically-created agents, following the `ApiKeyStore` pattern (encrypted JSON via `EncryptedJsonStore`). Coordinator gains runtime register/deregister.
+
+- [x] **`AgentRecord` type** — `agent_id`, `name`, `description`, `system_prompt`, `provider`, `model`, `keywords`, `allowed_tools`, `channels` (HashMap), `created_at`, `updated_at`, `status` (Active/Stopped). In `agentzero-orchestrator/src/agent_store.rs`.
+- [x] **`AgentStore`** — `RwLock<Vec<AgentRecord>>` + optional `EncryptedJsonStore` backing. Methods: `create()`, `get()`, `list()`, `update()`, `delete()`, `set_status()`. Persistent mode loads from disk on construction, flushes on every mutation. In-memory mode for tests.
+- [ ] **Coordinator extension** — `register_dynamic_agent(record, config_path, workspace_root)` builds `RuntimeExecution`, creates agent worker, registers with router. `deregister_agent(agent_id)` cancels worker, removes from router.
+- [x] **Tests** — Create/get/list/update/delete roundtrip, persistent survives reload, encrypted on disk, duplicate ID rejected, set_status. 11 tests.
+
+### Phase B: Agent Management API (HIGH)
+
+REST endpoints for agent lifecycle management in agentzero-gateway.
+
+- [x] **`POST /v1/agents`** — Create agent. Validates spec, persists to AgentStore. Returns agent_id + status. Requires Admin scope.
+- [x] **`GET /v1/agents`** — Extended to merge static (TOML/presence) + dynamic (store) agents with deduplication.
+- [x] **`GET /v1/agents/:id`** — Agent details: config, status, connected channels, source (dynamic/config).
+- [x] **`PATCH /v1/agents/:id`** — Update agent config fields (name, prompt, provider, model, tools, channels).
+- [x] **`DELETE /v1/agents/:id`** — Remove from store, returns confirmation.
+- [x] **Models** — `CreateAgentRequest`, `UpdateAgentRequest`, `AgentDetailResponse`, `CreateAgentResponse`, `WebhookQuery` in `models.rs`.
+- [x] **Tests** — CRUD lifecycle (create 201, get detail, update, delete), auth scope enforcement (401 without token), invalid input rejection (empty name), list includes dynamic agents, webhook agent targeting. 10 tests.
+
+### Phase C: Webhook Proxy + Agent Targeting (HIGH)
+
+Route incoming platform webhooks to specific agents.
+
+- [x] **Extend webhook handler** — `POST /v1/webhook/:channel` accepts optional `?agent_id=` query param. When present, validates agent exists and logs targeting.
+- [x] **Agent-targeted route** — `POST /v1/hooks/:channel/:agent_id` convenience route (cleaner URLs for platform webhook config). Validates agent exists before dispatching.
+- [x] **Tests** — Webhook with agent targeting, unknown agent returns 404. 1 test (integrated into gateway tests).
+
+### Phase D: Platform Webhook Auto-Registration (MEDIUM)
+
+Automatically configure platform webhooks when creating agents with channel tokens.
+
+- [ ] **Telegram** — Call `setWebhook` API on agent creation with `url=https://<gateway>/v1/hooks/telegram/<agent_id>`. Call `deleteWebhook` on agent deletion.
+- [ ] **Webhook URL resolution** — Gateway needs to know its public URL. Config: `[gateway] public_url = "https://..."`. Falls back to `AGENTZERO_PUBLIC_URL` env var.
+- [ ] **Tests** — Webhook registration called with correct URL, deregistration on delete. 3+ tests (mocked HTTP).
+
+### Phase E: Config Generation Helpers (MEDIUM)
+
+Programmatic config building for dynamic agents.
+
+- [ ] **`AgentZeroConfig::builder()`** — Fluent builder API for constructing configs programmatically.
+- [ ] **`to_toml(&self)`** — Serialize config to TOML string.
+- [ ] **`SwarmAgentConfig::from_agent_record()`** — Convert AgentRecord to SwarmAgentConfig for coordinator registration.
+- [ ] **Tests** — Builder produces valid config, to_toml roundtrips, from_agent_record maps all fields. 4+ tests.
+
+### Phase F: Per-Agent Memory Isolation (MEDIUM)
+
+Ensure dynamically-created agents have isolated conversation history.
+
+- [ ] **Namespaced memory** — Extend `MemoryStore` to scope queries by agent_id prefix on conversation_id.
+- [ ] **Per-agent SQLite** — Option to create `~/.agentzero/agents/<id>/memory.db` per agent (configured via AgentRecord).
+- [ ] **Tests** — Agent A's conversations invisible to Agent B. 3+ tests.
+
+---
+
+### Acceptance Criteria (Sprint 43)
+
+- [x] `POST /v1/agents` creates an agent and persists to encrypted store
+- [x] Agents persist across gateway restarts (AgentStore with EncryptedJsonStore)
+- [x] `GET /v1/agents` lists both static and dynamic agents
+- [x] `DELETE /v1/agents/:id` removes agent from store
+- [x] Webhooks route to specific agents via `/v1/hooks/:channel/:agent_id`
+- [ ] Coordinator wires dynamic agents into swarm workers at runtime
+- [ ] Telegram webhook auto-registered on agent creation
+- [x] Bot tokens encrypted at rest, never in API responses
+- [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
+
+---
+
 ## Backlog
 
 ### Lightweight Orchestrator Mode
@@ -379,6 +459,18 @@ CI-integrated end-to-end tests using a real local LLM server.
 - [ ] CI-integrated e2e tests using Ollama + tinyllama
 - [ ] Real provider completion, streaming, tool use, multi-turn tests
 - [ ] Orchestrator routing test with real LLM classification
+
+### Fleet Mode (mvmctl + mvmd Integration)
+
+Agent-as-a-Service backed by Firecracker microVM isolation via mvmctl/mvmd. Feature-gated behind `"fleet"`.
+
+- [ ] AgentStore backend that delegates to mvmd for Firecracker-based isolation
+- [ ] Warm sandbox pool integration (sub-second agent provisioning)
+- [ ] Sleep/wake with wake-on-message (webhook triggers snapshot restore)
+- [ ] agentzero Firecracker template (Nix flake for rootfs)
+- [ ] Config/secrets drive injection
+- [ ] Autoscaling across cloud providers (Hetzner, AWS, GCP, DigitalOcean)
+- [ ] Per-agent Turso auto-provisioning for memory durability across instances
 
 ### Multi-Node Orchestration (Full Distributed)
 

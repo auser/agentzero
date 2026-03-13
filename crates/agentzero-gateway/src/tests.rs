@@ -1743,7 +1743,9 @@ async fn v1_agents_list_with_presence() {
 }
 
 #[tokio::test]
-async fn v1_agents_list_no_presence_store_returns_503() {
+async fn v1_agents_list_no_stores_returns_empty_list() {
+    // Handler returns an empty list (200) when neither presence nor agent store
+    // is configured, rather than a 503.
     let state = GatewayState::test_with_bearer(None);
     state.paired_tokens.lock().unwrap().clear();
     let app = build_router(state, &default_config());
@@ -1754,7 +1756,12 @@ async fn v1_agents_list_no_presence_store_returns_503() {
         .body(Body::empty())
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["total"], 0);
+    assert!(json["data"].as_array().unwrap().is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -3973,4 +3980,259 @@ async fn presence_store_heartbeat_publishes_to_shared_event_bus() {
 
     assert_eq!(event.topic, "presence.heartbeat");
     assert!(event.payload.contains("agent-x"));
+}
+
+// ---------------------------------------------------------------------------
+// Agent management CRUD tests
+// ---------------------------------------------------------------------------
+
+fn state_with_agent_store() -> GatewayState {
+    use agentzero_orchestrator::AgentStore;
+    let mut state = GatewayState::test_with_bearer(Some("test-token"));
+    state.agent_store = Some(Arc::new(AgentStore::new()));
+    state
+}
+
+#[tokio::test]
+async fn create_agent_returns_201() {
+    let app = build_router(state_with_agent_store(), &default_config());
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/agents")
+        .header("authorization", "Bearer test-token")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "name": "Aria",
+                "description": "Travel assistant",
+                "system_prompt": "You are Aria",
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-20250514"
+            })
+            .to_string(),
+        ))
+        .expect("request");
+
+    let response = app.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(json["name"], "Aria");
+    assert_eq!(json["status"], "active");
+    assert!(json["agent_id"].as_str().unwrap().starts_with("agent_"));
+}
+
+#[tokio::test]
+async fn create_agent_rejects_empty_name() {
+    let app = build_router(state_with_agent_store(), &default_config());
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/agents")
+        .header("authorization", "Bearer test-token")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"name": ""}).to_string()))
+        .expect("request");
+
+    let response = app.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn create_agent_requires_admin_scope() {
+    let app = build_router(state_with_agent_store(), &default_config());
+    // No auth header → 401.
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/agents")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"name": "Test"}).to_string()))
+        .expect("request");
+
+    let response = app.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn list_agents_includes_dynamic_agents() {
+    let state = state_with_agent_store();
+    let store = state.agent_store.as_ref().unwrap();
+    store
+        .create(agentzero_orchestrator::AgentRecord {
+            agent_id: String::new(),
+            name: "TestBot".to_string(),
+            description: String::new(),
+            system_prompt: None,
+            provider: String::new(),
+            model: String::new(),
+            keywords: vec![],
+            allowed_tools: vec![],
+            channels: std::collections::HashMap::new(),
+            created_at: 0,
+            updated_at: 0,
+            status: agentzero_orchestrator::AgentStatus::Active,
+        })
+        .expect("create");
+
+    let app = build_router(state, &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/agents")
+        .header("authorization", "Bearer test-token")
+        .body(Body::empty())
+        .expect("request");
+
+    let response = app.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(json["total"], 1);
+    assert_eq!(json["data"][0]["status"], "active");
+}
+
+#[tokio::test]
+async fn get_agent_returns_detail() {
+    let state = state_with_agent_store();
+    let store = state.agent_store.as_ref().unwrap();
+    let record = store
+        .create(agentzero_orchestrator::AgentRecord {
+            agent_id: String::new(),
+            name: "DetailBot".to_string(),
+            description: "A detailed bot".to_string(),
+            system_prompt: Some("You are DetailBot".to_string()),
+            provider: "anthropic".to_string(),
+            model: "claude-sonnet-4-20250514".to_string(),
+            keywords: vec!["detail".to_string()],
+            allowed_tools: vec![],
+            channels: std::collections::HashMap::new(),
+            created_at: 0,
+            updated_at: 0,
+            status: agentzero_orchestrator::AgentStatus::Active,
+        })
+        .expect("create");
+
+    let app = build_router(state, &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/agents/{}", record.agent_id))
+        .header("authorization", "Bearer test-token")
+        .body(Body::empty())
+        .expect("request");
+
+    let response = app.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(json["name"], "DetailBot");
+    assert_eq!(json["source"], "dynamic");
+    assert_eq!(json["provider"], "anthropic");
+}
+
+#[tokio::test]
+async fn get_agent_unknown_returns_404() {
+    let app = build_router(state_with_agent_store(), &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/agents/nonexistent")
+        .header("authorization", "Bearer test-token")
+        .body(Body::empty())
+        .expect("request");
+
+    let response = app.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn delete_agent_removes_and_returns_success() {
+    let state = state_with_agent_store();
+    let store = state.agent_store.as_ref().unwrap();
+    let record = store
+        .create(agentzero_orchestrator::AgentRecord {
+            agent_id: String::new(),
+            name: "Ephemeral".to_string(),
+            description: String::new(),
+            system_prompt: None,
+            provider: String::new(),
+            model: String::new(),
+            keywords: vec![],
+            allowed_tools: vec![],
+            channels: std::collections::HashMap::new(),
+            created_at: 0,
+            updated_at: 0,
+            status: agentzero_orchestrator::AgentStatus::Active,
+        })
+        .expect("create");
+
+    let app = build_router(state, &default_config());
+    let request = Request::builder()
+        .method("DELETE")
+        .uri(format!("/v1/agents/{}", record.agent_id))
+        .header("authorization", "Bearer test-token")
+        .body(Body::empty())
+        .expect("request");
+
+    let response = app.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(json["deleted"], true);
+}
+
+#[tokio::test]
+async fn update_agent_modifies_fields() {
+    let state = state_with_agent_store();
+    let store = state.agent_store.as_ref().unwrap();
+    let record = store
+        .create(agentzero_orchestrator::AgentRecord {
+            agent_id: String::new(),
+            name: "OldName".to_string(),
+            description: String::new(),
+            system_prompt: None,
+            provider: String::new(),
+            model: String::new(),
+            keywords: vec![],
+            allowed_tools: vec![],
+            channels: std::collections::HashMap::new(),
+            created_at: 0,
+            updated_at: 0,
+            status: agentzero_orchestrator::AgentStatus::Active,
+        })
+        .expect("create");
+
+    let app = build_router(state, &default_config());
+    let request = Request::builder()
+        .method("PATCH")
+        .uri(format!("/v1/agents/{}", record.agent_id))
+        .header("authorization", "Bearer test-token")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"name": "NewName", "system_prompt": "Updated prompt"}).to_string(),
+        ))
+        .expect("request");
+
+    let response = app.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(json["name"], "NewName");
+    assert_eq!(json["system_prompt"], "Updated prompt");
+}
+
+#[tokio::test]
+async fn webhook_with_agent_validates_agent_exists() {
+    let app = build_router(state_with_agent_store(), &default_config());
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/hooks/telegram/nonexistent_agent")
+        .header("authorization", "Bearer test-token")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"update_id": 1}).to_string()))
+        .expect("request");
+
+    let response = app.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

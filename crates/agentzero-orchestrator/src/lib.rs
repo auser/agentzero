@@ -4,6 +4,7 @@
 //! event bus, pipeline execution, and swarm construction from config.
 
 pub mod agent_router;
+pub mod agent_store;
 pub mod block_stream;
 pub mod coordinator;
 pub mod event_bus;
@@ -16,6 +17,7 @@ pub mod presence;
 pub mod swarm;
 
 pub use agent_router::{AgentDescriptor, AgentRouter};
+pub use agent_store::{AgentChannelConfig, AgentRecord, AgentStatus, AgentStore, AgentUpdate};
 pub use block_stream::{Block, BlockAccumulator};
 pub use coordinator::{Coordinator, ErrorStrategy, TaskMessage, TaskResult};
 pub use event_bus::{

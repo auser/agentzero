@@ -5,7 +5,7 @@ use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
 use agentzero_core::{EventBus, MemoryStore};
-use agentzero_orchestrator::{JobStore, PresenceStore};
+use agentzero_orchestrator::{AgentStore, JobStore, PresenceStore};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
     collections::{HashMap, HashSet},
@@ -73,6 +73,8 @@ pub(crate) struct GatewayState {
     pub(crate) api_key_store: Option<Arc<ApiKeyStore>>,
     /// Distributed event bus for real-time event streaming.
     pub(crate) event_bus: Option<Arc<dyn EventBus>>,
+    /// Dynamic agent store for runtime agent CRUD.
+    pub(crate) agent_store: Option<Arc<AgentStore>>,
 }
 
 impl GatewayState {
@@ -121,6 +123,7 @@ impl GatewayState {
             gateway_channel: None,
             api_key_store: None,
             event_bus: None,
+            agent_store: None,
         }
     }
 
@@ -128,6 +131,13 @@ impl GatewayState {
     #[allow(dead_code)]
     pub(crate) fn with_event_bus(mut self, bus: Arc<dyn EventBus>) -> Self {
         self.event_bus = Some(bus);
+        self
+    }
+
+    /// Set the dynamic agent store for runtime agent CRUD.
+    #[allow(dead_code)]
+    pub(crate) fn with_agent_store(mut self, store: Arc<AgentStore>) -> Self {
+        self.agent_store = Some(store);
         self
     }
 
@@ -327,6 +337,7 @@ impl GatewayState {
             gateway_channel: None,
             api_key_store: None,
             event_bus: None,
+            agent_store: None,
         }
     }
 
@@ -369,6 +380,7 @@ impl GatewayState {
             gateway_channel: None,
             api_key_store: None,
             event_bus: None,
+            agent_store: None,
         }
     }
 }

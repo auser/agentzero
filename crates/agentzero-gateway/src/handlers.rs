@@ -1,13 +1,14 @@
 use crate::api_keys::Scope;
 use crate::auth::{authorize_request, authorize_with_scope};
 use crate::models::{
-    AgentListItem, AgentListResponse, ApiFallbackResponse, AsyncSubmitRequest, AsyncSubmitResponse,
-    CancelQuery, CancelResponse, ChatCompletionsRequest, ChatCompletionsResponse, ChatRequest,
-    ChatResponse, CompletionChoice, CompletionChoiceMessage, EstopResponse, EventItem,
-    EventListResponse, EventStreamQuery, GatewayError, HealthResponse, JobListItem, JobListQuery,
-    JobListResponse, JobStatusResponse, LivenessResponse, ModelItem, ModelsResponse, PairRequest,
-    PairResponse, PingRequest, PingResponse, ReadyResponse, TranscriptResponse, WebhookPayload,
-    WebhookResponse, WsRunQuery,
+    AgentDetailResponse, AgentListItem, AgentListResponse, ApiFallbackResponse, AsyncSubmitRequest,
+    AsyncSubmitResponse, CancelQuery, CancelResponse, ChatCompletionsRequest,
+    ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice, CompletionChoiceMessage,
+    CreateAgentRequest, CreateAgentResponse, EstopResponse, EventItem, EventListResponse,
+    EventStreamQuery, GatewayError, HealthResponse, JobListItem, JobListQuery, JobListResponse,
+    JobStatusResponse, LivenessResponse, ModelItem, ModelsResponse, PairRequest, PairResponse,
+    PingRequest, PingResponse, ReadyResponse, TranscriptResponse, UpdateAgentRequest,
+    WebhookPayload, WebhookQuery, WebhookResponse, WsRunQuery,
 };
 use crate::state::GatewayState;
 use crate::util::{generate_session_token, now_epoch_secs};
@@ -141,17 +142,27 @@ pub(crate) async fn webhook(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Path(channel): Path<String>,
+    query: axum::extract::Query<WebhookQuery>,
     Json(payload): Json<WebhookPayload>,
 ) -> Result<Json<WebhookResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
-    // Validate channel name: only alphanumeric, hyphens, and underscores.
     if !is_valid_channel_name(&channel) {
         return Err(GatewayError::BadRequest {
             message: format!(
                 "invalid channel name '{channel}': must be 1-64 chars, alphanumeric/hyphen/underscore only"
             ),
         });
+    }
+
+    // If agent_id is provided, validate that the agent exists.
+    if let Some(ref agent_id) = query.agent_id {
+        validate_agent_exists(&state, agent_id)?;
+        tracing::info!(
+            channel = %channel,
+            agent_id = %agent_id,
+            "webhook targeting specific agent"
+        );
     }
 
     let Some(delivery) = state.channels.dispatch(&channel, payload.inner).await else {
@@ -165,6 +176,61 @@ pub(crate) async fn webhook(
         channel: delivery.channel,
         detail: delivery.detail,
     }))
+}
+
+/// POST /v1/hooks/:channel/:agent_id — webhook with agent targeting (convenience route).
+pub(crate) async fn webhook_with_agent(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path((channel, agent_id)): Path<(String, String)>,
+    Json(payload): Json<WebhookPayload>,
+) -> Result<Json<WebhookResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
+
+    if !is_valid_channel_name(&channel) {
+        return Err(GatewayError::BadRequest {
+            message: format!(
+                "invalid channel name '{channel}': must be 1-64 chars, alphanumeric/hyphen/underscore only"
+            ),
+        });
+    }
+
+    validate_agent_exists(&state, &agent_id)?;
+
+    tracing::info!(
+        channel = %channel,
+        agent_id = %agent_id,
+        "webhook targeting specific agent"
+    );
+
+    let Some(delivery) = state.channels.dispatch(&channel, payload.inner).await else {
+        return Err(GatewayError::NotFound {
+            resource: format!("channel/{channel}"),
+        });
+    };
+
+    Ok(Json(WebhookResponse {
+        accepted: delivery.accepted,
+        channel: delivery.channel,
+        detail: delivery.detail,
+    }))
+}
+
+/// Validate that an agent exists in either the dynamic store or presence store.
+fn validate_agent_exists(state: &GatewayState, agent_id: &str) -> Result<(), GatewayError> {
+    // Check dynamic store.
+    if let Some(store) = &state.agent_store {
+        if store.get(agent_id).is_some() {
+            return Ok(());
+        }
+    }
+    // Check static agents via presence store.
+    // Note: presence store is async but we can't await here in a sync fn.
+    // For now, accept if agent_store found it; otherwise reject for dynamic agents.
+    // Static agents route through the normal webhook path without targeting.
+    Err(GatewayError::NotFound {
+        resource: format!("agent/{agent_id}"),
+    })
 }
 
 pub(crate) async fn legacy_webhook(
@@ -1169,35 +1235,52 @@ pub(crate) async fn job_transcript(
 
 // ---------------------------------------------------------------------------
 // WebSocket run subscription: /ws/runs/:run_id
-/// GET /v1/agents — list all registered agents with their presence status.
+/// GET /v1/agents — list all registered agents (static from TOML + dynamic from store).
 pub(crate) async fn agents_list(
     State(state): State<GatewayState>,
     headers: HeaderMap,
 ) -> Result<Json<AgentListResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
-    let presence = state
-        .presence_store
-        .as_ref()
-        .ok_or(GatewayError::AgentUnavailable)?;
+    let mut data: Vec<AgentListItem> = Vec::new();
 
-    let records = presence.list_all().await;
-    let data: Vec<AgentListItem> = records
-        .iter()
-        .map(|r| {
+    // Static agents from presence store (TOML-configured).
+    if let Some(presence) = &state.presence_store {
+        let records = presence.list_all().await;
+        for r in &records {
             let status_str = match r.status {
                 agentzero_orchestrator::PresenceStatus::Alive => "alive",
                 agentzero_orchestrator::PresenceStatus::Stale => "stale",
                 agentzero_orchestrator::PresenceStatus::Dead => "dead",
             };
-            AgentListItem {
+            data.push(AgentListItem {
                 agent_id: r.agent_id.clone(),
                 status: status_str,
                 ttl_secs: r.ttl.as_secs(),
-            }
-        })
-        .collect();
+            });
+        }
+    }
 
+    // Dynamic agents from agent store.
+    if let Some(store) = &state.agent_store {
+        for record in store.list() {
+            // Skip if already present from presence store (avoid duplicates).
+            if data.iter().any(|d| d.agent_id == record.agent_id) {
+                continue;
+            }
+            let status_str = match record.status {
+                agentzero_orchestrator::AgentStatus::Active => "active",
+                agentzero_orchestrator::AgentStatus::Stopped => "stopped",
+            };
+            data.push(AgentListItem {
+                agent_id: record.agent_id,
+                status: status_str,
+                ttl_secs: 0,
+            });
+        }
+    }
+
+    // Return empty list if neither store is configured (instead of error).
     let total = data.len();
     Ok(Json(AgentListResponse {
         object: "list",
@@ -1205,6 +1288,202 @@ pub(crate) async fn agents_list(
         total,
     }))
 }
+
+// ---------------------------------------------------------------------------
+// Agent management CRUD
+// ---------------------------------------------------------------------------
+
+/// POST /v1/agents — create a dynamic agent at runtime.
+pub(crate) async fn create_agent(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateAgentRequest>,
+) -> Result<(axum::http::StatusCode, Json<CreateAgentResponse>), GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
+
+    let agent_store = state
+        .agent_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    if req.name.trim().is_empty() {
+        return Err(GatewayError::BadRequest {
+            message: "agent name is required".to_string(),
+        });
+    }
+
+    let record = agentzero_orchestrator::AgentRecord {
+        agent_id: String::new(), // auto-generated
+        name: req.name,
+        description: req.description,
+        system_prompt: req.system_prompt,
+        provider: req.provider,
+        model: req.model,
+        keywords: req.keywords,
+        allowed_tools: req.allowed_tools,
+        channels: req.channels,
+        created_at: 0,
+        updated_at: 0,
+        status: agentzero_orchestrator::AgentStatus::Active,
+    };
+
+    let created = agent_store
+        .create(record)
+        .map_err(|e| GatewayError::BadRequest {
+            message: e.to_string(),
+        })?;
+
+    let channel_names: Vec<String> = created.channels.keys().cloned().collect();
+
+    Ok((
+        axum::http::StatusCode::CREATED,
+        Json(CreateAgentResponse {
+            agent_id: created.agent_id,
+            name: created.name,
+            status: "active".to_string(),
+            channels: channel_names,
+            created_at: created.created_at,
+        }),
+    ))
+}
+
+/// GET /v1/agents/:id — get agent details.
+pub(crate) async fn get_agent(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+) -> Result<Json<AgentDetailResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    // Check dynamic store first.
+    if let Some(store) = &state.agent_store {
+        if let Some(record) = store.get(&agent_id) {
+            return Ok(Json(agent_record_to_detail(&record, "dynamic")));
+        }
+    }
+
+    // Check static (TOML) agents via presence store.
+    if let Some(presence) = &state.presence_store {
+        let records = presence.list_all().await;
+        if records.iter().any(|r| r.agent_id == agent_id) {
+            return Ok(Json(AgentDetailResponse {
+                agent_id: agent_id.clone(),
+                name: agent_id,
+                description: String::new(),
+                system_prompt: None,
+                provider: String::new(),
+                model: String::new(),
+                keywords: vec![],
+                allowed_tools: vec![],
+                channels: vec![],
+                status: "active".to_string(),
+                source: "config",
+                created_at: 0,
+                updated_at: 0,
+            }));
+        }
+    }
+
+    Err(GatewayError::NotFound {
+        resource: format!("agent/{agent_id}"),
+    })
+}
+
+/// PATCH /v1/agents/:id — update agent config.
+pub(crate) async fn update_agent(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+    Json(req): Json<UpdateAgentRequest>,
+) -> Result<Json<AgentDetailResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
+
+    let agent_store = state
+        .agent_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let update = agentzero_orchestrator::AgentUpdate {
+        name: req.name,
+        description: req.description,
+        system_prompt: req.system_prompt,
+        provider: req.provider,
+        model: req.model,
+        keywords: req.keywords,
+        allowed_tools: req.allowed_tools,
+        channels: req.channels,
+    };
+
+    let updated = agent_store
+        .update(&agent_id, update)
+        .map_err(|e| GatewayError::BadRequest {
+            message: e.to_string(),
+        })?
+        .ok_or(GatewayError::NotFound {
+            resource: format!("agent/{agent_id}"),
+        })?;
+
+    Ok(Json(agent_record_to_detail(&updated, "dynamic")))
+}
+
+/// DELETE /v1/agents/:id — delete a dynamic agent.
+pub(crate) async fn delete_agent(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+) -> Result<Json<serde_json::Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
+
+    let agent_store = state
+        .agent_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let removed = agent_store
+        .delete(&agent_id)
+        .map_err(|e| GatewayError::BadRequest {
+            message: e.to_string(),
+        })?;
+
+    if !removed {
+        return Err(GatewayError::NotFound {
+            resource: format!("agent/{agent_id}"),
+        });
+    }
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "deleted": true,
+    })))
+}
+
+/// Convert an `AgentRecord` to an `AgentDetailResponse`.
+fn agent_record_to_detail(
+    record: &agentzero_orchestrator::AgentRecord,
+    source: &'static str,
+) -> AgentDetailResponse {
+    let status = match record.status {
+        agentzero_orchestrator::AgentStatus::Active => "active",
+        agentzero_orchestrator::AgentStatus::Stopped => "stopped",
+    };
+    AgentDetailResponse {
+        agent_id: record.agent_id.clone(),
+        name: record.name.clone(),
+        description: record.description.clone(),
+        system_prompt: record.system_prompt.clone(),
+        provider: record.provider.clone(),
+        model: record.model.clone(),
+        keywords: record.keywords.clone(),
+        allowed_tools: record.allowed_tools.clone(),
+        channels: record.channels.keys().cloned().collect(),
+        status: status.to_string(),
+        source,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 /// POST /v1/estop — emergency stop: cascade-cancel all active root-level runs.
 ///

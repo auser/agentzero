@@ -153,6 +153,18 @@ config-ui-dev:
     # Start backend with cargo watch, rebuilding on Rust changes
     cargo watch -w crates/agentzero-config-ui/src -x 'run -p agentzero --features config-ui -- config-ui' &
     CARGO_PID=$!
+    # Wait for backend to be ready before starting frontend
+    echo "Waiting for backend..."
+    for i in $(seq 1 120); do
+        if curl -s -o /dev/null -w '' http://127.0.0.1:42618/api/schema 2>/dev/null; then
+            echo "Backend ready!"
+            break
+        fi
+        if ! kill -0 $CARGO_PID 2>/dev/null; then
+            echo "Backend process died"; exit 1
+        fi
+        sleep 1
+    done
     # Start vite dev server for frontend hot reload
     cd crates/agentzero-config-ui/ui && npx vite --open &
     VITE_PID=$!

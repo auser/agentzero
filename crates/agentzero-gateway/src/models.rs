@@ -364,6 +364,85 @@ pub(crate) struct WebhookPayload {
     pub(crate) inner: Value,
 }
 
+// ---------------------------------------------------------------------------
+// Agent management (/v1/agents CRUD)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CreateAgentRequest {
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) description: String,
+    #[serde(default)]
+    pub(crate) system_prompt: Option<String>,
+    #[serde(default)]
+    pub(crate) provider: String,
+    #[serde(default)]
+    pub(crate) model: String,
+    #[serde(default)]
+    pub(crate) keywords: Vec<String>,
+    #[serde(default)]
+    pub(crate) allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub(crate) channels:
+        std::collections::HashMap<String, agentzero_orchestrator::AgentChannelConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpdateAgentRequest {
+    #[serde(default)]
+    pub(crate) name: Option<String>,
+    #[serde(default)]
+    pub(crate) description: Option<String>,
+    #[serde(default)]
+    pub(crate) system_prompt: Option<String>,
+    #[serde(default)]
+    pub(crate) provider: Option<String>,
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+    #[serde(default)]
+    pub(crate) keywords: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) allowed_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) channels:
+        Option<std::collections::HashMap<String, agentzero_orchestrator::AgentChannelConfig>>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AgentDetailResponse {
+    pub(crate) agent_id: String,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) system_prompt: Option<String>,
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) keywords: Vec<String>,
+    pub(crate) allowed_tools: Vec<String>,
+    pub(crate) channels: Vec<String>,
+    pub(crate) status: String,
+    pub(crate) source: &'static str,
+    pub(crate) created_at: u64,
+    pub(crate) updated_at: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CreateAgentResponse {
+    pub(crate) agent_id: String,
+    pub(crate) name: String,
+    pub(crate) status: String,
+    pub(crate) channels: Vec<String>,
+    pub(crate) created_at: u64,
+}
+
+/// Query params for webhook with agent targeting.
+#[derive(Debug, Deserialize)]
+pub(crate) struct WebhookQuery {
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
+}
+
 impl From<StatusCode> for GatewayError {
     fn from(status: StatusCode) -> Self {
         match status {
