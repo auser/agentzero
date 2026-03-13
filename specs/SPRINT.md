@@ -230,6 +230,76 @@ Wire the event bus into the orchestration layer for real-time cross-component aw
 
 ---
 
+## Sprint 41: Security Hardening & Observability
+
+**Goal:** Close all remaining CRITICAL/HIGH production readiness gaps: TLS listener wiring, persistent API key store, per-provider observability metrics, correlation ID propagation, structured audit logging, and comprehensive security integration testing. This sprint brings estimated readiness from ~80% to ~90%.
+
+### Phase A: TLS & Transport Security (CRITICAL)
+
+Wire TLS into the gateway listener and add transport security headers.
+
+- [ ] **TLS listener wiring** — When `[gateway.tls]` config has `cert_path` + `key_path`, use `axum_server::tls_rustls::RustlsConfig` instead of plain `TcpListener::bind`. Feature-gated behind `tls-rustls`. Fallback to plain TCP when no TLS config.
+- [ ] **HSTS middleware** — When TLS is active, add `Strict-Transport-Security: max-age=63072000; includeSubDomains` response header via tower middleware layer.
+- [ ] **Tests** — TLS config parsing test. HSTS header present when TLS active. 3+ tests.
+
+### Phase B: Persistent API Key Store (HIGH)
+
+Migrate in-memory `ApiKeyStore` to encrypted SQLite via `agentzero-storage`.
+
+- [ ] **`SqliteApiKeyStore`** — New struct in `agentzero-gateway` backed by `agentzero-storage` encrypted SQLite. Schema: `api_keys(id, key_hash, scopes, org_id, created_at, revoked_at)`. Keys stored as SHA-256 hashes only. CRUD operations: `create`, `revoke`, `list`, `validate`.
+- [ ] **Migration** — Schema version table for API key store, auto-migrate on startup.
+- [ ] **Wire into gateway** — Replace `ApiKeyStore::new()` with `SqliteApiKeyStore::open()` in gateway startup.
+- [ ] **Tests** — Key persistence across reopen. Revoked key rejected. Scope enforcement. 4+ tests.
+
+### Phase C: Provider Observability Metrics (HIGH)
+
+Add per-provider Prometheus metrics for latency, error rate, and token usage.
+
+- [ ] **Provider metrics layer** — Wrap provider calls with metrics recording: `agentzero_provider_request_duration_seconds` histogram (labeled by provider, model, status), `agentzero_provider_requests_total` counter, `agentzero_provider_tokens_total` counter (labeled by direction: input/output).
+- [ ] **`MetricsProvider` wrapper** — Decorator pattern in `agentzero-providers` that wraps any `Provider` and records metrics transparently.
+- [ ] **Tests** — Verify metrics incremented after provider call. 2+ tests.
+
+### Phase D: Correlation IDs & Request Tracing (HIGH)
+
+Propagate a unique request ID through all spans and response headers.
+
+- [ ] **Request ID middleware** — Extract `X-Request-ID` from incoming request or generate UUID. Store in request extensions. Add to all tracing spans via `tracing::Span::current().record()`.
+- [ ] **Response header** — Echo `X-Request-ID` in response headers for client correlation.
+- [ ] **Propagation to agent loop** — Pass request_id into `RunAgentRequest` and thread through agent `respond()` spans.
+- [ ] **Tests** — Response includes `X-Request-ID`. Custom ID echoed. Auto-generated when missing. 3+ tests.
+
+### Phase E: Structured Audit Logging (HIGH)
+
+Dedicated audit trail for security-relevant events.
+
+- [ ] **`AuditEvent` struct** — `{ timestamp, event_type, actor, resource, action, outcome, metadata }`. Types: `auth.login`, `auth.failed`, `api_key.created`, `api_key.revoked`, `estop.triggered`, `config.changed`.
+- [ ] **`AuditSink` trait** — `async fn log(&self, event: AuditEvent)`. Implementations: `FileAuditSink` (JSONL), `EventBusAuditSink` (publishes to event bus topic `audit.*`).
+- [ ] **Wire into gateway** — Emit audit events on auth success/failure, API key operations, emergency stop.
+- [ ] **Tests** — Auth failure logged. API key create logged. Estop logged. 3+ tests.
+
+### Phase F: Security Integration Testing (HIGH)
+
+End-to-end security test suite covering the full auth → scope → request flow.
+
+- [ ] **E2E auth lifecycle test** — Create API key → authenticate with it → verify scope enforcement → revoke → verify rejection.
+- [ ] **Per-identity rate limiting** — Add per-API-key rate limit buckets in middleware. Test: different keys have independent limits.
+- [ ] **Load test scaffold** — Basic load test using `tokio::spawn` + `reqwest` against gateway. Verify no panics under 100 concurrent requests, p99 response time recorded.
+- [ ] **Tests** — Full auth lifecycle (4+ assertions). Rate limit per key. Concurrent load stability. 6+ tests.
+
+---
+
+### Acceptance Criteria (Sprint 41)
+
+- [ ] TLS listener serves HTTPS when cert/key configured
+- [ ] API keys persist across gateway restarts
+- [ ] Provider metrics visible in `/metrics` Prometheus endpoint
+- [ ] Every response includes `X-Request-ID` header
+- [ ] Security events appear in audit log
+- [ ] E2E auth lifecycle test passes (create → use → scope check → revoke → reject)
+- [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
+
+---
+
 ## Backlog
 
 ### Lightweight Orchestrator Mode

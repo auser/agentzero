@@ -31,3 +31,13 @@ doc = false
 name = "fuzz_gossip_frame"
 path = "fuzz_targets/fuzz_gossip_frame.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_http_path"
+path = "fuzz_targets/fuzz_http_path.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_websocket"
+path = "fuzz_targets/fuzz_websocket.rs"
+doc = false
