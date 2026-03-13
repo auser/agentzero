@@ -82,7 +82,7 @@ impl r2d2::CustomizeConnection<rusqlite::Connection, rusqlite::Error> for Connec
     }
 }
 
-/// Map a query row (columns 0–6) to a [`MemoryEntry`].
+/// Map a query row (columns 0–7) to a [`MemoryEntry`].
 fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
     Ok(MemoryEntry {
         role: row.get(0)?,
@@ -92,6 +92,7 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
         conversation_id: row.get::<_, String>(4).unwrap_or_default(),
         created_at: row.get::<_, Option<String>>(5).ok().flatten(),
         expires_at: row.get::<_, Option<i64>>(6).unwrap_or_default(),
+        org_id: row.get::<_, String>(7).unwrap_or_default(),
     })
 }
 
@@ -100,8 +101,8 @@ impl MemoryStore for PooledMemoryStore {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
         let conn = self.pool.get().context("pool: failed to get connection")?;
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id, entry.expires_at],
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id, entry.expires_at, entry.org_id],
         )?;
         Ok(())
     }
@@ -110,7 +111,7 @@ impl MemoryStore for PooledMemoryStore {
         let conn = self.pool.get().context("pool: failed to get connection")?;
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
              FROM memory
              WHERE expires_at IS NULL OR expires_at > unixepoch()
              ORDER BY id DESC
@@ -135,7 +136,7 @@ impl MemoryStore for PooledMemoryStore {
         let conn = self.pool.get().context("pool: failed to get connection")?;
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
              FROM memory
              WHERE (expires_at IS NULL OR expires_at > unixepoch())
                AND (privacy_boundary = '' OR privacy_boundary = ?1
@@ -168,7 +169,7 @@ impl MemoryStore for PooledMemoryStore {
         let conn = self.pool.get().context("pool: failed to get connection")?;
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
              FROM memory
              WHERE conversation_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -188,8 +189,8 @@ impl MemoryStore for PooledMemoryStore {
     async fn fork_conversation(&self, from_id: &str, new_id: &str) -> anyhow::Result<()> {
         let conn = self.pool.get().context("pool: failed to get connection")?;
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at)
-             SELECT role, content, privacy_boundary, source_channel, ?2, expires_at
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id)
+             SELECT role, content, privacy_boundary, source_channel, ?2, expires_at, org_id
              FROM memory
              WHERE conversation_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())

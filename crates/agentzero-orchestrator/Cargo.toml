@@ -13,6 +13,7 @@ agentzero-channels = { workspace = true }
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
 agentzero-infra = { workspace = true }
+agentzero-storage = { workspace = true }
 agentzero-tools = { workspace = true }
 anyhow.workspace = true
 async-trait.workspace = true

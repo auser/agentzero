@@ -282,6 +282,7 @@ dependencies = [
  "agentzero-config",
  "agentzero-core",
  "agentzero-infra",
+ "agentzero-storage",
  "agentzero-testkit",
  "agentzero-tools",
  "anyhow",

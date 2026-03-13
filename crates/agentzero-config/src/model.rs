@@ -1877,11 +1877,23 @@ pub struct SwarmConfig {
     pub shutdown_grace_ms: u64,
     /// Capacity of the event bus broadcast channel.
     pub event_bus_capacity: usize,
-    /// Path to a JSONL file for persistent event logging.
-    /// When set, events are appended to this file and survive restarts.
-    /// Useful for research pipelines and audit trails.
+    /// Event bus backend: "memory" (default), "file", or "sqlite".
+    /// - "memory": in-process broadcast only (no persistence).
+    /// - "file": JSONL file-backed (requires `event_log_path`).
+    /// - "sqlite": SQLite WAL-mode persistent bus (requires `event_db_path`).
+    #[serde(default)]
+    pub event_bus: Option<String>,
+    /// Path to a JSONL file for persistent event logging (file bus backend).
+    /// When set and `event_bus` is not explicitly configured, uses the file backend.
     #[serde(default)]
     pub event_log_path: Option<String>,
+    /// Path to SQLite database for the SQLite event bus backend.
+    /// Only used when `event_bus = "sqlite"`.
+    #[serde(default)]
+    pub event_db_path: Option<String>,
+    /// Retention period in days for SQLite event bus GC. Default: 7.
+    #[serde(default = "default_event_retention_days")]
+    pub event_retention_days: u32,
     pub router: SwarmRouterConfig,
     /// Named agent definitions keyed by agent id.
     #[serde(default)]
@@ -1897,6 +1909,10 @@ pub struct SwarmConfig {
     pub depth_policy: Vec<DepthRuleConfig>,
 }
 
+fn default_event_retention_days() -> u32 {
+    7
+}
+
 impl Default for SwarmConfig {
     fn default() -> Self {
         Self {
@@ -1904,7 +1920,10 @@ impl Default for SwarmConfig {
             max_agents: 10,
             shutdown_grace_ms: 5_000,
             event_bus_capacity: 256,
+            event_bus: None,
             event_log_path: None,
+            event_db_path: None,
+            event_retention_days: 7,
             router: SwarmRouterConfig::default(),
             agents: HashMap::new(),
             pipelines: Vec::new(),

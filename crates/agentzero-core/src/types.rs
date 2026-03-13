@@ -720,6 +720,10 @@ pub struct MemoryEntry {
     /// periodic garbage collection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
+    /// Organization that owns this entry (multi-tenancy isolation).
+    /// Empty string means no org restriction (single-tenant / legacy).
+    #[serde(default)]
+    pub org_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -887,6 +891,34 @@ pub trait MemoryStore: Send + Sync {
     /// should override this.
     async fn gc_expired(&self) -> anyhow::Result<u64> {
         Ok(0)
+    }
+
+    /// Query recent entries scoped to an organization.
+    /// Default filters in-memory; backends should override with an optimized query.
+    async fn recent_for_org(&self, org_id: &str, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+        let all = self.recent(limit * 2).await?;
+        Ok(all
+            .into_iter()
+            .filter(|e| e.org_id == org_id)
+            .take(limit)
+            .collect())
+    }
+
+    /// Query recent entries for a conversation scoped to an organization.
+    /// Ensures org A cannot read org B's transcripts.
+    async fn recent_for_org_conversation(
+        &self,
+        org_id: &str,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let all = self.recent_for_conversation(conversation_id, limit).await?;
+        Ok(all.into_iter().filter(|e| e.org_id == org_id).collect())
+    }
+
+    /// List conversations belonging to a specific organization.
+    async fn list_conversations_for_org(&self, _org_id: &str) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
     }
 }
 

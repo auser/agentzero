@@ -813,6 +813,7 @@ impl Agent {
                 conversation_id: conversation_id.to_string(),
                 created_at: None,
                 expires_at: None,
+                org_id: String::new(),
             })
             .await
             .map_err(|source| AgentError::Memory { source })?;

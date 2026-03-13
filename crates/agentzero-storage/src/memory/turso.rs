@@ -2,6 +2,7 @@ use agentzero_core::{MemoryEntry, MemoryStore};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use std::fmt::{Debug, Formatter};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone)]
 pub struct SecretToken(String);
@@ -65,6 +66,109 @@ impl TursoSettings {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Migration framework for Turso (async variant of SQLite migration system)
+// ---------------------------------------------------------------------------
+
+struct TursoMigration {
+    version: u32,
+    description: &'static str,
+    statements: &'static [&'static str],
+}
+
+/// Ordered list of all Turso migrations. Append-only — never remove or reorder.
+const TURSO_MIGRATIONS: &[TursoMigration] = &[
+    TursoMigration {
+        version: 1,
+        description: "add privacy_boundary and source_channel columns",
+        statements: &[
+            "ALTER TABLE memory ADD COLUMN privacy_boundary TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE memory ADD COLUMN source_channel TEXT DEFAULT NULL",
+        ],
+    },
+    TursoMigration {
+        version: 2,
+        description: "add conversation_id column",
+        statements: &["ALTER TABLE memory ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''"],
+    },
+    TursoMigration {
+        version: 3,
+        description: "add expires_at column for message TTL",
+        statements: &["ALTER TABLE memory ADD COLUMN expires_at INTEGER DEFAULT NULL"],
+    },
+    TursoMigration {
+        version: 4,
+        description: "add org_id column for multi-tenancy isolation",
+        statements: &["ALTER TABLE memory ADD COLUMN org_id TEXT NOT NULL DEFAULT ''"],
+    },
+];
+
+/// Run all pending migrations against a Turso connection.
+async fn run_turso_migrations(conn: &libsql::Connection) -> anyhow::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at INTEGER NOT NULL DEFAULT (unixepoch())
+        )",
+        (),
+    )
+    .await
+    .context("failed to create schema_version table in Turso")?;
+
+    let current_version: u32 = {
+        let mut rows = conn
+            .query("SELECT COALESCE(MAX(version), 0) FROM schema_version", ())
+            .await
+            .context("failed to query schema_version in Turso")?;
+        match rows
+            .next()
+            .await
+            .context("failed to read schema_version row")?
+        {
+            Some(row) => row.get::<u32>(0).unwrap_or(0),
+            None => 0,
+        }
+    };
+
+    for migration in TURSO_MIGRATIONS {
+        if migration.version <= current_version {
+            continue;
+        }
+        for sql in migration.statements {
+            match conn.execute(sql, ()).await {
+                Ok(_) => {}
+                // Backward-compat: column already exists from pre-versioned setup.
+                Err(e) if e.to_string().contains("duplicate column") => {}
+                Err(e) => {
+                    return Err(anyhow!(
+                        "Turso migration v{} failed ({}): {e}",
+                        migration.version,
+                        migration.description
+                    ));
+                }
+            }
+        }
+        conn.execute(
+            "INSERT INTO schema_version (version, description) VALUES (?1, ?2)",
+            libsql::params![migration.version, migration.description],
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "failed to record Turso migration v{}: {}",
+                migration.version, migration.description
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// TursoMemoryStore
+// ---------------------------------------------------------------------------
+
 pub struct TursoMemoryStore {
     _db: libsql::Database,
     conn: tokio::sync::Mutex<libsql::Connection>,
@@ -97,6 +201,10 @@ impl TursoMemoryStore {
         .await
         .context("failed to ensure memory schema in Turso")?;
 
+        run_turso_migrations(&conn)
+            .await
+            .context("failed to run Turso migrations")?;
+
         Ok(Self {
             _db: db,
             conn: tokio::sync::Mutex::new(conn),
@@ -104,13 +212,43 @@ impl TursoMemoryStore {
     }
 }
 
+/// Helper: map a Turso row to a [`MemoryEntry`] (columns 0–7).
+fn turso_row_to_entry(row: &libsql::Row) -> anyhow::Result<MemoryEntry> {
+    Ok(MemoryEntry {
+        role: row.get::<String>(0).context("invalid role column")?,
+        content: row.get::<String>(1).context("invalid content column")?,
+        privacy_boundary: row.get::<String>(2).unwrap_or_default(),
+        source_channel: row.get::<Option<String>>(3).unwrap_or_default(),
+        conversation_id: row.get::<String>(4).unwrap_or_default(),
+        created_at: row.get::<Option<String>>(5).ok().flatten(),
+        expires_at: row.get::<Option<i64>>(6).unwrap_or_default(),
+        org_id: row.get::<String>(7).unwrap_or_default(),
+    })
+}
+
+fn now_epoch_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
 #[async_trait]
 impl MemoryStore for TursoMemoryStore {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
         let conn = self.conn.lock().await;
         conn.execute(
-            "INSERT INTO memory(role, content) VALUES(?1, ?2)",
-            libsql::params![entry.role, entry.content],
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            libsql::params![
+                entry.role,
+                entry.content,
+                entry.privacy_boundary,
+                entry.source_channel,
+                entry.conversation_id,
+                entry.expires_at,
+                entry.org_id
+            ],
         )
         .await
         .context("failed to append memory entry in Turso")?;
@@ -119,36 +257,158 @@ impl MemoryStore for TursoMemoryStore {
 
     async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
         let conn = self.conn.lock().await;
+        let now = now_epoch_secs();
         let mut rows = conn
             .query(
-                "SELECT role, content FROM memory ORDER BY id DESC LIMIT ?1",
-                libsql::params![limit as i64],
+                "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                        datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                 FROM memory
+                 WHERE expires_at IS NULL OR expires_at > ?1
+                 ORDER BY id DESC LIMIT ?2",
+                libsql::params![now, limit as i64],
             )
             .await
             .context("failed to query memory entries from Turso")?;
 
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.context("failed to read Turso row")? {
-            out.push(MemoryEntry {
-                role: row.get::<String>(0).context("invalid role column type")?,
-                content: row
-                    .get::<String>(1)
-                    .context("invalid content column type")?,
-                ..Default::default()
-            });
+            out.push(turso_row_to_entry(&row)?);
         }
         out.reverse();
         Ok(out)
+    }
+
+    async fn recent_for_boundary(
+        &self,
+        limit: usize,
+        boundary: &str,
+        source_channel: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let conn = self.conn.lock().await;
+        let now = now_epoch_secs();
+        let boundary_owned = boundary.to_string();
+        let source_owned = source_channel.map(|s| s.to_string());
+        let mut rows = conn
+            .query(
+                "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                        datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                 FROM memory
+                 WHERE (expires_at IS NULL OR expires_at > ?1)
+                   AND (privacy_boundary = '' OR privacy_boundary = ?2
+                        OR privacy_boundary IN ('any', 'inherit')
+                        OR (?2 = 'local_only' AND privacy_boundary = 'encrypted_only'))
+                   AND (?3 IS NULL OR source_channel IS NULL OR source_channel = ?3)
+                 ORDER BY id DESC LIMIT ?4",
+                libsql::params![now, boundary_owned, source_owned, limit as i64],
+            )
+            .await
+            .context("failed to query boundary-filtered entries from Turso")?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.context("failed to read Turso row")? {
+            out.push(turso_row_to_entry(&row)?);
+        }
+        out.reverse();
+        Ok(out)
+    }
+
+    async fn recent_for_conversation(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let conn = self.conn.lock().await;
+        let now = now_epoch_secs();
+        let cid = conversation_id.to_string();
+        let mut rows = conn
+            .query(
+                "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                        datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                 FROM memory
+                 WHERE conversation_id = ?1
+                   AND (expires_at IS NULL OR expires_at > ?2)
+                 ORDER BY id DESC LIMIT ?3",
+                libsql::params![cid, now, limit as i64],
+            )
+            .await
+            .context("failed to query conversation entries from Turso")?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.context("failed to read Turso row")? {
+            out.push(turso_row_to_entry(&row)?);
+        }
+        out.reverse();
+        Ok(out)
+    }
+
+    async fn fork_conversation(&self, from_id: &str, new_id: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().await;
+        let now = now_epoch_secs();
+        conn.execute(
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id)
+             SELECT role, content, privacy_boundary, source_channel, ?1, expires_at, org_id
+             FROM memory
+             WHERE conversation_id = ?2
+               AND (expires_at IS NULL OR expires_at > ?3)
+             ORDER BY id",
+            libsql::params![new_id, from_id, now],
+        )
+        .await
+        .context("failed to fork conversation in Turso")?;
+        Ok(())
+    }
+
+    async fn list_conversations(&self) -> anyhow::Result<Vec<String>> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT DISTINCT conversation_id FROM memory
+                 WHERE conversation_id != ''
+                 ORDER BY conversation_id",
+                (),
+            )
+            .await
+            .context("failed to list conversations in Turso")?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.context("failed to read Turso row")? {
+            out.push(row.get::<String>(0).context("invalid conversation_id")?);
+        }
+        Ok(out)
+    }
+
+    async fn gc_expired(&self) -> anyhow::Result<u64> {
+        let conn = self.conn.lock().await;
+        let now = now_epoch_secs();
+        let deleted = conn
+            .execute(
+                "DELETE FROM memory WHERE expires_at IS NOT NULL AND expires_at <= ?1",
+                libsql::params![now],
+            )
+            .await
+            .context("failed to gc expired entries in Turso")?;
+        Ok(deleted as u64)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SecretToken, TursoMemoryStore, TursoSettings};
+    use super::*;
     use agentzero_core::MemoryStore;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Current max migration version for assertions.
+    fn current_turso_schema_version() -> u32 {
+        TURSO_MIGRATIONS.last().map(|m| m.version).unwrap_or(0)
+    }
+
+    #[test]
+    fn turso_migration_count_matches_sqlite() {
+        // Keep Turso and SQLite migration counts in sync.
+        assert_eq!(current_turso_schema_version(), 4);
+    }
 
     #[test]
     fn turso_settings_reject_invalid_url_scheme() {

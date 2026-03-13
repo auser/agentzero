@@ -14,6 +14,7 @@ use agentzero_config::AgentZeroConfig;
 use agentzero_core::event_bus::{Event, FileBackedBus, InMemoryBus};
 use agentzero_core::{Agent, AgentEndpoint};
 use agentzero_infra::runtime::{build_runtime_execution, RunAgentRequest};
+use agentzero_storage::SqliteEventBus;
 use agentzero_tools::ConverseTool;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -129,9 +130,46 @@ pub async fn build_swarm_with_presence(
         "building swarm"
     );
 
-    // 1. Create the event bus (file-backed if event_log_path is set)
-    let bus: Arc<dyn agentzero_core::event_bus::EventBus> =
-        if let Some(ref log_path) = swarm_config.event_log_path {
+    // 1. Create the event bus based on config
+    let bus_kind = swarm_config.event_bus.as_deref().unwrap_or_else(|| {
+        // Backward compat: if event_log_path is set, use file backend
+        if swarm_config.event_log_path.is_some() {
+            "file"
+        } else {
+            "memory"
+        }
+    });
+
+    let bus: Arc<dyn agentzero_core::event_bus::EventBus> = match bus_kind {
+        "sqlite" => {
+            let db_path = swarm_config
+                .event_db_path
+                .as_deref()
+                .unwrap_or("data/events.db");
+            let resolved = if Path::new(db_path).is_relative() {
+                workspace_root.join(db_path)
+            } else {
+                db_path.into()
+            };
+            tracing::info!(
+                path = %resolved.display(),
+                retention_days = swarm_config.event_retention_days,
+                "using sqlite event bus"
+            );
+            Arc::new(
+                SqliteEventBus::open(&resolved, swarm_config.event_bus_capacity).map_err(|e| {
+                    anyhow::anyhow!(
+                        "failed to open sqlite event bus at {}: {e}",
+                        resolved.display()
+                    )
+                })?,
+            )
+        }
+        "file" => {
+            let log_path = swarm_config
+                .event_log_path
+                .as_deref()
+                .unwrap_or("data/events.jsonl");
             let resolved = if Path::new(log_path).is_relative() {
                 workspace_root.join(log_path)
             } else {
@@ -145,9 +183,12 @@ pub async fn build_swarm_with_presence(
                         anyhow::anyhow!("failed to open event log at {}: {e}", resolved.display())
                     })?,
             )
-        } else {
+        }
+        _ => {
+            tracing::info!("using in-memory event bus");
             Arc::new(InMemoryBus::new(swarm_config.event_bus_capacity))
-        };
+        }
+    };
 
     // 2. Build the AI router
     let router = if !swarm_config.router.provider.is_empty() {

@@ -90,6 +90,9 @@ pub struct JobRecord {
     /// Agent that successfully claimed this job via [`JobStore::try_claim`].
     /// `None` until a claim succeeds.
     pub claimed_by: Option<String>,
+    /// Organization that owns this job (multi-tenancy isolation).
+    /// `None` for backward compatibility with single-tenant deployments.
+    pub org_id: Option<String>,
 }
 
 /// Thread-safe store for tracking async agent runs.
@@ -124,6 +127,18 @@ impl JobStore {
         lane: Lane,
         parent_run_id: Option<RunId>,
     ) -> RunId {
+        self.submit_for_org(agent_id, lane, parent_run_id, None)
+            .await
+    }
+
+    /// Submit a new job scoped to an organization. Returns the assigned [`RunId`].
+    pub async fn submit_for_org(
+        &self,
+        agent_id: String,
+        lane: Lane,
+        parent_run_id: Option<RunId>,
+        org_id: Option<String>,
+    ) -> RunId {
         let run_id = RunId::new();
         let now = Instant::now();
         let record = JobRecord {
@@ -138,6 +153,7 @@ impl JobStore {
             cost_microdollars: 0,
             tags: HashMap::new(),
             claimed_by: None,
+            org_id,
         };
         self.jobs.write().await.insert(run_id.clone(), record);
         let _ = self.notify.send((run_id.clone(), JobStatus::Pending));
@@ -196,6 +212,17 @@ impl JobStore {
     /// Get a snapshot of a job record.
     pub async fn get(&self, run_id: &RunId) -> Option<JobRecord> {
         self.jobs.read().await.get(run_id).cloned()
+    }
+
+    /// Get a job record, but only if it belongs to the specified org.
+    /// Returns `None` if the job doesn't exist or belongs to a different org.
+    pub async fn get_for_org(&self, run_id: &RunId, org_id: &str) -> Option<JobRecord> {
+        self.jobs
+            .read()
+            .await
+            .get(run_id)
+            .filter(|r| r.org_id.as_deref() == Some(org_id))
+            .cloned()
     }
 
     /// List all jobs for a given parent run (sub-agent tracking).
@@ -286,11 +313,20 @@ impl JobStore {
     /// Emergency stop: cascade-cancel all active root-level runs.
     /// Returns the total list of run IDs that were cancelled (roots + descendants).
     pub async fn emergency_stop_all(&self) -> Vec<RunId> {
-        // Collect all root-level (no parent) non-terminal run IDs.
+        self.emergency_stop_for_org(None).await
+    }
+
+    /// Emergency stop scoped to an organization. When `org_id` is `None`,
+    /// cancels all active roots (backward-compatible).
+    pub async fn emergency_stop_for_org(&self, org_id: Option<&str>) -> Vec<RunId> {
         let roots: Vec<RunId> = {
             let jobs = self.jobs.read().await;
             jobs.values()
                 .filter(|r| r.parent_run_id.is_none() && !r.status.is_terminal())
+                .filter(|r| match org_id {
+                    Some(oid) => r.org_id.as_deref() == Some(oid),
+                    None => true,
+                })
                 .map(|r| r.run_id.clone())
                 .collect()
         };
@@ -305,8 +341,22 @@ impl JobStore {
 
     /// List all jobs, optionally filtered by status string.
     pub async fn list_all(&self, status_filter: Option<&str>) -> Vec<JobRecord> {
+        self.list_all_for_org(status_filter, None).await
+    }
+
+    /// List jobs scoped to an organization, optionally filtered by status.
+    /// When `org_id` is `None`, returns all jobs (backward-compatible).
+    pub async fn list_all_for_org(
+        &self,
+        status_filter: Option<&str>,
+        org_id: Option<&str>,
+    ) -> Vec<JobRecord> {
         let jobs = self.jobs.read().await;
         jobs.values()
+            .filter(|r| match org_id {
+                Some(oid) => r.org_id.as_deref() == Some(oid),
+                None => true,
+            })
             .filter(|r| match status_filter {
                 None => true,
                 Some("pending") => matches!(r.status, JobStatus::Pending),
@@ -853,5 +903,123 @@ mod tests {
         let store = JobStore::new();
         let fake = RunId("run-nope".to_string());
         assert!(!store.try_claim(&fake, "claimer").await);
+    }
+
+    // --- Org isolation tests (Phase F) ---
+
+    #[tokio::test]
+    async fn org_isolation_job_invisible_to_other_org() {
+        let store = JobStore::new();
+        let run_id = store
+            .submit_for_org(
+                "agent".to_string(),
+                Lane::Main,
+                None,
+                Some("org-a".to_string()),
+            )
+            .await;
+
+        // org-a can see it
+        assert!(store.get_for_org(&run_id, "org-a").await.is_some());
+        // org-b cannot
+        assert!(store.get_for_org(&run_id, "org-b").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_all_for_org_filters_correctly() {
+        let store = JobStore::new();
+        store
+            .submit_for_org("a".to_string(), Lane::Main, None, Some("org-a".to_string()))
+            .await;
+        store
+            .submit_for_org("b".to_string(), Lane::Main, None, Some("org-b".to_string()))
+            .await;
+        store
+            .submit_for_org("c".to_string(), Lane::Main, None, Some("org-a".to_string()))
+            .await;
+
+        let org_a_jobs = store.list_all_for_org(None, Some("org-a")).await;
+        assert_eq!(org_a_jobs.len(), 2);
+        assert!(org_a_jobs
+            .iter()
+            .all(|j| j.org_id.as_deref() == Some("org-a")));
+
+        let org_b_jobs = store.list_all_for_org(None, Some("org-b")).await;
+        assert_eq!(org_b_jobs.len(), 1);
+
+        // None org_id returns all
+        let all_jobs = store.list_all_for_org(None, None).await;
+        assert_eq!(all_jobs.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn list_all_for_org_with_status_filter() {
+        let store = JobStore::new();
+        let r1 = store
+            .submit_for_org("a".to_string(), Lane::Main, None, Some("org-a".to_string()))
+            .await;
+        store
+            .submit_for_org("b".to_string(), Lane::Main, None, Some("org-a".to_string()))
+            .await;
+        store.update_status(&r1, JobStatus::Running).await;
+
+        let running = store.list_all_for_org(Some("running"), Some("org-a")).await;
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].agent_id, "a");
+
+        let pending = store.list_all_for_org(Some("pending"), Some("org-a")).await;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].agent_id, "b");
+    }
+
+    #[tokio::test]
+    async fn emergency_stop_for_org_only_cancels_own_jobs() {
+        let store = JobStore::new();
+        let r_a = store
+            .submit_for_org("a".to_string(), Lane::Main, None, Some("org-a".to_string()))
+            .await;
+        store.update_status(&r_a, JobStatus::Running).await;
+
+        let r_b = store
+            .submit_for_org("b".to_string(), Lane::Main, None, Some("org-b".to_string()))
+            .await;
+        store.update_status(&r_b, JobStatus::Running).await;
+
+        let cancelled = store.emergency_stop_for_org(Some("org-a")).await;
+        assert_eq!(cancelled.len(), 1);
+        assert!(cancelled.contains(&r_a));
+
+        // org-b's job should still be running
+        assert_eq!(
+            store
+                .get(&r_b)
+                .await
+                .expect("org-b job should exist")
+                .status,
+            JobStatus::Running
+        );
+    }
+
+    #[tokio::test]
+    async fn submit_for_org_inherits_org_id() {
+        let store = JobStore::new();
+        let run_id = store
+            .submit_for_org(
+                "agent".to_string(),
+                Lane::Main,
+                None,
+                Some("acme-corp".to_string()),
+            )
+            .await;
+        let record = store.get(&run_id).await.expect("job should exist");
+        assert_eq!(record.org_id.as_deref(), Some("acme-corp"));
+    }
+
+    #[tokio::test]
+    async fn backward_compat_submit_has_no_org_id() {
+        let store = JobStore::new();
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+        let record = store.get(&run_id).await.expect("job should exist");
+        assert!(record.org_id.is_none());
     }
 }
