@@ -211,9 +211,9 @@ Wire the event bus into the orchestration layer for real-time cross-component aw
 
 ### Phase F: CI/CD & Hardening (LOW)
 
-- [ ] **Container image scanning** — Trivy or Grype in CI. Fail on CRITICAL/HIGH CVEs.
-- [ ] **SBOM generation** — CycloneDX via `cargo-cyclonedx`. Published as release artifact.
-- [ ] **Fuzz targets** — `cargo-fuzz` for HTTP parsing, provider response parsing, TOML config, WebSocket frames. In `fuzz/` directory.
+- [x] **Container image scanning** — Trivy in CI (`container-scan` job) and release pipeline. Fails on CRITICAL/HIGH CVEs with `ignore-unfixed`.
+- [x] **SBOM generation** — CycloneDX via `cargo-cyclonedx` in release pipeline. Uploaded as `sbom` artifact.
+- [x] **Fuzz targets** — 3 `cargo-fuzz` targets in `fuzz/`: TOML config parsing, JSON event deserialization, gossip wire protocol frame parsing.
 
 ---
 

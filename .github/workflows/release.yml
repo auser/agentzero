@@ -267,7 +267,7 @@ jobs:
           path: dist/*
 
   publish:
-    needs: build
+    needs: [build, sbom]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -309,6 +309,26 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: bash scripts/publish-crates.sh
 
+  sbom:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+      - name: Generate CycloneDX SBOM (JSON)
+        run: |
+          mkdir -p sbom
+          cargo cyclonedx --format json
+          mv bom.json sbom/agentzero-sbom.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sbom/
+
   container:
     needs: build
     runs-on: ubuntu-latest
@@ -342,5 +362,13 @@ jobs:
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.value }}
             ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.semver }}
+      - name: Scan container image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.value }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
 
 
