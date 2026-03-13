@@ -139,6 +139,20 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
             });
     }
 
+    // Wire persistent API key store when a data directory is available.
+    if let Some(ref data_dir) = options.data_dir {
+        match api_keys::ApiKeyStore::persistent(data_dir) {
+            Ok(store) => {
+                let count = store.list_all_count();
+                tracing::info!(keys = count, "loaded persistent API key store");
+                state = state.with_api_key_store(Arc::new(store));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to open persistent API key store");
+            }
+        }
+    }
+
     if let (Some(config_path), Some(workspace_root)) = (options.config_path, options.workspace_root)
     {
         state = state.with_agent_paths(config_path, workspace_root);

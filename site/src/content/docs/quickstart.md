@@ -5,6 +5,10 @@ description: Get AgentZero installed, configured, and running — from first ins
 
 This guide walks you through every step to get AgentZero running, from installation through production deployment.
 
+:::tip[Want an always-on agent fast?]
+If you just want a bot responding on Telegram, Discord, or Slack with tools enabled, see [Always-On Agent in 5 Minutes](/agentzero/guides/always-on/).
+:::
+
 ## Prerequisites
 
 You need **one** of the following:

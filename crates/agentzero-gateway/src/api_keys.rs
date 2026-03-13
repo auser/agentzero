@@ -194,6 +194,11 @@ impl ApiKeyStore {
         Ok(removed)
     }
 
+    /// Return total number of stored keys (all orgs).
+    pub fn list_all_count(&self) -> usize {
+        self.keys.read().expect("api key store lock").len()
+    }
+
     /// List all keys for an org.
     pub fn list(&self, org_id: &str) -> Vec<ApiKeyRecord> {
         let keys = self.keys.read().expect("api key store lock");

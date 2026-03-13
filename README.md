@@ -337,6 +337,7 @@ See [examples/](examples/) for ready-to-use configurations:
 
 ## Documentation
 
+- [Always-On Agent in 5 Minutes](https://auser.github.io/agentzero/guides/always-on/) — Zero to a Telegram/Discord/Slack bot with tools
 - [Quick Start](https://auser.github.io/agentzero/quickstart/) — Installation through production deployment
 - [Configuration Reference](https://auser.github.io/agentzero/config/reference/) — Full annotated `agentzero.toml`
 - [CLI Commands](https://auser.github.io/agentzero/reference/commands/) — Complete command reference
