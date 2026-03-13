@@ -188,10 +188,10 @@ Complete the distributed event bus with TCP gossip for multi-instance deployment
 
 ### Phase C: CLI API Key Management (MEDIUM)
 
-- [ ] **`auth api-key create`** — Generates key with specified scopes and optional org_id. Returns raw key once. Wired to persistent `ApiKeyStore`.
-- [ ] **`auth api-key revoke`** — Deactivates a key by key_id.
-- [ ] **`auth api-key list`** — Shows active keys (masked) filtered by org_id.
-- [ ] **Tests** — Create, list, revoke lifecycle. Scope enforcement. 4+ tests.
+- [x] **`auth api-key create`** — Creates key with `--org-id`, `--user-id`, `--scopes` (comma-separated), optional `--expires-at`. Returns raw key (shown once). Validates scopes, rejects empty/invalid. Wired to persistent `ApiKeyStore` via `EncryptedJsonStore`.
+- [x] **`auth api-key revoke`** — Removes key by key_id. Prints "not found" for unknown keys.
+- [x] **`auth api-key list`** — Lists keys for org (`--org-id`). Supports `--json` for machine-readable output.
+- [x] **Tests** — 4 tests: create-revoke lifecycle, list empty org, reject invalid scopes, revoke unknown key. All gated behind `gateway` feature.
 
 ### Phase D: EventBus Integration Wiring (MEDIUM)
 
@@ -221,7 +221,7 @@ Wire the event bus into the orchestration layer for real-time cross-component aw
 
 - [x] AI/keyword tool selector reduces tool set passed to provider
 - [x] Gossip layer enables multi-instance event propagation over TCP
-- [ ] CLI commands manage full API key lifecycle (create/revoke/list)
+- [x] CLI commands manage full API key lifecycle (create/revoke/list)
 - [ ] Event bus wired into JobStore and PresenceStore for real-time events
 - [ ] WhatsApp Cloud API channel wired and config-registered
 - [ ] SMS (Twilio) channel sends and health-checks via REST API

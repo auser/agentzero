@@ -29,6 +29,7 @@ interactive = ["dep:inquire", "dep:console"]
 privacy = ["agentzero-core/privacy", "agentzero-gateway?/privacy"]
 telemetry = ["agentzero-infra/telemetry", "agentzero-gateway?/telemetry"]
 local-model = ["agentzero-infra/local-model"]
+config-ui = ["dep:agentzero-config-ui"]
 
 [dependencies]
 anyhow.workspace = true
@@ -45,6 +46,7 @@ agentzero-plugins = { workspace = true, optional = true }
 agentzero-providers = { workspace = true }
 agentzero-storage = { workspace = true }
 agentzero-tools = { workspace = true }
+agentzero-config-ui = { workspace = true, optional = true }
 base64 = "0.22"
 console = { version = "0.15", optional = true }
 crossterm = { version = "0.28", optional = true }

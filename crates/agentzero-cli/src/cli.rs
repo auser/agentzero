@@ -304,6 +304,19 @@ pub enum Commands {
         #[command(subcommand)]
         command: BackupCommands,
     },
+    /// Open the visual node graph configuration editor.
+    #[cfg(feature = "config-ui")]
+    ConfigUi {
+        /// Port for the config UI server.
+        #[arg(long, default_value_t = 42618)]
+        port: u16,
+        /// Config file to edit (defaults to agentzero.toml in current directory).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Launch as native Tauri window instead of browser (future).
+        #[arg(long)]
+        native: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -907,6 +920,44 @@ pub enum AuthCommands {
     },
     /// Show auth status with active profile and token expiry info.
     Status {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manage gateway API keys (create, revoke, list).
+    ApiKey {
+        #[command(subcommand)]
+        command: ApiKeyCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ApiKeyCommands {
+    /// Create a new API key for gateway access.
+    Create {
+        /// Organization ID for multi-tenancy isolation.
+        #[arg(long)]
+        org_id: String,
+        /// User ID associated with this key.
+        #[arg(long, default_value = "cli")]
+        user_id: String,
+        /// Comma-separated scopes: runs:read, runs:write, runs:manage, admin.
+        #[arg(long, value_delimiter = ',')]
+        scopes: Vec<String>,
+        /// Unix timestamp for key expiration (optional).
+        #[arg(long)]
+        expires_at: Option<u64>,
+    },
+    /// Revoke an API key by its key ID.
+    Revoke {
+        /// Key ID to revoke (e.g. azk_a1b2c3d4e5f6).
+        key_id: String,
+    },
+    /// List API keys for an organization.
+    List {
+        /// Organization ID to filter keys by.
+        #[arg(long)]
+        org_id: String,
         /// Emit machine-readable JSON output.
         #[arg(long)]
         json: bool,

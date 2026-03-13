@@ -181,5 +181,11 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             commands::privacy::PrivacyCommand::run(&ctx, command).await
         }
         Commands::Backup { command } => commands::backup::BackupCommand::run(&ctx, command).await,
+        #[cfg(feature = "config-ui")]
+        Commands::ConfigUi {
+            port,
+            config,
+            native: _,
+        } => agentzero_config_ui::start_config_ui(config, port, true).await,
     }
 }

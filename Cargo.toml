@@ -17,6 +17,7 @@ members = [
   "crates/agentzero-storage",
   "crates/agentzero-ffi",
   "crates/agentzero-plugin-sdk",
+  "crates/agentzero-config-ui",
 ]
 default-members = ["bin/agentzero"]
 resolver = "2"
@@ -52,6 +53,7 @@ agentzero-testkit = { path = "crates/agentzero-testkit", version = "0.5.6" }
 agentzero-tools = { path = "crates/agentzero-tools", default-features = false, version = "0.5.6" }
 agentzero-ffi = { path = "crates/agentzero-ffi", version = "0.5.6" }
 agentzero-plugin-sdk = { path = "crates/agentzero-plugin-sdk", version = "0.5.6" }
+agentzero-config-ui = { path = "crates/agentzero-config-ui", version = "0.5.6" }
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart"] }
 rusqlite = { version = "0.31", default-features = false }

@@ -388,6 +388,104 @@ impl AgentZeroCommand for AuthCommand {
                     .with_context(|| format!("failed to activate profile `{profile}`"))?;
                 println!("active auth profile set to `{profile}` for provider `{provider}`");
             }
+            AuthCommands::ApiKey { command } => {
+                run_api_key_command(&ctx.data_dir, command)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn run_api_key_command(
+    data_dir: &std::path::Path,
+    command: crate::cli::ApiKeyCommands,
+) -> anyhow::Result<()> {
+    #[cfg(not(feature = "gateway"))]
+    {
+        let _ = (data_dir, command);
+        bail!(
+            "API key management requires the `gateway` feature. Rebuild with `--features gateway`."
+        );
+    }
+
+    #[cfg(feature = "gateway")]
+    {
+        use agentzero_gateway::api_keys::{ApiKeyStore, Scope};
+
+        let store = ApiKeyStore::persistent(data_dir)
+            .with_context(|| format!("failed to open API key store at {}", data_dir.display()))?;
+
+        match command {
+            crate::cli::ApiKeyCommands::Create {
+                org_id,
+                user_id,
+                scopes,
+                expires_at,
+            } => {
+                let scope_set: std::collections::HashSet<Scope> = scopes
+                    .iter()
+                    .filter_map(|s| {
+                        Scope::parse(s.trim()).or_else(|| {
+                            eprintln!("warning: unknown scope '{}', skipping", s);
+                            None
+                        })
+                    })
+                    .collect();
+
+                if scope_set.is_empty() {
+                    bail!(
+                        "no valid scopes provided. Available: runs:read, runs:write, runs:manage, admin"
+                    );
+                }
+
+                let (raw_key, record) = store.create(&org_id, &user_id, scope_set, expires_at)?;
+                println!("Created API key:");
+                println!("  Key ID:  {}", record.key_id);
+                println!("  Org:     {}", record.org_id);
+                println!("  User:    {}", record.user_id);
+                println!(
+                    "  Scopes:  {}",
+                    record
+                        .scopes
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                if let Some(exp) = record.expires_at {
+                    println!("  Expires: {exp}");
+                }
+                println!();
+                println!("  Raw key (save this — it will not be shown again):");
+                println!("  {raw_key}");
+            }
+            crate::cli::ApiKeyCommands::Revoke { key_id } => {
+                if store.revoke(&key_id)? {
+                    println!("Revoked API key: {key_id}");
+                } else {
+                    println!("API key not found: {key_id}");
+                }
+            }
+            crate::cli::ApiKeyCommands::List { org_id, json } => {
+                let keys = store.list(&org_id);
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&keys)?);
+                } else if keys.is_empty() {
+                    println!("No API keys found for org '{org_id}'.");
+                } else {
+                    println!("API keys for org '{org_id}':");
+                    for key in &keys {
+                        let scopes_str: Vec<&str> = key.scopes.iter().map(|s| s.as_str()).collect();
+                        println!(
+                            "  {}  user={}  scopes=[{}]",
+                            key.key_id,
+                            key.user_id,
+                            scopes_str.join(", ")
+                        );
+                    }
+                    println!("\n{} key(s) total.", keys.len());
+                }
+            }
         }
         Ok(())
     }
@@ -1231,5 +1329,124 @@ mod tests {
 
         let rendered = render_auth_status_text(&status, &[], &[]);
         assert_eq!(rendered, "No auth profiles configured.");
+    }
+
+    // -----------------------------------------------------------------------
+    // API Key CLI command tests (require `gateway` feature)
+    // -----------------------------------------------------------------------
+
+    #[cfg(feature = "gateway")]
+    mod api_key_tests {
+        use super::*;
+
+        fn temp_dir() -> std::path::PathBuf {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static CTR: AtomicU64 = AtomicU64::new(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            let seq = CTR.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "agentzero-cli-apikey-{}-{now}-{seq}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&dir).expect("create temp dir");
+            dir
+        }
+
+        #[test]
+        fn api_key_create_revoke_lifecycle() {
+            use crate::cli::ApiKeyCommands;
+            let dir = temp_dir();
+
+            // Create
+            let result = super::super::run_api_key_command(
+                &dir,
+                ApiKeyCommands::Create {
+                    org_id: "test-org".to_string(),
+                    user_id: "test-user".to_string(),
+                    scopes: vec!["runs:read".to_string(), "runs:write".to_string()],
+                    expires_at: None,
+                },
+            );
+            assert!(result.is_ok(), "create should succeed");
+
+            // List
+            let store =
+                agentzero_gateway::api_keys::ApiKeyStore::persistent(&dir).expect("open store");
+            let keys = store.list("test-org");
+            assert_eq!(keys.len(), 1);
+            let key_id = keys[0].key_id.clone();
+
+            // Revoke
+            let result = super::super::run_api_key_command(
+                &dir,
+                ApiKeyCommands::Revoke {
+                    key_id: key_id.clone(),
+                },
+            );
+            assert!(result.is_ok(), "revoke should succeed");
+
+            // Verify revoked
+            let store2 =
+                agentzero_gateway::api_keys::ApiKeyStore::persistent(&dir).expect("reload store");
+            assert!(store2.list("test-org").is_empty());
+
+            fs::remove_dir_all(dir).ok();
+        }
+
+        #[test]
+        fn api_key_list_empty_org() {
+            use crate::cli::ApiKeyCommands;
+            let dir = temp_dir();
+
+            let result = super::super::run_api_key_command(
+                &dir,
+                ApiKeyCommands::List {
+                    org_id: "nonexistent".to_string(),
+                    json: false,
+                },
+            );
+            assert!(result.is_ok());
+
+            fs::remove_dir_all(dir).ok();
+        }
+
+        #[test]
+        fn api_key_create_rejects_empty_scopes() {
+            use crate::cli::ApiKeyCommands;
+            let dir = temp_dir();
+
+            let result = super::super::run_api_key_command(
+                &dir,
+                ApiKeyCommands::Create {
+                    org_id: "org".to_string(),
+                    user_id: "user".to_string(),
+                    scopes: vec!["invalid_scope".to_string()],
+                    expires_at: None,
+                },
+            );
+            assert!(result.is_err(), "should reject invalid scopes");
+
+            fs::remove_dir_all(dir).ok();
+        }
+
+        #[test]
+        fn api_key_revoke_unknown_key() {
+            use crate::cli::ApiKeyCommands;
+            let dir = temp_dir();
+
+            let result = super::super::run_api_key_command(
+                &dir,
+                ApiKeyCommands::Revoke {
+                    key_id: "azk_nonexistent".to_string(),
+                },
+            );
+            // Should succeed (prints "not found" but doesn't error).
+            assert!(result.is_ok());
+
+            fs::remove_dir_all(dir).ok();
+        }
     }
 }
