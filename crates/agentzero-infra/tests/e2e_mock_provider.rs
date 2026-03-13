@@ -186,6 +186,7 @@ async fn agent_single_turn_no_tools() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hi".to_string())
@@ -217,6 +218,7 @@ async fn agent_with_echo_tool() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     let output = run_agent_with_runtime(
@@ -256,6 +258,7 @@ async fn agent_respects_max_iterations() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     // The loop runs `max_tool_iterations` iterations (0..2). Each iteration
@@ -290,6 +293,7 @@ async fn agent_with_failing_provider_returns_error() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hello".to_string())

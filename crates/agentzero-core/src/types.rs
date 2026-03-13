@@ -215,6 +215,10 @@ pub struct AgentConfig {
     pub cost_calculator: Option<Arc<dyn Fn(u64, u64) -> u64 + Send + Sync>>,
     /// Per-tool execution timeout in milliseconds (0 = no timeout). Default: 120_000 (2 min).
     pub tool_timeout_ms: u64,
+    /// Tool selection strategy: "all" (default), "keyword", or "ai".
+    pub tool_selection: ToolSelectionMode,
+    /// Optional override model for AI-based tool selection (cheaper/faster model).
+    pub tool_selection_model: Option<String>,
 }
 
 impl Default for AgentConfig {
@@ -239,6 +243,8 @@ impl Default for AgentConfig {
             tool_boundaries: HashMap::new(),
             cost_calculator: None,
             tool_timeout_ms: 120_000,
+            tool_selection: ToolSelectionMode::All,
+            tool_selection_model: None,
         }
     }
 }
@@ -586,6 +592,63 @@ impl ToolDefinition {
             input_schema: schema,
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tool selection
+// ---------------------------------------------------------------------------
+
+/// Strategy for selecting which tools to pass to the LLM provider.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolSelectionMode {
+    /// Pass all available tools (default, backward-compatible).
+    #[default]
+    All,
+    /// Use keyword/TF-IDF matching on tool descriptions. No LLM call.
+    Keyword,
+    /// Use a lightweight LLM call to classify relevant tools.
+    Ai,
+}
+
+impl std::fmt::Display for ToolSelectionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::All => write!(f, "all"),
+            Self::Keyword => write!(f, "keyword"),
+            Self::Ai => write!(f, "ai"),
+        }
+    }
+}
+
+impl std::str::FromStr for ToolSelectionMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "all" => Ok(Self::All),
+            "keyword" => Ok(Self::Keyword),
+            "ai" => Ok(Self::Ai),
+            other => Err(format!("unknown tool selection mode: {other}")),
+        }
+    }
+}
+
+/// Lightweight summary of a tool for selection purposes (name + description only).
+#[derive(Debug, Clone)]
+pub struct ToolSummary {
+    pub name: String,
+    pub description: String,
+}
+
+/// Selects a subset of tools relevant to a given task.
+#[async_trait]
+pub trait ToolSelector: Send + Sync {
+    /// Given a task description and available tools, return the names of relevant tools.
+    async fn select(
+        &self,
+        task_description: &str,
+        available_tools: &[ToolSummary],
+    ) -> anyhow::Result<Vec<String>>;
 }
 
 /// The LLM's request to invoke a tool (from a tool_use response).

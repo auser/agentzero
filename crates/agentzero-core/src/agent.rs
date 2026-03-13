@@ -5,7 +5,7 @@ use crate::types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ConversationMessage,
     HookEvent, HookFailureMode, HookRiskTier, HookSink, LoopAction, MemoryEntry, MemoryStore,
     MetricsSink, Provider, ResearchTrigger, StopReason, StreamSink, Tool, ToolContext,
-    ToolDefinition, ToolResultMessage, ToolUseRequest, UserMessage,
+    ToolDefinition, ToolResultMessage, ToolSelector, ToolSummary, ToolUseRequest, UserMessage,
 };
 use crate::validation::validate_json;
 use serde_json::json;
@@ -327,6 +327,7 @@ pub struct Agent {
     hooks: Option<Box<dyn HookSink>>,
     metrics: Option<Box<dyn MetricsSink>>,
     loop_detection_config: Option<LoopDetectionConfig>,
+    tool_selector: Option<Box<dyn ToolSelector>>,
 }
 
 impl Agent {
@@ -345,6 +346,7 @@ impl Agent {
             hooks: None,
             metrics: None,
             loop_detection_config: None,
+            tool_selector: None,
         }
     }
 
@@ -366,6 +368,11 @@ impl Agent {
 
     pub fn with_metrics(mut self, metrics: Box<dyn MetricsSink>) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    pub fn with_tool_selector(mut self, selector: Box<dyn ToolSelector>) -> Self {
+        self.tool_selector = Some(selector);
         self
     }
 
@@ -967,7 +974,40 @@ impl Agent {
         )
         .await;
 
-        let tool_definitions = self.build_tool_definitions();
+        let all_tool_definitions = self.build_tool_definitions();
+
+        // Apply tool selection if a selector is configured.
+        let tool_definitions = if let Some(ref selector) = self.tool_selector {
+            let summaries: Vec<ToolSummary> = all_tool_definitions
+                .iter()
+                .map(|td| ToolSummary {
+                    name: td.name.clone(),
+                    description: td.description.clone(),
+                })
+                .collect();
+            match selector.select(user_text, &summaries).await {
+                Ok(selected_names) => {
+                    let selected: Vec<ToolDefinition> = all_tool_definitions
+                        .iter()
+                        .filter(|td| selected_names.contains(&td.name))
+                        .cloned()
+                        .collect();
+                    info!(
+                        total = all_tool_definitions.len(),
+                        selected = selected.len(),
+                        mode = %self.config.tool_selection,
+                        "tool selection applied"
+                    );
+                    selected
+                }
+                Err(e) => {
+                    warn!(error = %e, "tool selection failed, falling back to all tools");
+                    all_tool_definitions
+                }
+            }
+        } else {
+            all_tool_definitions
+        };
 
         // Load recent memory and convert to conversation messages.
         let recent_memory = if let Some(ref cid) = ctx.conversation_id {

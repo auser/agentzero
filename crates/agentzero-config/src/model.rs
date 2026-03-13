@@ -548,6 +548,12 @@ pub struct AgentSettings {
     /// Per-tool execution timeout in milliseconds (0 = no timeout). Default: 120_000 (2 min).
     #[serde(default = "default_tool_timeout_ms")]
     pub tool_timeout_ms: u64,
+    /// Tool selection strategy: "all" (default), "keyword", or "ai".
+    #[serde(default)]
+    pub tool_selection: Option<String>,
+    /// Optional override model for AI-based tool selection (cheaper/faster model).
+    #[serde(default)]
+    pub tool_selection_model: Option<String>,
 }
 
 fn default_tool_timeout_ms() -> u64 {
@@ -573,6 +579,8 @@ impl Default for AgentSettings {
             max_cost_usd: None,
             max_tokens: None,
             tool_timeout_ms: default_tool_timeout_ms(),
+            tool_selection: None,
+            tool_selection_model: None,
         }
     }
 }

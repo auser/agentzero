@@ -49,6 +49,7 @@ fn static_execution(response: &str) -> RuntimeExecution {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     }
 }
 
@@ -71,6 +72,7 @@ fn streaming_execution(response: &str) -> RuntimeExecution {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     }
 }
 
@@ -170,6 +172,7 @@ async fn run_agent_once_records_audit_events() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "test".to_string())
@@ -200,6 +203,7 @@ async fn run_agent_once_provider_error_propagates() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hello".to_string())
@@ -403,6 +407,7 @@ async fn full_loop_agent_with_tool_call_round_trip() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     let output = run_agent_with_runtime(

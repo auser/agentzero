@@ -64,6 +64,8 @@ pub struct RuntimeExecution {
     pub cost_config: agentzero_config::CostConfig,
     /// Data directory for persistent cost tracking.
     pub data_dir: PathBuf,
+    /// Optional tool selector for AI/keyword-based tool filtering.
+    pub tool_selector: Option<Box<dyn agentzero_core::ToolSelector>>,
 }
 
 struct AuditHookSink {
@@ -269,6 +271,14 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             tool_boundaries: config.security.tool_boundaries.clone(),
             cost_calculator,
             tool_timeout_ms: config.agent.tool_timeout_ms,
+            tool_selection: config
+                .agent
+                .tool_selection
+                .clone()
+                .unwrap_or_default()
+                .parse()
+                .unwrap_or(agentzero_core::ToolSelectionMode::All),
+            tool_selection_model: config.agent.tool_selection_model.clone(),
         },
         provider,
         memory,
@@ -303,6 +313,13 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf(),
+        tool_selector: match config.agent.tool_selection.as_deref().unwrap_or("all") {
+            "keyword" => Some(Box::new(
+                crate::tool_selection::KeywordToolSelector::default(),
+            )),
+            // "ai" selector requires a provider — wired at a higher level.
+            _ => None,
+        },
     })
 }
 
@@ -365,6 +382,9 @@ pub fn run_agent_streaming(
         }
         if let Some(hooks) = execution.hook_sink {
             agent = agent.with_hooks(hooks);
+        }
+        if let Some(selector) = execution.tool_selector {
+            agent = agent.with_tool_selector(selector);
         }
 
         let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
@@ -431,6 +451,9 @@ pub async fn run_agent_with_runtime(
     }
     if let Some(hooks) = execution.hook_sink {
         agent = agent.with_hooks(hooks);
+    }
+    if let Some(selector) = execution.tool_selector {
+        agent = agent.with_tool_selector(selector);
     }
 
     let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
@@ -1128,6 +1151,7 @@ mod tests {
             max_cost_microdollars: 0,
             cost_config: Default::default(),
             data_dir: std::path::PathBuf::from("/tmp"),
+            tool_selector: None,
         }
     }
 

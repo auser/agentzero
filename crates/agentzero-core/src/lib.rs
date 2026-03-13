@@ -32,6 +32,6 @@ pub use types::{
     LoopAction, MemoryEntry, MemoryStore, MergeStrategy, MetricsSink, Provider, QueueMode,
     ReasoningConfig, ResearchPolicy, ResearchTrigger, RunId, StopReason, StreamChunk, StreamSink,
     Tool, ToolCallDelta, ToolContext, ToolDefinition, ToolResult, ToolResultMessage,
-    ToolUseRequest, UserMessage,
+    ToolSelectionMode, ToolSelector, ToolSummary, ToolUseRequest, UserMessage,
 };
 pub use validation::validate_json;

@@ -152,6 +152,7 @@ async fn e2e_basic_completion() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     let output = run_agent_with_runtime(execution, workspace_root(), "Say hello.".to_string())
@@ -181,6 +182,7 @@ async fn e2e_agent_with_echo_tool() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     let output = run_agent_with_runtime(
@@ -222,6 +224,7 @@ async fn e2e_multi_turn_memory() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     let output1 = run_agent_with_runtime(
@@ -261,6 +264,7 @@ async fn e2e_multi_turn_memory() {
         max_cost_microdollars: 0,
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
+        tool_selector: None,
     };
 
     let output2 =
