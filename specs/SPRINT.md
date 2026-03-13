@@ -134,11 +134,11 @@ Wire the existing WhatsApp Cloud API channel into the config pipeline and add a 
 
 ### Acceptance Criteria
 
-- [ ] Embedded event bus works with SQLite persistence (no Redis)
+- [x] Embedded event bus works with SQLite persistence (no Redis)
 - [ ] Gossip layer enables multi-instance event propagation over TCP
-- [ ] All request handlers use typed structs with validation
-- [ ] Circuit breaker wraps provider calls transparently
-- [ ] Liveness probe verifies async runtime health
+- [x] All request handlers use typed structs with validation
+- [x] Circuit breaker wraps provider calls transparently
+- [x] Liveness probe verifies async runtime health
 - [x] Turso migrations tracked with version table
 - [x] Org isolation prevents cross-tenant data access
 - [ ] API key CLI commands manage full key lifecycle
@@ -156,7 +156,92 @@ Wire the existing WhatsApp Cloud API channel into the config pipeline and add a 
 
 ---
 
+## Sprint 40: AI Tool Selection, GossipEventBus, CLI API Key Management, WhatsApp/SMS
+
+**Goal:** Ship the strategic AI tool selection feature (reducing token waste on large tool sets), complete the distributed event bus with gossip layer, add CLI-based API key lifecycle management, and wire WhatsApp + SMS channels.
+
+**Baseline:** Sprint 39 phases A-F complete (2,184 tests, 0 clippy warnings). SQLite event bus, Turso migrations, multi-tenancy isolation, typed responses, circuit breaker wiring, liveness probe all shipped.
+
+---
+
+### Phase A: AI-Based Tool Selection (HIGH)
+
+When an agent has access to many tools, use AI to select relevant tools by name and description rather than passing all tools to every provider call. Reduces token usage and improves response quality.
+
+**Tasks:**
+
+- [ ] **`ToolSelector` trait** — `select(task_description, available_tools) -> Vec<ToolDef>`. Input: task/message text + list of `(name, description)` pairs. Output: ranked subset of relevant tools. In `agentzero-core`.
+- [ ] **`AiToolSelector`** — Uses a lightweight LLM call (provider's cheapest model or builtin) to classify which tools are relevant. Prompt: "Given this task, select the most relevant tools from this list." Returns tool names. Cached per unique task hash for the session. In `agentzero-infra`.
+- [ ] **`KeywordToolSelector`** — Fallback: keyword/TF-IDF matching on tool descriptions. No LLM call needed. Fast but less accurate. In `agentzero-infra`.
+- [ ] **Integration** — `Agent::respond_with_tools()` optionally runs tool selection before provider call when `tool_selection = "ai" | "keyword" | "all"` (default: `"all"` for backward compat). Selected tools passed to provider instead of full set.
+- [ ] **Config** — `[agent] tool_selection = "all" | "ai" | "keyword"`, `tool_selection_model` (optional override).
+- [ ] **Tests** — Keyword selector matches on description. "all" mode passes everything. Cache hit on repeated task. 6+ tests.
+
+### Phase B: GossipEventBus (MEDIUM)
+
+Complete the distributed event bus with TCP gossip for multi-instance deployments.
+
+- [ ] **`GossipEventBus`** — TCP mesh layer wrapping `SqliteEventBus`. Each node listens on configurable port. Broadcasts events to peers via length-prefixed bincode frames. Deduplication via event ID set (bounded LRU). Peer health via periodic ping. In `agentzero-orchestrator`.
+- [ ] **Config** — `[swarm] event_bus = "gossip"`, `gossip_port`, `gossip_peers` list. Falls back to `SqliteEventBus` for local persistence.
+- [ ] **Tests** — Two-node gossip relay, deduplication, peer disconnect recovery. 4+ tests.
+
+### Phase C: CLI API Key Management (MEDIUM)
+
+- [ ] **`auth api-key create`** — Generates key with specified scopes and optional org_id. Returns raw key once. Wired to persistent `ApiKeyStore`.
+- [ ] **`auth api-key revoke`** — Deactivates a key by key_id.
+- [ ] **`auth api-key list`** — Shows active keys (masked) filtered by org_id.
+- [ ] **Tests** — Create, list, revoke lifecycle. Scope enforcement. 4+ tests.
+
+### Phase D: EventBus Integration Wiring (MEDIUM)
+
+Wire the event bus into the orchestration layer for real-time cross-component awareness.
+
+- [ ] **JobStore integration** — Publish events on job state transitions (pending→running→completed/failed/cancelled). Topic: `job.{status}`.
+- [ ] **PresenceStore integration** — Publish heartbeat events. Topic: `presence.heartbeat`.
+- [ ] **Gateway SSE/WebSocket** — Subscribe to event bus for real-time push to clients. Replace polling with event-driven updates.
+- [ ] **Tests** — JobStore publishes on state change. Gateway receives events. 4+ tests.
+
+### Phase E: WhatsApp & SMS Channels (MEDIUM)
+
+- [ ] **WhatsApp wiring** — Add `"whatsapp"` arm to `register_one()` in `channel_setup.rs`. Maps config fields. 2 tests.
+- [ ] **`sms.rs`** — New Twilio SMS channel: `send()` via Twilio REST API (Basic auth, form-encoded body, 1600-char chunking), `listen()` webhook stub, `health_check()`. 4+ tests.
+- [ ] **Feature flag** — `channel-sms = ["reqwest"]` in `Cargo.toml`. Add to `channels-standard` and `all-channels`.
+- [ ] **Catalog + registration** — `sms => (SmsChannel, SMS_DESCRIPTOR)` in `channel_catalog!`; `"sms"` arm in `register_one()`.
+
+### Phase F: CI/CD & Hardening (LOW)
+
+- [ ] **Container image scanning** — Trivy or Grype in CI. Fail on CRITICAL/HIGH CVEs.
+- [ ] **SBOM generation** — CycloneDX via `cargo-cyclonedx`. Published as release artifact.
+- [ ] **Fuzz targets** — `cargo-fuzz` for HTTP parsing, provider response parsing, TOML config, WebSocket frames. In `fuzz/` directory.
+
+---
+
+### Acceptance Criteria (Sprint 40)
+
+- [ ] AI/keyword tool selector reduces tool set passed to provider
+- [ ] Gossip layer enables multi-instance event propagation over TCP
+- [ ] CLI commands manage full API key lifecycle (create/revoke/list)
+- [ ] Event bus wired into JobStore and PresenceStore for real-time events
+- [ ] WhatsApp Cloud API channel wired and config-registered
+- [ ] SMS (Twilio) channel sends and health-checks via REST API
+- [ ] Container scanning blocks CRITICAL CVEs in CI
+- [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
+
+---
+
 ## Backlog
+
+### Lightweight Orchestrator Mode
+
+A minimal binary that runs only the orchestrator (routing, coordination, event bus) without bundling tool runners, CLI, or TUI. Designed for resource-constrained edge devices. See Sprint 39 Phase H for details.
+
+### Examples Directory
+
+Comprehensive examples with READMEs demonstrating key use cases: research-pipeline, business-office, chatbot, multi-agent-team, edge-deployment. See Sprint 39 Phase I for details.
+
+### Operational Runbooks
+
+Incident response, backup & recovery, monitoring setup, and scaling runbooks. See Sprint 39 Phase M for details.
 
 ### E2E Testing with Local LLM
 
