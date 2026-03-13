@@ -417,6 +417,11 @@ impl AgentZeroConfig {
 
         Ok(())
     }
+
+    /// Serialize this config to TOML.
+    pub fn to_toml(&self) -> anyhow::Result<String> {
+        toml::to_string_pretty(self).map_err(|e| anyhow!("failed to serialize config: {e}"))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1352,6 +1357,11 @@ pub struct GatewayConfig {
     /// Must be explicitly set to acknowledge the security implications.
     #[serde(default)]
     pub allow_insecure: bool,
+    /// Public URL where this gateway is accessible from the internet.
+    /// Used for webhook auto-registration with platforms (e.g. Telegram setWebhook).
+    /// Example: "https://api.example.com"
+    #[serde(default)]
+    pub public_url: Option<String>,
 }
 
 /// TLS certificate configuration for the gateway.
@@ -1375,6 +1385,7 @@ impl Default for GatewayConfig {
             relay: RelayConfig::default(),
             tls: None,
             allow_insecure: false,
+            public_url: None,
         }
     }
 }
@@ -2097,6 +2108,54 @@ impl Default for SwarmAgentConfig {
             max_iterations: 20,
             conversation: ConversationConfig::default(),
         }
+    }
+}
+
+impl SwarmAgentConfig {
+    /// Create a new swarm agent config with the given name and description.
+    pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Set the provider and model.
+    pub fn with_provider(mut self, provider: impl Into<String>, model: impl Into<String>) -> Self {
+        self.provider = provider.into();
+        self.model = model.into();
+        self
+    }
+
+    /// Set the system prompt.
+    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Set routing keywords.
+    pub fn with_keywords(mut self, keywords: Vec<String>) -> Self {
+        self.keywords = keywords;
+        self
+    }
+
+    /// Set allowed tools.
+    pub fn with_allowed_tools(mut self, tools: Vec<String>) -> Self {
+        self.allowed_tools = tools;
+        self
+    }
+
+    /// Set event bus subscription topics.
+    pub fn with_subscriptions(mut self, topics: Vec<String>) -> Self {
+        self.subscribes_to = topics;
+        self
+    }
+
+    /// Set output topics.
+    pub fn with_produces(mut self, topics: Vec<String>) -> Self {
+        self.produces = topics;
+        self
     }
 }
 

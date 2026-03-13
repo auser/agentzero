@@ -156,6 +156,17 @@ pub trait Channel: Send + Sync {
     ) -> anyhow::Result<()> {
         Ok(())
     }
+
+    /// Register a webhook URL with the platform so it delivers messages
+    /// to the gateway. Default is a no-op for channels that use polling.
+    async fn register_webhook(&self, _webhook_url: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Deregister the webhook URL from the platform. Called on agent deletion.
+    async fn deregister_webhook(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

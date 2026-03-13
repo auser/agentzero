@@ -226,7 +226,7 @@ Wire the event bus into the orchestration layer for real-time cross-component aw
 - [x] WhatsApp Cloud API channel wired and config-registered
 - [x] SMS (Twilio) channel sends and health-checks via REST API
 - [x] Container scanning blocks CRITICAL CVEs in CI
-- [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
+- [x] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
 
 ---
 
@@ -401,26 +401,26 @@ Route incoming platform webhooks to specific agents.
 
 Automatically configure platform webhooks when creating agents with channel tokens.
 
-- [ ] **Telegram** — Call `setWebhook` API on agent creation with `url=https://<gateway>/v1/hooks/telegram/<agent_id>`. Call `deleteWebhook` on agent deletion.
-- [ ] **Webhook URL resolution** — Gateway needs to know its public URL. Config: `[gateway] public_url = "https://..."`. Falls back to `AGENTZERO_PUBLIC_URL` env var.
+- [x] **Telegram** — Call `setWebhook` API on agent creation with `url=https://<gateway>/v1/hooks/telegram/<agent_id>`. Call `deleteWebhook` on agent deletion.
+- [x] **Webhook URL resolution** — Gateway needs to know its public URL. Config: `[gateway] public_url = "https://..."`. Falls back to `AGENTZERO_PUBLIC_URL` env var.
 - [ ] **Tests** — Webhook registration called with correct URL, deregistration on delete. 3+ tests (mocked HTTP).
 
 ### Phase E: Config Generation Helpers (MEDIUM)
 
 Programmatic config building for dynamic agents.
 
-- [ ] **`AgentZeroConfig::builder()`** — Fluent builder API for constructing configs programmatically.
-- [ ] **`to_toml(&self)`** — Serialize config to TOML string.
-- [ ] **`SwarmAgentConfig::from_agent_record()`** — Convert AgentRecord to SwarmAgentConfig for coordinator registration.
+- [x] **`SwarmAgentConfig` builder** — Fluent builder API: `new()`, `with_provider()`, `with_system_prompt()`, `with_keywords()`, `with_allowed_tools()`, `with_subscriptions()`, `with_produces()`.
+- [x] **`to_toml(&self)`** — Serialize config to TOML string via `AgentZeroConfig::to_toml()`.
+- [x] **`AgentRecord` conversions** — `to_swarm_config()` and `to_descriptor()` on AgentRecord for coordinator registration.
 - [ ] **Tests** — Builder produces valid config, to_toml roundtrips, from_agent_record maps all fields. 4+ tests.
 
 ### Phase F: Per-Agent Memory Isolation (MEDIUM)
 
 Ensure dynamically-created agents have isolated conversation history.
 
-- [ ] **Namespaced memory** — Extend `MemoryStore` to scope queries by agent_id prefix on conversation_id.
-- [ ] **Per-agent SQLite** — Option to create `~/.agentzero/agents/<id>/memory.db` per agent (configured via AgentRecord).
-- [ ] **Tests** — Agent A's conversations invisible to Agent B. 3+ tests.
+- [x] **Namespaced memory** — Added `agent_id` field to `MemoryEntry`. Extended `MemoryStore` trait with `recent_for_agent()`, `recent_for_agent_conversation()`, `list_conversations_for_agent()`. SQLite migration v5 adds `agent_id` column.
+- [x] **SQLite/Turso/Pooled implementations** — All three memory backends updated with agent-scoped queries and INSERT/SELECT including `agent_id`.
+- [x] **Tests** — 4 tests: agent-scoped recent, agent-scoped conversation isolation, agent_id roundtrip persistence, list_conversations_for_agent filtering.
 
 ---
 
@@ -431,7 +431,7 @@ Ensure dynamically-created agents have isolated conversation history.
 - [x] `GET /v1/agents` lists both static and dynamic agents
 - [x] `DELETE /v1/agents/:id` removes agent from store
 - [x] Webhooks route to specific agents via `/v1/hooks/:channel/:agent_id`
-- [ ] Coordinator wires dynamic agents into swarm workers at runtime
+- [x] Coordinator wires dynamic agents into swarm workers at runtime (`register_dynamic_agent()` / `deregister_agent()`)
 - [ ] Telegram webhook auto-registered on agent creation
 - [x] Bot tokens encrypted at rest, never in API responses
 - [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings

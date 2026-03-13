@@ -112,26 +112,32 @@ async fn agent_chain_a_b_c_dispatches_to_channel() {
 
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![], 100);
 
-    coord.register_agent(
-        make_descriptor(
-            "agent-a",
-            vec!["channel.*.message"],
-            vec!["task.a.done"],
-            "any",
-        ),
-        make_agent("result-from-A"),
-        "/tmp".to_string(),
-    );
-    coord.register_agent(
-        make_descriptor("agent-b", vec!["task.a.*"], vec!["task.b.done"], "any"),
-        make_agent("result-from-B"),
-        "/tmp".to_string(),
-    );
-    coord.register_agent(
-        make_descriptor("agent-c", vec!["task.b.*"], vec!["task.c.done"], "any"),
-        make_agent("result-from-C"),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor(
+                "agent-a",
+                vec!["channel.*.message"],
+                vec!["task.a.done"],
+                "any",
+            ),
+            make_agent("result-from-A"),
+            "/tmp".to_string(),
+        )
+        .await;
+    coord
+        .register_agent(
+            make_descriptor("agent-b", vec!["task.a.*"], vec!["task.b.done"], "any"),
+            make_agent("result-from-B"),
+            "/tmp".to_string(),
+        )
+        .await;
+    coord
+        .register_agent(
+            make_descriptor("agent-c", vec!["task.b.*"], vec!["task.c.done"], "any"),
+            make_agent("result-from-C"),
+            "/tmp".to_string(),
+        )
+        .await;
 
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
@@ -186,16 +192,18 @@ async fn privacy_boundary_blocks_incompatible_routing() {
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![], 100);
 
     // This agent has "any" boundary — should NOT receive "local_only" events.
-    coord.register_agent(
-        make_descriptor(
-            "agent-any",
-            vec!["channel.*.message"],
-            vec!["task.done"],
-            "any",
-        ),
-        make_agent("should-not-see-this"),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor(
+                "agent-any",
+                vec!["channel.*.message"],
+                vec!["task.done"],
+                "any",
+            ),
+            make_agent("should-not-see-this"),
+            "/tmp".to_string(),
+        )
+        .await;
 
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
@@ -244,16 +252,18 @@ async fn privacy_boundary_allows_compatible_routing() {
 
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![], 100);
 
-    coord.register_agent(
-        make_descriptor(
-            "agent-local",
-            vec!["channel.*.message"],
-            vec![],
-            "local_only",
-        ),
-        make_agent("local-response"),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor(
+                "agent-local",
+                vec!["channel.*.message"],
+                vec![],
+                "local_only",
+            ),
+            make_agent("local-response"),
+            "/tmp".to_string(),
+        )
+        .await;
 
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
@@ -317,16 +327,20 @@ async fn pipeline_executes_sequential_steps() {
 
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![pipeline], 100);
 
-    coord.register_agent(
-        make_descriptor("step-1", vec![], vec![], "any"),
-        make_agent("step-1-output"),
-        "/tmp".to_string(),
-    );
-    coord.register_agent(
-        make_descriptor("step-2", vec![], vec![], "any"),
-        make_agent("step-2-final"),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor("step-1", vec![], vec![], "any"),
+            make_agent("step-1-output"),
+            "/tmp".to_string(),
+        )
+        .await;
+    coord
+        .register_agent(
+            make_descriptor("step-2", vec![], vec![], "any"),
+            make_agent("step-2-final"),
+            "/tmp".to_string(),
+        )
+        .await;
 
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
@@ -384,11 +398,13 @@ async fn graceful_shutdown_completes_in_flight() {
 
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![], 3000);
 
-    coord.register_agent(
-        make_descriptor("worker", vec!["channel.*.message"], vec![], "any"),
-        make_agent("graceful-result"),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor("worker", vec!["channel.*.message"], vec![], "any"),
+            make_agent("graceful-result"),
+            "/tmp".to_string(),
+        )
+        .await;
 
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
@@ -441,16 +457,18 @@ async fn correlation_id_traces_full_chain() {
 
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![], 100);
 
-    coord.register_agent(
-        make_descriptor(
-            "alpha",
-            vec!["channel.*.message"],
-            vec!["task.alpha.done"],
-            "any",
-        ),
-        make_agent("alpha-output"),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor(
+                "alpha",
+                vec!["channel.*.message"],
+                vec!["task.alpha.done"],
+                "any",
+            ),
+            make_agent("alpha-output"),
+            "/tmp".to_string(),
+        )
+        .await;
 
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
@@ -582,22 +600,28 @@ async fn pipeline_skip_mode_passes_previous_output() {
 
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![pipeline], 100);
 
-    coord.register_agent(
-        make_descriptor("step-a", vec![], vec![], "any"),
-        make_agent("output-from-A"),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor("step-a", vec![], vec![], "any"),
+            make_agent("output-from-A"),
+            "/tmp".to_string(),
+        )
+        .await;
     // step-b uses a slow provider that will exceed the 1-second timeout.
-    coord.register_agent(
-        make_descriptor("step-b", vec![], vec![], "any"),
-        make_slow_agent(std::time::Duration::from_secs(30)),
-        "/tmp".to_string(),
-    );
-    coord.register_agent(
-        make_descriptor("step-c", vec![], vec![], "any"),
-        make_agent("output-from-C"),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor("step-b", vec![], vec![], "any"),
+            make_slow_agent(std::time::Duration::from_secs(30)),
+            "/tmp".to_string(),
+        )
+        .await;
+    coord
+        .register_agent(
+            make_descriptor("step-c", vec![], vec![], "any"),
+            make_agent("output-from-C"),
+            "/tmp".to_string(),
+        )
+        .await;
 
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
@@ -673,11 +697,13 @@ async fn pipeline_retry_mode_retries_on_failure() {
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![pipeline], 100);
 
     // Use a slow provider so the step always times out.
-    coord.register_agent(
-        make_descriptor("step-retry", vec![], vec![], "any"),
-        make_slow_agent(std::time::Duration::from_secs(30)),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor("step-retry", vec![], vec![], "any"),
+            make_slow_agent(std::time::Duration::from_secs(30)),
+            "/tmp".to_string(),
+        )
+        .await;
 
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
@@ -771,21 +797,27 @@ async fn pipeline_abort_stops_on_first_error() {
 
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![pipeline], 100);
 
-    coord.register_agent(
-        make_descriptor("step-a", vec![], vec![], "any"),
-        make_agent("output-from-A"),
-        "/tmp".to_string(),
-    );
-    coord.register_agent(
-        make_descriptor("step-b", vec![], vec![], "any"),
-        make_slow_agent(std::time::Duration::from_secs(30)),
-        "/tmp".to_string(),
-    );
-    coord.register_agent(
-        make_descriptor("step-c", vec![], vec![], "any"),
-        make_agent("output-from-C-should-not-appear"),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor("step-a", vec![], vec![], "any"),
+            make_agent("output-from-A"),
+            "/tmp".to_string(),
+        )
+        .await;
+    coord
+        .register_agent(
+            make_descriptor("step-b", vec![], vec![], "any"),
+            make_slow_agent(std::time::Duration::from_secs(30)),
+            "/tmp".to_string(),
+        )
+        .await;
+    coord
+        .register_agent(
+            make_descriptor("step-c", vec![], vec![], "any"),
+            make_agent("output-from-C-should-not-appear"),
+            "/tmp".to_string(),
+        )
+        .await;
 
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
@@ -843,16 +875,20 @@ async fn queue_mode_steer_routes_by_keyword() {
     let mut coord = Coordinator::new(bus.clone(), channels.clone(), router, vec![], 100);
 
     // Register two agents with different keywords.
-    coord.register_agent(
-        make_descriptor("alpha", vec!["channel.*.message"], vec![], "any"),
-        make_agent("alpha-response"),
-        "/tmp".to_string(),
-    );
-    coord.register_agent(
-        make_descriptor("beta", vec!["channel.*.message"], vec![], "any"),
-        make_agent("beta-response"),
-        "/tmp".to_string(),
-    );
+    coord
+        .register_agent(
+            make_descriptor("alpha", vec!["channel.*.message"], vec![], "any"),
+            make_agent("alpha-response"),
+            "/tmp".to_string(),
+        )
+        .await;
+    coord
+        .register_agent(
+            make_descriptor("beta", vec!["channel.*.message"], vec![], "any"),
+            make_agent("beta-response"),
+            "/tmp".to_string(),
+        )
+        .await;
 
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();

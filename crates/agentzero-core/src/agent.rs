@@ -895,6 +895,7 @@ impl Agent {
         request_id: &str,
         source_channel: Option<&str>,
         conversation_id: &str,
+        agent_id: Option<&str>,
     ) -> Result<(), AgentError> {
         self.hook(
             "before_memory_write",
@@ -911,6 +912,7 @@ impl Agent {
                 created_at: None,
                 expires_at: None,
                 org_id: String::new(),
+                agent_id: agent_id.unwrap_or("").to_string(),
             })
             .await
             .map_err(|source| AgentError::Memory { source })?;
@@ -1313,6 +1315,7 @@ impl Agent {
                         request_id,
                         ctx.source_channel.as_deref(),
                         ctx.conversation_id.as_deref().unwrap_or(""),
+                        ctx.agent_id.as_deref(),
                     )
                     .await?;
                     self.audit("respond_success", json!({"request_id": request_id}))
@@ -1614,6 +1617,7 @@ impl Agent {
                             request_id,
                             ctx.source_channel.as_deref(),
                             ctx.conversation_id.as_deref().unwrap_or(""),
+                            ctx.agent_id.as_deref(),
                         )
                         .await?;
                         return Ok(AssistantMessage {
@@ -1753,6 +1757,7 @@ impl Agent {
             request_id,
             ctx.source_channel.as_deref(),
             ctx.conversation_id.as_deref().unwrap_or(""),
+            ctx.agent_id.as_deref(),
         )
         .await?;
         self.audit("respond_success", json!({"request_id": request_id}))
@@ -1887,6 +1892,7 @@ impl Agent {
             request_id,
             ctx.source_channel.as_deref(),
             ctx.conversation_id.as_deref().unwrap_or(""),
+            ctx.agent_id.as_deref(),
         )
         .await?;
 
@@ -2103,6 +2109,7 @@ impl Agent {
             request_id,
             ctx.source_channel.as_deref(),
             ctx.conversation_id.as_deref().unwrap_or(""),
+            ctx.agent_id.as_deref(),
         )
         .await?;
         self.audit("respond_success", json!({"request_id": request_id}))

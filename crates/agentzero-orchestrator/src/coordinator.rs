@@ -88,7 +88,7 @@ impl ErrorStrategy {
 
 pub struct Coordinator {
     bus: Arc<dyn EventBus>,
-    agents: HashMap<String, AgentWorker>,
+    agents: Arc<tokio::sync::RwLock<HashMap<String, AgentWorker>>>,
     channels: Arc<ChannelRegistry>,
     router: AgentRouter,
     pipelines: Vec<PipelineConfig>,
@@ -110,7 +110,7 @@ impl Coordinator {
     ) -> Self {
         Self {
             bus,
-            agents: HashMap::new(),
+            agents: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             channels,
             router,
             pipelines,
@@ -128,7 +128,7 @@ impl Coordinator {
 
     /// Register an agent worker. The coordinator owns the agent's task channel
     /// and join handle.
-    pub fn register_agent(
+    pub async fn register_agent(
         &mut self,
         descriptor: AgentDescriptor,
         agent: Agent,
@@ -153,7 +153,7 @@ impl Coordinator {
             presence,
         ));
 
-        self.agents.insert(
+        self.agents.write().await.insert(
             id.clone(),
             AgentWorker {
                 id,
@@ -169,7 +169,7 @@ impl Coordinator {
     ///
     /// This variant is used by the swarm builder when it needs the `task_tx`
     /// before registration (e.g. to wire up `ConverseTool` endpoints).
-    pub fn register_agent_with_rx(
+    pub async fn register_agent_with_rx(
         &mut self,
         descriptor: AgentDescriptor,
         agent: Agent,
@@ -195,7 +195,7 @@ impl Coordinator {
             presence,
         ));
 
-        self.agents.insert(
+        self.agents.write().await.insert(
             id.clone(),
             AgentWorker {
                 id,
@@ -207,9 +207,87 @@ impl Coordinator {
         );
     }
 
+    /// Register a dynamic agent at runtime (after `run()` has been called).
+    ///
+    /// Unlike `register_agent()`, this method works on a running coordinator
+    /// via the shared agents map. The agent worker is spawned immediately.
+    pub async fn register_dynamic_agent(
+        &self,
+        descriptor: AgentDescriptor,
+        agent: Agent,
+        workspace_root: String,
+    ) {
+        let (task_tx, task_rx) = mpsc::channel::<TaskMessage>(32);
+        let status = Arc::new(AtomicU8::new(STATUS_IDLE));
+        let id = descriptor.id.clone();
+
+        let bus = self.bus.clone();
+        let desc = descriptor.clone();
+        let worker_status = status.clone();
+        let presence = self.presence.clone();
+
+        let join_handle = tokio::spawn(agent_worker(
+            agent,
+            task_rx,
+            bus,
+            desc,
+            worker_status,
+            workspace_root,
+            presence,
+        ));
+
+        tracing::info!(agent_id = %id, "dynamic agent registered");
+
+        self.agents.write().await.insert(
+            id.clone(),
+            AgentWorker {
+                id,
+                descriptor,
+                task_tx,
+                join_handle,
+                status,
+            },
+        );
+    }
+
+    /// Deregister a dynamic agent at runtime.
+    ///
+    /// Drops the task sender, causing the agent worker to shut down gracefully.
+    /// Returns `true` if the agent was found and removed.
+    pub async fn deregister_agent(&self, agent_id: &str) -> bool {
+        let worker = self.agents.write().await.remove(agent_id);
+        if let Some(w) = worker {
+            // Drop the sender — this causes `task_rx.recv()` to return `None`,
+            // which triggers the worker's graceful shutdown path.
+            drop(w.task_tx);
+            // Abort the join handle if the worker is stuck.
+            w.join_handle.abort();
+
+            tracing::info!(agent_id = %agent_id, "dynamic agent deregistered");
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if an agent is registered and alive.
+    pub async fn is_agent_registered(&self, agent_id: &str) -> bool {
+        let agents = self.agents.read().await;
+        if let Some(worker) = agents.get(agent_id) {
+            worker.status.load(Ordering::Relaxed) != STATUS_STOPPED
+        } else {
+            false
+        }
+    }
+
     /// Descriptors for all registered agents (used by the router).
-    fn agent_descriptors(&self) -> Vec<AgentDescriptor> {
-        self.agents.values().map(|w| w.descriptor.clone()).collect()
+    async fn agent_descriptors(&self) -> Vec<AgentDescriptor> {
+        self.agents
+            .read()
+            .await
+            .values()
+            .map(|w| w.descriptor.clone())
+            .collect()
     }
 
     /// Run the coordinator until shutdown signal.
@@ -367,7 +445,7 @@ impl Coordinator {
                 let bus = self.bus.clone();
                 let corr_store = self.correlation_store.clone();
                 let channels = self.channels.clone();
-                let agents = self.collect_agent_senders();
+                let agents = self.collect_agent_senders().await;
                 let pipeline = pipeline.clone();
                 let step_timeout = pipeline.step_timeout_secs;
                 let error_strategy =
@@ -393,7 +471,7 @@ impl Coordinator {
             }
 
             // AI/keyword routing — filter out dead agents from candidates.
-            let mut descriptors = self.agent_descriptors();
+            let mut descriptors = self.agent_descriptors().await;
             if let Some(ref ps) = self.presence {
                 let mut alive_descriptors = Vec::with_capacity(descriptors.len());
                 for d in descriptors {
@@ -407,7 +485,8 @@ impl Coordinator {
             }
             match self.router.route(&content, &descriptors).await {
                 Ok(Some(agent_id)) => {
-                    if let Some(worker) = self.agents.get(&agent_id) {
+                    let agents = self.agents.read().await;
+                    if let Some(worker) = agents.get(&agent_id) {
                         // Privacy check
                         if !is_boundary_compatible(
                             &event.privacy_boundary,
@@ -533,7 +612,8 @@ impl Coordinator {
 
             // 1. Check if any agent subscribes to this topic → CHAIN
             let mut routed = false;
-            for worker in self.agents.values() {
+            let agents = self.agents.read().await;
+            for worker in agents.values() {
                 let matches = worker
                     .descriptor
                     .subscribes_to
@@ -626,8 +706,10 @@ impl Coordinator {
         })
     }
 
-    fn collect_agent_senders(&self) -> HashMap<String, mpsc::Sender<TaskMessage>> {
+    async fn collect_agent_senders(&self) -> HashMap<String, mpsc::Sender<TaskMessage>> {
         self.agents
+            .read()
+            .await
             .iter()
             .map(|(id, w)| (id.clone(), w.task_tx.clone()))
             .collect()

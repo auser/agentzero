@@ -409,13 +409,15 @@ pub async fn build_swarm_with_presence(
             );
         }
 
-        coord.register_agent_with_rx(
-            ba.descriptor,
-            ba.agent,
-            ba.workspace_root,
-            ba.task_tx,
-            ba.task_rx,
-        );
+        coord
+            .register_agent_with_rx(
+                ba.descriptor,
+                ba.agent,
+                ba.workspace_root,
+                ba.task_tx,
+                ba.task_rx,
+            )
+            .await;
     }
 
     Ok(Some((coord, shutdown_tx)))

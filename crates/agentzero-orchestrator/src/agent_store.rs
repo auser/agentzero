@@ -81,6 +81,30 @@ pub struct AgentUpdate {
     pub channels: Option<HashMap<String, AgentChannelConfig>>,
 }
 
+impl AgentRecord {
+    /// Convert this record to a `SwarmAgentConfig` for use with the swarm builder.
+    pub fn to_swarm_config(&self) -> agentzero_config::SwarmAgentConfig {
+        agentzero_config::SwarmAgentConfig::new(&self.name, &self.description)
+            .with_provider(&self.provider, &self.model)
+            .with_system_prompt(self.system_prompt.as_deref().unwrap_or(""))
+            .with_keywords(self.keywords.clone())
+            .with_allowed_tools(self.allowed_tools.clone())
+    }
+
+    /// Convert this record to an `AgentDescriptor` for routing registration.
+    pub fn to_descriptor(&self) -> crate::agent_router::AgentDescriptor {
+        crate::agent_router::AgentDescriptor {
+            id: self.agent_id.clone(),
+            name: self.name.clone(),
+            description: self.description.clone(),
+            keywords: self.keywords.clone(),
+            subscribes_to: vec!["channel.*.message".to_string()],
+            produces: vec![],
+            privacy_boundary: String::new(),
+        }
+    }
+}
+
 // ─── AgentStore ──────────────────────────────────────────────────────────────
 
 const AGENTS_FILE: &str = "agents.json";

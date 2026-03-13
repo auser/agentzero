@@ -822,6 +822,10 @@ pub struct MemoryEntry {
     /// Empty string means no org restriction (single-tenant / legacy).
     #[serde(default)]
     pub org_id: String,
+    /// Agent that created this entry (per-agent memory isolation).
+    /// Empty string means shared across all agents (legacy behavior).
+    #[serde(default)]
+    pub agent_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1016,6 +1020,37 @@ pub trait MemoryStore: Send + Sync {
 
     /// List conversations belonging to a specific organization.
     async fn list_conversations_for_org(&self, _org_id: &str) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    /// Query recent entries scoped to a specific agent.
+    /// Default filters in-memory; backends should override with an optimized query.
+    async fn recent_for_agent(
+        &self,
+        agent_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let all = self.recent(limit * 2).await?;
+        Ok(all
+            .into_iter()
+            .filter(|e| e.agent_id == agent_id)
+            .take(limit)
+            .collect())
+    }
+
+    /// Query recent entries for a conversation scoped to a specific agent.
+    async fn recent_for_agent_conversation(
+        &self,
+        agent_id: &str,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let all = self.recent_for_conversation(conversation_id, limit).await?;
+        Ok(all.into_iter().filter(|e| e.agent_id == agent_id).collect())
+    }
+
+    /// List conversations belonging to a specific agent.
+    async fn list_conversations_for_agent(&self, _agent_id: &str) -> anyhow::Result<Vec<String>> {
         Ok(Vec::new())
     }
 }

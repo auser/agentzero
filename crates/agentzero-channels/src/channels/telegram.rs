@@ -173,6 +173,51 @@ mod impl_ {
                 .map(|r| r.status().is_success())
                 .unwrap_or(false)
         }
+
+        async fn register_webhook(&self, webhook_url: &str) -> anyhow::Result<()> {
+            let url = format!("{}/v1/webhook/telegram", webhook_url.trim_end_matches('/'));
+            let body = serde_json::json!({
+                "url": url,
+                "allowed_updates": ["message"],
+                "drop_pending_updates": false,
+            });
+            let resp = self
+                .client
+                .post(self.api_url("setWebhook"))
+                .json(&body)
+                .send()
+                .await?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                anyhow::bail!("telegram setWebhook failed: {status} {text}");
+            }
+            let json: serde_json::Value = resp.json().await?;
+            if json["ok"].as_bool() != Some(true) {
+                anyhow::bail!(
+                    "telegram setWebhook returned error: {}",
+                    json["description"].as_str().unwrap_or("unknown")
+                );
+            }
+            tracing::info!(webhook_url = %url, "telegram webhook registered");
+            Ok(())
+        }
+
+        async fn deregister_webhook(&self) -> anyhow::Result<()> {
+            let resp = self
+                .client
+                .post(self.api_url("deleteWebhook"))
+                .json(&serde_json::json!({}))
+                .send()
+                .await?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                anyhow::bail!("telegram deleteWebhook failed: {status} {text}");
+            }
+            tracing::info!("telegram webhook deregistered");
+            Ok(())
+        }
     }
 
     #[cfg(test)]

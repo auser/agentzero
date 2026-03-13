@@ -223,6 +223,7 @@ fn turso_row_to_entry(row: &libsql::Row) -> anyhow::Result<MemoryEntry> {
         created_at: row.get::<Option<String>>(5).ok().flatten(),
         expires_at: row.get::<Option<i64>>(6).unwrap_or_default(),
         org_id: row.get::<String>(7).unwrap_or_default(),
+        agent_id: row.get::<String>(8).unwrap_or_default(),
     })
 }
 
@@ -238,8 +239,8 @@ impl MemoryStore for TursoMemoryStore {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
         let conn = self.conn.lock().await;
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             libsql::params![
                 entry.role,
                 entry.content,
@@ -247,7 +248,8 @@ impl MemoryStore for TursoMemoryStore {
                 entry.source_channel,
                 entry.conversation_id,
                 entry.expires_at,
-                entry.org_id
+                entry.org_id,
+                entry.agent_id
             ],
         )
         .await
@@ -261,7 +263,7 @@ impl MemoryStore for TursoMemoryStore {
         let mut rows = conn
             .query(
                 "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                        datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                        datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
                  FROM memory
                  WHERE expires_at IS NULL OR expires_at > ?1
                  ORDER BY id DESC LIMIT ?2",
@@ -291,7 +293,7 @@ impl MemoryStore for TursoMemoryStore {
         let mut rows = conn
             .query(
                 "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                        datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                        datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
                  FROM memory
                  WHERE (expires_at IS NULL OR expires_at > ?1)
                    AND (privacy_boundary = '' OR privacy_boundary = ?2
@@ -323,7 +325,7 @@ impl MemoryStore for TursoMemoryStore {
         let mut rows = conn
             .query(
                 "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                        datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                        datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
                  FROM memory
                  WHERE conversation_id = ?1
                    AND (expires_at IS NULL OR expires_at > ?2)
@@ -345,8 +347,8 @@ impl MemoryStore for TursoMemoryStore {
         let conn = self.conn.lock().await;
         let now = now_epoch_secs();
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id)
-             SELECT role, content, privacy_boundary, source_channel, ?1, expires_at, org_id
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id)
+             SELECT role, content, privacy_boundary, source_channel, ?1, expires_at, org_id, agent_id
              FROM memory
              WHERE conversation_id = ?2
                AND (expires_at IS NULL OR expires_at > ?3)

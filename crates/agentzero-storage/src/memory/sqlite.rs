@@ -117,6 +117,11 @@ const MIGRATIONS: &[Migration] = &[
         description: "add org_id column for multi-tenancy isolation",
         statements: &["ALTER TABLE memory ADD COLUMN org_id TEXT NOT NULL DEFAULT ''"],
     },
+    Migration {
+        version: 5,
+        description: "add agent_id column for per-agent memory isolation",
+        statements: &["ALTER TABLE memory ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''"],
+    },
 ];
 
 /// Run all pending migrations against the connection. Creates the version table
@@ -251,7 +256,7 @@ fn migrate_plaintext_to_encrypted(path: &Path, key: &StorageKey) -> anyhow::Resu
     Ok(())
 }
 
-/// Map a query row (columns 0–7) to a [`MemoryEntry`].
+/// Map a query row (columns 0–8) to a [`MemoryEntry`].
 fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
     Ok(MemoryEntry {
         role: row.get(0)?,
@@ -262,6 +267,7 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
         created_at: row.get::<_, Option<String>>(5).ok().flatten(),
         expires_at: row.get::<_, Option<i64>>(6).unwrap_or_default(),
         org_id: row.get::<_, String>(7).unwrap_or_default(),
+        agent_id: row.get::<_, String>(8).unwrap_or_default(),
     })
 }
 
@@ -270,8 +276,8 @@ impl MemoryStore for SqliteMemoryStore {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id, entry.expires_at, entry.org_id],
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id, entry.expires_at, entry.org_id, entry.agent_id],
         )?;
         Ok(())
     }
@@ -280,7 +286,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, agent_id
              FROM memory
              WHERE expires_at IS NULL OR expires_at > unixepoch()
              ORDER BY id DESC
@@ -305,7 +311,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
              FROM memory
              WHERE (expires_at IS NULL OR expires_at > unixepoch())
                AND (privacy_boundary = '' OR privacy_boundary = ?1
@@ -338,7 +344,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
              FROM memory
              WHERE conversation_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -358,8 +364,8 @@ impl MemoryStore for SqliteMemoryStore {
     async fn fork_conversation(&self, from_id: &str, new_id: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id)
-             SELECT role, content, privacy_boundary, source_channel, ?2, expires_at, org_id
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id)
+             SELECT role, content, privacy_boundary, source_channel, ?2, expires_at, org_id, agent_id
              FROM memory
              WHERE conversation_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -382,7 +388,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
              FROM memory
              WHERE org_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -407,7 +413,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
              FROM memory
              WHERE org_id = ?1 AND conversation_id = ?2
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -446,6 +452,72 @@ impl MemoryStore for SqliteMemoryStore {
             "SELECT DISTINCT conversation_id FROM memory WHERE conversation_id != '' ORDER BY conversation_id",
         )?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    async fn recent_for_agent(
+        &self,
+        agent_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+             FROM memory
+             WHERE agent_id = ?1
+               AND (expires_at IS NULL OR expires_at > unixepoch())
+             ORDER BY id DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![agent_id, limit as i64], row_to_entry)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        out.reverse();
+        Ok(out)
+    }
+
+    async fn recent_for_agent_conversation(
+        &self,
+        agent_id: &str,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+             FROM memory
+             WHERE agent_id = ?1 AND conversation_id = ?2
+               AND (expires_at IS NULL OR expires_at > unixepoch())
+             ORDER BY id DESC
+             LIMIT ?3",
+        )?;
+        let aid = agent_id.to_string();
+        let cid = conversation_id.to_string();
+        let rows = stmt.query_map(params![aid, cid, limit as i64], row_to_entry)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        out.reverse();
+        Ok(out)
+    }
+
+    async fn list_conversations_for_agent(&self, agent_id: &str) -> anyhow::Result<Vec<String>> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT conversation_id FROM memory
+             WHERE conversation_id != '' AND agent_id = ?1
+             ORDER BY conversation_id",
+        )?;
+        let rows = stmt.query_map(params![agent_id], |row| row.get::<_, String>(0))?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -1034,7 +1106,7 @@ mod tests {
 
     #[test]
     fn current_schema_version_equals_migration_count() {
-        assert_eq!(current_schema_version(), 4);
+        assert_eq!(current_schema_version(), 5);
     }
 
     #[tokio::test]
@@ -1343,6 +1415,139 @@ mod tests {
 
         let recent = store.recent(1).await.unwrap();
         assert_eq!(recent[0].org_id, "acme-corp");
+
+        fs::remove_file(db_path).ok();
+    }
+
+    // --- Per-agent memory isolation tests (Sprint 43, Phase F) ---
+
+    #[tokio::test]
+    async fn agent_scoped_recent_filters_by_agent() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "agent-a msg".into(),
+                agent_id: "agent-a".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "agent-b msg".into(),
+                agent_id: "agent-b".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let agent_a = store.recent_for_agent("agent-a", 10).await.unwrap();
+        assert_eq!(agent_a.len(), 1);
+        assert_eq!(agent_a[0].content, "agent-a msg");
+
+        let agent_b = store.recent_for_agent("agent-b", 10).await.unwrap();
+        assert_eq!(agent_b.len(), 1);
+        assert_eq!(agent_b[0].content, "agent-b msg");
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn agent_scoped_conversation_isolates_transcripts() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "agent-a conv".into(),
+                agent_id: "agent-a".into(),
+                conversation_id: "conv-1".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "agent-b conv".into(),
+                agent_id: "agent-b".into(),
+                conversation_id: "conv-1".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        // Same conversation_id but different agent — isolated
+        let agent_a = store
+            .recent_for_agent_conversation("agent-a", "conv-1", 10)
+            .await
+            .unwrap();
+        assert_eq!(agent_a.len(), 1);
+        assert_eq!(agent_a[0].content, "agent-a conv");
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn agent_id_persists_through_roundtrip() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "test".into(),
+                agent_id: "agent-researcher".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let recent = store.recent(1).await.unwrap();
+        assert_eq!(recent[0].agent_id, "agent-researcher");
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn list_conversations_for_agent_filters_correctly() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store");
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "a".into(),
+                agent_id: "agent-a".into(),
+                conversation_id: "conv-1".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "b".into(),
+                agent_id: "agent-b".into(),
+                conversation_id: "conv-2".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let a_convs = store.list_conversations_for_agent("agent-a").await.unwrap();
+        assert_eq!(a_convs, vec!["conv-1"]);
+
+        let b_convs = store.list_conversations_for_agent("agent-b").await.unwrap();
+        assert_eq!(b_convs, vec!["conv-2"]);
 
         fs::remove_file(db_path).ok();
     }
