@@ -414,6 +414,10 @@ fn to_anthropic_messages(messages: &[ConversationMessage]) -> Vec<Message> {
                                     },
                                 });
                             }
+                            ContentPart::Audio { .. } => {
+                                // Anthropic API does not support inline audio content blocks.
+                                // Skip audio parts silently.
+                            }
                         }
                     }
                     MessageContent::Blocks(blocks)

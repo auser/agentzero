@@ -156,11 +156,38 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         }
     }
 
-    // Wire up the job store and presence store for /v1/runs endpoints.
-    let job_store = Arc::new(agentzero_orchestrator::JobStore::new());
-    state = state.with_job_store(job_store.clone());
+    // Build the event bus so the same instance is shared by the job store,
+    // presence store, swarm coordinator, and gateway SSE/WebSocket endpoints.
+    let event_bus: Arc<dyn agentzero_core::EventBus> = match full_config.as_ref() {
+        Some(cfg) if cfg.swarm.enabled => {
+            let workspace_root = state
+                .workspace_root
+                .as_ref()
+                .map(|p| p.as_ref().clone())
+                .unwrap_or_default();
+            match agentzero_orchestrator::build_event_bus(cfg, &workspace_root).await {
+                Ok(bus) => bus,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "failed to build configured event bus, falling back to in-memory"
+                    );
+                    Arc::new(agentzero_core::event_bus::InMemoryBus::new(256))
+                }
+            }
+        }
+        _ => Arc::new(agentzero_core::event_bus::InMemoryBus::new(256)),
+    };
 
-    let presence_store = Arc::new(agentzero_orchestrator::PresenceStore::new());
+    // Wire up the job store and presence store for /v1/runs endpoints.
+    let job_store =
+        Arc::new(agentzero_orchestrator::JobStore::new().with_event_bus(event_bus.clone()));
+    state = state
+        .with_job_store(job_store.clone())
+        .with_event_bus(event_bus.clone());
+
+    let presence_store =
+        Arc::new(agentzero_orchestrator::PresenceStore::new().with_event_bus(event_bus.clone()));
     state.presence_store = Some(presence_store);
 
     // Start config file watcher for live hot-reload.
@@ -335,6 +362,7 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
                 &config_path,
                 &workspace_root,
                 state.presence_store.clone(),
+                event_bus.clone(),
             )
             .await
             {

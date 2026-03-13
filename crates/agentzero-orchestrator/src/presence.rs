@@ -4,6 +4,8 @@
 //! last heartbeat time and reports agents as alive, stale, or dead based on
 //! configurable TTL thresholds.
 
+use agentzero_core::event_bus::Event;
+use agentzero_core::EventBus;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -30,16 +32,33 @@ pub struct PresenceRecord {
 }
 
 /// Thread-safe store for tracking agent presence.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PresenceStore {
     records: Arc<RwLock<HashMap<String, (Instant, Duration)>>>,
+    /// Optional distributed event bus for publishing heartbeat events.
+    event_bus: Option<Arc<dyn EventBus>>,
+}
+
+impl std::fmt::Debug for PresenceStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PresenceStore")
+            .field("event_bus", &self.event_bus.is_some())
+            .finish()
+    }
 }
 
 impl PresenceStore {
     pub fn new() -> Self {
         Self {
             records: Arc::new(RwLock::new(HashMap::new())),
+            event_bus: None,
         }
+    }
+
+    /// Set the distributed event bus for publishing heartbeat events.
+    pub fn with_event_bus(mut self, bus: Arc<dyn EventBus>) -> Self {
+        self.event_bus = Some(bus);
+        self
     }
 
     /// Register an agent with an initial heartbeat and TTL.
@@ -55,6 +74,17 @@ impl PresenceStore {
         let mut records = self.records.write().await;
         if let Some(entry) = records.get_mut(agent_id) {
             entry.0 = Instant::now();
+        }
+        drop(records);
+
+        // Publish heartbeat to distributed event bus if configured.
+        if let Some(ref bus) = self.event_bus {
+            let event = Event::new(
+                "presence.heartbeat",
+                agent_id,
+                serde_json::json!({ "agent_id": agent_id }).to_string(),
+            );
+            let _ = bus.publish(event).await;
         }
     }
 
@@ -195,5 +225,30 @@ mod tests {
         store.gc_expired().await;
 
         assert_eq!(store.status("agent-1").await, None);
+    }
+
+    #[tokio::test]
+    async fn event_bus_publishes_on_heartbeat() {
+        let bus = Arc::new(agentzero_core::InMemoryBus::default_capacity());
+        let store = PresenceStore::new().with_event_bus(bus.clone());
+        let mut sub = bus.subscribe();
+
+        store.register("agent-1", Duration::from_secs(30)).await;
+        store.heartbeat("agent-1").await;
+
+        let event = tokio::time::timeout(Duration::from_secs(1), sub.recv())
+            .await
+            .expect("timeout waiting for heartbeat event")
+            .expect("recv");
+        assert_eq!(event.topic, "presence.heartbeat");
+        assert!(event.payload.contains("agent-1"));
+    }
+
+    #[tokio::test]
+    async fn no_event_bus_heartbeat_still_works() {
+        let store = PresenceStore::new();
+        store.register("agent-1", Duration::from_secs(30)).await;
+        store.heartbeat("agent-1").await;
+        assert!(store.is_alive("agent-1").await);
     }
 }

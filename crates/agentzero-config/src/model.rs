@@ -39,6 +39,8 @@ pub struct AgentZeroConfig {
     pub privacy: PrivacyConfig,
     pub swarm: SwarmConfig,
     pub logging: LoggingConfig,
+    pub code_interpreter: CodeInterpreterConfig,
+    pub media_gen: MediaGenConfig,
 }
 
 impl AgentZeroConfig {
@@ -554,6 +556,9 @@ pub struct AgentSettings {
     /// Optional override model for AI-based tool selection (cheaper/faster model).
     #[serde(default)]
     pub tool_selection_model: Option<String>,
+    /// Context summarization settings.
+    #[serde(default)]
+    pub summarization: SummarizationSettings,
 }
 
 fn default_tool_timeout_ms() -> u64 {
@@ -581,6 +586,7 @@ impl Default for AgentSettings {
             tool_timeout_ms: default_tool_timeout_ms(),
             tool_selection: None,
             tool_selection_model: None,
+            summarization: SummarizationSettings::default(),
         }
     }
 }
@@ -2176,6 +2182,136 @@ pub struct PipelineTriggerConfig {
     pub topic: String,
     /// Trigger when the AI router classifies the message with this label.
     pub ai_classified: String,
+}
+
+// ---------------------------------------------------------------------------
+// Code Interpreter
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct CodeInterpreterConfig {
+    pub enabled: bool,
+    pub timeout_ms: u64,
+    pub max_output_bytes: usize,
+    pub allowed_languages: Vec<String>,
+}
+
+impl Default for CodeInterpreterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timeout_ms: 30_000,
+            max_output_bytes: 65536,
+            allowed_languages: vec!["python".into(), "javascript".into()],
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Context Summarization
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SummarizationSettings {
+    pub enabled: bool,
+    pub keep_recent: usize,
+    pub min_entries_for_summarization: usize,
+    pub max_summary_chars: usize,
+}
+
+impl Default for SummarizationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            keep_recent: 10,
+            min_entries_for_summarization: 20,
+            max_summary_chars: 2000,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Media Generation (TTS, Image, Video)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MediaGenConfig {
+    pub tts: TtsToolConfig,
+    pub image_gen: ImageGenToolConfig,
+    pub video_gen: VideoGenToolConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TtsToolConfig {
+    pub enabled: bool,
+    pub api_url: String,
+    pub api_key_env: String,
+    pub model: String,
+    pub default_voice: String,
+    pub timeout_ms: u64,
+}
+
+impl Default for TtsToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_url: "https://api.openai.com/v1/audio/speech".into(),
+            api_key_env: "OPENAI_API_KEY".into(),
+            model: "tts-1".into(),
+            default_voice: "alloy".into(),
+            timeout_ms: 60_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ImageGenToolConfig {
+    pub enabled: bool,
+    pub api_url: String,
+    pub api_key_env: String,
+    pub model: String,
+    pub default_size: String,
+    pub timeout_ms: u64,
+}
+
+impl Default for ImageGenToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_url: "https://api.openai.com/v1/images/generations".into(),
+            api_key_env: "OPENAI_API_KEY".into(),
+            model: "dall-e-3".into(),
+            default_size: "1024x1024".into(),
+            timeout_ms: 60_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct VideoGenToolConfig {
+    pub enabled: bool,
+    pub api_url: String,
+    pub api_key_env: String,
+    pub model: String,
+    pub timeout_ms: u64,
+}
+
+impl Default for VideoGenToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_url: "https://api.minimax.chat/v1/video_generation".into(),
+            api_key_env: "MINIMAX_API_KEY".into(),
+            model: "MiniMax-Hailuo-2.3".into(),
+            timeout_ms: 300_000,
+        }
+    }
 }
 
 #[cfg(test)]

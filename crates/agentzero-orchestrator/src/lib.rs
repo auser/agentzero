@@ -27,4 +27,4 @@ pub use job_store::{EventKind, EventLog, JobStore, RunEvent};
 pub use lanes::{LaneConfig, LaneManager, LaneReceivers, WorkItem, WorkResult};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use presence::{PresenceRecord, PresenceStatus, PresenceStore};
-pub use swarm::{build_swarm, build_swarm_with_presence};
+pub use swarm::{build_event_bus, build_swarm, build_swarm_with_presence};

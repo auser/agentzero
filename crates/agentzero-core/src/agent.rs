@@ -36,20 +36,33 @@ fn build_provider_prompt(
     current_prompt: &str,
     recent_memory: &[MemoryEntry],
     max_prompt_chars: usize,
+    context_summary: Option<&str>,
 ) -> (String, bool) {
-    if recent_memory.is_empty() {
+    if recent_memory.is_empty() && context_summary.is_none() {
         return cap_prompt(current_prompt, max_prompt_chars);
     }
 
-    let mut prompt = String::from("Recent memory:\n");
-    for entry in recent_memory.iter().rev() {
-        prompt.push_str("- ");
-        prompt.push_str(&entry.role);
-        prompt.push_str(": ");
-        prompt.push_str(&entry.content);
+    let mut prompt = String::new();
+
+    if let Some(summary) = context_summary {
+        prompt.push_str("Context summary:\n");
+        prompt.push_str(summary);
+        prompt.push_str("\n\n");
+    }
+
+    if !recent_memory.is_empty() {
+        prompt.push_str("Recent conversation:\n");
+        for entry in recent_memory.iter().rev() {
+            prompt.push_str("- ");
+            prompt.push_str(&entry.role);
+            prompt.push_str(": ");
+            prompt.push_str(&entry.content);
+            prompt.push('\n');
+        }
         prompt.push('\n');
     }
-    prompt.push_str("\nCurrent input:\n");
+
+    prompt.push_str("Current input:\n");
     prompt.push_str(current_prompt);
 
     cap_prompt(&prompt, max_prompt_chars)
@@ -697,6 +710,65 @@ impl Agent {
         Ok(result)
     }
 
+    /// Summarize older conversation entries if summarization is enabled and
+    /// there are enough entries to warrant it. Returns `None` if disabled or
+    /// the summarization call fails (graceful fallback to normal truncation).
+    async fn maybe_summarize_context(&self, entries: &[MemoryEntry]) -> Option<String> {
+        let cfg = &self.config.summarization;
+        if !cfg.enabled || entries.len() < cfg.min_entries_for_summarization {
+            return None;
+        }
+
+        let keep = cfg.keep_recent.min(entries.len());
+        let older = &entries[keep..];
+        if older.is_empty() {
+            return None;
+        }
+
+        // Build the text to summarize.
+        let mut text = String::new();
+        for entry in older.iter().rev() {
+            text.push_str(&entry.role);
+            text.push_str(": ");
+            text.push_str(&entry.content);
+            text.push('\n');
+        }
+
+        let summarization_prompt = format!(
+            "Summarize the following conversation history in {} characters or less. \
+             Preserve key facts, decisions, and context that would be important for \
+             continuing the conversation. Be concise.\n\n{}",
+            cfg.max_summary_chars, text
+        );
+
+        // Use a short timeout to avoid blocking the main flow.
+        let summary_timeout = Duration::from_secs(10);
+        match timeout(
+            summary_timeout,
+            self.provider.complete(&summarization_prompt),
+        )
+        .await
+        {
+            Ok(Ok(chat_result)) => {
+                let text = chat_result.output_text;
+                let summary = if text.chars().count() > cfg.max_summary_chars {
+                    text.chars().take(cfg.max_summary_chars).collect::<String>()
+                } else {
+                    text
+                };
+                Some(summary)
+            }
+            Ok(Err(e)) => {
+                warn!("context summarization failed, falling back to truncation: {e}");
+                None
+            }
+            Err(_) => {
+                warn!("context summarization timed out, falling back to truncation");
+                None
+            }
+        }
+    }
+
     async fn call_provider_with_context(
         &self,
         prompt: &str,
@@ -718,8 +790,26 @@ impl Agent {
             json!({"request_id": request_id, "items": recent_memory.len()}),
         )
         .await;
-        let (provider_prompt, prompt_truncated) =
-            build_provider_prompt(prompt, &recent_memory, self.config.max_prompt_chars);
+        // Summarize older context if enabled and enough entries exist.
+        let context_summary = self.maybe_summarize_context(&recent_memory).await;
+        let (effective_memory, summary_ref) = if let Some(ref summary) = context_summary {
+            // Keep only the most recent entries verbatim.
+            let keep = self
+                .config
+                .summarization
+                .keep_recent
+                .min(recent_memory.len());
+            (&recent_memory[..keep], Some(summary.as_str()))
+        } else {
+            (recent_memory.as_slice(), None)
+        };
+
+        let (provider_prompt, prompt_truncated) = build_provider_prompt(
+            prompt,
+            effective_memory,
+            self.config.max_prompt_chars,
+            summary_ref,
+        );
         if prompt_truncated {
             self.audit(
                 "provider_prompt_truncated",
@@ -2417,7 +2507,7 @@ mod tests {
         assert_eq!(response.text, "assistant-after-tool");
         let prompts = prompts.lock().expect("provider lock poisoned");
         assert_eq!(prompts.len(), 1);
-        assert!(prompts[0].contains("Recent memory:"));
+        assert!(prompts[0].contains("Recent conversation:"));
         assert!(prompts[0].contains("Current input:\nTool output from echo: echoed:ping"));
     }
 
@@ -2452,7 +2542,7 @@ mod tests {
         assert_eq!(response.text, "assistant-without-tool");
         let prompts = prompts.lock().expect("provider lock poisoned");
         assert_eq!(prompts.len(), 1);
-        assert!(prompts[0].contains("Recent memory:"));
+        assert!(prompts[0].contains("Recent conversation:"));
         assert!(prompts[0].contains("Current input:\ntool:unknown payload"));
     }
 

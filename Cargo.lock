@@ -407,6 +407,7 @@ dependencies = [
  "agentzero-storage",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "glob",
  "regex",
  "reqwest",

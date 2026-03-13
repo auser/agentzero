@@ -3820,3 +3820,157 @@ async fn webhook_payload_accepts_arbitrary_json() {
     assert_eq!(payload.inner["event"], "push");
     assert_eq!(payload.inner["nested"]["key"], 42);
 }
+
+// ---------------------------------------------------------------------------
+// SSE event bus endpoint tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn sse_events_requires_event_bus() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/events")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    // No event bus configured → 503 (AgentUnavailable).
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn sse_events_requires_auth() {
+    let bus = std::sync::Arc::new(agentzero_core::InMemoryBus::default_capacity());
+    let state = GatewayState::test_with_bearer(Some("secret-tok")).with_event_bus(bus);
+    let app = build_router(state, &default_config());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/events")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    // No auth header → 401.
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ─── Event bus wiring integration tests ──────────────────────────────────────
+
+#[tokio::test]
+async fn job_store_publishes_to_shared_event_bus_on_submit() {
+    // Verify that a job_store wired with an event bus publishes job.pending on submit.
+    use agentzero_core::{EventBus, InMemoryBus};
+    use agentzero_orchestrator::JobStore;
+
+    let bus = Arc::new(InMemoryBus::default_capacity());
+    let mut sub = bus.subscribe();
+    let store = JobStore::new().with_event_bus(bus.clone() as Arc<dyn EventBus>);
+
+    let run_id = store
+        .submit("agent-a".into(), agentzero_core::Lane::Main, None)
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_millis(100), async {
+        loop {
+            if let Ok(ev) = sub.recv().await {
+                return ev;
+            }
+        }
+    })
+    .await
+    .expect("event bus should receive job.pending within timeout");
+
+    assert_eq!(event.topic, "job.pending");
+    assert!(event.payload.contains(run_id.as_str()));
+}
+
+#[tokio::test]
+async fn job_store_publishes_to_shared_event_bus_on_status_change() {
+    // Verify that status transitions publish to the event bus.
+    use agentzero_core::{EventBus, InMemoryBus, JobStatus};
+    use agentzero_orchestrator::JobStore;
+
+    let bus = Arc::new(InMemoryBus::default_capacity());
+    let mut sub = bus.subscribe();
+    let store = JobStore::new().with_event_bus(bus.clone() as Arc<dyn EventBus>);
+
+    let run_id = store
+        .submit("agent-b".into(), agentzero_core::Lane::Main, None)
+        .await;
+    // Drain the pending event.
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(50), async {
+        loop {
+            if sub.recv().await.is_ok() {
+                return;
+            }
+        }
+    })
+    .await;
+
+    store.update_status(&run_id, JobStatus::Running).await;
+    let event = tokio::time::timeout(std::time::Duration::from_millis(100), async {
+        loop {
+            if let Ok(ev) = sub.recv().await {
+                return ev;
+            }
+        }
+    })
+    .await
+    .expect("event bus should receive job.running within timeout");
+
+    assert_eq!(event.topic, "job.running");
+}
+
+#[tokio::test]
+async fn sse_events_without_event_bus_returns_503() {
+    // State with no event bus wired → SSE endpoint returns 503.
+    let state = GatewayState::test_with_bearer(Some("tok"));
+    let app = build_router(state, &default_config());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/events")
+                .header("authorization", "Bearer tok")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn presence_store_heartbeat_publishes_to_shared_event_bus() {
+    // Verify PresenceStore wired with a bus emits presence.heartbeat on heartbeat().
+    use agentzero_core::{EventBus, InMemoryBus};
+    use agentzero_orchestrator::PresenceStore;
+
+    let bus = Arc::new(InMemoryBus::default_capacity());
+    let mut sub = bus.subscribe();
+    let store = PresenceStore::new().with_event_bus(bus.clone() as Arc<dyn EventBus>);
+
+    store
+        .register("agent-x", std::time::Duration::from_secs(30))
+        .await;
+    store.heartbeat("agent-x").await;
+
+    let event = tokio::time::timeout(std::time::Duration::from_millis(100), async {
+        loop {
+            if let Ok(ev) = sub.recv().await {
+                return ev;
+            }
+        }
+    })
+    .await
+    .expect("event bus should receive presence.heartbeat within timeout");
+
+    assert_eq!(event.topic, "presence.heartbeat");
+    assert!(event.payload.contains("agent-x"));
+}

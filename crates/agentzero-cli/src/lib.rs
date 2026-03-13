@@ -156,6 +156,8 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Tools { .. } => "tools",
         Commands::Privacy { .. } => "privacy",
         Commands::Backup { .. } => "backup",
+        #[cfg(feature = "config-ui")]
+        Commands::ConfigUi { .. } => "config-ui",
     }
 }
 

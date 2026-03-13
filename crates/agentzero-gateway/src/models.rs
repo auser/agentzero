@@ -223,6 +223,14 @@ pub(crate) struct CancelQuery {
     pub(crate) cascade: Option<bool>,
 }
 
+/// Query params for event bus SSE stream.
+#[derive(Debug, Deserialize)]
+pub(crate) struct EventStreamQuery {
+    /// Optional topic prefix filter (e.g. "job." or "presence.").
+    #[serde(default)]
+    pub(crate) topic: Option<String>,
+}
+
 /// Query params for WebSocket run subscription.
 #[derive(Debug, Deserialize)]
 pub(crate) struct WsRunQuery {

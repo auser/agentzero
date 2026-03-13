@@ -92,6 +92,10 @@ pub fn load_tool_security_policy(
         enable_html_extract: config.web_fetch.enabled,
         enable_composio: config.composio.enabled,
         enable_pushover: config.pushover.enabled,
+        enable_code_interpreter: config.code_interpreter.enabled,
+        enable_tts: config.media_gen.tts.enabled,
+        enable_image_gen: config.media_gen.image_gen.enabled,
+        enable_video_gen: config.media_gen.video_gen.enabled,
         enable_wasm_plugins: config.security.plugin.wasm_enabled,
         wasm_global_plugin_dir: config.security.plugin.global_plugin_dir.map(PathBuf::from),
         wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),
@@ -105,6 +109,9 @@ pub fn load_tool_security_policy(
         policy.enable_web_search = false;
         policy.enable_html_extract = false;
         policy.enable_composio = false;
+        policy.enable_tts = false;
+        policy.enable_image_gen = false;
+        policy.enable_video_gen = false;
         // Restrict URL access to localhost only.
         policy.url_access.allow_loopback = true;
         policy.url_access.block_private_ip = false;

@@ -113,4 +113,5 @@ channel_catalog!(
     webhook           => (WebhookChannel, WEBHOOK_DESCRIPTOR),
     napcat            => (NapcatChannel, NAPCAT_DESCRIPTOR),
     acp               => (AcpChannel, ACP_DESCRIPTOR),
+    sms               => (SmsChannel, SMS_DESCRIPTOR),
 );

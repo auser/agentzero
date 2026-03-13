@@ -279,6 +279,15 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
                 .parse()
                 .unwrap_or(agentzero_core::ToolSelectionMode::All),
             tool_selection_model: config.agent.tool_selection_model.clone(),
+            summarization: agentzero_core::SummarizationConfig {
+                enabled: config.agent.summarization.enabled,
+                keep_recent: config.agent.summarization.keep_recent,
+                min_entries_for_summarization: config
+                    .agent
+                    .summarization
+                    .min_entries_for_summarization,
+                max_summary_chars: config.agent.summarization.max_summary_chars,
+            },
         },
         provider,
         memory,

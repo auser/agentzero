@@ -25,6 +25,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+base64 = "0.22"
 reqwest.workspace = true
 scraper = { version = "0.22", optional = true }
 zip = { workspace = true, optional = true }

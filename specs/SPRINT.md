@@ -197,17 +197,17 @@ Complete the distributed event bus with TCP gossip for multi-instance deployment
 
 Wire the event bus into the orchestration layer for real-time cross-component awareness.
 
-- [ ] **JobStore integration** — Publish events on job state transitions (pending→running→completed/failed/cancelled). Topic: `job.{status}`.
-- [ ] **PresenceStore integration** — Publish heartbeat events. Topic: `presence.heartbeat`.
-- [ ] **Gateway SSE/WebSocket** — Subscribe to event bus for real-time push to clients. Replace polling with event-driven updates.
-- [ ] **Tests** — JobStore publishes on state change. Gateway receives events. 4+ tests.
+- [x] **JobStore integration** — Publish events on job state transitions (pending→running→completed/failed/cancelled). Topic: `job.{status}`.
+- [x] **PresenceStore integration** — Publish heartbeat events. Topic: `presence.heartbeat`.
+- [x] **Gateway SSE/WebSocket** — `sse_events()` subscribes to event bus; bus now shared across all stores and gateway state via `Arc<dyn EventBus>`.
+- [x] **Tests** — 4 new tests in `agentzero-gateway`: job submit event, status change event, SSE 503 without bus, presence heartbeat event.
 
 ### Phase E: WhatsApp & SMS Channels (MEDIUM)
 
-- [ ] **WhatsApp wiring** — Add `"whatsapp"` arm to `register_one()` in `channel_setup.rs`. Maps config fields. 2 tests.
-- [ ] **`sms.rs`** — New Twilio SMS channel: `send()` via Twilio REST API (Basic auth, form-encoded body, 1600-char chunking), `listen()` webhook stub, `health_check()`. 4+ tests.
-- [ ] **Feature flag** — `channel-sms = ["reqwest"]` in `Cargo.toml`. Add to `channels-standard` and `all-channels`.
-- [ ] **Catalog + registration** — `sms => (SmsChannel, SMS_DESCRIPTOR)` in `channel_catalog!`; `"sms"` arm in `register_one()`.
+- [x] **WhatsApp wiring** — Added `"whatsapp"` arm to `register_one()` in `channel_setup.rs`. Maps `access_token`, `channel_id` → `phone_number_id`, `token` → `verify_token`. 2 tests.
+- [x] **`sms.rs`** — New Twilio SMS channel: `send()` via Twilio REST API (Basic auth, form-encoded `To`/`From`/`Body`, 1600-char chunking), `listen()` webhook stub, `health_check()`. 4 unit tests.
+- [x] **Feature flag** — `channel-sms = ["reqwest"]` in `Cargo.toml`. Added to `channels-standard` and `all-channels`.
+- [x] **Catalog + registration** — `sms => (SmsChannel, SMS_DESCRIPTOR)` in `channel_catalog!`; `"sms"` arm in `register_one()`. `account_sid` + `from_number` added to `ChannelInstanceConfig`.
 
 ### Phase F: CI/CD & Hardening (LOW)
 
@@ -221,10 +221,10 @@ Wire the event bus into the orchestration layer for real-time cross-component aw
 
 - [x] AI/keyword tool selector reduces tool set passed to provider
 - [x] Gossip layer enables multi-instance event propagation over TCP
-- [x] CLI commands manage full API key lifecycle (create/revoke/list)
-- [ ] Event bus wired into JobStore and PresenceStore for real-time events
-- [ ] WhatsApp Cloud API channel wired and config-registered
-- [ ] SMS (Twilio) channel sends and health-checks via REST API
+- [ ] CLI commands manage full API key lifecycle (create/revoke/list)
+- [x] Event bus wired into JobStore and PresenceStore for real-time events
+- [x] WhatsApp Cloud API channel wired and config-registered
+- [x] SMS (Twilio) channel sends and health-checks via REST API
 - [ ] Container scanning blocks CRITICAL CVEs in CI
 - [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
 

@@ -31,7 +31,7 @@ pub use types::{
     DepthRule, HookEvent, HookFailureMode, HookPolicy, HookRiskTier, HookSink, JobStatus, Lane,
     LoopAction, MemoryEntry, MemoryStore, MergeStrategy, MetricsSink, Provider, QueueMode,
     ReasoningConfig, ResearchPolicy, ResearchTrigger, RunId, StopReason, StreamChunk, StreamSink,
-    Tool, ToolCallDelta, ToolContext, ToolDefinition, ToolResult, ToolResultMessage,
-    ToolSelectionMode, ToolSelector, ToolSummary, ToolUseRequest, UserMessage,
+    SummarizationConfig, Tool, ToolCallDelta, ToolContext, ToolDefinition, ToolResult,
+    ToolResultMessage, ToolSelectionMode, ToolSelector, ToolSummary, ToolUseRequest, UserMessage,
 };
 pub use validation::validate_json;

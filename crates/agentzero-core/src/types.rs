@@ -219,6 +219,9 @@ pub struct AgentConfig {
     pub tool_selection: ToolSelectionMode,
     /// Optional override model for AI-based tool selection (cheaper/faster model).
     pub tool_selection_model: Option<String>,
+    /// Context summarization config. When enabled, older conversation entries
+    /// are summarized by the LLM instead of being hard-truncated.
+    pub summarization: SummarizationConfig,
 }
 
 impl Default for AgentConfig {
@@ -245,6 +248,7 @@ impl Default for AgentConfig {
             tool_timeout_ms: 120_000,
             tool_selection: ToolSelectionMode::All,
             tool_selection_model: None,
+            summarization: SummarizationConfig::default(),
         }
     }
 }
@@ -344,6 +348,31 @@ pub enum ResearchTrigger {
 pub struct ReasoningConfig {
     pub enabled: Option<bool>,
     pub level: Option<String>,
+}
+
+/// Configuration for intelligent context summarization.
+/// When enabled, older conversation entries are summarized by the LLM
+/// instead of being hard-truncated, preserving key context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummarizationConfig {
+    pub enabled: bool,
+    /// Number of recent entries to keep verbatim (rest get summarized).
+    pub keep_recent: usize,
+    /// Minimum total entries before summarization triggers.
+    pub min_entries_for_summarization: usize,
+    /// Max characters for the generated summary.
+    pub max_summary_chars: usize,
+}
+
+impl Default for SummarizationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            keep_recent: 10,
+            min_entries_for_summarization: 20,
+            max_summary_chars: 2000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -679,6 +708,11 @@ pub enum ContentPart {
         media_type: String,
         data: String, // base64-encoded
     },
+    #[serde(rename = "audio")]
+    Audio {
+        media_type: String,
+        data: String, // base64-encoded
+    },
 }
 
 /// A message in a multi-turn conversation (for structured tool use).
@@ -730,6 +764,7 @@ impl ConversationMessage {
                         .map(|p| match p {
                             ContentPart::Text { text } => text.len(),
                             ContentPart::Image { .. } => 100, // placeholder estimate for images
+                            ContentPart::Audio { .. } => 100, // placeholder estimate for audio
                         })
                         .sum::<usize>()
             }

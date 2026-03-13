@@ -200,6 +200,15 @@ impl Message {
                         },
                     }));
                 }
+                agentzero_core::ContentPart::Audio { media_type, data } => {
+                    content_array.push(serde_json::json!({
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": data,
+                            "format": if media_type.contains("wav") { "wav" } else { "mp3" },
+                        },
+                    }));
+                }
             }
         }
         Self {

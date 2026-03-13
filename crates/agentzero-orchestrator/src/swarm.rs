@@ -11,7 +11,7 @@ use crate::coordinator::{Coordinator, TaskMessage};
 use crate::presence::PresenceStore;
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
-use agentzero_core::event_bus::{Event, FileBackedBus, InMemoryBus};
+use agentzero_core::event_bus::{Event, EventBus, FileBackedBus, InMemoryBus};
 use agentzero_core::{Agent, AgentEndpoint};
 use agentzero_infra::runtime::{build_runtime_execution, RunAgentRequest};
 use agentzero_storage::SqliteEventBus;
@@ -88,51 +88,18 @@ struct BuiltAgent {
     turn_timeout_secs: u64,
 }
 
-// ─── build_swarm ────────────────────────────────────────────────────────────
+// ─── build_event_bus ────────────────────────────────────────────────────────
 
-/// Build a swarm coordinator from config.
+/// Build the event bus from config.
 ///
-/// Returns `None` if swarm is not enabled. Returns `Some(coordinator, shutdown_tx)`
-/// if swarm is enabled and at least one agent is configured.
-pub async fn build_swarm(
+/// Used by the gateway and swarm builder to create a shared bus that is wired
+/// into `JobStore`, `PresenceStore`, and the gateway SSE/WebSocket endpoints.
+pub async fn build_event_bus(
     config: &AgentZeroConfig,
-    channels: Arc<ChannelRegistry>,
-    config_path: &Path,
     workspace_root: &Path,
-) -> anyhow::Result<Option<(Coordinator, tokio::sync::watch::Sender<bool>)>> {
-    build_swarm_with_presence(config, channels, config_path, workspace_root, None).await
-}
-
-/// Build a swarm coordinator from config, optionally wiring a presence store
-/// so agents can register for the `/v1/agents` endpoint.
-pub async fn build_swarm_with_presence(
-    config: &AgentZeroConfig,
-    channels: Arc<ChannelRegistry>,
-    config_path: &Path,
-    workspace_root: &Path,
-    presence: Option<Arc<PresenceStore>>,
-) -> anyhow::Result<Option<(Coordinator, tokio::sync::watch::Sender<bool>)>> {
+) -> anyhow::Result<Arc<dyn EventBus>> {
     let swarm_config = &config.swarm;
-
-    if !swarm_config.enabled {
-        return Ok(None);
-    }
-
-    if swarm_config.agents.is_empty() {
-        tracing::warn!("swarm enabled but no agents configured");
-        return Ok(None);
-    }
-
-    tracing::info!(
-        agents = swarm_config.agents.len(),
-        pipelines = swarm_config.pipelines.len(),
-        bus_capacity = swarm_config.event_bus_capacity,
-        "building swarm"
-    );
-
-    // 1. Create the event bus based on config
     let bus_kind = swarm_config.event_bus.as_deref().unwrap_or_else(|| {
-        // Backward compat: if event_log_path is set, use file backend
         if swarm_config.event_log_path.is_some() {
             "file"
         } else {
@@ -140,7 +107,7 @@ pub async fn build_swarm_with_presence(
         }
     });
 
-    let bus: Arc<dyn agentzero_core::event_bus::EventBus> = match bus_kind {
+    match bus_kind {
         "sqlite" => {
             let db_path = swarm_config
                 .event_db_path
@@ -156,14 +123,14 @@ pub async fn build_swarm_with_presence(
                 retention_days = swarm_config.event_retention_days,
                 "using sqlite event bus"
             );
-            Arc::new(
+            Ok(Arc::new(
                 SqliteEventBus::open(&resolved, swarm_config.event_bus_capacity).map_err(|e| {
                     anyhow::anyhow!(
                         "failed to open sqlite event bus at {}: {e}",
                         resolved.display()
                     )
                 })?,
-            )
+            ))
         }
         "file" => {
             let log_path = swarm_config
@@ -176,13 +143,13 @@ pub async fn build_swarm_with_presence(
                 log_path.into()
             };
             tracing::info!(path = %resolved.display(), "using file-backed event bus");
-            Arc::new(
+            Ok(Arc::new(
                 FileBackedBus::open(&resolved, swarm_config.event_bus_capacity)
                     .await
                     .map_err(|e| {
                         anyhow::anyhow!("failed to open event log at {}: {e}", resolved.display())
                     })?,
-            )
+            ))
         }
         "gossip" => {
             let db_path = swarm_config
@@ -209,22 +176,71 @@ pub async fn build_swarm_with_presence(
                 peers = peers.len(),
                 "using gossip event bus"
             );
-            crate::gossip::GossipEventBus::start(crate::gossip::GossipConfig {
+            let bus = crate::gossip::GossipEventBus::start(crate::gossip::GossipConfig {
                 listen_addr,
                 peers,
                 db_path: resolved.to_string_lossy().to_string(),
                 capacity: swarm_config.event_bus_capacity,
             })
             .await
-            .map_err(|e| anyhow::anyhow!("failed to start gossip event bus: {e}"))?
+            .map_err(|e| anyhow::anyhow!("failed to start gossip event bus: {e}"))?;
+            Ok(bus as Arc<dyn EventBus>)
         }
         _ => {
             tracing::info!("using in-memory event bus");
-            Arc::new(InMemoryBus::new(swarm_config.event_bus_capacity))
+            Ok(Arc::new(InMemoryBus::new(swarm_config.event_bus_capacity)))
         }
-    };
+    }
+}
 
-    // 2. Build the AI router
+// ─── build_swarm ────────────────────────────────────────────────────────────
+
+/// Build a swarm coordinator from config.
+///
+/// Returns `None` if swarm is not enabled. Returns `Some(coordinator, shutdown_tx)`
+/// if swarm is enabled and at least one agent is configured.
+pub async fn build_swarm(
+    config: &AgentZeroConfig,
+    channels: Arc<ChannelRegistry>,
+    config_path: &Path,
+    workspace_root: &Path,
+) -> anyhow::Result<Option<(Coordinator, tokio::sync::watch::Sender<bool>)>> {
+    let bus = build_event_bus(config, workspace_root).await?;
+    build_swarm_with_presence(config, channels, config_path, workspace_root, None, bus).await
+}
+
+/// Build a swarm coordinator from config, optionally wiring a presence store
+/// so agents can register for the `/v1/agents` endpoint.
+///
+/// The caller must supply a pre-built `bus` so that the same bus instance can
+/// be wired into `JobStore` and `PresenceStore` before the swarm starts.
+pub async fn build_swarm_with_presence(
+    config: &AgentZeroConfig,
+    channels: Arc<ChannelRegistry>,
+    config_path: &Path,
+    workspace_root: &Path,
+    presence: Option<Arc<PresenceStore>>,
+    bus: Arc<dyn EventBus>,
+) -> anyhow::Result<Option<(Coordinator, tokio::sync::watch::Sender<bool>)>> {
+    let swarm_config = &config.swarm;
+
+    if !swarm_config.enabled {
+        return Ok(None);
+    }
+
+    if swarm_config.agents.is_empty() {
+        tracing::warn!("swarm enabled but no agents configured");
+        return Ok(None);
+    }
+
+    tracing::info!(
+        agents = swarm_config.agents.len(),
+        pipelines = swarm_config.pipelines.len(),
+        bus_capacity = swarm_config.event_bus_capacity,
+        "building swarm"
+    );
+
+    // 1. Build the AI router
     let router = if !swarm_config.router.provider.is_empty() {
         let router_req = RunAgentRequest {
             workspace_root: workspace_root.to_path_buf(),
@@ -254,7 +270,7 @@ pub async fn build_swarm_with_presence(
         AgentRouter::keywords_only()
     };
 
-    // 3. Create the coordinator
+    // 2. Create the coordinator
     let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
 
     let mut coord = Coordinator::new(

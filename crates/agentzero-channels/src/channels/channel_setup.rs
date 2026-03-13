@@ -32,6 +32,10 @@ pub struct ChannelInstanceConfig {
     pub imap_port: Option<u16>,
     pub username: Option<String>,
     pub from_address: Option<String>,
+    /// Twilio Account SID for the SMS channel.
+    pub account_sid: Option<String>,
+    /// Twilio-assigned sending number (E.164) for the SMS channel.
+    pub from_number: Option<String>,
     #[serde(default)]
     pub allowed_users: Vec<String>,
     #[serde(default)]
@@ -234,6 +238,51 @@ fn register_one(
             Ok(true)
         }
 
+        #[cfg(feature = "channel-whatsapp")]
+        "whatsapp" => {
+            let access_token = config
+                .access_token
+                .as_ref()
+                .ok_or("whatsapp requires access_token")?;
+            let phone_number_id = config
+                .channel_id
+                .as_ref()
+                .ok_or("whatsapp requires channel_id (phone_number_id)")?;
+            let verify_token = config.token.clone().unwrap_or_default();
+            let channel = super::WhatsappChannel::new(
+                access_token.clone(),
+                phone_number_id.clone(),
+                verify_token,
+                config.allowed_users.clone(),
+            );
+            registry.register(Arc::new(channel));
+            Ok(true)
+        }
+
+        #[cfg(feature = "channel-sms")]
+        "sms" => {
+            let account_sid = config
+                .account_sid
+                .as_ref()
+                .ok_or("sms requires account_sid")?;
+            let auth_token = config
+                .token
+                .as_ref()
+                .ok_or("sms requires token (auth_token)")?;
+            let from_number = config
+                .from_number
+                .as_ref()
+                .ok_or("sms requires from_number")?;
+            let channel = super::SmsChannel::new(
+                account_sid.clone(),
+                auth_token.clone(),
+                from_number.clone(),
+                config.allowed_users.clone(),
+            );
+            registry.register(Arc::new(channel));
+            Ok(true)
+        }
+
         _ => Ok(false),
     }
 }
@@ -305,5 +354,64 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(cfg.privacy_boundary, "local_only");
+    }
+
+    #[cfg(feature = "channel-whatsapp")]
+    #[test]
+    fn whatsapp_missing_access_token_returns_error() {
+        let mut registry = ChannelRegistry::new();
+        let mut configs = HashMap::new();
+        configs.insert("whatsapp".to_string(), ChannelInstanceConfig::default());
+        let errors = register_configured_channels(&mut registry, &configs);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].1.contains("access_token"));
+    }
+
+    #[cfg(feature = "channel-whatsapp")]
+    #[test]
+    fn whatsapp_with_required_fields_registers() {
+        let mut registry = ChannelRegistry::new();
+        let mut configs = HashMap::new();
+        configs.insert(
+            "whatsapp".to_string(),
+            ChannelInstanceConfig {
+                access_token: Some("EAAtest".into()),
+                channel_id: Some("12345678901".into()),
+                ..Default::default()
+            },
+        );
+        let errors = register_configured_channels(&mut registry, &configs);
+        assert!(errors.is_empty());
+        assert!(registry.has_channel("whatsapp"));
+    }
+
+    #[cfg(feature = "channel-sms")]
+    #[test]
+    fn sms_missing_account_sid_returns_error() {
+        let mut registry = ChannelRegistry::new();
+        let mut configs = HashMap::new();
+        configs.insert("sms".to_string(), ChannelInstanceConfig::default());
+        let errors = register_configured_channels(&mut registry, &configs);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].1.contains("account_sid"));
+    }
+
+    #[cfg(feature = "channel-sms")]
+    #[test]
+    fn sms_with_required_fields_registers() {
+        let mut registry = ChannelRegistry::new();
+        let mut configs = HashMap::new();
+        configs.insert(
+            "sms".to_string(),
+            ChannelInstanceConfig {
+                account_sid: Some("ACtest000000000000000000000000000".into()),
+                token: Some("auth_token_test".into()),
+                from_number: Some("+15550001234".into()),
+                ..Default::default()
+            },
+        );
+        let errors = register_configured_channels(&mut registry, &configs);
+        assert!(errors.is_empty());
+        assert!(registry.has_channel("sms"));
     }
 }

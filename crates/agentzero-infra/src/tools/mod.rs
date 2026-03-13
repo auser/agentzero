@@ -10,16 +10,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use agentzero_tools::{
-    AgentsIpcTool, ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool, ComposioTool,
-    ContentSearchTool, CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool,
-    CronUpdateTool, DelegateCoordinationStatusTool, DelegateTool, FileEditTool, GitOperationsTool,
-    GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool,
-    HttpRequestTool, ImageInfoTool, MemoryForgetTool, MemoryRecallTool, MemoryStoreTool,
-    ModelRoutingConfigTool, PdfReadTool, ProcessTool, ProxyConfigTool, PushoverTool,
-    ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool, ShellPolicy, ShellTool,
-    SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, SubAgentListTool,
-    SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool, ToolSecurityPolicy, UrlValidationTool,
-    WasmModuleTool, WasmToolExecTool, WebFetchTool, WebSearchTool, WriteFilePolicy, WriteFileTool,
+    AgentsIpcTool, ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool,
+    CodeInterpreterTool, ComposioTool, ContentSearchTool, CronAddTool, CronListTool, CronPauseTool,
+    CronRemoveTool, CronResumeTool, CronUpdateTool, DelegateCoordinationStatusTool, DelegateTool,
+    FileEditTool, GitOperationsTool, GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool,
+    HardwareMemoryReadTool, HttpRequestTool, ImageGenTool, ImageInfoTool, MemoryForgetTool,
+    MemoryRecallTool, MemoryStoreTool, ModelRoutingConfigTool, PdfReadTool, ProcessTool,
+    ProxyConfigTool, PushoverTool, ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool,
+    ShellPolicy, ShellTool, SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool,
+    SopStatusTool, SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool,
+    ToolSecurityPolicy, TtsTool, UrlValidationTool, VideoGenTool, WasmModuleTool, WasmToolExecTool,
+    WebFetchTool, WebSearchTool, WriteFilePolicy, WriteFileTool,
 };
 #[cfg(feature = "document-tools")]
 pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
@@ -132,6 +133,22 @@ pub fn default_tools(
     if policy.enable_mcp && !policy.mcp_servers.is_empty() {
         let mcp_tools = create_mcp_tools(&policy.mcp_servers)?;
         tools.extend(mcp_tools);
+    }
+
+    if policy.enable_code_interpreter {
+        tools.push(Box::new(CodeInterpreterTool::default()));
+    }
+
+    if policy.enable_tts {
+        tools.push(Box::new(TtsTool::default()));
+    }
+
+    if policy.enable_image_gen {
+        tools.push(Box::new(ImageGenTool::default()));
+    }
+
+    if policy.enable_video_gen {
+        tools.push(Box::new(VideoGenTool::default()));
     }
 
     if policy.enable_composio {

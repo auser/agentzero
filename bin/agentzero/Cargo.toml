@@ -35,6 +35,7 @@ privacy = ["agentzero-cli/privacy"]
 telemetry = ["agentzero-cli/telemetry"]
 document-tools = ["agentzero-cli/document-tools"]
 local-model = ["agentzero-cli/local-model"]
+config-ui = ["agentzero-cli/config-ui"]
 
 [dependencies]
 anyhow.workspace = true

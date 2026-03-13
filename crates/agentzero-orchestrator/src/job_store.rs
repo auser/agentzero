@@ -3,7 +3,8 @@
 //! Each async job submission gets a [`RunId`] and is tracked here through its
 //! lifecycle: `Pending → Running → Completed/Failed/Cancelled`.
 
-use agentzero_core::{JobStatus, Lane, RunId};
+use agentzero_core::event_bus::Event;
+use agentzero_core::{EventBus, JobStatus, Lane, RunId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
@@ -96,13 +97,23 @@ pub struct JobRecord {
 }
 
 /// Thread-safe store for tracking async agent runs.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct JobStore {
     jobs: Arc<RwLock<HashMap<RunId, JobRecord>>>,
     /// Channel that fires whenever a job's status changes.
     notify: Arc<tokio::sync::broadcast::Sender<(RunId, JobStatus)>>,
     /// Persistent event log for run lifecycle tracking.
     event_log: EventLog,
+    /// Optional distributed event bus for cross-instance awareness.
+    event_bus: Option<Arc<dyn EventBus>>,
+}
+
+impl std::fmt::Debug for JobStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JobStore")
+            .field("event_bus", &self.event_bus.is_some())
+            .finish()
+    }
 }
 
 impl JobStore {
@@ -112,7 +123,14 @@ impl JobStore {
             jobs: Arc::new(RwLock::new(HashMap::new())),
             notify: Arc::new(tx),
             event_log: EventLog::new(),
+            event_bus: None,
         }
+    }
+
+    /// Set the distributed event bus for publishing job state transitions.
+    pub fn with_event_bus(mut self, bus: Arc<dyn EventBus>) -> Self {
+        self.event_bus = Some(bus);
+        self
     }
 
     /// Access the event log for recording tool calls and other events.
@@ -158,6 +176,20 @@ impl JobStore {
         self.jobs.write().await.insert(run_id.clone(), record);
         let _ = self.notify.send((run_id.clone(), JobStatus::Pending));
         self.event_log.append(&run_id, EventKind::Created).await;
+
+        // Publish to distributed event bus if configured.
+        if let Some(ref bus) = self.event_bus {
+            let payload = serde_json::json!({
+                "run_id": run_id.as_str(),
+                "status": "pending",
+            })
+            .to_string();
+            let event = Event::new("job.pending", "job_store", payload);
+            if let Err(e) = bus.publish(event).await {
+                tracing::warn!(error = %e, "failed to publish job submit event");
+            }
+        }
+
         run_id
     }
 
@@ -184,6 +216,20 @@ impl JobStore {
             JobStatus::Cancelled => EventKind::Cancelled,
         };
         self.event_log.append(run_id, kind).await;
+
+        // Publish to distributed event bus if configured.
+        if let Some(ref bus) = self.event_bus {
+            let topic = format!("job.{}", status_to_topic(&status));
+            let payload = serde_json::json!({
+                "run_id": run_id.as_str(),
+                "status": status_to_topic(&status),
+            })
+            .to_string();
+            let event = Event::new(topic, "job_store", payload);
+            if let Err(e) = bus.publish(event).await {
+                tracing::warn!(error = %e, "failed to publish job status event");
+            }
+        }
     }
 
     /// Atomically transition a job from `Pending` to `Running`, recording the
@@ -447,6 +493,16 @@ impl JobStore {
 impl Default for JobStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn status_to_topic(status: &JobStatus) -> &'static str {
+    match status {
+        JobStatus::Pending => "pending",
+        JobStatus::Running => "running",
+        JobStatus::Completed { .. } => "completed",
+        JobStatus::Failed { .. } => "failed",
+        JobStatus::Cancelled => "cancelled",
     }
 }
 
@@ -1021,5 +1077,71 @@ mod tests {
         let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
         let record = store.get(&run_id).await.expect("job should exist");
         assert!(record.org_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn event_bus_publishes_on_submit() {
+        let bus = Arc::new(agentzero_core::InMemoryBus::default_capacity());
+        let store = JobStore::new().with_event_bus(bus.clone());
+        let mut sub = bus.subscribe();
+
+        let _run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+        assert_eq!(event.topic, "job.pending");
+        assert!(event.payload.contains("pending"));
+    }
+
+    #[tokio::test]
+    async fn event_bus_publishes_on_status_change() {
+        let bus = Arc::new(agentzero_core::InMemoryBus::default_capacity());
+        let store = JobStore::new().with_event_bus(bus.clone());
+        let mut sub = bus.subscribe();
+
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+
+        // Consume the submit event.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+
+        // Transition to Running.
+        store.update_status(&run_id, JobStatus::Running).await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+        assert_eq!(event.topic, "job.running");
+
+        // Transition to Completed.
+        store
+            .update_status(
+                &run_id,
+                JobStatus::Completed {
+                    result: "done".to_string(),
+                },
+            )
+            .await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+        assert_eq!(event.topic, "job.completed");
+    }
+
+    #[tokio::test]
+    async fn no_event_bus_still_works() {
+        // Verify backward compat: no event bus configured should not panic.
+        let store = JobStore::new();
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+        store.update_status(&run_id, JobStatus::Running).await;
+        let record = store.get(&run_id).await.expect("job");
+        assert_eq!(record.status, JobStatus::Running);
     }
 }

@@ -45,6 +45,43 @@ on_error_default = "warn"                   # block | warn | ignore
 # on_error_medium = "warn"
 # on_error_high = "block"
 
+[agent.summarization]
+enabled = false                             # summarize older context instead of truncating
+keep_recent = 10                            # entries to keep verbatim
+min_entries_for_summarization = 20          # threshold before summarization kicks in
+max_summary_chars = 2000                    # max summary length
+
+# ---------------------------------------------------------------------------
+# Code Interpreter — sandboxed Python/JS execution
+# ---------------------------------------------------------------------------
+[code_interpreter]
+enabled = false
+timeout_ms = 30000
+max_output_bytes = 65536
+allowed_languages = ["python", "javascript"]
+
+# ---------------------------------------------------------------------------
+# Media Generation — TTS, image, video generation tools
+# ---------------------------------------------------------------------------
+[media_gen.tts]
+enabled = false
+api_url = "https://api.openai.com/v1/audio/speech"
+api_key_env = "OPENAI_API_KEY"
+model = "tts-1"
+default_voice = "alloy"
+
+[media_gen.image_gen]
+enabled = false
+api_url = "https://api.openai.com/v1/images/generations"
+api_key_env = "OPENAI_API_KEY"
+model = "dall-e-3"
+
+[media_gen.video_gen]
+enabled = false
+api_url = "https://api.minimax.chat/v1/video_generation"
+api_key_env = "MINIMAX_API_KEY"
+model = "MiniMax-Hailuo-2.3"
+
 # ---------------------------------------------------------------------------
 # Security — file, shell, and tool security
 # ---------------------------------------------------------------------------

@@ -57,6 +57,10 @@ enum BrowserAction {
     Scroll {
         direction: String,
     },
+    ExecuteJs {
+        script: String,
+    },
+    Content,
     Close,
 }
 
@@ -249,11 +253,23 @@ impl Tool for BrowserTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "Browser action: navigate, execute_js, screenshot, content, close",
-                    "enum": ["navigate", "execute_js", "screenshot", "content", "close"]
+                    "description": "Browser action to perform",
+                    "enum": [
+                        "navigate", "snapshot", "click", "fill", "type",
+                        "get_text", "get_title", "get_url", "screenshot",
+                        "wait", "press", "hover", "scroll",
+                        "execute_js", "content", "close"
+                    ]
                 },
-                "url": { "type": "string", "description": "URL to navigate to (for navigate action)" },
-                "script": { "type": "string", "description": "JavaScript to execute (for execute_js action)" }
+                "url": { "type": "string", "description": "URL to navigate to (navigate action)" },
+                "selector": { "type": "string", "description": "CSS selector (click, fill, type, get_text, hover, wait)" },
+                "value": { "type": "string", "description": "Value to fill (fill action)" },
+                "text": { "type": "string", "description": "Text to type (type action)" },
+                "key": { "type": "string", "description": "Key to press (press action)" },
+                "direction": { "type": "string", "description": "Scroll direction: up or down (scroll action)" },
+                "script": { "type": "string", "description": "JavaScript to execute (execute_js action)" },
+                "path": { "type": "string", "description": "File path for screenshot (screenshot action)" },
+                "ms": { "type": "integer", "description": "Milliseconds to wait (wait action)" }
             },
             "required": ["action"]
         }))
@@ -274,6 +290,11 @@ impl Tool for BrowserTool {
             | BrowserAction::GetText { selector }
             | BrowserAction::Hover { selector } => {
                 Self::validate_selector(selector)?;
+            }
+            BrowserAction::ExecuteJs { ref script } => {
+                if script.trim().is_empty() {
+                    return Err(anyhow!("script must not be empty"));
+                }
             }
             _ => {}
         }
@@ -343,6 +364,34 @@ mod tests {
     fn validate_domain_allows_any_when_empty() {
         let tool = BrowserTool::default();
         assert!(tool.validate_domain("https://anything.com").is_ok());
+    }
+
+    #[tokio::test]
+    async fn browser_execute_js_rejects_empty_script() {
+        let tool = BrowserTool::default();
+        let err = tool
+            .execute(
+                r#"{"action": "execute_js", "script": ""}"#,
+                &ToolContext::new(".".to_string()),
+            )
+            .await
+            .expect_err("empty script should fail");
+        assert!(err.to_string().contains("script must not be empty"));
+    }
+
+    #[test]
+    fn parse_content_action() {
+        let action: BrowserAction =
+            serde_json::from_str(r#"{"action": "content"}"#).expect("content should parse");
+        assert!(matches!(action, BrowserAction::Content));
+    }
+
+    #[test]
+    fn parse_execute_js_action() {
+        let action: BrowserAction =
+            serde_json::from_str(r#"{"action": "execute_js", "script": "return 1+1"}"#)
+                .expect("execute_js should parse");
+        assert!(matches!(action, BrowserAction::ExecuteJs { .. }));
     }
 
     #[test]

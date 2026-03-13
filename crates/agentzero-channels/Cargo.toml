@@ -55,6 +55,7 @@ channel-mqtt = []
 channel-transcription = []
 channel-whatsapp-web = []
 channel-nostr = ["tokio-tungstenite", "futures-util"]
+channel-sms = ["reqwest"]
 tls-rustls = ["reqwest?/rustls-tls", "tokio-tungstenite?/rustls-tls-native-roots"]
 tls-native = ["reqwest?/native-tls", "tokio-tungstenite?/native-tls"]
 channels-standard = [
@@ -68,6 +69,8 @@ channels-standard = [
     "channel-irc",
     "channel-nostr",
     "channel-webhook",
+    "channel-whatsapp",
+    "channel-sms",
 ]
 all-channels = [
     "channel-cli",
@@ -96,4 +99,5 @@ all-channels = [
     "channel-signal",
     "channel-imessage",
     "channel-nostr",
+    "channel-sms",
 ]

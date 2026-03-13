@@ -10,6 +10,7 @@ pub mod autonomy;
 pub mod browser;
 pub mod browser_open;
 pub mod cli_discovery;
+pub mod code_interpreter;
 pub mod composio;
 pub mod content_search;
 pub mod converse;
@@ -28,6 +29,7 @@ pub mod hardware_tools;
 pub mod html_extract;
 pub mod http_request;
 pub mod image_info;
+pub mod media_gen;
 pub mod memory_tools;
 pub mod model_routing_config;
 pub mod pdf_read;
@@ -58,6 +60,7 @@ pub use apply_patch::ApplyPatchTool;
 pub use browser::BrowserTool;
 pub use browser_open::BrowserOpenTool;
 pub use cli_discovery::CliDiscoveryTool;
+pub use code_interpreter::{CodeInterpreterConfig, CodeInterpreterTool};
 pub use composio::ComposioTool;
 pub use content_search::ContentSearchTool;
 pub use converse::ConverseTool;
@@ -76,6 +79,7 @@ pub use hardware_tools::{HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareM
 pub use html_extract::HtmlExtractTool;
 pub use http_request::HttpRequestTool;
 pub use image_info::ImageInfoTool;
+pub use media_gen::{ImageGenTool, TtsTool, VideoGenTool};
 pub use memory_tools::{MemoryForgetTool, MemoryRecallTool, MemoryStoreTool};
 pub use model_routing_config::ModelRoutingConfigTool;
 pub use pdf_read::PdfReadTool;
@@ -129,6 +133,10 @@ pub struct ToolSecurityPolicy {
     pub enable_html_extract: bool,
     pub enable_composio: bool,
     pub enable_pushover: bool,
+    pub enable_code_interpreter: bool,
+    pub enable_tts: bool,
+    pub enable_image_gen: bool,
+    pub enable_video_gen: bool,
     pub enable_wasm_plugins: bool,
     pub wasm_global_plugin_dir: Option<PathBuf>,
     pub wasm_project_plugin_dir: Option<PathBuf>,
@@ -195,6 +203,10 @@ impl ToolSecurityPolicy {
             enable_html_extract: false,
             enable_composio: false,
             enable_pushover: false,
+            enable_code_interpreter: false,
+            enable_tts: false,
+            enable_image_gen: false,
+            enable_video_gen: false,
             enable_wasm_plugins: false,
             wasm_global_plugin_dir: None,
             wasm_project_plugin_dir: None,

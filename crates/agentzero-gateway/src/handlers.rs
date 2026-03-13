@@ -4,10 +4,10 @@ use crate::models::{
     AgentListItem, AgentListResponse, ApiFallbackResponse, AsyncSubmitRequest, AsyncSubmitResponse,
     CancelQuery, CancelResponse, ChatCompletionsRequest, ChatCompletionsResponse, ChatRequest,
     ChatResponse, CompletionChoice, CompletionChoiceMessage, EstopResponse, EventItem,
-    EventListResponse, GatewayError, HealthResponse, JobListItem, JobListQuery, JobListResponse,
-    JobStatusResponse, LivenessResponse, ModelItem, ModelsResponse, PairRequest, PairResponse,
-    PingRequest, PingResponse, ReadyResponse, TranscriptResponse, WebhookPayload, WebhookResponse,
-    WsRunQuery,
+    EventListResponse, EventStreamQuery, GatewayError, HealthResponse, JobListItem, JobListQuery,
+    JobListResponse, JobStatusResponse, LivenessResponse, ModelItem, ModelsResponse, PairRequest,
+    PairResponse, PingRequest, PingResponse, ReadyResponse, TranscriptResponse, WebhookPayload,
+    WebhookResponse, WsRunQuery,
 };
 use crate::state::GatewayState;
 use crate::util::{generate_session_token, now_epoch_secs};
@@ -1577,6 +1577,79 @@ fn block_status_frame(
         // For non-completed statuses, delegate to the raw frame builder.
         other => status_frame(run_id, other),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Event bus SSE endpoint
+// ---------------------------------------------------------------------------
+
+/// `GET /v1/events` — SSE stream of real-time events from the distributed event bus.
+///
+/// Subscribes to the event bus and streams events as SSE frames. Supports optional
+/// `topic` query parameter to filter events by topic prefix.
+pub(crate) async fn sse_events(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    query: axum::extract::Query<EventStreamQuery>,
+) -> Result<Response, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let event_bus = state
+        .event_bus
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?
+        .clone();
+
+    let topic_filter = query.topic.clone();
+
+    let mut subscriber = event_bus.subscribe();
+
+    let stream = async_stream::stream! {
+        let deadline = Instant::now() + Duration::from_secs(600);
+
+        loop {
+            tokio::select! {
+                result = subscriber.recv() => {
+                    match result {
+                        Ok(event) => {
+                            // Filter by topic prefix if specified.
+                            if let Some(ref prefix) = topic_filter {
+                                if !event.topic.starts_with(prefix.as_str()) {
+                                    continue;
+                                }
+                            }
+                            let frame = json!({
+                                "id": event.id,
+                                "topic": event.topic,
+                                "source": event.source,
+                                "payload": event.payload,
+                                "timestamp_ms": event.timestamp_ms,
+                            });
+                            yield Ok::<_, std::convert::Infallible>(
+                                format!("data: {frame}\n\n")
+                            );
+                        }
+                        Err(_) => return,
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    yield Ok(format!(
+                        "data: {}\n\n",
+                        json!({"type": "error", "message": "stream timeout"})
+                    ));
+                    return;
+                }
+            }
+        }
+    };
+
+    let body = axum::body::Body::from_stream(stream);
+    Ok(Response::builder()
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive")
+        .body(body)
+        .expect("SSE response builder"))
 }
 
 // ---------------------------------------------------------------------------

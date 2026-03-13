@@ -132,6 +132,33 @@ build-sizes:
     cargo build -p agentzero --profile release-min --no-default-features --features memory-sqlite,plugins,tls-native -q
     echo "  plugins+native-tls: $(du -h target/release-min/agentzero | cut -f1)"
 
+# ── Config UI ────────────────────────────────────
+
+# Launch the visual node graph config editor (browser)
+config-ui:
+    cargo run -p agentzero --features config-ui -- config-ui
+
+# Build the config UI frontend (for embedding)
+config-ui-build:
+    cd crates/agentzero-config-ui/ui && npm install && npm run build
+
+# Dev mode: cargo watch for backend + vite dev for frontend (hot reload)
+config-ui-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Starting config UI dev servers..."
+    echo "  Backend:  http://127.0.0.1:42618  (cargo watch)"
+    echo "  Frontend: http://127.0.0.1:5173   (vite dev, proxies /api)"
+    echo ""
+    # Start backend with cargo watch, rebuilding on Rust changes
+    cargo watch -w crates/agentzero-config-ui/src -x 'run -p agentzero --features config-ui -- config-ui' &
+    CARGO_PID=$!
+    # Start vite dev server for frontend hot reload
+    cd crates/agentzero-config-ui/ui && npx vite --open &
+    VITE_PID=$!
+    trap "kill $CARGO_PID $VITE_PID 2>/dev/null" EXIT
+    wait
+
 # ── Docker ────────────────────────────────────────
 
 # Build Docker image

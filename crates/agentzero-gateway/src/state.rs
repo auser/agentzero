@@ -4,7 +4,7 @@ use crate::token_store::save_paired_tokens;
 use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
-use agentzero_core::MemoryStore;
+use agentzero_core::{EventBus, MemoryStore};
 use agentzero_orchestrator::{JobStore, PresenceStore};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
@@ -71,6 +71,8 @@ pub(crate) struct GatewayState {
     pub(crate) gateway_channel: Option<Arc<GatewayChannel>>,
     /// API key store for scope-based authorization.
     pub(crate) api_key_store: Option<Arc<ApiKeyStore>>,
+    /// Distributed event bus for real-time event streaming.
+    pub(crate) event_bus: Option<Arc<dyn EventBus>>,
 }
 
 impl GatewayState {
@@ -118,7 +120,15 @@ impl GatewayState {
             memory_store: None,
             gateway_channel: None,
             api_key_store: None,
+            event_bus: None,
         }
+    }
+
+    /// Set the distributed event bus for real-time event streaming.
+    #[allow(dead_code)]
+    pub(crate) fn with_event_bus(mut self, bus: Arc<dyn EventBus>) -> Self {
+        self.event_bus = Some(bus);
+        self
     }
 
     /// Set the API key store for scope-based authorization.
@@ -316,6 +326,7 @@ impl GatewayState {
             memory_store: None,
             gateway_channel: None,
             api_key_store: None,
+            event_bus: None,
         }
     }
 
@@ -357,6 +368,7 @@ impl GatewayState {
             memory_store: None,
             gateway_channel: None,
             api_key_store: None,
+            event_bus: None,
         }
     }
 }
