@@ -1902,6 +1902,12 @@ pub struct SwarmConfig {
     /// Retention period in days for SQLite event bus GC. Default: 7.
     #[serde(default = "default_event_retention_days")]
     pub event_retention_days: u32,
+    /// Port for gossip TCP listener (only used when `event_bus = "gossip"`).
+    #[serde(default)]
+    pub gossip_port: Option<u16>,
+    /// Addresses of gossip peers (e.g. `["192.168.1.10:9100", "192.168.1.11:9100"]`).
+    #[serde(default)]
+    pub gossip_peers: Vec<String>,
     pub router: SwarmRouterConfig,
     /// Named agent definitions keyed by agent id.
     #[serde(default)]
@@ -1932,6 +1938,8 @@ impl Default for SwarmConfig {
             event_log_path: None,
             event_db_path: None,
             event_retention_days: 7,
+            gossip_port: None,
+            gossip_peers: Vec::new(),
             router: SwarmRouterConfig::default(),
             agents: HashMap::new(),
             pipelines: Vec::new(),

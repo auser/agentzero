@@ -135,7 +135,7 @@ Wire the existing WhatsApp Cloud API channel into the config pipeline and add a 
 ### Acceptance Criteria
 
 - [x] Embedded event bus works with SQLite persistence (no Redis)
-- [ ] Gossip layer enables multi-instance event propagation over TCP
+- [x] Gossip layer enables multi-instance event propagation over TCP
 - [x] All request handlers use typed structs with validation
 - [x] Circuit breaker wraps provider calls transparently
 - [x] Liveness probe verifies async runtime health
@@ -182,9 +182,9 @@ When an agent has access to many tools, use AI to select relevant tools by name 
 
 Complete the distributed event bus with TCP gossip for multi-instance deployments.
 
-- [ ] **`GossipEventBus`** — TCP mesh layer wrapping `SqliteEventBus`. Each node listens on configurable port. Broadcasts events to peers via length-prefixed bincode frames. Deduplication via event ID set (bounded LRU). Peer health via periodic ping. In `agentzero-orchestrator`.
-- [ ] **Config** — `[swarm] event_bus = "gossip"`, `gossip_port`, `gossip_peers` list. Falls back to `SqliteEventBus` for local persistence.
-- [ ] **Tests** — Two-node gossip relay, deduplication, peer disconnect recovery. 4+ tests.
+- [x] **`GossipEventBus`** — TCP mesh layer wrapping `SqliteEventBus`. Length-prefixed JSON frames over TCP. Bounded LRU dedup set (10k entries). Periodic ping for peer health. Auto-reconnect on send failure. `GossipConfig` struct (listen_addr, peers, db_path, capacity). In `agentzero-orchestrator/src/gossip.rs`.
+- [x] **Config** — `SwarmConfig` gains `gossip_port: Option<u16>` and `gossip_peers: Vec<String>`. `event_bus = "gossip"` arm in `swarm.rs` wires `GossipEventBus::start()`. Falls back to `SqliteEventBus` for local persistence.
+- [x] **Tests** — 5 tests: two-node gossip relay (publish on bus1 received on bus2), dedup prevents re-broadcast, dedup evicts oldest, local publish persists + subscribes, wire protocol round-trip.
 
 ### Phase C: CLI API Key Management (MEDIUM)
 
@@ -220,7 +220,7 @@ Wire the event bus into the orchestration layer for real-time cross-component aw
 ### Acceptance Criteria (Sprint 40)
 
 - [x] AI/keyword tool selector reduces tool set passed to provider
-- [ ] Gossip layer enables multi-instance event propagation over TCP
+- [x] Gossip layer enables multi-instance event propagation over TCP
 - [ ] CLI commands manage full API key lifecycle (create/revoke/list)
 - [ ] Event bus wired into JobStore and PresenceStore for real-time events
 - [ ] WhatsApp Cloud API channel wired and config-registered

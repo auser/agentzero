@@ -184,6 +184,40 @@ pub async fn build_swarm_with_presence(
                     })?,
             )
         }
+        "gossip" => {
+            let db_path = swarm_config
+                .event_db_path
+                .as_deref()
+                .unwrap_or("data/events.db");
+            let resolved = if Path::new(db_path).is_relative() {
+                workspace_root.join(db_path)
+            } else {
+                db_path.into()
+            };
+            let port = swarm_config.gossip_port.unwrap_or(9100);
+            let listen_addr: std::net::SocketAddr = format!("0.0.0.0:{port}")
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid gossip listen address: {e}"))?;
+            let peers: Vec<std::net::SocketAddr> = swarm_config
+                .gossip_peers
+                .iter()
+                .filter_map(|p| p.parse().ok())
+                .collect();
+            tracing::info!(
+                path = %resolved.display(),
+                addr = %listen_addr,
+                peers = peers.len(),
+                "using gossip event bus"
+            );
+            crate::gossip::GossipEventBus::start(crate::gossip::GossipConfig {
+                listen_addr,
+                peers,
+                db_path: resolved.to_string_lossy().to_string(),
+                capacity: swarm_config.event_bus_capacity,
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to start gossip event bus: {e}"))?
+        }
         _ => {
             tracing::info!("using in-memory event bus");
             Arc::new(InMemoryBus::new(swarm_config.event_bus_capacity))
