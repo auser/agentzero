@@ -297,6 +297,67 @@ End-to-end security test suite covering the full auth → scope → request flow
 
 ---
 
+## Sprint 42: Lightweight Mode, Examples, Docker Secrets & Runbooks
+
+**Goal:** Ship the lightweight orchestrator binary for edge deployments, comprehensive examples for adoption, Docker Secrets support for secure container deployments, and operational runbooks. Brings estimated readiness from ~90% to ~95%.
+
+**Baseline:** Sprint 41 complete. All CRITICAL/HIGH security, observability, and resilience gaps closed. TLS, persistent API keys, provider metrics, correlation IDs, audit logging, E2E security tests all shipped.
+
+---
+
+### Phase A: Lightweight Orchestrator Mode (HIGH)
+
+A minimal binary that runs orchestration + gateway without heavy tool/plugin/channel crates.
+
+- [ ] **`agentzero-lite` binary** — New binary target in `bin/agentzero-lite/`. Depends only on `agentzero-core`, `agentzero-config`, `agentzero-providers`, `agentzero-infra` (orchestrator subset), `agentzero-orchestrator`, and `agentzero-gateway`. Excludes: `agentzero-tools`, `agentzero-channels`, `agentzero-plugins`, `agentzero-cli`, `agentzero-ffi`.
+- [ ] **Remote tool execution** — `POST /v1/tool-execute` endpoint on gateway accepts `{ tool, input }` and returns `{ output }`. Lightweight mode delegates tool calls to a full-featured node via this endpoint. Config: `[orchestrator] tool_mode = "local" | "remote"`, `tool_remote_url`.
+- [ ] **Binary size target** — Under 10 MB release binary (vs ~25 MB full).
+- [ ] **Tests** — Builds without tools feature. Remote tool delegation round-trip. Gateway starts in lite mode. 4+ tests.
+
+### Phase B: Examples Directory (MEDIUM)
+
+Comprehensive examples with READMEs demonstrating key use cases.
+
+- [ ] **`examples/chatbot/`** — Simple single-agent chatbot with tool use. Minimal config. Good first example for new users. `README.md`, `config.toml`, agent definition.
+- [ ] **`examples/multi-agent-team/`** — Team of specialized agents (researcher, writer, reviewer) collaborating via lane-based routing. Demonstrates queue modes, collect, and followup.
+- [ ] **`examples/research-pipeline/`** — Already exists. Review and update README with current API. Ensure it runs against current codebase.
+- [ ] **`examples/business-office/`** — Already exists. Review and update README. Verify delegation, budgets, cascade stop work.
+- [ ] **`examples/edge-deployment/`** — Lightweight mode config + remote tool execution to a full node.
+
+### Phase C: Docker Secrets & Container Hardening (MEDIUM)
+
+- [ ] **Docker Secrets support** — Config loader reads from `/run/secrets/<key>` when environment variable is not set. Supports `AGENTZERO_API_KEY`, `AGENTZERO_ENCRYPTION_KEY`, provider API keys. Fallback chain: env var → Docker secret → config file.
+- [ ] **`docker-compose.yml` secrets** — Add `secrets:` section with external secret references. Document setup in `docs/deployment/docker-secrets.md`.
+- [ ] **Resource limits** — Add `mem_limit`, `cpus`, and `healthcheck` to docker-compose services.
+- [ ] **Tests** — Config loader reads from mock `/run/secrets/` path. 2+ tests.
+
+### Phase D: Operational Runbooks (LOW)
+
+- [ ] **Incident response** — `docs/runbooks/incident-response.md`: E-stop procedure, provider failover, inspecting stuck jobs, log locations, escalation template.
+- [ ] **Backup & recovery** — `docs/runbooks/backup-recovery.md`: Scheduled backup via cron, restore procedure, integrity verification, encrypted export.
+- [ ] **Monitoring setup** — `docs/runbooks/monitoring.md`: Prometheus scrape config, key metrics to alert on, Grafana dashboard JSON template.
+- [ ] **Scaling** — `docs/runbooks/scaling.md`: Metrics thresholds, horizontal scaling with gossip event bus, lightweight mode for edge, provider fallback chain setup.
+
+### Phase E: E2E Testing with Local LLM (MEDIUM)
+
+- [ ] **CI-integrated e2e tests** — GitHub Actions job using Ollama + tinyllama (or similar small model). Tests run against real LLM completions.
+- [ ] **Test coverage** — Provider completion, streaming, tool use, multi-turn conversation.
+- [ ] **Orchestrator routing test** — Real LLM classification for agent routing decisions.
+
+---
+
+### Acceptance Criteria (Sprint 42)
+
+- [ ] Lightweight binary builds under 10 MB without tool/plugin crates
+- [ ] Remote tool delegation round-trip works between lite and full nodes
+- [ ] 5 example directories with working configs and READMEs
+- [ ] Docker Secrets fallback chain works (env → secret → config)
+- [ ] 4 operational runbooks cover incident, backup, monitoring, scaling
+- [ ] E2E tests pass with real local LLM
+- [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
+
+---
+
 ## Backlog
 
 ### Lightweight Orchestrator Mode
