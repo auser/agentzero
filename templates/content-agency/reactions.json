@@ -1,0 +1,50 @@
+[
+    {
+        "source_agent": "writer",
+        "event_pattern": "mission.completed",
+        "target_agent": "seo",
+        "action": "propose_seo_review",
+        "probability": 1.0,
+        "cooldown_secs": 300
+    },
+    {
+        "source_agent": "seo",
+        "event_pattern": "mission.completed",
+        "target_agent": "editor",
+        "action": "propose_publish_review",
+        "probability": 0.95,
+        "cooldown_secs": 300
+    },
+    {
+        "source_agent": "writer",
+        "event_pattern": "content.published",
+        "target_agent": "social_media",
+        "action": "propose_social_post",
+        "probability": 0.9,
+        "cooldown_secs": 600
+    },
+    {
+        "source_agent": "analyst",
+        "event_pattern": "report.generated",
+        "target_agent": "editor",
+        "action": "propose_topic",
+        "probability": 0.7,
+        "cooldown_secs": 3600
+    },
+    {
+        "source_agent": "editor",
+        "event_pattern": "proposal.approved",
+        "target_agent": "researcher",
+        "action": "begin_research",
+        "probability": 1.0,
+        "cooldown_secs": 60
+    },
+    {
+        "source_agent": "researcher",
+        "event_pattern": "mission.completed",
+        "target_agent": "writer",
+        "action": "begin_writing",
+        "probability": 1.0,
+        "cooldown_secs": 60
+    }
+]

@@ -96,6 +96,7 @@ pub fn load_tool_security_policy(
         enable_tts: config.media_gen.tts.enabled,
         enable_image_gen: config.media_gen.image_gen.enabled,
         enable_video_gen: config.media_gen.video_gen.enabled,
+        enable_autopilot: config.autopilot.enabled,
         enable_wasm_plugins: config.security.plugin.wasm_enabled,
         wasm_global_plugin_dir: config.security.plugin.global_plugin_dir.map(PathBuf::from),
         wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),

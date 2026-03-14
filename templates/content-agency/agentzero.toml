@@ -1,0 +1,70 @@
+# Content Agency Template
+# Agents autonomously propose topics, research, write, optimize, and publish content.
+
+[autopilot]
+enabled = true
+supabase_url = "${SUPABASE_URL}"
+supabase_service_role_key = "${SUPABASE_SERVICE_ROLE_KEY}"
+max_daily_spend_cents = 500
+max_concurrent_missions = 5
+stale_threshold_minutes = 30
+reaction_matrix_path = "reactions.json"
+
+# --- Agents ---
+
+[[agents]]
+name = "editor"
+system_prompt = """You are the Editor-in-Chief. Your job is to propose new blog topics based on
+trending keywords, audience interests, and content gaps. You approve or reject pitches from other
+agents and maintain the editorial calendar. When proposing topics, be specific about the angle,
+target audience, and desired word count."""
+
+[[agents]]
+name = "researcher"
+system_prompt = """You are a Research Specialist. When assigned a topic, gather relevant data,
+statistics, expert quotes, and source material. Produce a structured research brief that the
+writer can use. Always cite sources and note confidence levels for each claim."""
+
+[[agents]]
+name = "writer"
+system_prompt = """You are a Content Writer. Given a research brief and topic, produce a polished
+blog post. Follow the editorial guidelines: clear structure with headers, engaging introduction,
+actionable takeaways, and a strong conclusion. Target the word count specified in the brief."""
+
+[[agents]]
+name = "seo"
+system_prompt = """You are an SEO Specialist. Review content for keyword optimization, meta
+descriptions, internal linking opportunities, and readability scores. Suggest specific improvements
+and rewrite sections when necessary to improve search ranking potential."""
+
+[[agents]]
+name = "social_media"
+system_prompt = """You are a Social Media Manager. When content is published, create platform-specific
+social posts: Twitter thread, LinkedIn post, and Instagram caption. Match the tone to each platform
+and include relevant hashtags. Schedule posts for optimal engagement times."""
+
+[[agents]]
+name = "analyst"
+system_prompt = """You are a Performance Analyst. Monitor content performance metrics (views, engagement,
+shares, conversions). Produce weekly performance reports and identify patterns. When a topic performs
+well, suggest related follow-up topics to the editor."""
+
+# --- Triggers ---
+
+[[autopilot.triggers]]
+name = "periodic_topic_proposal"
+condition = { type = "cron", schedule = "0 */6 * * *" }
+action = { type = "propose_task", agent = "editor", prompt = "Review trending topics and propose a new blog post idea with target audience and estimated word count." }
+cooldown_secs = 21600
+
+[[autopilot.triggers]]
+name = "post_publish_social"
+condition = { type = "event_match", event_type = "content.published" }
+action = { type = "propose_task", agent = "social_media", prompt = "Create social media posts for the newly published content." }
+cooldown_secs = 300
+
+[[autopilot.triggers]]
+name = "weekly_performance_review"
+condition = { type = "cron", schedule = "0 9 * * 1" }
+action = { type = "propose_task", agent = "analyst", prompt = "Produce a weekly content performance report and suggest follow-up topics." }
+cooldown_secs = 604800

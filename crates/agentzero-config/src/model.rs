@@ -41,6 +41,7 @@ pub struct AgentZeroConfig {
     pub logging: LoggingConfig,
     pub code_interpreter: CodeInterpreterConfig,
     pub media_gen: MediaGenConfig,
+    pub autopilot: AutopilotConfig,
 }
 
 impl AgentZeroConfig {
@@ -2371,6 +2372,91 @@ impl Default for VideoGenToolConfig {
             timeout_ms: 300_000,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Autopilot configuration
+// ---------------------------------------------------------------------------
+
+/// Condition for a trigger rule (used in TOML config).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AutopilotTriggerCondition {
+    EventMatch { event_type: String },
+    Cron { schedule: String },
+    MetricThreshold { metric: String, threshold: f64 },
+}
+
+/// Action for a trigger rule (used in TOML config).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AutopilotTriggerAction {
+    ProposeTask { agent: String, prompt: String },
+    NotifyAgent { agent: String, message: String },
+    RunPipeline { pipeline: String },
+}
+
+/// A trigger rule defined in TOML config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutopilotTriggerConfig {
+    pub name: String,
+    pub condition: AutopilotTriggerCondition,
+    pub action: AutopilotTriggerAction,
+    #[serde(default = "default_autopilot_cooldown")]
+    pub cooldown_secs: u64,
+    #[serde(default = "default_autopilot_enabled")]
+    pub enabled: bool,
+}
+
+fn default_autopilot_cooldown() -> u64 {
+    3600
+}
+
+fn default_autopilot_enabled() -> bool {
+    true
+}
+
+/// Configuration for the autonomous company loop.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AutopilotConfig {
+    pub enabled: bool,
+    pub supabase_url: String,
+    #[serde(default)]
+    pub supabase_service_role_key: String,
+    #[serde(default = "default_autopilot_max_daily_spend")]
+    pub max_daily_spend_cents: u64,
+    #[serde(default = "default_autopilot_max_concurrent")]
+    pub max_concurrent_missions: usize,
+    #[serde(default = "default_autopilot_max_proposals")]
+    pub max_proposals_per_hour: usize,
+    #[serde(default = "default_autopilot_max_missions_agent")]
+    pub max_missions_per_agent_per_day: usize,
+    #[serde(default = "default_autopilot_stale_threshold")]
+    pub stale_threshold_minutes: u32,
+    pub reaction_matrix_path: Option<String>,
+    #[serde(default)]
+    pub triggers: Vec<AutopilotTriggerConfig>,
+}
+
+fn default_autopilot_max_daily_spend() -> u64 {
+    500
+}
+
+fn default_autopilot_max_concurrent() -> usize {
+    5
+}
+
+fn default_autopilot_max_proposals() -> usize {
+    20
+}
+
+fn default_autopilot_max_missions_agent() -> usize {
+    10
+}
+
+fn default_autopilot_stale_threshold() -> u32 {
+    30
 }
 
 #[cfg(test)]

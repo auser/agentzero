@@ -1,0 +1,58 @@
+[
+    {
+        "source_agent": "product",
+        "event_pattern": "proposal.approved",
+        "target_agent": "engineer",
+        "action": "implement_feature",
+        "probability": 1.0,
+        "cooldown_secs": 60
+    },
+    {
+        "source_agent": "engineer",
+        "event_pattern": "mission.completed",
+        "target_agent": "qa",
+        "action": "test_implementation",
+        "probability": 1.0,
+        "cooldown_secs": 60
+    },
+    {
+        "source_agent": "qa",
+        "event_pattern": "test.failed",
+        "target_agent": "engineer",
+        "action": "fix_regression",
+        "probability": 1.0,
+        "cooldown_secs": 120
+    },
+    {
+        "source_agent": "support",
+        "event_pattern": "ticket.bug_report",
+        "target_agent": "qa",
+        "action": "reproduce_bug",
+        "probability": 0.9,
+        "cooldown_secs": 300
+    },
+    {
+        "source_agent": "support",
+        "event_pattern": "ticket.feature_request",
+        "target_agent": "product",
+        "action": "evaluate_request",
+        "probability": 0.8,
+        "cooldown_secs": 600
+    },
+    {
+        "source_agent": "ops",
+        "event_pattern": "incident.detected",
+        "target_agent": "engineer",
+        "action": "investigate_incident",
+        "probability": 0.9,
+        "cooldown_secs": 300
+    },
+    {
+        "source_agent": "growth",
+        "event_pattern": "campaign.completed",
+        "target_agent": "product",
+        "action": "review_campaign_impact",
+        "probability": 0.7,
+        "cooldown_secs": 3600
+    }
+]
