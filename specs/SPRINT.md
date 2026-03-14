@@ -438,6 +438,101 @@ Ensure dynamically-created agents have isolated conversation history.
 
 ---
 
+## Sprint 44: Self-Running AI Company — Autopilot Engine, Supabase Integration, Gateway Routes
+
+**Goal:** Build the autonomous company loop: agents propose actions, system auto-approves within constraints (cap gates), creates executable missions, workers execute steps, events trigger reactions — all without human intervention. Architecture: AgentZero (VPS) + Supabase (state/real-time) + Next.js/Vercel (dashboard, separate repo). Three company templates: Content Agency, Dev Agency, SaaS Product.
+
+**Baseline:** Sprint 43 complete. Agent-as-a-Service, runtime CRUD, webhook proxy, per-agent memory all shipped.
+
+**Plan:** `.claude/plans/dapper-enchanting-llama.md`
+
+---
+
+### Phase A: Autopilot Crate Skeleton + Core Types (HIGH)
+
+New `crates/agentzero-autopilot` crate with domain types for the autonomous loop.
+
+- [x] **Crate skeleton** — `Cargo.toml` with deps on `agentzero-core`, `reqwest`, `serde`, `serde_json`, `async-trait`, `anyhow`, `tokio`, `chrono`, `uuid`, `rand`. Feature-gated behind `autopilot` in workspace.
+- [x] **Core types** — `Proposal`, `Mission`, `MissionStep`, `AutopilotEvent`, `TriggerRule`, `ReactionRule` with status enums, serde, and Display impls.
+- [x] **Config** — `AutopilotConfig` added to `AgentZeroConfig` in `agentzero-config/src/model.rs`.
+- [x] **Tests** — Serde roundtrip, status transitions, Display impls. 8 tests.
+
+### Phase B: Supabase Client + Cap Gates (HIGH)
+
+Thin Supabase PostgREST client and resource constraint enforcement.
+
+- [x] **`SupabaseClient`** — `reqwest`-based client with service_role auth. Methods: `insert_proposal`, `update_proposal_status`, `insert_mission`, `update_mission_status`, `heartbeat_mission`, `query_stale_missions`, `get_daily_spend`, `get_concurrent_mission_count`, `insert_event`, `upsert_content`.
+- [x] **`CapGate`** — Checks daily spend, concurrent missions, proposals/hour, missions/agent/day. Returns `Approved` or `Rejected { reason }`.
+- [x] **Tests** — Cap gate logic (under/over limits, boundary cases). 6 tests.
+
+### Phase C: Autopilot Tools (HIGH)
+
+Standard `impl Tool` structs for agent interaction with the autopilot system.
+
+- [x] **`proposal_create`** — Creates proposal, runs cap gate, writes to Supabase, emits `proposal.created` event.
+- [x] **`proposal_vote`** — Approve/reject proposal. On approval, auto-creates Mission with steps.
+- [x] **`mission_status`** — Query one or all missions from Supabase.
+- [x] **`trigger_fire`** — Manually fire a trigger (for testing or agent-initiated reactions).
+- [x] **Tool registration** — Add `enable_autopilot` to `ToolSecurityPolicy`, register tools in `default_tools()`.
+- [x] **Tests** — Tool schema validation, execute with mock context. 4 tests.
+
+### Phase D: Trigger Engine + Reaction Matrix (HIGH)
+
+Event-driven automation and probabilistic inter-agent dynamics.
+
+- [x] **`TriggerEngine`** — Subscribes to EventBus for event-driven triggers, uses CronStore for time-based. Evaluates conditions, respects cooldowns, fires actions (creates proposals).
+- [x] **`ReactionMatrix`** — JSON-configurable rules. When agent A emits event X, agent B proposes action Y with probability P. Loaded from config file path.
+- [x] **Tests** — Trigger evaluation, cooldown enforcement, probability distribution, event matching. 14 tests.
+
+### Phase E: Stale Recovery + Autopilot Loop (HIGH)
+
+Mission health monitoring and main orchestration loop.
+
+- [x] **`StaleRecovery`** — Tokio task every 5 min. Queries stale missions (heartbeat > threshold). Marks stalled, fires `mission.stalled` event.
+- [ ] **`AutopilotLoop`** — Listens for approved proposals, creates missions, dispatches steps to agents via Coordinator, updates heartbeats, emits events, feeds TriggerEngine and ReactionMatrix.
+- [ ] **Swarm wiring** — Start AutopilotLoop alongside Coordinator when `[autopilot]` config present.
+- [x] **Tests** — Stale detection. 1 test.
+
+### Phase F: Gateway Autopilot Routes (MEDIUM)
+
+REST endpoints for dashboard control.
+
+- [ ] **`GET /v1/autopilot/proposals`** — List proposals (paginated).
+- [ ] **`POST /v1/autopilot/proposals/:id/approve`** — Approve proposal.
+- [ ] **`POST /v1/autopilot/proposals/:id/reject`** — Reject proposal.
+- [ ] **`GET /v1/autopilot/missions`** — List missions.
+- [ ] **`GET /v1/autopilot/missions/:id`** — Mission detail with steps.
+- [ ] **`GET /v1/autopilot/triggers`** — List triggers.
+- [ ] **`POST /v1/autopilot/triggers/:id/toggle`** — Enable/disable trigger.
+- [ ] **`GET /v1/autopilot/stats`** — Daily spend, mission counts, agent activity.
+- [ ] **Tests** — Route handler tests. 4+ tests.
+
+### Phase G: Supabase Schema + Company Templates (MEDIUM)
+
+SQL migration and template configs.
+
+- [x] **SQL migration** — `supabase/migrations/001_autopilot_schema.sql` with tables: proposals, missions, mission_steps, events, triggers, content, agent_activity, cap_gate_ledger. RLS policies, indexes, real-time, helper views.
+- [x] **Content Agency template** — TOML config + `reactions.json` for 6-agent content company.
+- [x] **Dev Agency template** — TOML config + reactions for 6-agent dev agency.
+- [x] **SaaS Product template** — TOML config + reactions for 6-agent SaaS product.
+
+---
+
+### Acceptance Criteria (Sprint 44)
+
+- [x] `crates/agentzero-autopilot` compiles and passes all tests (38 tests)
+- [x] Cap gates reject proposals when resource constraints are violated
+- [x] Agents can create proposals and query missions via tools
+- [x] Trigger engine fires actions on matching events with cooldown enforcement
+- [x] Reaction matrix enables probabilistic inter-agent interactions
+- [x] Stale recovery detects and marks stuck missions
+- [ ] Gateway exposes `/v1/autopilot/*` REST endpoints
+- [x] Supabase schema covers all autopilot state
+- [x] 3 company templates (content agency, dev agency, SaaS product) with working configs
+- [x] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
+
+---
+
 ## Backlog
 
 ### Lightweight Orchestrator Mode

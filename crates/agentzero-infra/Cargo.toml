@@ -13,6 +13,7 @@ default = ["memory-sqlite", "document-tools"]
 memory-sqlite = []
 document-tools = ["agentzero-tools/document-tools"]
 memory-turso = ["agentzero-storage/memory-turso"]
+autopilot = ["dep:agentzero-autopilot"]
 wasm-plugins = ["dep:agentzero-plugins"]
 wasm-jit = ["wasm-plugins", "agentzero-plugins/wasm-jit"]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
@@ -26,6 +27,7 @@ agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
 agentzero-tools = { workspace = true }
 agentzero-storage = { workspace = true }
+agentzero-autopilot = { workspace = true, optional = true }
 agentzero-plugins = { workspace = true, features = ["wasm-runtime"], optional = true }
 agentzero-providers = { workspace = true }
 opentelemetry = { version = "0.29", optional = true }

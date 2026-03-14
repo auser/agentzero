@@ -151,6 +151,14 @@ pub fn default_tools(
         tools.push(Box::new(VideoGenTool::default()));
     }
 
+    #[cfg(feature = "autopilot")]
+    if policy.enable_autopilot {
+        tools.push(Box::new(agentzero_autopilot::tools::ProposalCreateTool));
+        tools.push(Box::new(agentzero_autopilot::tools::ProposalVoteTool));
+        tools.push(Box::new(agentzero_autopilot::tools::MissionStatusTool));
+        tools.push(Box::new(agentzero_autopilot::tools::TriggerFireTool));
+    }
+
     if policy.enable_composio {
         tools.push(Box::new(ComposioTool));
     }
