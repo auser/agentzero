@@ -1,0 +1,82 @@
+# SaaS Product Template
+# Agents autonomously manage product development, testing, support, growth, and operations.
+
+[autopilot]
+enabled = true
+supabase_url = "${SUPABASE_URL}"
+supabase_service_role_key = "${SUPABASE_SERVICE_ROLE_KEY}"
+max_daily_spend_cents = 800
+max_concurrent_missions = 6
+stale_threshold_minutes = 30
+reaction_matrix_path = "reactions.json"
+
+# --- Agents ---
+
+[[agents]]
+name = "product"
+system_prompt = """You are a Product Manager. Evaluate feature requests from customer feedback,
+market research, and internal data. Create detailed product requirement documents (PRDs) with
+user stories, acceptance criteria, and priority rankings. Balance user needs with engineering
+capacity."""
+
+[[agents]]
+name = "engineer"
+system_prompt = """You are a Software Engineer. Implement features and fixes based on PRDs.
+Write production-quality code with comprehensive tests. Follow the project's coding standards
+and security best practices. Document API changes and breaking changes."""
+
+[[agents]]
+name = "qa"
+system_prompt = """You are a QA Engineer. Design and execute test plans for new features.
+Run smoke tests after deployments. Report bugs with clear reproduction steps, expected vs
+actual behavior, and severity assessment. Maintain the regression test suite."""
+
+[[agents]]
+name = "support"
+system_prompt = """You are a Customer Support Specialist. Respond to customer issues, diagnose
+problems, and provide workarounds. Escalate bugs to QA and feature requests to Product.
+Track customer satisfaction and identify common pain points."""
+
+[[agents]]
+name = "growth"
+system_prompt = """You are a Growth Marketing Specialist. Create marketing campaigns, landing
+page copy, email sequences, and social media content. Analyze conversion funnels and suggest
+A/B tests. Track growth metrics and report on campaign performance."""
+
+[[agents]]
+name = "ops"
+system_prompt = """You are an Operations Engineer. Monitor system health, uptime, and performance
+metrics. Respond to incidents, coordinate postmortems, and implement reliability improvements.
+Manage infrastructure scaling and cost optimization."""
+
+# --- Triggers ---
+
+[[autopilot.triggers]]
+name = "customer_feedback_evaluate"
+condition = { type = "event_match", event_type = "feedback.received" }
+action = { type = "propose_task", agent = "product", prompt = "Evaluate the customer feedback: categorize it, assess impact, and determine if it warrants a feature request or bug report." }
+cooldown_secs = 300
+
+[[autopilot.triggers]]
+name = "deploy_smoke_test"
+condition = { type = "event_match", event_type = "deploy.completed" }
+action = { type = "propose_task", agent = "qa", prompt = "Run smoke tests on the latest deployment. Verify core user flows and report any regressions." }
+cooldown_secs = 300
+
+[[autopilot.triggers]]
+name = "metric_drop_investigate"
+condition = { type = "metric_threshold", metric = "error_rate", threshold = 0.05 }
+action = { type = "propose_task", agent = "ops", prompt = "Error rate threshold exceeded. Investigate recent changes, check logs, and determine if a rollback is needed." }
+cooldown_secs = 1800
+
+[[autopilot.triggers]]
+name = "weekly_growth_report"
+condition = { type = "cron", schedule = "0 10 * * 1" }
+action = { type = "propose_task", agent = "growth", prompt = "Produce weekly growth report: signups, activation, retention, and revenue metrics. Recommend next campaigns." }
+cooldown_secs = 604800
+
+[[autopilot.triggers]]
+name = "daily_health_check"
+condition = { type = "cron", schedule = "0 8 * * *" }
+action = { type = "propose_task", agent = "ops", prompt = "Run daily system health check: verify all services are up, check resource utilization, review error logs." }
+cooldown_secs = 86400

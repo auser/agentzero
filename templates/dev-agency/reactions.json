@@ -1,0 +1,50 @@
+[
+    {
+        "source_agent": "coder",
+        "event_pattern": "pr.created",
+        "target_agent": "reviewer",
+        "action": "review_pr",
+        "probability": 1.0,
+        "cooldown_secs": 60
+    },
+    {
+        "source_agent": "support",
+        "event_pattern": "ticket.escalated",
+        "target_agent": "pm",
+        "action": "prioritize_issue",
+        "probability": 0.8,
+        "cooldown_secs": 300
+    },
+    {
+        "source_agent": "pm",
+        "event_pattern": "task.assigned",
+        "target_agent": "architect",
+        "action": "design_solution",
+        "probability": 0.7,
+        "cooldown_secs": 300
+    },
+    {
+        "source_agent": "architect",
+        "event_pattern": "mission.completed",
+        "target_agent": "coder",
+        "action": "implement_design",
+        "probability": 1.0,
+        "cooldown_secs": 60
+    },
+    {
+        "source_agent": "reviewer",
+        "event_pattern": "review.approved",
+        "target_agent": "devops",
+        "action": "merge_and_deploy",
+        "probability": 1.0,
+        "cooldown_secs": 120
+    },
+    {
+        "source_agent": "devops",
+        "event_pattern": "deploy.completed",
+        "target_agent": "support",
+        "action": "notify_stakeholders",
+        "probability": 0.9,
+        "cooldown_secs": 300
+    }
+]

@@ -535,6 +535,20 @@ SQL migration and template configs.
 
 ## Backlog
 
+### Embedded Binary Size Reduction (HIGH)
+
+Reduce the `embedded` profile binary for resource-constrained devices. Currently 10.1MB (budget temporarily at 11MB), target 5-8MB. Phased approach: feature-gate tools into tiers, add plain SQLite option (no sqlcipher), make WASM plugins optional, minimize reqwest features, audit with cargo-bloat.
+
+**Plan:** `specs/plans/embedded-binary-size-reduction.md`
+
+- [ ] **Phase 1: Tool tiering** — Split tool registration into `core`/`extended`/`full` tiers. Embedded compiles only `core` (file ops, shell, memory, sub-agents). Target: -500KB to -1MB.
+- [ ] **Phase 2: Plain SQLite** — Add `memory-sqlite-plain` feature without bundled-sqlcipher encryption. Target: -2MB.
+- [ ] **Phase 3: Optional WASM** — Create `embedded-minimal` (no WASM) and keep `embedded` with WASM. Target: -300KB.
+- [ ] **Phase 4: HTTP client minimization** — Audit and trim reqwest features; evaluate `ureq` for embedded. Target: -200KB.
+- [ ] **Phase 5: cargo-bloat audit** — Profile with `cargo bloat --release --crates`, eliminate hidden size contributors.
+- [ ] **Phase 6: Binary compression** — Evaluate UPX for deployment-time compression.
+- [ ] **CI: cargo-bloat report** — Add size breakdown as CI artifact for tracking trends.
+
 ### Lightweight Orchestrator Mode
 
 A minimal binary that runs only the orchestrator (routing, coordination, event bus) without bundling tool runners, CLI, or TUI. Designed for resource-constrained edge devices. See Sprint 39 Phase H for details.

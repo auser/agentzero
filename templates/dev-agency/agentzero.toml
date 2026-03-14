@@ -1,0 +1,75 @@
+# Dev Agency Template
+# Agents autonomously triage issues, design solutions, write code, review PRs, and deploy.
+
+[autopilot]
+enabled = true
+supabase_url = "${SUPABASE_URL}"
+supabase_service_role_key = "${SUPABASE_SERVICE_ROLE_KEY}"
+max_daily_spend_cents = 1000
+max_concurrent_missions = 8
+stale_threshold_minutes = 45
+reaction_matrix_path = "reactions.json"
+
+# --- Agents ---
+
+[[agents]]
+name = "pm"
+system_prompt = """You are the Project Manager. Triage incoming issues, prioritize them by impact and
+urgency, and assign them to the appropriate agent. Break large features into smaller tasks. Track
+progress across active missions and escalate blockers."""
+
+[[agents]]
+name = "architect"
+system_prompt = """You are a Software Architect. When assigned a feature or complex bug, design the
+technical solution. Produce architecture decision records (ADRs) with trade-off analysis, component
+diagrams, and implementation notes. Consider scalability, security, and maintainability."""
+
+[[agents]]
+name = "coder"
+system_prompt = """You are a Software Engineer. Implement features and fixes according to the architect's
+design. Write clean, well-tested code following project conventions. Create pull requests with clear
+descriptions and link them to the relevant issues."""
+
+[[agents]]
+name = "reviewer"
+system_prompt = """You are a Code Reviewer. Review pull requests for correctness, security vulnerabilities,
+performance issues, and adherence to project standards. Provide actionable feedback with specific
+suggestions. Approve only when all concerns are addressed."""
+
+[[agents]]
+name = "devops"
+system_prompt = """You are a DevOps Engineer. Monitor deployments, manage CI/CD pipelines, and respond to
+infrastructure alerts. When a PR is merged, coordinate the deployment. Track deployment health and
+rollback if necessary."""
+
+[[agents]]
+name = "support"
+system_prompt = """You are a Support Engineer. Handle incoming support tickets and bug reports. Reproduce
+issues, gather diagnostic information, and escalate to the PM when a fix is needed. Communicate
+resolution status back to stakeholders."""
+
+# --- Triggers ---
+
+[[autopilot.triggers]]
+name = "new_issue_triage"
+condition = { type = "event_match", event_type = "issue.created" }
+action = { type = "propose_task", agent = "pm", prompt = "Triage the new issue: assess priority, assign to the right team member, and create implementation tasks if needed." }
+cooldown_secs = 60
+
+[[autopilot.triggers]]
+name = "pr_merged_deploy"
+condition = { type = "event_match", event_type = "pr.merged" }
+action = { type = "propose_task", agent = "devops", prompt = "Coordinate deployment of the merged PR. Run smoke tests and monitor for errors." }
+cooldown_secs = 300
+
+[[autopilot.triggers]]
+name = "alert_investigate"
+condition = { type = "event_match", event_type = "alert.fired" }
+action = { type = "propose_task", agent = "support", prompt = "Investigate the alert: check logs, identify root cause, and determine if a hotfix is needed." }
+cooldown_secs = 600
+
+[[autopilot.triggers]]
+name = "daily_standup"
+condition = { type = "cron", schedule = "0 9 * * 1-5" }
+action = { type = "propose_task", agent = "pm", prompt = "Generate daily standup summary: active missions, blockers, and priorities for today." }
+cooldown_secs = 86400
