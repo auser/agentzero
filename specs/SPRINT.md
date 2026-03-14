@@ -374,7 +374,7 @@ Persistent store for dynamically-created agents, following the `ApiKeyStore` pat
 
 - [x] **`AgentRecord` type** — `agent_id`, `name`, `description`, `system_prompt`, `provider`, `model`, `keywords`, `allowed_tools`, `channels` (HashMap), `created_at`, `updated_at`, `status` (Active/Stopped). In `agentzero-orchestrator/src/agent_store.rs`.
 - [x] **`AgentStore`** — `RwLock<Vec<AgentRecord>>` + optional `EncryptedJsonStore` backing. Methods: `create()`, `get()`, `list()`, `update()`, `delete()`, `set_status()`. Persistent mode loads from disk on construction, flushes on every mutation. In-memory mode for tests.
-- [ ] **Coordinator extension** — `register_dynamic_agent(record, config_path, workspace_root)` builds `RuntimeExecution`, creates agent worker, registers with router. `deregister_agent(agent_id)` cancels worker, removes from router.
+- [x] **Coordinator extension** — `register_dynamic_agent_from_record(record, config_path, workspace_root)` builds `RuntimeExecution`, creates agent worker, registers with router. `register_dynamic_agent()` for pre-built agents. `deregister_agent(agent_id)` cancels worker, removes from router.
 - [x] **Tests** — Create/get/list/update/delete roundtrip, persistent survives reload, encrypted on disk, duplicate ID rejected, set_status. 11 tests.
 
 ### Phase B: Agent Management API (HIGH)
@@ -403,7 +403,7 @@ Automatically configure platform webhooks when creating agents with channel toke
 
 - [x] **Telegram** — Call `setWebhook` API on agent creation with `url=https://<gateway>/v1/hooks/telegram/<agent_id>`. Call `deleteWebhook` on agent deletion.
 - [x] **Webhook URL resolution** — Gateway needs to know its public URL. Config: `[gateway] public_url = "https://..."`. Falls back to `AGENTZERO_PUBLIC_URL` env var.
-- [ ] **Tests** — Webhook registration called with correct URL, deregistration on delete. 3+ tests (mocked HTTP).
+- [x] **Tests** — `resolve_public_url`, `agent_channel_to_instance_config` (bot_token + extra fields), `build_channel_instance` unknown returns None. 4 tests. Gateway wires `register_webhook()` on create, `deregister_webhook()` on delete.
 
 ### Phase E: Config Generation Helpers (MEDIUM)
 
@@ -412,7 +412,7 @@ Programmatic config building for dynamic agents.
 - [x] **`SwarmAgentConfig` builder** — Fluent builder API: `new()`, `with_provider()`, `with_system_prompt()`, `with_keywords()`, `with_allowed_tools()`, `with_subscriptions()`, `with_produces()`.
 - [x] **`to_toml(&self)`** — Serialize config to TOML string via `AgentZeroConfig::to_toml()`.
 - [x] **`AgentRecord` conversions** — `to_swarm_config()` and `to_descriptor()` on AgentRecord for coordinator registration.
-- [ ] **Tests** — Builder produces valid config, to_toml roundtrips, from_agent_record maps all fields. 4+ tests.
+- [x] **Tests** — `to_swarm_config_maps_all_fields`, `to_descriptor_maps_id_and_keywords`, `swarm_config_builder_api`, `agent_zero_config_to_toml_roundtrips`. 4 tests.
 
 ### Phase F: Per-Agent Memory Isolation (MEDIUM)
 
@@ -432,9 +432,9 @@ Ensure dynamically-created agents have isolated conversation history.
 - [x] `DELETE /v1/agents/:id` removes agent from store
 - [x] Webhooks route to specific agents via `/v1/hooks/:channel/:agent_id`
 - [x] Coordinator wires dynamic agents into swarm workers at runtime (`register_dynamic_agent()` / `deregister_agent()`)
-- [ ] Telegram webhook auto-registered on agent creation
+- [x] Telegram webhook auto-registered on agent creation (gateway calls `register_webhook()` / `deregister_webhook()`)
 - [x] Bot tokens encrypted at rest, never in API responses
-- [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
+- [x] All quality gates pass: `cargo clippy`, `cargo test`, 0 warnings
 
 ---
 

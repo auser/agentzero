@@ -466,6 +466,78 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    // ── Phase E: Config generation helper tests ────────────────────────
+
+    #[test]
+    fn to_swarm_config_maps_all_fields() {
+        let record = AgentRecord {
+            agent_id: "agent_test123".to_string(),
+            name: "Aria".to_string(),
+            description: "Travel assistant".to_string(),
+            system_prompt: Some("You are Aria".to_string()),
+            provider: "anthropic".to_string(),
+            model: "claude-sonnet-4-20250514".to_string(),
+            keywords: vec!["travel".to_string(), "booking".to_string()],
+            allowed_tools: vec!["web_search".to_string()],
+            channels: HashMap::new(),
+            created_at: 100,
+            updated_at: 200,
+            status: AgentStatus::Active,
+        };
+        let swarm = record.to_swarm_config();
+        assert_eq!(swarm.name, "Aria");
+        assert_eq!(swarm.description, "Travel assistant");
+        assert_eq!(swarm.provider, "anthropic");
+        assert_eq!(swarm.model, "claude-sonnet-4-20250514");
+        assert_eq!(swarm.system_prompt.as_deref(), Some("You are Aria"));
+        assert_eq!(swarm.keywords, vec!["travel", "booking"]);
+        assert_eq!(swarm.allowed_tools, vec!["web_search"]);
+    }
+
+    #[test]
+    fn to_descriptor_maps_id_and_keywords() {
+        let record = make_record("Router");
+        let created = AgentStore::new().create(record).expect("create");
+        let desc = created.to_descriptor();
+        assert_eq!(desc.id, created.agent_id);
+        assert_eq!(desc.name, "Router");
+        assert_eq!(desc.description, "Router agent");
+        assert_eq!(desc.keywords, vec!["test"]);
+        assert!(desc
+            .subscribes_to
+            .contains(&"channel.*.message".to_string()));
+    }
+
+    #[test]
+    fn swarm_config_builder_api() {
+        let cfg = agentzero_config::SwarmAgentConfig::new("bot", "a bot")
+            .with_provider("openai", "gpt-4o")
+            .with_system_prompt("You are bot")
+            .with_keywords(vec!["ai".to_string()])
+            .with_allowed_tools(vec!["code".to_string()])
+            .with_subscriptions(vec!["channel.*.message".to_string()])
+            .with_produces(vec!["agent.bot.response".to_string()]);
+
+        assert_eq!(cfg.name, "bot");
+        assert_eq!(cfg.description, "a bot");
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.model, "gpt-4o");
+        assert_eq!(cfg.system_prompt.as_deref(), Some("You are bot"));
+        assert_eq!(cfg.keywords, vec!["ai"]);
+        assert_eq!(cfg.allowed_tools, vec!["code"]);
+        assert_eq!(cfg.subscribes_to, vec!["channel.*.message"]);
+        assert_eq!(cfg.produces, vec!["agent.bot.response"]);
+    }
+
+    #[test]
+    fn agent_zero_config_to_toml_roundtrips() {
+        let config = agentzero_config::AgentZeroConfig::default();
+        let toml_str = config.to_toml().expect("to_toml should succeed");
+        assert!(!toml_str.is_empty());
+        // Should be valid TOML.
+        let _: toml::Value = toml::from_str(&toml_str).expect("should parse as valid TOML");
+    }
+
     fn unique_temp_dir() -> std::path::PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static CTR: AtomicU64 = AtomicU64::new(0);

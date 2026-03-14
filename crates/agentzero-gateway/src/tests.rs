@@ -4236,3 +4236,52 @@ async fn webhook_with_agent_validates_agent_exists() {
     let response = app.oneshot(request).await.expect("response");
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
+
+// ─── Phase D: Webhook auto-registration helpers ──────────────────────────
+
+#[test]
+fn resolve_public_url_returns_none_without_config() {
+    let state = GatewayState::test_with_bearer(Some("t"));
+    // No live_config, no env var → None.
+    let url = crate::handlers::resolve_public_url(&state);
+    // We can't guarantee env var is unset, but at least exercise the path.
+    if std::env::var("AGENTZERO_PUBLIC_URL").is_err() {
+        assert!(url.is_none());
+    }
+}
+
+#[test]
+fn agent_channel_to_instance_config_maps_bot_token() {
+    use std::collections::HashMap;
+    let cfg = agentzero_orchestrator::AgentChannelConfig {
+        bot_token: Some("my-bot-token".to_string()),
+        webhook_url: None,
+        extra: HashMap::new(),
+    };
+    let instance = crate::handlers::agent_channel_to_instance_config(&cfg);
+    assert_eq!(instance.bot_token.as_deref(), Some("my-bot-token"));
+}
+
+#[test]
+fn agent_channel_to_instance_config_maps_extra_fields() {
+    let mut extra = std::collections::HashMap::new();
+    extra.insert("access_token".to_string(), "at-123".to_string());
+    extra.insert("channel_id".to_string(), "ch-456".to_string());
+    extra.insert("app_token".to_string(), "app-789".to_string());
+    let cfg = agentzero_orchestrator::AgentChannelConfig {
+        bot_token: None,
+        webhook_url: None,
+        extra,
+    };
+    let instance = crate::handlers::agent_channel_to_instance_config(&cfg);
+    assert_eq!(instance.access_token.as_deref(), Some("at-123"));
+    assert_eq!(instance.channel_id.as_deref(), Some("ch-456"));
+    assert_eq!(instance.app_token.as_deref(), Some("app-789"));
+}
+
+#[test]
+fn build_channel_instance_unknown_returns_none() {
+    let cfg = agentzero_channels::ChannelInstanceConfig::default();
+    let result = agentzero_channels::build_channel_instance("nonexistent", &cfg);
+    assert!(matches!(result, Ok(None)));
+}

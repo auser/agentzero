@@ -1333,6 +1333,38 @@ pub(crate) async fn create_agent(
             message: e.to_string(),
         })?;
 
+    // Auto-register webhooks for channels that have bot tokens.
+    let public_url = resolve_public_url(&state);
+    if let Some(ref base_url) = public_url {
+        for (channel_name, channel_cfg) in &created.channels {
+            let instance_cfg = agent_channel_to_instance_config(channel_cfg);
+            match agentzero_channels::build_channel_instance(channel_name, &instance_cfg) {
+                Ok(Some(ch)) => {
+                    let webhook_url = format!(
+                        "{}/v1/hooks/{}/{}",
+                        base_url.trim_end_matches('/'),
+                        channel_name,
+                        created.agent_id
+                    );
+                    if let Err(e) = ch.register_webhook(&webhook_url).await {
+                        tracing::warn!(
+                            agent_id = %created.agent_id,
+                            channel = %channel_name,
+                            error = %e,
+                            "failed to auto-register webhook"
+                        );
+                    }
+                }
+                Ok(None) => {
+                    tracing::debug!(channel = %channel_name, "channel not compiled in, skipping webhook registration");
+                }
+                Err(e) => {
+                    tracing::warn!(channel = %channel_name, error = %e, "failed to build channel for webhook registration");
+                }
+            }
+        }
+    }
+
     let channel_names: Vec<String> = created.channels.keys().cloned().collect();
 
     Ok((
@@ -1439,6 +1471,9 @@ pub(crate) async fn delete_agent(
         .as_ref()
         .ok_or(GatewayError::AgentUnavailable)?;
 
+    // Fetch record before deletion so we can deregister webhooks.
+    let record = agent_store.get(&agent_id);
+
     let removed = agent_store
         .delete(&agent_id)
         .map_err(|e| GatewayError::BadRequest {
@@ -1449,6 +1484,25 @@ pub(crate) async fn delete_agent(
         return Err(GatewayError::NotFound {
             resource: format!("agent/{agent_id}"),
         });
+    }
+
+    // Deregister webhooks for channels that had bot tokens.
+    if let Some(record) = record {
+        for (channel_name, channel_cfg) in &record.channels {
+            let instance_cfg = agent_channel_to_instance_config(channel_cfg);
+            if let Ok(Some(ch)) =
+                agentzero_channels::build_channel_instance(channel_name, &instance_cfg)
+            {
+                if let Err(e) = ch.deregister_webhook().await {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        channel = %channel_name,
+                        error = %e,
+                        "failed to deregister webhook"
+                    );
+                }
+            }
+        }
     }
 
     Ok(Json(json!({
@@ -1938,4 +1992,49 @@ pub(crate) async fn sse_events(
 /// `GET /v1/openapi.json` — serves the auto-generated OpenAPI 3.1 specification.
 pub(crate) async fn openapi_spec() -> Json<serde_json::Value> {
     Json(crate::openapi::build_openapi_spec())
+}
+
+// ---------------------------------------------------------------------------
+// Webhook auto-registration helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve the gateway's public URL from live config or environment variable.
+pub(crate) fn resolve_public_url(state: &GatewayState) -> Option<String> {
+    // Try live config first.
+    if let Some(ref rx) = state.live_config {
+        let url = rx.borrow().gateway.public_url.clone();
+        if url.is_some() {
+            return url;
+        }
+    }
+    // Fall back to environment variable.
+    std::env::var("AGENTZERO_PUBLIC_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+/// Convert an `AgentChannelConfig` (from the agent store) to a
+/// `ChannelInstanceConfig` (used by channel_setup) for building a temporary
+/// channel instance.
+pub(crate) fn agent_channel_to_instance_config(
+    cfg: &agentzero_orchestrator::AgentChannelConfig,
+) -> agentzero_channels::ChannelInstanceConfig {
+    let mut instance = agentzero_channels::ChannelInstanceConfig {
+        bot_token: cfg.bot_token.clone(),
+        ..Default::default()
+    };
+    // Map well-known extra fields to their ChannelInstanceConfig counterparts.
+    if let Some(v) = cfg.extra.get("access_token") {
+        instance.access_token = Some(v.clone());
+    }
+    if let Some(v) = cfg.extra.get("channel_id") {
+        instance.channel_id = Some(v.clone());
+    }
+    if let Some(v) = cfg.extra.get("app_token") {
+        instance.app_token = Some(v.clone());
+    }
+    if let Some(v) = cfg.extra.get("webhook_url") {
+        instance.base_url = Some(v.clone());
+    }
+    instance
 }

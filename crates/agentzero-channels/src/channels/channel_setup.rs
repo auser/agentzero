@@ -79,6 +79,55 @@ pub fn register_configured_channels(
     errors
 }
 
+/// Build a single channel instance from a name and config.
+///
+/// Returns `Ok(Some(channel))` if the channel was built successfully,
+/// `Ok(None)` if the channel feature is not compiled in,
+/// `Err(msg)` if the config is invalid.
+#[allow(unused_variables)]
+pub fn build_channel_instance(
+    name: &str,
+    config: &ChannelInstanceConfig,
+) -> Result<Option<Arc<dyn crate::Channel>>, String> {
+    match name {
+        #[cfg(feature = "channel-telegram")]
+        "telegram" => {
+            let bot_token = config
+                .bot_token
+                .as_ref()
+                .ok_or("telegram requires bot_token")?;
+            let channel =
+                super::TelegramChannel::new(bot_token.clone(), config.allowed_users.clone());
+            Ok(Some(Arc::new(channel)))
+        }
+        #[cfg(feature = "channel-discord")]
+        "discord" => {
+            let bot_token = config
+                .bot_token
+                .as_ref()
+                .ok_or("discord requires bot_token")?;
+            let channel =
+                super::DiscordChannel::new(bot_token.clone(), config.allowed_users.clone());
+            Ok(Some(Arc::new(channel)))
+        }
+        #[cfg(feature = "channel-slack")]
+        "slack" => {
+            let bot_token = config
+                .bot_token
+                .as_ref()
+                .ok_or("slack requires bot_token")?;
+            let channel = super::SlackChannel::new(
+                bot_token.clone(),
+                config.app_token.clone(),
+                config.channel_id.clone(),
+                config.allowed_users.clone(),
+            );
+            Ok(Some(Arc::new(channel)))
+        }
+        _ => Ok(None),
+    }
+}
+
 /// Try to register a single channel.
 /// Returns `Ok(true)` if registered, `Ok(false)` if feature not compiled in,
 /// `Err(msg)` if config is invalid.

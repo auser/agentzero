@@ -270,6 +270,66 @@ impl Coordinator {
         }
     }
 
+    /// Register a dynamic agent from an `AgentRecord`, building the full
+    /// runtime (provider, tools, memory) from config paths.
+    ///
+    /// This is the high-level convenience method for the `POST /v1/agents` flow.
+    /// Returns `Ok(())` on success, or an error if the runtime could not be built.
+    pub async fn register_dynamic_agent_from_record(
+        &self,
+        record: &crate::agent_store::AgentRecord,
+        config_path: &std::path::Path,
+        workspace_root: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        use agentzero_core::Agent;
+        use agentzero_infra::runtime::{build_runtime_execution, RunAgentRequest};
+
+        let req = RunAgentRequest {
+            workspace_root: workspace_root.to_path_buf(),
+            config_path: config_path.to_path_buf(),
+            message: String::new(),
+            provider_override: if record.provider.is_empty() {
+                None
+            } else {
+                Some(record.provider.clone())
+            },
+            model_override: if record.model.is_empty() {
+                None
+            } else {
+                Some(record.model.clone())
+            },
+            profile_override: None,
+            extra_tools: Vec::new(),
+            conversation_id: None,
+        };
+
+        let exec = build_runtime_execution(req).await?;
+
+        let mut agent_config = exec.config;
+        if let Some(ref prompt) = record.system_prompt {
+            agent_config.system_prompt = Some(prompt.clone());
+        }
+
+        let tools = if record.allowed_tools.is_empty() {
+            exec.tools
+        } else {
+            let allowed: std::collections::HashSet<&str> =
+                record.allowed_tools.iter().map(|s| s.as_str()).collect();
+            exec.tools
+                .into_iter()
+                .filter(|t| allowed.contains(t.name()))
+                .collect()
+        };
+
+        let agent = Agent::new(agent_config, exec.provider, exec.memory, tools);
+        let descriptor = record.to_descriptor();
+        let ws_root = workspace_root.to_string_lossy().to_string();
+
+        self.register_dynamic_agent(descriptor, agent, ws_root)
+            .await;
+        Ok(())
+    }
+
     /// Check if an agent is registered and alive.
     pub async fn is_agent_registered(&self, agent_id: &str) -> bool {
         let agents = self.agents.read().await;

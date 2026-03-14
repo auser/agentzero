@@ -35,3 +35,4 @@ examples/research-pipeline/research/
 **/*.jsonl
 research/events.jsonl
 research
+**/target
