@@ -7,6 +7,48 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.6.0] - 2026-03-14
+
+### Added
+- Extract tool calls from local model text output — Local models (llama.cpp, ollama) often emit tool invocations as JSON
+- Compact tool prompting for local models and streamline research pipeline — Rewrite format_tools_system_block() to use a concise markdown format instead
+- Hybrid local+cloud config for research pipeline example — Configure the research pipeline to mix local and cloud models:
+- Remove legacy ProcessPluginTool and fix FFI test flakiness — Remove ProcessPluginTool (MCP strictly supersedes it) across 6 files:
+- Add cost estimation, per-run budgets, and daily/monthly quota enforcement — Wire up the existing cost tracking skeleton with actual pricing data,
+- Production hardening II — security, TLS, observability, data integrity, E2E tests — Sprint 37 closes all CRITICAL and HIGH gaps for external deployment:
+- Sprint 38 scaling & ops — per-identity rate limiting, provider fallback, OpenAPI, backup/restore, production config validation — - Per-identity rate limiting with DashMap-based tracking, GC, and X-RateLimit headers
+- Sprint 39 phases A-D — SQLite event bus, typed responses, circuit breaker, liveness probe — Phase A: Embedded distributed event bus (no Redis)
+- Sprint 39 phases E-F + config — Turso migrations, multi-tenancy, event bus wiring — Phase E: Turso migration versioning
+- Sprint 40 Phase A — AI-based tool selection — Add ToolSelector trait and three implementations (All, Keyword, AI) to
+- Sprint 40 Phase B — GossipEventBus for distributed event propagation — TCP mesh gossip layer wrapping SqliteEventBus. Length-prefixed JSON wire
+- Sprint 40 Phase C — CLI API key management (create/revoke/list) — Add `auth api-key create/revoke/list` subcommands to the CLI. Create
+- Sprint 40 Phase D — EventBus integration wiring — Wire distributed event bus into JobStore, PresenceStore, and Gateway:
+- Sprint 40 Phase E — add Twilio SMS channel implementation — New sms.rs with send() via Twilio REST API, 1600-char chunking,
+- Sprint 40 Phase F — CI/CD hardening — - Add Trivy container image scanning to CI (container-scan job)
+- Sprint 41 — wire persistent API key store in gateway startup — - Wire ApiKeyStore::persistent(data_dir) into gateway run() when data_dir
+- Sprint 42 staged work — config UI, fuzz targets, code interpreter, media gen, docs — Adds agentzero-config-ui crate (React + ReactFlow visual config editor),
+- Sprint 43 Phases A-C — AgentStore, CRUD API, webhook proxy — Add agent-as-a-service capabilities:
+- Sprint 43 Phases D-F + Coordinator wiring — webhook auto-reg, config helpers, per-agent memory — Phase A (coordinator): register_dynamic_agent() / deregister_agent() with
+- Sprint 43 completion — webhook wiring, coordinator convenience, tests — Wire webhook auto-registration into gateway handlers:
+
+### Fixed
+- Prevent llama.cpp abort when prompt exceeds context window — The builtin provider had no guard checking that the tokenized prompt
+- Set n_batch to match n_ctx for builtin llama.cpp provider — llama.cpp asserts `n_tokens_all <= cparams.n_batch` during decode.
+- Parse tool calls from code blocks and bare JSON in builtin provider — Local models frequently emit tool calls as ```json code blocks or bare
+- Add repetition detection to builtin provider generation loop — Small local models (3B-7B) frequently get stuck in degenerate repetition
+- Writer agent outputs to research/brief.md instead of output/brief.md — The write_file tool requires parent directories to exist (it canonicalizes
+- Isolate pipeline agent conversations and switch to Brave search — Two fixes for the research pipeline:
+
+### Changed
+- Add Sprint 38 plan — scaling, ops readiness, provider fallback — Sprint 38 targets scaling and operational readiness:
+- Add Sprint 40 plan — AI tool selection, gossip bus, CLI API keys, WhatsApp/SMS — Sprint 40 phases:
+- Add Sprint 41 plan — security hardening & observability
+- Add Sprint 42 plan — lightweight mode, examples, Docker secrets, runbooks
+- Add "Your First Hour" getting-started guide — Hands-on walkthrough covering CLI agent, HTTP gateway, and multi-agent
+
+### Changed
+- Track fuzz workspace Cargo.lock for reproducible fuzzing
+
 ## [0.5.6] - 2026-03-11
 
 ### Fixed
