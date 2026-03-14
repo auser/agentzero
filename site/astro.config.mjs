@@ -30,6 +30,7 @@ export default defineConfig({
             { label: "Overview", slug: "overview" },
             { label: "Installation", slug: "installation" },
             { label: "Quick Start", slug: "quickstart" },
+            { label: "Your First Hour", slug: "guides/first-hour" },
           ],
         },
         {
