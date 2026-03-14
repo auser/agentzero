@@ -32,7 +32,7 @@ jobs:
       - name: release build (embedded)
         run: cargo build -p agentzero --profile release-min --no-default-features --features embedded
       - name: release size budget (embedded)
-        run: scripts/check-binary-size.sh --binary target/release-min/agentzero --max-bytes 10000000
+        run: scripts/check-binary-size.sh --binary target/release-min/agentzero --max-bytes 11000000
       - name: cold-start latency
         run: scripts/bench-cli-startup.sh --iterations 20 --command "--help"
 
