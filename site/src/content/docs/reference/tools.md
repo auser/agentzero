@@ -64,6 +64,10 @@ AgentZero ships with 50+ built-in tools and supports extension via WASM plugins,
 | `schedule` | Schedule one-time tasks | `[cron]` |
 | `composio` | Composio integration | `enable_composio` |
 | `pushover` | Pushover notifications | `enable_pushover` |
+| `proposal_create` | Create autopilot proposals for agent-driven work | `[autopilot]` |
+| `proposal_vote` | Approve or reject autopilot proposals | `[autopilot]` |
+| `mission_status` | Query autopilot mission status | `[autopilot]` |
+| `trigger_fire` | Manually fire an autopilot trigger | `[autopilot]` |
 
 ### Conditionally Registered
 

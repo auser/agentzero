@@ -39,6 +39,14 @@ The gateway binds to `127.0.0.1` (localhost only) by default. Setting `allow_pub
 | `POST` | `/v1/noise/handshake/ik` | None | Noise IK handshake (feature-gated) |
 | `POST` | `/v1/relay/submit` | None | Submit sealed envelope (relay mode, feature-gated) |
 | `GET` | `/v1/relay/poll/:routing_id` | None | Poll sealed envelopes (relay mode, feature-gated) |
+| `GET` | `/v1/autopilot/proposals` | Bearer | List autopilot proposals (feature-gated) |
+| `POST` | `/v1/autopilot/proposals/:id/approve` | Bearer | Approve an autopilot proposal (feature-gated) |
+| `POST` | `/v1/autopilot/proposals/:id/reject` | Bearer | Reject an autopilot proposal (feature-gated) |
+| `GET` | `/v1/autopilot/missions` | Bearer | List autopilot missions (feature-gated) |
+| `GET` | `/v1/autopilot/missions/:id` | Bearer | Get mission detail with steps (feature-gated) |
+| `GET` | `/v1/autopilot/triggers` | Bearer | List autopilot triggers (feature-gated) |
+| `POST` | `/v1/autopilot/triggers/:id/toggle` | Bearer | Enable/disable a trigger (feature-gated) |
+| `GET` | `/v1/autopilot/stats` | Bearer | Daily spend, mission counts, agent activity (feature-gated) |
 
 ## Authentication
 

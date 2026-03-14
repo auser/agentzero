@@ -19,6 +19,7 @@ const features = [
   { title: "Lean Runtime", desc: "Single-process CLI with streaming output, minimal dependencies, and fast cold starts." },
   { title: "Plugin Sandbox", desc: "WASM plugins run in a bounded sandbox with integrity verification." },
   { title: "Deploy Anywhere", desc: "Native binary, no container required. Linux, macOS, Windows." },
+  { title: "Autopilot Mode", desc: "Agents propose, approve, and execute work autonomously with cap gates, triggers, and reaction matrices." },
 ];
 
 const steps = [
@@ -32,7 +33,7 @@ const metrics = [
   { value: "<8MB", label: "Minimal Binary" },
   { value: "~19ms", label: "Cold Start" },
   { value: "37+", label: "LLM Providers" },
-  { value: "53+", label: "Built-in Tools" },
+  { value: "57+", label: "Built-in Tools" },
 ];
 
 const differentiators = [
@@ -45,12 +46,13 @@ const differentiators = [
   { title: "8 Platform Targets", desc: "Linux (x86/ARM/musl), macOS (Intel/Apple Silicon), Windows, Raspberry Pi. One codebase, native everywhere." },
   { title: "Self-Update", desc: "Built-in updater with SHA-256 integrity checks and automatic rollback. Stay current without manual steps." },
   { title: "MCP Support", desc: "Model Context Protocol support for tool interoperability. Connect to any MCP-compatible tool server." },
+  { title: "Autonomous Companies", desc: "Three company templates (Content Agency, Dev Agency, SaaS Product) with autonomous agent loops, Supabase state, and dashboard control." },
 ];
 
 const pillars = [
   { title: "Interfaces", items: ["Provider trait", "MemoryStore trait", "Tool trait", "Channel trait"] },
   { title: "Runtime Core", items: ["Agent orchestrator", "Config + policy", "Security + redaction", "Audit trail"] },
-  { title: "Pluggable Traits", items: ["WASM plugins", "MCP tools", "Multiple providers", "SQLite / Turso"] },
+  { title: "Pluggable Traits", items: ["WASM plugins", "MCP tools", "Multiple providers", "SQLite / Turso", "Autopilot engine"] },
 ];
 ---
 

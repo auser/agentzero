@@ -30,6 +30,7 @@ flowchart TD
     INFRA --> STORAGE[agentzero-storage]
     INFRA --> TOOLS[agentzero-tools]
     INFRA --> WASM[agentzero-plugins]
+    INFRA --> AP[agentzero-autopilot]
 
     GW --> INFRA
     GW --> CHANNELS[agentzero-channels]
@@ -38,9 +39,9 @@ flowchart TD
     FFI --> CORE
 ```
 
-## Workspace Crates (17)
+## Workspace Crates (18)
 
-The workspace was consolidated from 46 crates and has grown to 17. Each crate corresponds to a real deployment or consumption boundary.
+The workspace was consolidated from 46 crates and has grown to 18. Each crate corresponds to a real deployment or consumption boundary.
 
 | Crate | Purpose |
 |---|---|
@@ -51,9 +52,10 @@ The workspace was consolidated from 46 crates and has grown to 17. Each crate co
 | `agentzero-providers` | OpenAI-compatible provider implementation (Anthropic, OpenAI, OpenRouter, Ollama, etc.) |
 | `agentzero-auth` | Credential management (OAuth, API keys, profiles) |
 | `agentzero-storage` | Encrypted KV store + conversation memory (SQLite, Turso, SQLCipher) |
-| `agentzero-tools` | 50+ built-in tool implementations (includes autonomy, hardware, cron, skills) |
+| `agentzero-tools` | 57+ built-in tool implementations (includes autonomy, hardware, cron, skills) |
 | `agentzero-infra` | Agent orchestration, audit, runtime execution, tool wiring |
 | `agentzero-orchestrator` | Multi-agent coordination, swarm routing, pipeline integration |
+| `agentzero-autopilot` | Autonomous company loop — proposals, cap gates, missions, triggers, reaction matrices (feature-gated) |
 | `agentzero-channels` | Platform integrations (Telegram, Discord, Slack) + leak guard |
 | `agentzero-plugins` | WASM plugin host runtime (wasmi default, wasmtime optional) |
 | `agentzero-plugin-sdk` | Plugin SDK (ABI v2, WASI) |

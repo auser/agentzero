@@ -237,6 +237,25 @@ api_key = ""                                                      # API key (e.g
 language = "en"                                                   # ISO-639-1 language hint
 model = "whisper-large-v3"                                        # transcription model
 
+# ─── Autopilot ──────────────────────────────────────────
+[autopilot]
+enabled = false                                  # enable autonomous company loop
+supabase_url = ""                                # Supabase project URL
+supabase_service_role_key = ""                   # Supabase service role key (env: SUPABASE_SERVICE_ROLE_KEY)
+max_daily_spend_cents = 500                      # daily spend cap in cents
+max_concurrent_missions = 5                      # max missions running at once
+max_proposals_per_hour = 20                      # proposal rate limit
+max_missions_per_agent_per_day = 10              # per-agent mission cap
+stale_threshold_minutes = 30                     # heartbeat threshold for stale detection
+reaction_matrix_path = ""                        # path to reactions.json
+
+# Autopilot triggers (cron, event-driven, metric thresholds)
+# [[autopilot.triggers]]
+# name = "periodic_topic_proposal"
+# condition = { type = "cron", schedule = "0 */6 * * *" }
+# action = { type = "propose_task", agent = "editor", prompt = "Propose a new blog topic" }
+# cooldown_secs = 21600
+
 # ─── Research Mode ───────────────────────────────────────
 [research]
 enabled = false

@@ -97,6 +97,21 @@ description: AgentZero development roadmap — completed milestones and future d
 - **Audio input** — `[AUDIO:/path]` markers in user messages are transcribed before reaching the LLM via a configurable OpenAI-compatible endpoint (default: Groq Whisper); new `[audio]` config section
 - Workspace version bumped to 0.4.0
 
+### Self-Running AI Company — Autopilot Engine (Sprint 44)
+
+- **Autopilot crate** — New `agentzero-autopilot` crate with autonomous company loop: proposals, cap gates, missions, triggers, reaction matrices, stale recovery
+- **Core types** — `Proposal`, `Mission`, `MissionStep`, `AutopilotEvent`, `TriggerRule`, `ReactionRule` with status enums, serde, Display impls
+- **Cap gates** — Resource constraint enforcement: daily spend, concurrent missions, proposals/hour, missions/agent/day
+- **Supabase client** — PostgREST client for proposals, missions, events, content (service_role auth)
+- **Trigger engine** — Event-driven + cron-based trigger rules with cooldown enforcement
+- **Reaction matrix** — JSON-configurable probabilistic inter-agent interactions with wildcard patterns
+- **Stale recovery** — Heartbeat monitoring for stuck missions with configurable threshold
+- **Autopilot tools** — `proposal_create`, `proposal_vote`, `mission_status`, `trigger_fire`
+- **Supabase schema** — SQL migration with 8 tables, RLS policies, indexes, realtime, helper views
+- **Company templates** — Content Agency, Dev Agency, SaaS Product (TOML config + reaction matrix JSON)
+- 38 tests, 0 clippy warnings
+- Workspace version 0.6.0
+
 ## Planned
 
 ### Registry Repo, Audio Streaming & Image Generation (Sprint 31)

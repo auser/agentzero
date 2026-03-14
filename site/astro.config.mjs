@@ -42,6 +42,7 @@ export default defineConfig({
             { label: "MCP Servers", slug: "guides/mcp" },
             { label: "Channels", slug: "guides/channels" },
             { label: "Multi-Agent Patterns", slug: "guides/multi-agent" },
+            { label: "Autopilot Mode", slug: "guides/autopilot" },
             { label: "Daily Usage", slug: "guides/daily-usage" },
             { label: "Testing", slug: "guides/testing" },
             { label: "Plugin Authoring", slug: "guides/plugins" },
