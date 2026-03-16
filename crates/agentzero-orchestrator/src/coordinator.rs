@@ -321,6 +321,7 @@ impl Coordinator {
             profile_override: None,
             extra_tools: Vec::new(),
             conversation_id: None,
+            agent_store: None,
         };
 
         let exec = build_runtime_execution(req).await?;

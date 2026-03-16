@@ -187,6 +187,14 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             port,
             config,
             native: _,
-        } => agentzero_config_ui::start_config_ui(config, port, true).await,
+        } => {
+            agentzero_config_ui::start_config_ui_with_data_dir(
+                config,
+                port,
+                true,
+                Some(&ctx.data_dir),
+            )
+            .await
+        }
     }
 }

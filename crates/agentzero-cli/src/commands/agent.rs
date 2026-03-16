@@ -2,8 +2,10 @@ use crate::command_core::{AgentZeroCommand, CommandContext};
 use agentzero_infra::runtime::{
     build_runtime_execution, run_agent_once, run_agent_streaming, RunAgentRequest,
 };
+use agentzero_orchestrator::agent_store::AgentStore;
 use async_trait::async_trait;
 use std::io::Write;
+use std::sync::Arc;
 
 pub struct AgentOptions {
     /// Message to send to agent
@@ -29,6 +31,7 @@ impl AgentZeroCommand for AgentCommand {
             return run_streaming(ctx, opts).await;
         }
 
+        let agent_store = build_agent_store(ctx);
         let output = run_agent_once(RunAgentRequest {
             workspace_root: ctx.workspace_root.clone(),
             config_path: ctx.config_path.clone(),
@@ -38,6 +41,7 @@ impl AgentZeroCommand for AgentCommand {
             profile_override: opts.profile,
             extra_tools: vec![],
             conversation_id: super::conversation::read_active_conversation(ctx),
+            agent_store,
         })
         .await?;
 
@@ -46,8 +50,22 @@ impl AgentZeroCommand for AgentCommand {
     }
 }
 
+/// Build an `AgentStore` from the CLI data directory (best-effort).
+fn build_agent_store(
+    ctx: &CommandContext,
+) -> Option<Arc<dyn agentzero_core::agent_store::AgentStoreApi>> {
+    match AgentStore::persistent(&ctx.data_dir) {
+        Ok(store) => Some(Arc::new(store)),
+        Err(e) => {
+            tracing::debug!(error = %e, "could not open agent store; agent_manage tool will be unavailable");
+            None
+        }
+    }
+}
+
 async fn run_streaming(ctx: &CommandContext, opts: AgentOptions) -> anyhow::Result<()> {
     let message = opts.message.clone();
+    let agent_store = build_agent_store(ctx);
     let execution = build_runtime_execution(RunAgentRequest {
         workspace_root: ctx.workspace_root.clone(),
         config_path: ctx.config_path.clone(),
@@ -57,6 +75,7 @@ async fn run_streaming(ctx: &CommandContext, opts: AgentOptions) -> anyhow::Resu
         profile_override: opts.profile,
         extra_tools: vec![],
         conversation_id: super::conversation::read_active_conversation(ctx),
+        agent_store,
     })
     .await?;
 
