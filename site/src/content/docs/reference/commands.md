@@ -48,6 +48,79 @@ agentzero agent -m "explain this function" --stream
 | `--profile <NAME>` | Use a specific auth profile by name (from `auth list`) |
 | `--stream` | Stream tokens incrementally as they arrive |
 
+### `agents`
+
+Manage persistent named agents. Agents created here are stored in an encrypted JSON store and can be hot-loaded into a running coordinator. Keywords enable automatic routing via the `AgentRouter`.
+
+#### `agents create`
+
+```bash
+agentzero agents create --name Aria --description "Travel planner" \
+  --model claude-sonnet-4-20250514 --provider anthropic --keywords travel,booking
+agentzero agents create --name Coder --model gpt-4o --allowed-tools shell,read_file,write_file --json
+```
+
+| Flag | Description |
+|---|---|
+| `--name <NAME>` | **(Required)** Agent name |
+| `--description <TEXT>` | What this agent does |
+| `--model <ID>` | Model identifier |
+| `--provider <NAME>` | Provider (anthropic, openai, openrouter, etc.) |
+| `--system-prompt <TEXT>` | System prompt / persona |
+| `--keywords <LIST>` | Comma-separated routing keywords |
+| `--allowed-tools <LIST>` | Comma-separated tool allowlist (empty = all) |
+| `--json` | Emit JSON output |
+
+#### `agents list`
+
+```bash
+agentzero agents list
+agentzero agents list --json
+```
+
+#### `agents get`
+
+```bash
+agentzero agents get --id agent_abc123
+agentzero agents get --id agent_abc123 --json
+```
+
+#### `agents update`
+
+```bash
+agentzero agents update --id agent_abc123 --name "New Name" --model gpt-4o
+agentzero agents update --id agent_abc123 --keywords travel,flights,hotels
+```
+
+| Flag | Description |
+|---|---|
+| `--id <ID>` | **(Required)** Agent ID |
+| `--name`, `--description`, `--model`, `--provider`, `--system-prompt` | Fields to update |
+| `--keywords <LIST>` | Replace keywords (comma-separated) |
+| `--allowed-tools <LIST>` | Replace tool allowlist (comma-separated) |
+| `--json` | Emit JSON output |
+
+#### `agents delete`
+
+```bash
+agentzero agents delete --id agent_abc123
+```
+
+#### `agents status`
+
+```bash
+agentzero agents status --id agent_abc123 --active
+agentzero agents status --id agent_abc123 --stopped
+```
+
+| Flag | Description |
+|---|---|
+| `--id <ID>` | **(Required)** Agent ID |
+| `--active` | Set agent to active |
+| `--stopped` | Set agent to stopped |
+
+---
+
 ### `onboard`
 
 Generate a starter `agentzero.toml` config file in the current directory. The interactive wizard walks you through provider, model, memory, and security settings.

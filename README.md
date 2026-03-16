@@ -72,7 +72,7 @@ agentzero -vvv agent -m "your task"
 | **MCP** | First-class Model Context Protocol — each MCP tool registered individually |
 | **Security** | Fail-closed defaults, allowlists, OTP gating, audit trail, secret redaction, estop |
 | **Gateway** | HTTP/WebSocket server with OpenAI-compatible API |
-| **Multi-agent** | Delegation, swarm coordination, pipelines, event bus |
+| **Multi-agent** | Delegation, swarm coordination, pipelines, event bus, persistent named agents |
 
 ## Configuration
 
@@ -159,6 +159,32 @@ agentic = true
 allowed_tools = ["web_search", "web_fetch", "read_file"]
 ```
 
+### Persistent agent management
+
+Create named agents at runtime — from the CLI, the browser config UI, or via natural language during a conversation:
+
+```bash
+# Create a persistent agent
+agentzero agents create --name Aria --description "Travel planner" \
+  --model claude-sonnet-4-20250514 --provider anthropic --keywords travel,booking
+
+# List agents
+agentzero agents list
+
+# Update an agent
+agentzero agents update --id agent_abc123 --model gpt-4o --keywords travel,flights
+
+# Delete an agent
+agentzero agents delete --id agent_abc123
+```
+
+Enable the LLM-callable `agent_manage` tool so agents can create other agents during conversation:
+
+```toml
+[agent]
+enable_agent_manage = true
+```
+
 ### Channel integrations
 
 ```toml
@@ -231,6 +257,7 @@ Gateway endpoints:
 ```bash
 agentzero onboard          # Interactive setup
 agentzero agent -m "..."   # Send a message
+agentzero agents list      # Manage persistent agents
 agentzero gateway          # Start HTTP gateway
 agentzero status           # Quick status check
 agentzero doctor models    # Diagnose model availability

@@ -20,6 +20,7 @@ AgentZero's core principle is that **every subsystem is a trait**. This means yo
 | **Skills** | Skill registry | Built-in skillforge + SOP engine | Install from local/remote/git |
 | **Identity** | Config-driven | Markdown, JSON | `[identity]` config |
 | **Gateway** | HTTP service | Axum-based REST API | Endpoint handlers |
+| **Agent Store** | `AgentStoreApi` | Encrypted JSON persistence (AgentStore) | Implement `AgentStoreApi` trait |
 | **Cost** | Tracker | Token + USD tracking with limits | `[cost]` config |
 | **Privacy** | Config-driven | Noise Protocol E2E encryption, sealed envelopes, key rotation, privacy boundaries | `[privacy]` config |
 
@@ -68,7 +69,7 @@ pub trait Tool: Send + Sync {
 }
 ```
 
-All 50+ built-in tools implement this trait with `input_schema()` for structured tool-use APIs. WASM plugins and process plugins are wrapped in `Tool` adapters. MCP servers are registered as first-class tools — each remote tool gets its own `McpIndividualTool` with a namespaced name (`mcp__{server}__{tool}`), the tool's real description, and its real input schema.
+All 58+ built-in tools implement this trait with `input_schema()` for structured tool-use APIs. WASM plugins and process plugins are wrapped in `Tool` adapters. MCP servers are registered as first-class tools — each remote tool gets its own `McpIndividualTool` with a namespaced name (`mcp__{server}__{tool}`), the tool's real description, and its real input schema.
 
 ## Crate Boundaries
 
