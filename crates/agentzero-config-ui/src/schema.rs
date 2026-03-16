@@ -188,6 +188,7 @@ fn build_security_policy_descriptor() -> NodeTypeDescriptor {
     for (key, label, default) in [
         ("enable_cron", "Enable Cron", false),
         ("enable_agents_ipc", "Enable Agents IPC", true),
+        ("enable_agent_manage", "Enable Agent Manage", false),
         ("enable_mcp", "Enable MCP", false),
         ("enable_composio", "Enable Composio", false),
         ("enable_pushover", "Enable Pushover", false),
@@ -1010,6 +1011,13 @@ pub fn build_tool_summaries() -> Vec<ToolSummary> {
             "orchestration",
             false,
             Some("enable_agents_ipc"),
+        ),
+        tool(
+            "agent_manage",
+            "Create, list, update, or delete persistent agents",
+            "orchestration",
+            false,
+            Some("enable_agent_manage"),
         ),
         tool(
             "composio",

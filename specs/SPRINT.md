@@ -533,6 +533,82 @@ SQL migration and template configs.
 
 ---
 
+## Sprint 45: Persistent Agent Management — CLI, Config UI, LLM Tool
+
+**Goal:** Enable natural-language agent creation workflow: "Create a new persistent agent named [Name] for [specific task]. Set [Model] as primary. Use [Name] for all [task type]." Three management surfaces: LLM tool, CLI subcommands, and browser-based config UI panel.
+
+**Baseline:** Sprint 44 complete. AgentStore, AgentRouter, Coordinator dynamic registration, agent CRUD API, webhook proxy all shipped. Config UI has TOML-based agent nodes but no persistent agent management.
+
+**Plan:** `specs/plans/agent-manage-cli-configui.md`
+
+---
+
+### Phase A: LLM Tool — `agent_manage` (HIGH)
+
+An LLM-callable tool so agents can create/manage other agents during conversation. Placed in `agentzero-infra` to avoid circular deps.
+
+- [x] **`enable_agent_manage` policy flag** — Add `pub enable_agent_manage: bool` to `ToolSecurityPolicy` in `agentzero-tools/src/lib.rs`. Default `false`.
+- [x] **`AgentManageTool`** — New file `agentzero-infra/src/tools/agent_manage.rs`. Single tool with `action` discriminator (`create`, `list`, `get`, `update`, `delete`, `set_status`). Takes `Arc<dyn AgentStoreApi>`. Returns human-readable text. `AgentStoreApi` trait + types in `agentzero-core/src/agent_store.rs` to avoid circular deps.
+- [x] **Wire into `default_tools()`** — New `default_tools_with_store()` function. Register tool behind `enable_agent_manage` flag. Updated `runtime.rs` call site.
+- [x] **Config wiring** — Add `enable_agent_manage: bool` to `AgentSettings` in `agentzero-config/src/model.rs`. Wire through `policy.rs` to `ToolSecurityPolicy`.
+- [x] **Tests** — 7 unit tests for all actions using in-memory `AgentStoreApi` impl.
+
+### Phase B: CLI Subcommands — `agentzero agents` (HIGH)
+
+Human-facing CRUD from the terminal. Uses `Agents` (plural) to avoid breaking existing `Agent` command.
+
+- [x] **`AgentsCommands` enum** — Add to `agentzero-cli/src/cli.rs` with subcommands: `Create`, `List`, `Get`, `Update`, `Delete`, `Status`.
+- [x] **`Agents` variant** — Add to `Commands` enum in `cli.rs`.
+- [x] **Handler implementation** — New file `agentzero-cli/src/commands/agents.rs`. Instantiate `AgentStore::persistent(&ctx.data_dir)?` and call CRUD methods. Follow `cron.rs` pattern.
+- [x] **CLI dispatch** — Add `pub mod agents;` to `commands/mod.rs`, match arm + command name in `lib.rs`.
+- [x] **Tests** — 8 parse tests for `agentzero agents create/list/list --json/get/update/delete/status/requires-subcommand` in `lib.rs`.
+
+### Phase C: Config UI — Backend API (HIGH)
+
+REST endpoints for persistent agent management in the browser config UI.
+
+- [x] **`agents_api.rs`** — New file `agentzero-config-ui/src/agents_api.rs`. Handlers: `list_agents`, `create_agent`, `get_agent`, `update_agent`, `delete_agent`, `set_agent_status`. Uses `State<Arc<AgentStore>>`. Returns JSON.
+- [x] **Routes** — Merged into `server.rs` via `build_router_with_agents()`: `GET/POST /api/agents`, `GET/PUT/DELETE /api/agents/{id}`, `PUT /api/agents/{id}/status`.
+- [x] **`start_config_ui()` update** — New `start_config_ui_with_data_dir()` accepting `data_dir: Option<&Path>`.
+- [x] **Dependency** — Add `agentzero-orchestrator` to `agentzero-config-ui/Cargo.toml`.
+- [x] **Tests** — 6 endpoint tests: list empty, create 201, create+get, get unknown 404, delete unknown 404, full CRUD lifecycle.
+
+### Phase D: Config UI — Frontend Agents Panel (MEDIUM)
+
+Visual agent management in the React Flow browser editor.
+
+- [x] **`AgentsPanel.tsx`** — New file `ui/src/panels/AgentsPanel.tsx`. Table view (Name, Model, Status, Keywords). Create form. Status toggle. Delete with confirmation. Auto-refresh.
+- [x] **API client** — New file `ui/src/agentsApi.ts`. Fetch-based client: `listAgents`, `createAgent`, `getAgent`, `updateAgent`, `deleteAgent`, `setAgentStatus`.
+- [x] **Types** — Add `AgentRecord`, `CreateAgentRequest`, `UpdateAgentRequest` interfaces to `ui/src/types.ts`.
+- [x] **App integration** — Add "Agents" tab to bottom panel in `App.tsx` alongside TOML Preview and Validation.
+- [x] **TypeScript check** — `npx tsc --noEmit` passes with zero errors.
+
+### Phase E: Config UI — Schema Updates (LOW)
+
+- [x] **Security policy descriptor** — Add `enable_agent_manage` to "Automation & Integrations" group in `schema.rs`.
+- [x] **Tool summary** — Add `agent_manage` to `build_tool_summaries()` (gated by `enable_agent_manage`).
+
+### Phase F: Coordinator Store Sync — Hot-Loading (MEDIUM)
+
+- [x] **`sync_from_store()`** — Add to `Coordinator` in `coordinator.rs`. Lists agents from store, registers Active agents not already running, deregisters deleted/Stopped agents.
+- [x] **Timer-based sync** — `StoreSyncConfig` struct + `with_store_sync()` builder. `run_store_sync()` loop in coordinator's `run()` via `tokio::select!`. Configurable interval (min 5s, default 30s).
+- [x] **Tests** — 2 tests: sync with empty store is noop, sync deregisters agent not in store.
+
+---
+
+### Acceptance Criteria (Sprint 45)
+
+- [x] `agent_manage` tool creates/lists/updates/deletes persistent agents during LLM conversation
+- [x] `agentzero agents create --name X --model Y --keywords Z` works from CLI
+- [x] `agentzero agents list` shows persistent agents (human and JSON output)
+- [x] Config UI `/api/agents` REST CRUD works
+- [x] Config UI Agents tab shows persistent agents with create/edit/delete/status toggle
+- [x] Coordinator `sync_from_store()` hot-loads newly created agents
+- [x] Keywords set on agents enable automatic routing via `AgentRouter`
+- [x] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings (2,311 tests, 0 failures)
+
+---
+
 ## Backlog
 
 ### Embedded Binary Size Reduction (HIGH)

@@ -1,13 +1,17 @@
+mod agent_manage;
 mod mcp;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
 
+use agentzero_core::agent_store::AgentStoreApi;
 use agentzero_core::delegation::DelegateConfig;
 use agentzero_core::routing::ModelRouter;
 use agentzero_core::{DepthPolicy, Tool};
 use agentzero_tools::ToolBuilder;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+pub use agent_manage::AgentManageTool;
 
 pub use agentzero_tools::{
     AgentsIpcTool, ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool,
@@ -32,6 +36,26 @@ pub fn default_tools(
     policy: &ToolSecurityPolicy,
     router: Option<ModelRouter>,
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
+) -> anyhow::Result<Vec<Box<dyn Tool>>> {
+    default_tools_inner(policy, router, delegate_agents, None)
+}
+
+/// Build the default tool set, optionally with an `AgentStore` for the
+/// `agent_manage` tool.
+pub fn default_tools_with_store(
+    policy: &ToolSecurityPolicy,
+    router: Option<ModelRouter>,
+    delegate_agents: Option<HashMap<String, DelegateConfig>>,
+    agent_store: Option<Arc<dyn AgentStoreApi>>,
+) -> anyhow::Result<Vec<Box<dyn Tool>>> {
+    default_tools_inner(policy, router, delegate_agents, agent_store)
+}
+
+fn default_tools_inner(
+    policy: &ToolSecurityPolicy,
+    router: Option<ModelRouter>,
+    delegate_agents: Option<HashMap<String, DelegateConfig>>,
+    agent_store: Option<Arc<dyn AgentStoreApi>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
     let mut tools: Vec<Box<dyn Tool>> = vec![
         Box::new(ReadFileTool::new(policy.read_file.clone())),
@@ -167,6 +191,12 @@ pub fn default_tools(
         tools.push(Box::new(PushoverTool));
     }
 
+    if policy.enable_agent_manage {
+        if let Some(ref store) = agent_store {
+            tools.push(Box::new(AgentManageTool::new(Arc::clone(store))));
+        }
+    }
+
     #[cfg(feature = "wasm-plugins")]
     if policy.enable_wasm_plugins {
         use agentzero_plugins::package::{discover_plugins, filter_by_state, PluginState};
@@ -231,7 +261,7 @@ pub fn default_tools_with_depth(
     depth: u8,
     depth_policy: &DepthPolicy,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    let all_tools = default_tools(policy, router, delegate_agents)?;
+    let all_tools = default_tools_inner(policy, router, delegate_agents, None)?;
 
     if depth_policy.rules.is_empty() {
         return Ok(all_tools);

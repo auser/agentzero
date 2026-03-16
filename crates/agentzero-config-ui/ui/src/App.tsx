@@ -26,6 +26,7 @@ import Sidebar from './panels/Sidebar';
 import PropertiesPanel from './panels/PropertiesPanel';
 import TomlPreviewPanel from './panels/TomlPreviewPanel';
 import ValidationPanel from './panels/ValidationPanel';
+import AgentsPanel from './panels/AgentsPanel';
 
 const nodeTypes: NodeTypes = {
   tool: ToolNode,
@@ -57,7 +58,7 @@ export default function App() {
     setSelectedNode, setNodeTypes, setTools, loadGraph, undo, redo, getGraphModel,
   } = useGraphStore();
 
-  const [bottomPanel, setBottomPanel] = useState<'toml' | 'validation'>('toml');
+  const [bottomPanel, setBottomPanel] = useState<'toml' | 'validation' | 'agents'>('toml');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -234,9 +235,17 @@ export default function App() {
           >
             Validation
           </button>
+          <button
+            className={`tab-btn ${bottomPanel === 'agents' ? 'active' : ''}`}
+            onClick={() => setBottomPanel('agents')}
+          >
+            Agents
+          </button>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {bottomPanel === 'toml' ? <TomlPreviewPanel /> : <ValidationPanel />}
+          {bottomPanel === 'toml' && <TomlPreviewPanel />}
+          {bottomPanel === 'validation' && <ValidationPanel />}
+          {bottomPanel === 'agents' && <AgentsPanel />}
         </div>
       </div>
     </div>

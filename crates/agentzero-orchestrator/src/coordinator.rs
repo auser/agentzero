@@ -97,6 +97,16 @@ pub struct Coordinator {
     shutdown_grace_ms: u64,
     /// Optional presence store for agent heartbeat tracking.
     presence: Option<Arc<PresenceStore>>,
+    /// Optional agent store + paths for periodic sync (hot-loading).
+    store_sync: Option<StoreSyncConfig>,
+}
+
+/// Configuration for periodic agent store synchronization.
+pub struct StoreSyncConfig {
+    pub store: Arc<crate::agent_store::AgentStore>,
+    pub config_path: std::path::PathBuf,
+    pub workspace_root: std::path::PathBuf,
+    pub interval_secs: u64,
 }
 
 impl Coordinator {
@@ -117,12 +127,22 @@ impl Coordinator {
             correlation_store: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             shutdown_grace_ms,
             presence: None,
+            store_sync: None,
         }
     }
 
     /// Set the presence store for agent heartbeat tracking.
     pub fn with_presence(mut self, store: Arc<PresenceStore>) -> Self {
         self.presence = Some(store);
+        self
+    }
+
+    /// Enable periodic agent store synchronization.
+    ///
+    /// When set, the coordinator will periodically poll the `AgentStore` and
+    /// hot-load any new agents (or deregister deleted/stopped ones).
+    pub fn with_store_sync(mut self, config: StoreSyncConfig) -> Self {
+        self.store_sync = Some(config);
         self
     }
 
@@ -322,7 +342,7 @@ impl Coordinator {
         };
 
         let agent = Agent::new(agent_config, exec.provider, exec.memory, tools);
-        let descriptor = record.to_descriptor();
+        let descriptor = crate::agent_store::agent_to_descriptor(record);
         let ws_root = workspace_root.to_string_lossy().to_string();
 
         self.register_dynamic_agent(descriptor, agent, ws_root)
@@ -337,6 +357,59 @@ impl Coordinator {
             worker.status.load(Ordering::Relaxed) != STATUS_STOPPED
         } else {
             false
+        }
+    }
+
+    /// Synchronize the coordinator's agent workers with the persistent
+    /// `AgentStore`. Registers any Active agents that aren't already running
+    /// and deregisters agents that have been deleted or stopped.
+    ///
+    /// Intended to be called on a timer (e.g. every 30 seconds) so that
+    /// agents created via the CLI, config UI, or LLM tool become live
+    /// without a full restart.
+    pub async fn sync_from_store(
+        &self,
+        store: &crate::agent_store::AgentStore,
+        config_path: &std::path::Path,
+        workspace_root: &std::path::Path,
+    ) {
+        use crate::agent_store::AgentStatus;
+
+        let records = store.list();
+        let desired_ids: std::collections::HashSet<String> = records
+            .iter()
+            .filter(|r| r.status == AgentStatus::Active)
+            .map(|r| r.agent_id.clone())
+            .collect();
+
+        // Register new/active agents not yet running.
+        for record in &records {
+            if record.status != AgentStatus::Active {
+                continue;
+            }
+            if self.is_agent_registered(&record.agent_id).await {
+                continue;
+            }
+            if let Err(e) = self
+                .register_dynamic_agent_from_record(record, config_path, workspace_root)
+                .await
+            {
+                tracing::warn!(
+                    agent_id = %record.agent_id,
+                    name = %record.name,
+                    error = %e,
+                    "failed to register agent from store"
+                );
+            }
+        }
+
+        // Deregister agents that are no longer active or were deleted.
+        let registered_ids: Vec<String> = self.agents.read().await.keys().cloned().collect();
+
+        for id in registered_ids {
+            if !desired_ids.contains(&id) {
+                self.deregister_agent(&id).await;
+            }
         }
     }
 
@@ -367,6 +440,17 @@ impl Coordinator {
         let mut s3 = shutdown.clone();
         let response_loop = tokio::spawn(async move { c3.run_response_handler(&mut s3).await });
 
+        // Optional: agent store sync loop.
+        let sync_loop = if coord.store_sync.is_some() {
+            let c4 = coord.clone();
+            let mut s4 = shutdown.clone();
+            Some(tokio::spawn(
+                async move { c4.run_store_sync(&mut s4).await },
+            ))
+        } else {
+            None
+        };
+
         // Wait for shutdown signal or any loop to exit.
         tokio::select! {
             _ = shutdown.changed() => {
@@ -381,6 +465,9 @@ impl Coordinator {
             r = response_loop => {
                 if let Err(e) = r { tracing::error!(error = %e, "response handler loop panicked"); }
             }
+            r = async { match sync_loop { Some(h) => h.await, None => std::future::pending().await } } => {
+                if let Err(e) = r { tracing::error!(error = %e, "store sync loop panicked"); }
+            }
         }
 
         // Graceful shutdown: give in-flight tasks time to complete.
@@ -389,6 +476,38 @@ impl Coordinator {
             "coordinator shutting down, waiting for in-flight tasks"
         );
         tokio::time::sleep(Duration::from_millis(coord.shutdown_grace_ms)).await;
+
+        Ok(())
+    }
+
+    // ─── Loop 0: Agent Store Sync ──────────────────────────────────────────
+
+    async fn run_store_sync(
+        &self,
+        shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> anyhow::Result<()> {
+        let sync_cfg = match &self.store_sync {
+            Some(cfg) => cfg,
+            None => return Ok(()),
+        };
+        let interval_secs = sync_cfg.interval_secs.max(5); // minimum 5s
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+        // Skip the first immediate tick.
+        interval.tick().await;
+
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => break,
+                _ = interval.tick() => {
+                    self.sync_from_store(
+                        &sync_cfg.store,
+                        &sync_cfg.config_path,
+                        &sync_cfg.workspace_root,
+                    )
+                    .await;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -1432,5 +1551,67 @@ mod tests {
         assert_eq!(parsed.agent_id, "researcher");
         assert_eq!(parsed.depth, 1);
         assert!(matches!(parsed.status, JobStatus::Completed { .. }));
+    }
+
+    #[tokio::test]
+    async fn sync_from_store_with_empty_store_is_noop() {
+        let bus: Arc<dyn EventBus> = Arc::new(agentzero_core::InMemoryBus::default_capacity());
+        let channels = Arc::new(ChannelRegistry::new());
+        let router = AgentRouter::new(None, false);
+        let coord = Coordinator::new(bus, channels, router, vec![], 100);
+
+        let store = crate::agent_store::AgentStore::new();
+        let config_path = std::path::Path::new("/tmp/agentzero.toml");
+        let workspace = std::path::Path::new("/tmp");
+
+        // Should not panic with an empty store.
+        coord.sync_from_store(&store, config_path, workspace).await;
+
+        assert!(!coord.is_agent_registered("nonexistent").await);
+    }
+
+    #[tokio::test]
+    async fn sync_deregisters_stopped_agent() {
+        use agentzero_core::{Agent, AgentConfig};
+
+        let bus: Arc<dyn EventBus> = Arc::new(agentzero_core::InMemoryBus::default_capacity());
+        let channels = Arc::new(ChannelRegistry::new());
+        let router = AgentRouter::new(None, false);
+        let coord = Coordinator::new(bus.clone(), channels, router, vec![], 100);
+
+        // Manually register a dummy agent.
+        let config = AgentConfig::default();
+        let provider: Box<dyn agentzero_core::Provider> =
+            Box::new(agentzero_testkit::StaticProvider {
+                output_text: String::new(),
+            });
+        let memory: Box<dyn agentzero_core::MemoryStore> =
+            Box::new(agentzero_testkit::TestMemoryStore::default());
+        let agent = Agent::new(config, provider, memory, vec![]);
+        let descriptor = AgentDescriptor {
+            id: "agent_dummy".to_string(),
+            name: "dummy".to_string(),
+            description: String::new(),
+            keywords: vec![],
+            subscribes_to: vec![],
+            produces: vec![],
+            privacy_boundary: String::new(),
+        };
+        coord
+            .register_dynamic_agent(descriptor, agent, "/tmp".to_string())
+            .await;
+        assert!(coord.is_agent_registered("agent_dummy").await);
+
+        // Sync with empty store => the registered agent should be deregistered.
+        let store = crate::agent_store::AgentStore::new();
+        let config_path = std::path::Path::new("/tmp/agentzero.toml");
+        let workspace = std::path::Path::new("/tmp");
+
+        coord.sync_from_store(&store, config_path, workspace).await;
+
+        assert!(
+            !coord.is_agent_registered("agent_dummy").await,
+            "dummy agent should be deregistered after sync with empty store"
+        );
     }
 }

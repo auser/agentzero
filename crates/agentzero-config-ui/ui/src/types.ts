@@ -137,3 +137,38 @@ export interface DepthPolicyNodeData {
   allowed_tools: string[];
   denied_tools: string[];
 }
+
+// Persistent agent types (from AgentStore, not TOML config)
+export interface AgentRecord {
+  agent_id: string;
+  name: string;
+  description: string;
+  provider: string;
+  model: string;
+  system_prompt?: string;
+  keywords: string[];
+  allowed_tools: string[];
+  status: 'active' | 'stopped';
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CreateAgentRequest {
+  name: string;
+  description?: string;
+  provider?: string;
+  model?: string;
+  system_prompt?: string;
+  keywords?: string[];
+  allowed_tools?: string[];
+}
+
+export interface UpdateAgentRequest {
+  name?: string;
+  description?: string;
+  provider?: string;
+  model?: string;
+  system_prompt?: string;
+  keywords?: string[];
+  allowed_tools?: string[];
+}

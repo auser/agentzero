@@ -565,6 +565,9 @@ pub struct AgentSettings {
     /// Context summarization settings.
     #[serde(default)]
     pub summarization: SummarizationSettings,
+    /// Enable the `agent_manage` tool for creating/managing persistent agents.
+    #[serde(default)]
+    pub enable_agent_manage: bool,
 }
 
 fn default_tool_timeout_ms() -> u64 {
@@ -593,6 +596,7 @@ impl Default for AgentSettings {
             tool_selection: None,
             tool_selection_model: None,
             summarization: SummarizationSettings::default(),
+            enable_agent_manage: false,
         }
     }
 }

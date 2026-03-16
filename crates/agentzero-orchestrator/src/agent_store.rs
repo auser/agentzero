@@ -3,105 +3,39 @@
 //! Follows the [`ApiKeyStore`](crate::api_keys::ApiKeyStore) pattern:
 //! `RwLock<Vec<AgentRecord>>` with optional `EncryptedJsonStore` backing
 //! for encrypted-at-rest persistence.
+//!
+//! Types (`AgentRecord`, `AgentUpdate`, `AgentStatus`, `AgentChannelConfig`)
+//! and the `AgentStoreApi` trait are defined in `agentzero-core` and
+//! re-exported here for convenience.
 
 use agentzero_storage::EncryptedJsonStore;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// Re-export types from core so existing code continues to compile.
+pub use agentzero_core::agent_store::{
+    AgentChannelConfig, AgentRecord, AgentStatus, AgentStoreApi, AgentUpdate,
+};
 
-/// Status of a dynamically-created agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AgentStatus {
-    Active,
-    Stopped,
+/// Convert an `AgentRecord` to a `SwarmAgentConfig` for use with the swarm builder.
+pub fn agent_to_swarm_config(record: &AgentRecord) -> agentzero_config::SwarmAgentConfig {
+    agentzero_config::SwarmAgentConfig::new(&record.name, &record.description)
+        .with_provider(&record.provider, &record.model)
+        .with_system_prompt(record.system_prompt.as_deref().unwrap_or(""))
+        .with_keywords(record.keywords.clone())
+        .with_allowed_tools(record.allowed_tools.clone())
 }
 
-/// Channel configuration for a dynamic agent.
-///
-/// Tokens are stored encrypted at rest via `EncryptedJsonStore`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentChannelConfig {
-    /// Bot token or access token for the platform.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bot_token: Option<String>,
-    /// Registered webhook URL (set after auto-registration).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub webhook_url: Option<String>,
-    /// Additional platform-specific fields.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub extra: HashMap<String, String>,
-}
-
-/// Persistent record for a dynamically-created agent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentRecord {
-    pub agent_id: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    #[serde(default)]
-    pub provider: String,
-    #[serde(default)]
-    pub model: String,
-    #[serde(default)]
-    pub keywords: Vec<String>,
-    #[serde(default)]
-    pub allowed_tools: Vec<String>,
-    #[serde(default)]
-    pub channels: HashMap<String, AgentChannelConfig>,
-    pub created_at: u64,
-    pub updated_at: u64,
-    pub status: AgentStatus,
-}
-
-/// Fields that can be updated on an existing agent.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AgentUpdate {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub keywords: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_tools: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channels: Option<HashMap<String, AgentChannelConfig>>,
-}
-
-impl AgentRecord {
-    /// Convert this record to a `SwarmAgentConfig` for use with the swarm builder.
-    pub fn to_swarm_config(&self) -> agentzero_config::SwarmAgentConfig {
-        agentzero_config::SwarmAgentConfig::new(&self.name, &self.description)
-            .with_provider(&self.provider, &self.model)
-            .with_system_prompt(self.system_prompt.as_deref().unwrap_or(""))
-            .with_keywords(self.keywords.clone())
-            .with_allowed_tools(self.allowed_tools.clone())
-    }
-
-    /// Convert this record to an `AgentDescriptor` for routing registration.
-    pub fn to_descriptor(&self) -> crate::agent_router::AgentDescriptor {
-        crate::agent_router::AgentDescriptor {
-            id: self.agent_id.clone(),
-            name: self.name.clone(),
-            description: self.description.clone(),
-            keywords: self.keywords.clone(),
-            subscribes_to: vec!["channel.*.message".to_string()],
-            produces: vec![],
-            privacy_boundary: String::new(),
-        }
+/// Convert an `AgentRecord` to an `AgentDescriptor` for routing registration.
+pub fn agent_to_descriptor(record: &AgentRecord) -> crate::agent_router::AgentDescriptor {
+    crate::agent_router::AgentDescriptor {
+        id: record.agent_id.clone(),
+        name: record.name.clone(),
+        description: record.description.clone(),
+        keywords: record.keywords.clone(),
+        subscribes_to: vec!["channel.*.message".to_string()],
+        produces: vec![],
+        privacy_boundary: String::new(),
     }
 }
 
@@ -269,6 +203,36 @@ impl AgentStore {
     }
 }
 
+impl AgentStoreApi for AgentStore {
+    fn create(&self, record: AgentRecord) -> anyhow::Result<AgentRecord> {
+        AgentStore::create(self, record)
+    }
+
+    fn get(&self, agent_id: &str) -> Option<AgentRecord> {
+        AgentStore::get(self, agent_id)
+    }
+
+    fn list(&self) -> Vec<AgentRecord> {
+        AgentStore::list(self)
+    }
+
+    fn update(&self, agent_id: &str, update: AgentUpdate) -> anyhow::Result<Option<AgentRecord>> {
+        AgentStore::update(self, agent_id, update)
+    }
+
+    fn delete(&self, agent_id: &str) -> anyhow::Result<bool> {
+        AgentStore::delete(self, agent_id)
+    }
+
+    fn set_status(&self, agent_id: &str, status: AgentStatus) -> anyhow::Result<bool> {
+        AgentStore::set_status(self, agent_id, status)
+    }
+
+    fn count(&self) -> usize {
+        AgentStore::count(self)
+    }
+}
+
 fn generate_agent_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static CTR: AtomicU64 = AtomicU64::new(0);
@@ -302,6 +266,7 @@ fn now_epoch() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn make_record(name: &str) -> AgentRecord {
         AgentRecord {
@@ -484,7 +449,7 @@ mod tests {
             updated_at: 200,
             status: AgentStatus::Active,
         };
-        let swarm = record.to_swarm_config();
+        let swarm = agent_to_swarm_config(&record);
         assert_eq!(swarm.name, "Aria");
         assert_eq!(swarm.description, "Travel assistant");
         assert_eq!(swarm.provider, "anthropic");
@@ -498,7 +463,7 @@ mod tests {
     fn to_descriptor_maps_id_and_keywords() {
         let record = make_record("Router");
         let created = AgentStore::new().create(record).expect("create");
-        let desc = created.to_descriptor();
+        let desc = agent_to_descriptor(&created);
         assert_eq!(desc.id, created.agent_id);
         assert_eq!(desc.name, "Router");
         assert_eq!(desc.description, "Router agent");

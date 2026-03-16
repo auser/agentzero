@@ -1,0 +1,602 @@
+//! LLM-callable tool for managing persistent agents.
+//!
+//! Placed in `agentzero-infra` (not `agentzero-tools`) to avoid a circular
+//! dependency: this module needs `AgentStore` from `agentzero-orchestrator`,
+//! and `agentzero-infra` already depends on both `agentzero-tools` and
+//! `agentzero-orchestrator`.
+
+use agentzero_core::agent_store::{AgentRecord, AgentStatus, AgentStoreApi, AgentUpdate};
+use agentzero_core::{Tool, ToolContext, ToolResult};
+use async_trait::async_trait;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+#[derive(Debug, Deserialize)]
+struct Input {
+    action: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+    #[serde(default)]
+    keywords: Option<Vec<String>>,
+    #[serde(default)]
+    allowed_tools: Option<Vec<String>>,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+pub struct AgentManageTool {
+    store: Arc<dyn AgentStoreApi>,
+}
+
+impl AgentManageTool {
+    pub fn new(store: Arc<dyn AgentStoreApi>) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl Tool for AgentManageTool {
+    fn name(&self) -> &'static str {
+        "agent_manage"
+    }
+
+    fn description(&self) -> &'static str {
+        "Create, list, update, or delete persistent agents. Use this when the user asks you to \
+         create a new agent, modify an existing agent's configuration, or remove an agent."
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "list", "get", "update", "delete", "set_status"],
+                    "description": "The management action to perform"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Agent name (required for create)"
+                },
+                "agent_id": {
+                    "type": "string",
+                    "description": "Agent ID (required for get/update/delete/set_status)"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "What this agent does"
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Model to use (e.g. claude-sonnet-4-20250514)"
+                },
+                "provider": {
+                    "type": "string",
+                    "description": "Provider (e.g. anthropic, openai, openrouter)"
+                },
+                "system_prompt": {
+                    "type": "string",
+                    "description": "System prompt / persona for the agent"
+                },
+                "keywords": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Keywords for routing messages to this agent"
+                },
+                "allowed_tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Tool names this agent can use (empty = all)"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["active", "stopped"],
+                    "description": "Agent status (for set_status action)"
+                }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }))
+    }
+
+    async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+        let parsed: Input =
+            serde_json::from_str(input).map_err(|e| anyhow::anyhow!("invalid input: {e}"))?;
+
+        let store = self.store.as_ref();
+        let output = match parsed.action.as_str() {
+            "create" => action_create(store, &parsed)?,
+            "list" => action_list(store),
+            "get" => action_get(store, &parsed)?,
+            "update" => action_update(store, &parsed)?,
+            "delete" => action_delete(store, &parsed)?,
+            "set_status" => action_set_status(store, &parsed)?,
+            other => anyhow::bail!(
+                "unknown action '{other}'. Valid: create, list, get, update, delete, set_status"
+            ),
+        };
+
+        Ok(ToolResult { output })
+    }
+}
+
+fn action_create(store: &dyn AgentStoreApi, input: &Input) -> anyhow::Result<String> {
+    let name = input
+        .name
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("'name' is required for create"))?;
+
+    let record = AgentRecord {
+        agent_id: String::new(), // auto-generated by store
+        name: name.to_string(),
+        description: input.description.clone().unwrap_or_default(),
+        system_prompt: input.system_prompt.clone(),
+        provider: input.provider.clone().unwrap_or_default(),
+        model: input.model.clone().unwrap_or_default(),
+        keywords: input.keywords.clone().unwrap_or_default(),
+        allowed_tools: input.allowed_tools.clone().unwrap_or_default(),
+        channels: HashMap::new(),
+        created_at: 0,
+        updated_at: 0,
+        status: AgentStatus::Active,
+    };
+
+    let created = store.create(record)?;
+
+    Ok(format!(
+        "Agent created successfully.\n\
+         - ID: {}\n\
+         - Name: {}\n\
+         - Provider: {}\n\
+         - Model: {}\n\
+         - Keywords: {}\n\
+         - Status: active",
+        created.agent_id,
+        created.name,
+        if created.provider.is_empty() {
+            "(default)"
+        } else {
+            &created.provider
+        },
+        if created.model.is_empty() {
+            "(default)"
+        } else {
+            &created.model
+        },
+        if created.keywords.is_empty() {
+            "(none)".to_string()
+        } else {
+            created.keywords.join(", ")
+        },
+    ))
+}
+
+fn action_list(store: &dyn AgentStoreApi) -> String {
+    let agents = store.list();
+    if agents.is_empty() {
+        return "No persistent agents found.".to_string();
+    }
+
+    let mut lines = vec![format!("Found {} agent(s):\n", agents.len())];
+    for a in &agents {
+        let status = match a.status {
+            AgentStatus::Active => "active",
+            AgentStatus::Stopped => "stopped",
+        };
+        lines.push(format!(
+            "- {} (id: {}, model: {}, status: {}, keywords: [{}])",
+            a.name,
+            a.agent_id,
+            if a.model.is_empty() {
+                "(default)"
+            } else {
+                &a.model
+            },
+            status,
+            a.keywords.join(", "),
+        ));
+    }
+    lines.join("\n")
+}
+
+fn action_get(store: &dyn AgentStoreApi, input: &Input) -> anyhow::Result<String> {
+    let agent_id = input
+        .agent_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("'agent_id' is required for get"))?;
+
+    let record = store
+        .get(agent_id)
+        .ok_or_else(|| anyhow::anyhow!("agent '{agent_id}' not found"))?;
+
+    let status = match record.status {
+        AgentStatus::Active => "active",
+        AgentStatus::Stopped => "stopped",
+    };
+
+    Ok(format!(
+        "Agent: {}\n\
+         - ID: {}\n\
+         - Description: {}\n\
+         - Provider: {}\n\
+         - Model: {}\n\
+         - System prompt: {}\n\
+         - Keywords: [{}]\n\
+         - Allowed tools: [{}]\n\
+         - Status: {}\n\
+         - Created: {}\n\
+         - Updated: {}",
+        record.name,
+        record.agent_id,
+        if record.description.is_empty() {
+            "(none)"
+        } else {
+            &record.description
+        },
+        if record.provider.is_empty() {
+            "(default)"
+        } else {
+            &record.provider
+        },
+        if record.model.is_empty() {
+            "(default)"
+        } else {
+            &record.model
+        },
+        record.system_prompt.as_deref().unwrap_or("(none)"),
+        record.keywords.join(", "),
+        if record.allowed_tools.is_empty() {
+            "all".to_string()
+        } else {
+            record.allowed_tools.join(", ")
+        },
+        status,
+        record.created_at,
+        record.updated_at,
+    ))
+}
+
+fn action_update(store: &dyn AgentStoreApi, input: &Input) -> anyhow::Result<String> {
+    let agent_id = input
+        .agent_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("'agent_id' is required for update"))?;
+
+    let update = AgentUpdate {
+        name: input.name.clone(),
+        description: input.description.clone(),
+        system_prompt: input.system_prompt.clone(),
+        provider: input.provider.clone(),
+        model: input.model.clone(),
+        keywords: input.keywords.clone(),
+        allowed_tools: input.allowed_tools.clone(),
+        channels: None,
+    };
+
+    match store.update(agent_id, update)? {
+        Some(updated) => Ok(format!(
+            "Agent '{}' updated successfully (id: {}).",
+            updated.name, updated.agent_id
+        )),
+        None => anyhow::bail!("agent '{agent_id}' not found"),
+    }
+}
+
+fn action_delete(store: &dyn AgentStoreApi, input: &Input) -> anyhow::Result<String> {
+    let agent_id = input
+        .agent_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("'agent_id' is required for delete"))?;
+
+    if store.delete(agent_id)? {
+        Ok(format!("Agent '{agent_id}' deleted successfully."))
+    } else {
+        anyhow::bail!("agent '{agent_id}' not found")
+    }
+}
+
+fn action_set_status(store: &dyn AgentStoreApi, input: &Input) -> anyhow::Result<String> {
+    let agent_id = input
+        .agent_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("'agent_id' is required for set_status"))?;
+
+    let status_str = input.status.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("'status' is required for set_status (active or stopped)")
+    })?;
+
+    let status = match status_str {
+        "active" => AgentStatus::Active,
+        "stopped" => AgentStatus::Stopped,
+        other => anyhow::bail!("invalid status '{other}'. Must be 'active' or 'stopped'"),
+    };
+
+    if store.set_status(agent_id, status)? {
+        Ok(format!("Agent '{agent_id}' status set to '{status_str}'."))
+    } else {
+        anyhow::bail!("agent '{agent_id}' not found")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentzero_core::ToolContext;
+    use std::sync::RwLock;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_ctx() -> ToolContext {
+        ToolContext::new("/tmp".to_string())
+    }
+
+    /// Minimal in-memory `AgentStoreApi` for tests.
+    struct MemoryStore {
+        agents: RwLock<Vec<AgentRecord>>,
+        counter: std::sync::atomic::AtomicU64,
+    }
+
+    impl MemoryStore {
+        fn new() -> Self {
+            Self {
+                agents: RwLock::new(Vec::new()),
+                counter: std::sync::atomic::AtomicU64::new(0),
+            }
+        }
+    }
+
+    impl AgentStoreApi for MemoryStore {
+        fn create(&self, mut record: AgentRecord) -> anyhow::Result<AgentRecord> {
+            let seq = self
+                .counter
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_secs();
+            if record.agent_id.is_empty() {
+                record.agent_id = format!("agent_test_{seq}");
+            }
+            record.created_at = now;
+            record.updated_at = now;
+            record.status = AgentStatus::Active;
+            let mut agents = self.agents.write().expect("lock");
+            agents.push(record.clone());
+            Ok(record)
+        }
+
+        fn get(&self, agent_id: &str) -> Option<AgentRecord> {
+            self.agents
+                .read()
+                .expect("lock")
+                .iter()
+                .find(|a| a.agent_id == agent_id)
+                .cloned()
+        }
+
+        fn list(&self) -> Vec<AgentRecord> {
+            self.agents.read().expect("lock").clone()
+        }
+
+        fn update(
+            &self,
+            agent_id: &str,
+            update: AgentUpdate,
+        ) -> anyhow::Result<Option<AgentRecord>> {
+            let mut agents = self.agents.write().expect("lock");
+            let Some(record) = agents.iter_mut().find(|a| a.agent_id == agent_id) else {
+                return Ok(None);
+            };
+            if let Some(name) = update.name {
+                record.name = name;
+            }
+            if let Some(desc) = update.description {
+                record.description = desc;
+            }
+            if let Some(sp) = update.system_prompt {
+                record.system_prompt = Some(sp);
+            }
+            if let Some(p) = update.provider {
+                record.provider = p;
+            }
+            if let Some(m) = update.model {
+                record.model = m;
+            }
+            if let Some(kw) = update.keywords {
+                record.keywords = kw;
+            }
+            if let Some(at) = update.allowed_tools {
+                record.allowed_tools = at;
+            }
+            Ok(Some(record.clone()))
+        }
+
+        fn delete(&self, agent_id: &str) -> anyhow::Result<bool> {
+            let mut agents = self.agents.write().expect("lock");
+            let before = agents.len();
+            agents.retain(|a| a.agent_id != agent_id);
+            Ok(agents.len() < before)
+        }
+
+        fn set_status(&self, agent_id: &str, status: AgentStatus) -> anyhow::Result<bool> {
+            let mut agents = self.agents.write().expect("lock");
+            let Some(record) = agents.iter_mut().find(|a| a.agent_id == agent_id) else {
+                return Ok(false);
+            };
+            record.status = status;
+            Ok(true)
+        }
+
+        fn count(&self) -> usize {
+            self.agents.read().expect("lock").len()
+        }
+    }
+
+    fn test_store() -> Arc<dyn AgentStoreApi> {
+        Arc::new(MemoryStore::new())
+    }
+
+    #[tokio::test]
+    async fn create_and_list() {
+        let store = test_store();
+        let tool = AgentManageTool::new(store.clone());
+        let ctx = test_ctx();
+
+        let result = tool
+            .execute(
+                r#"{"action":"create","name":"Aria","description":"Travel planner","model":"claude-sonnet-4-20250514","provider":"anthropic","keywords":["travel","booking"]}"#,
+                &ctx,
+            )
+            .await
+            .expect("create should succeed");
+        assert!(result.output.contains("Agent created successfully"));
+        assert!(result.output.contains("Aria"));
+
+        let result = tool
+            .execute(r#"{"action":"list"}"#, &ctx)
+            .await
+            .expect("list should succeed");
+        assert!(result.output.contains("1 agent(s)"));
+        assert!(result.output.contains("Aria"));
+        assert!(result.output.contains("travel, booking"));
+    }
+
+    #[tokio::test]
+    async fn get_agent() {
+        let store = test_store();
+        let tool = AgentManageTool::new(store.clone());
+        let ctx = test_ctx();
+
+        tool.execute(
+            r#"{"action":"create","name":"Bot","model":"gpt-4o","provider":"openai"}"#,
+            &ctx,
+        )
+        .await
+        .expect("create");
+
+        let agents = store.list();
+        let id = &agents[0].agent_id;
+
+        let result = tool
+            .execute(&format!(r#"{{"action":"get","agent_id":"{id}"}}"#), &ctx)
+            .await
+            .expect("get should succeed");
+        assert!(result.output.contains("Bot"));
+        assert!(result.output.contains("gpt-4o"));
+    }
+
+    #[tokio::test]
+    async fn update_agent() {
+        let store = test_store();
+        let tool = AgentManageTool::new(store.clone());
+        let ctx = test_ctx();
+
+        tool.execute(
+            r#"{"action":"create","name":"Old","model":"old-model"}"#,
+            &ctx,
+        )
+        .await
+        .expect("create");
+
+        let id = store.list()[0].agent_id.clone();
+
+        let result = tool
+            .execute(
+                &format!(
+                    r#"{{"action":"update","agent_id":"{id}","name":"New","model":"new-model"}}"#
+                ),
+                &ctx,
+            )
+            .await
+            .expect("update should succeed");
+        assert!(result.output.contains("updated successfully"));
+
+        let updated = store.get(&id).expect("should exist");
+        assert_eq!(updated.name, "New");
+        assert_eq!(updated.model, "new-model");
+    }
+
+    #[tokio::test]
+    async fn delete_agent() {
+        let store = test_store();
+        let tool = AgentManageTool::new(store.clone());
+        let ctx = test_ctx();
+
+        tool.execute(r#"{"action":"create","name":"Temp"}"#, &ctx)
+            .await
+            .expect("create");
+
+        let id = store.list()[0].agent_id.clone();
+        assert_eq!(store.count(), 1);
+
+        let result = tool
+            .execute(&format!(r#"{{"action":"delete","agent_id":"{id}"}}"#), &ctx)
+            .await
+            .expect("delete should succeed");
+        assert!(result.output.contains("deleted successfully"));
+        assert_eq!(store.count(), 0);
+    }
+
+    #[tokio::test]
+    async fn set_status() {
+        let store = test_store();
+        let tool = AgentManageTool::new(store.clone());
+        let ctx = test_ctx();
+
+        tool.execute(r#"{"action":"create","name":"Runner"}"#, &ctx)
+            .await
+            .expect("create");
+
+        let id = store.list()[0].agent_id.clone();
+
+        let result = tool
+            .execute(
+                &format!(r#"{{"action":"set_status","agent_id":"{id}","status":"stopped"}}"#),
+                &ctx,
+            )
+            .await
+            .expect("set_status should succeed");
+        assert!(result.output.contains("stopped"));
+
+        let record = store.get(&id).expect("should exist");
+        assert_eq!(record.status, AgentStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn create_without_name_fails() {
+        let store = test_store();
+        let tool = AgentManageTool::new(store);
+        let ctx = test_ctx();
+
+        let result = tool.execute(r#"{"action":"create"}"#, &ctx).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn list_empty() {
+        let store = test_store();
+        let tool = AgentManageTool::new(store);
+        let ctx = test_ctx();
+
+        let result = tool
+            .execute(r#"{"action":"list"}"#, &ctx)
+            .await
+            .expect("list should succeed");
+        assert!(result.output.contains("No persistent agents found"));
+    }
+}

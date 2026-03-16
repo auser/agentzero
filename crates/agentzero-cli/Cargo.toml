@@ -42,6 +42,7 @@ agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
 agentzero-gateway = { workspace = true, optional = true }
 agentzero-infra = { workspace = true }
+agentzero-orchestrator = { workspace = true }
 agentzero-plugins = { workspace = true, optional = true }
 agentzero-providers = { workspace = true }
 agentzero-storage = { workspace = true }
