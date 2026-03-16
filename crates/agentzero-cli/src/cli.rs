@@ -106,6 +106,11 @@ pub enum Commands {
         #[arg(long)]
         stream: bool,
     },
+    /// Manage persistent agents (create, list, update, delete).
+    Agents {
+        #[command(subcommand)]
+        command: AgentsCommands,
+    },
     /// Manage provider subscription authentication profiles.
     Auth {
         #[command(subcommand)]
@@ -342,6 +347,100 @@ pub enum ToolsCommands {
         /// Pretty-print the schema.
         #[arg(long)]
         pretty: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentsCommands {
+    /// Create a new persistent agent.
+    Create {
+        /// Agent name.
+        #[arg(long)]
+        name: String,
+        /// What this agent does.
+        #[arg(long)]
+        description: Option<String>,
+        /// Model to use (e.g. claude-sonnet-4-20250514).
+        #[arg(long)]
+        model: Option<String>,
+        /// Provider (e.g. anthropic, openai, openrouter).
+        #[arg(long)]
+        provider: Option<String>,
+        /// System prompt / persona.
+        #[arg(long)]
+        system_prompt: Option<String>,
+        /// Routing keywords (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        keywords: Vec<String>,
+        /// Tool allowlist (comma-separated, empty = all).
+        #[arg(long, value_delimiter = ',')]
+        allowed_tools: Vec<String>,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all persistent agents.
+    List {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show details for a specific agent.
+    Get {
+        /// Agent ID.
+        #[arg(long)]
+        id: String,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Update an existing agent.
+    Update {
+        /// Agent ID.
+        #[arg(long)]
+        id: String,
+        /// New name.
+        #[arg(long)]
+        name: Option<String>,
+        /// New description.
+        #[arg(long)]
+        description: Option<String>,
+        /// New model.
+        #[arg(long)]
+        model: Option<String>,
+        /// New provider.
+        #[arg(long)]
+        provider: Option<String>,
+        /// New system prompt.
+        #[arg(long)]
+        system_prompt: Option<String>,
+        /// New keywords (comma-separated, replaces existing).
+        #[arg(long, value_delimiter = ',')]
+        keywords: Option<Vec<String>>,
+        /// New tool allowlist (comma-separated, replaces existing).
+        #[arg(long, value_delimiter = ',')]
+        allowed_tools: Option<Vec<String>>,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete an agent.
+    Delete {
+        /// Agent ID.
+        #[arg(long)]
+        id: String,
+    },
+    /// Set agent status (active/stopped).
+    Status {
+        /// Agent ID.
+        #[arg(long)]
+        id: String,
+        /// Activate the agent.
+        #[arg(long)]
+        active: bool,
+        /// Stop the agent.
+        #[arg(long)]
+        stopped: bool,
     },
 }
 

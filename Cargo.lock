@@ -135,6 +135,7 @@ dependencies = [
  "agentzero-core",
  "agentzero-gateway",
  "agentzero-infra",
+ "agentzero-orchestrator",
  "agentzero-plugins",
  "agentzero-providers",
  "agentzero-storage",
@@ -191,6 +192,7 @@ version = "0.6.0"
 dependencies = [
  "agentzero-config",
  "agentzero-core",
+ "agentzero-orchestrator",
  "anyhow",
  "axum 0.7.9",
  "http-body-util",

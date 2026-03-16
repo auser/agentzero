@@ -1,6 +1,6 @@
 use crate::audio::process_audio_markers;
 use crate::audit::FileAuditSink;
-use crate::tools::default_tools;
+use crate::tools::default_tools_with_store;
 use agentzero_auth::AuthManager;
 use agentzero_config::{
     load, load_audit_policy, load_env_var, load_tool_security_policy, AudioConfig,
@@ -38,6 +38,10 @@ pub struct RunAgentRequest {
     pub extra_tools: Vec<Box<dyn Tool>>,
     /// Active conversation ID for memory scoping.
     pub conversation_id: Option<String>,
+    /// Optional agent store for the `agent_manage` tool.
+    /// When provided and `enable_agent_manage` is true in config, the tool
+    /// is registered so agents can create/manage other persistent agents.
+    pub agent_store: Option<std::sync::Arc<dyn agentzero_core::agent_store::AgentStoreApi>>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,7 +203,8 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         };
     let memory = build_memory_store(&req.config_path).await?;
     let tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
-    let mut tools: Vec<Box<dyn Tool>> = default_tools(&tool_policy, router, delegate_agents)?;
+    let mut tools: Vec<Box<dyn Tool>> =
+        default_tools_with_store(&tool_policy, router, delegate_agents, req.agent_store)?;
     // Append any extra tools (e.g. FFI-registered tools).
     tools.extend(req.extra_tools);
     let audit_policy = load_audit_policy(&req.workspace_root, &req.config_path)?;

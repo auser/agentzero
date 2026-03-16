@@ -119,6 +119,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Gateway { .. } => "gateway",
         Commands::Daemon { .. } => "daemon",
         Commands::Agent { .. } => "agent",
+        Commands::Agents { .. } => "agents",
         Commands::Auth { .. } => "auth",
         Commands::Cron { .. } => "cron",
         Commands::Hooks { .. } => "hooks",
@@ -204,12 +205,13 @@ fn normalize_verbose_args(args: Vec<OsString>) -> Result<Vec<OsString>, clap::Er
 mod tests {
     use super::parse_cli_from;
     use crate::cli::{
-        ApprovalCommands, ApprovalRisk, AuthCommands, ChannelCommands, Cli, Commands,
-        CompletionShell, ConfigCommands, CoordinationCommands, CostCommands, CronCommands,
-        DoctorCommands, EstopCommands, EstopLevel, GoalCommands, HardwareCommands, HookCommands,
-        IdentityCommands, IdentityKind, IntegrationsCommands, MemoryCommands, MigrateCommands,
-        ModelCommands, PeripheralCommands, PluginCommands, RagCommands, ServiceCommands,
-        ServiceInit, SkillCommands, TemplateCommands, TunnelCommands, UpdateCommands,
+        AgentsCommands, ApprovalCommands, ApprovalRisk, AuthCommands, ChannelCommands, Cli,
+        Commands, CompletionShell, ConfigCommands, CoordinationCommands, CostCommands,
+        CronCommands, DoctorCommands, EstopCommands, EstopLevel, GoalCommands, HardwareCommands,
+        HookCommands, IdentityCommands, IdentityKind, IntegrationsCommands, MemoryCommands,
+        MigrateCommands, ModelCommands, PeripheralCommands, PluginCommands, RagCommands,
+        ServiceCommands, ServiceInit, SkillCommands, TemplateCommands, TunnelCommands,
+        UpdateCommands,
     };
     use clap::{ColorChoice, CommandFactory};
 
@@ -1671,5 +1673,132 @@ mod tests {
                 command: SkillCommands::Templates
             }
         ));
+    }
+
+    // ── agents subcommand tests ─────────────────────────────────────────
+
+    #[test]
+    fn parse_cli_agents_create() {
+        let parsed = parse_cli_from([
+            "agentzero",
+            "agents",
+            "create",
+            "--name",
+            "Aria",
+            "--description",
+            "Travel planner",
+            "--model",
+            "claude-sonnet-4-20250514",
+            "--provider",
+            "anthropic",
+            "--keywords",
+            "travel,booking",
+        ])
+        .expect("agents create should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Agents {
+                command: AgentsCommands::Create { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_agents_list() {
+        let parsed =
+            parse_cli_from(["agentzero", "agents", "list"]).expect("agents list should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Agents {
+                command: AgentsCommands::List { json: false }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_agents_list_json() {
+        let parsed = parse_cli_from(["agentzero", "agents", "list", "--json"])
+            .expect("agents list --json should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Agents {
+                command: AgentsCommands::List { json: true }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_agents_get() {
+        let parsed = parse_cli_from(["agentzero", "agents", "get", "--id", "agent_123"])
+            .expect("agents get should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Agents {
+                command: AgentsCommands::Get { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_agents_update() {
+        let parsed = parse_cli_from([
+            "agentzero",
+            "agents",
+            "update",
+            "--id",
+            "agent_123",
+            "--name",
+            "NewName",
+            "--model",
+            "gpt-4o",
+        ])
+        .expect("agents update should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Agents {
+                command: AgentsCommands::Update { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_agents_delete() {
+        let parsed = parse_cli_from(["agentzero", "agents", "delete", "--id", "agent_123"])
+            .expect("agents delete should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Agents {
+                command: AgentsCommands::Delete { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_agents_status() {
+        let parsed = parse_cli_from([
+            "agentzero",
+            "agents",
+            "status",
+            "--id",
+            "agent_123",
+            "--active",
+        ])
+        .expect("agents status should parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Agents {
+                command: AgentsCommands::Status { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_cli_agents_requires_subcommand() {
+        let err = parse_cli_from(["agentzero", "agents"])
+            .expect_err("agents without subcommand should fail");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
     }
 }

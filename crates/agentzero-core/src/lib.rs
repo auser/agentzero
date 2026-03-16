@@ -5,6 +5,7 @@
 //! utilities for URL policy enforcement, security, delegation, and routing.
 
 pub mod agent;
+pub mod agent_store;
 pub mod common;
 pub mod delegation;
 pub mod event_bus;

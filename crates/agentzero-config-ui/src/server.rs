@@ -26,16 +26,47 @@ struct Assets;
 
 /// Build the axum router with API routes and static asset serving.
 pub fn build_router() -> Router {
-    Router::new()
+    build_router_with_agents(None)
+}
+
+/// Build the axum router, optionally including persistent agent management
+/// routes when an `AgentStore` is provided.
+pub fn build_router_with_agents(
+    agent_store: Option<std::sync::Arc<agentzero_orchestrator::agent_store::AgentStore>>,
+) -> Router {
+    let mut router = Router::new()
         // API routes
         .route("/api/schema", get(api::get_schema))
         .route("/api/tools", get(api::get_tools))
         .route("/api/defaults", get(api::get_defaults))
         .route("/api/import", post(api::import_toml))
         .route("/api/export", post(api::export_toml))
-        .route("/api/validate", post(api::validate))
-        // Static assets (SPA fallback)
-        .fallback(static_handler)
+        .route("/api/validate", post(api::validate));
+
+    // Agent management routes (only when a store is available).
+    if let Some(store) = agent_store {
+        use crate::agents_api;
+        use axum::routing::put;
+
+        let agents_router = Router::new()
+            .route(
+                "/api/agents",
+                get(agents_api::list_agents).post(agents_api::create_agent),
+            )
+            .route(
+                "/api/agents/:id",
+                get(agents_api::get_agent)
+                    .put(agents_api::update_agent)
+                    .delete(agents_api::delete_agent),
+            )
+            .route("/api/agents/:id/status", put(agents_api::set_agent_status))
+            .with_state(store);
+
+        router = router.merge(agents_router);
+    }
+
+    // Static assets (SPA fallback)
+    router.fallback(static_handler)
 }
 
 /// Serve embedded static assets, falling back to index.html for SPA routing.

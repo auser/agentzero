@@ -3,13 +3,16 @@
 //! Provides a browser-based UI (React Flow + Axum) for visually composing
 //! tools, security policies, agents, model routing, and generating TOML config.
 
+pub mod agents_api;
 pub mod api;
 pub mod schema;
 pub mod server;
 pub mod toml_bridge;
 
+use agentzero_orchestrator::agent_store::AgentStore;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Start the config UI server and optionally open the browser.
 ///
@@ -22,7 +25,22 @@ pub async fn start_config_ui(
     port: u16,
     open_browser: bool,
 ) -> anyhow::Result<()> {
-    let router = server::build_router();
+    start_config_ui_with_data_dir(_config_path, port, open_browser, None).await
+}
+
+/// Start the config UI server with an optional data directory for persistent
+/// agent management.
+pub async fn start_config_ui_with_data_dir(
+    _config_path: Option<PathBuf>,
+    port: u16,
+    open_browser: bool,
+    data_dir: Option<&Path>,
+) -> anyhow::Result<()> {
+    let agent_store = match data_dir {
+        Some(dir) => Some(Arc::new(AgentStore::persistent(dir)?)),
+        None => None,
+    };
+    let router = server::build_router_with_agents(agent_store);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
 
     let url = format!("http://127.0.0.1:{port}");

@@ -78,6 +78,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             )
             .await
         }
+        Commands::Agents { command } => commands::agents::AgentsCommand::run(&ctx, command).await,
         Commands::Auth { command } => commands::auth::AuthCommand::run(&ctx, command).await,
         Commands::Cron { command } => commands::cron::CronCommand::run(&ctx, command).await,
         Commands::Hooks { command } => commands::hooks::HooksCommand::run(&ctx, command).await,
@@ -186,6 +187,14 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             port,
             config,
             native: _,
-        } => agentzero_config_ui::start_config_ui(config, port, true).await,
+        } => {
+            agentzero_config_ui::start_config_ui_with_data_dir(
+                config,
+                port,
+                true,
+                Some(&ctx.data_dir),
+            )
+            .await
+        }
     }
 }

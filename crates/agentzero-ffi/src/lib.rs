@@ -434,6 +434,7 @@ impl AgentZeroController {
             profile_override: config.profile.clone(),
             extra_tools,
             conversation_id: None,
+            agent_store: None,
         };
 
         let result = runtime().block_on(agentzero_infra::runtime::run_agent_once(req));

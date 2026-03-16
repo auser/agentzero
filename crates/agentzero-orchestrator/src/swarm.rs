@@ -255,6 +255,7 @@ pub async fn build_swarm_with_presence(
             profile_override: None,
             extra_tools: Vec::new(),
             conversation_id: None,
+            agent_store: None,
         };
         match build_runtime_execution(router_req).await {
             Ok(exec) => AgentRouter::new(
@@ -282,6 +283,18 @@ pub async fn build_swarm_with_presence(
     );
     if let Some(ps) = presence {
         coord = coord.with_presence(ps);
+    }
+
+    // Wire agent store sync for hot-loading persistent agents.
+    if let Ok(store) =
+        crate::agent_store::AgentStore::persistent(config_path.parent().unwrap_or(workspace_root))
+    {
+        coord = coord.with_store_sync(crate::coordinator::StoreSyncConfig {
+            store: Arc::new(store),
+            config_path: config_path.to_path_buf(),
+            workspace_root: workspace_root.to_path_buf(),
+            interval_secs: 30,
+        });
     }
 
     // ── Pass 1: Build all agents and create task channels ───────────────
@@ -325,6 +338,7 @@ pub async fn build_swarm_with_presence(
             profile_override: None,
             extra_tools: Vec::new(),
             conversation_id: None,
+            agent_store: None,
         };
 
         match build_runtime_execution(req).await {

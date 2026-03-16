@@ -47,6 +47,9 @@ loop_detection_no_progress_threshold = 3
 loop_detection_ping_pong_cycles = 2
 loop_detection_failure_streak = 3
 
+# Enable the agent_manage tool (create/list/update/delete persistent agents)
+enable_agent_manage = false
+
 [agent.hooks]
 enabled = false
 timeout_ms = 250
