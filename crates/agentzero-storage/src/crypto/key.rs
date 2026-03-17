@@ -22,6 +22,10 @@ impl StorageKey {
         load_or_create_key_file(config_dir)
     }
 
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self { bytes }
+    }
+
     pub fn as_bytes(self) -> [u8; 32] {
         self.bytes
     }

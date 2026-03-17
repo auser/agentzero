@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "bin/agentzero",
+  "bin/agentzero-lite",
   "crates/agentzero-bench",
   "crates/agentzero-auth",
   "crates/agentzero-testkit",
