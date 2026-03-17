@@ -240,6 +240,9 @@ pub(crate) struct WsRunQuery {
     /// Output format: "raw" (default) or "blocks" (markdown-aware chunking).
     #[serde(default)]
     pub(crate) format: Option<String>,
+    /// Auth token passed as query param (browser WebSocket cannot set headers).
+    #[serde(default)]
+    pub(crate) token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

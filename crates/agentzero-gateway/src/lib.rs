@@ -151,6 +151,17 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
                 tracing::warn!(error = %e, "failed to open persistent API key store");
             }
         }
+
+        match agentzero_orchestrator::AgentStore::persistent(data_dir) {
+            Ok(store) => {
+                let count = store.count();
+                tracing::info!(agents = count, "loaded persistent agent store");
+                state = state.with_agent_store(Arc::new(store));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to open persistent agent store");
+            }
+        }
     }
 
     if let (Some(config_path), Some(workspace_root)) = (options.config_path, options.workspace_root)
@@ -431,11 +442,23 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
     let mut middleware_config = options.middleware.clone();
     middleware_config.tls_enabled = tls_config.is_some();
 
-    let app = build_router(state, &middleware_config);
-
     let addr: SocketAddr = format!("{host}:{port}")
         .parse()
         .context("invalid gateway host/port")?;
+
+    // Auto-enable CORS for localhost origins when bound to loopback and no
+    // explicit CORS origins are configured.  This lets the Vite dev server
+    // (typically on port 5173) talk to the gateway without extra setup.
+    if middleware_config.cors_allowed_origins.is_empty() && addr.ip().is_loopback() {
+        middleware_config
+            .cors_allowed_origins
+            .push(format!("http://localhost:{port}"));
+        middleware_config
+            .cors_allowed_origins
+            .push("http://localhost:5173".to_string());
+    }
+
+    let app = build_router(state, &middleware_config);
 
     // Graceful shutdown: when the signal fires, the server stops accepting new
     // connections and waits for in-flight requests.  If connections don't close

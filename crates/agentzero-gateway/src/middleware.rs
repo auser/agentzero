@@ -333,7 +333,7 @@ pub fn cors_preflight_response(allowed_origins: &[String], origin: &str) -> Resp
         )
         .header(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
-            "Authorization, Content-Type",
+            "Authorization, Content-Type, X-Pairing-Code, X-Request-Id",
         )
         .header(header::ACCESS_CONTROL_MAX_AGE, "3600")
         .body(Body::empty())

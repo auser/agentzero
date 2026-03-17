@@ -525,9 +525,19 @@ pub(crate) const WS_MAX_MESSAGE_SIZE: usize = 2 * 1024 * 1024;
 
 pub(crate) async fn ws_chat(
     State(state): State<GatewayState>,
-    headers: HeaderMap,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+    mut headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<Response, GatewayError> {
+    // Browser WebSocket API cannot set custom headers, so accept the token
+    // as a query parameter and inject it into the headers for auth.
+    if !headers.contains_key(axum::http::header::AUTHORIZATION) {
+        if let Some(token) = query.get("token") {
+            if let Ok(val) = format!("Bearer {token}").parse() {
+                headers.insert(axum::http::header::AUTHORIZATION, val);
+            }
+        }
+    }
     authorize_with_scope(&state, &headers, true, &Scope::RunsWrite)?;
     let config_path = state
         .config_path
@@ -1613,11 +1623,18 @@ pub(crate) async fn emergency_stop(
 /// - `{"type": "cancelled", "run_id": "..."}`
 pub(crate) async fn ws_run_subscribe(
     State(state): State<GatewayState>,
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     Path(run_id_str): Path<String>,
     query: axum::extract::Query<WsRunQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, GatewayError> {
+    if !headers.contains_key(axum::http::header::AUTHORIZATION) {
+        if let Some(ref token) = query.token {
+            if let Ok(val) = format!("Bearer {token}").parse() {
+                headers.insert(axum::http::header::AUTHORIZATION, val);
+            }
+        }
+    }
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let job_store = state
