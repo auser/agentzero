@@ -45,6 +45,84 @@ pub struct AgentZeroConfig {
 }
 
 impl AgentZeroConfig {
+    /// Auto-detect provider configuration from well-known environment variables.
+    ///
+    /// Returns `Some(config)` if a recognized API key is found, `None` otherwise.
+    /// The returned config has sensible defaults for all fields.
+    ///
+    /// Detection order:
+    /// - `ANTHROPIC_API_KEY` → provider "anthropic"
+    /// - `OPENAI_API_KEY` → provider "openai"
+    /// - `OPENROUTER_API_KEY` → provider "openrouter"
+    pub fn inferred_from_env() -> Option<Self> {
+        let (kind, base_url, model) = if std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .is_some()
+        {
+            (
+                "anthropic".to_string(),
+                "https://api.anthropic.com".to_string(),
+                "claude-sonnet-4-6".to_string(),
+            )
+        } else if std::env::var("OPENAI_API_KEY")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .is_some()
+        {
+            (
+                "openai".to_string(),
+                "https://api.openai.com".to_string(),
+                "gpt-4o".to_string(),
+            )
+        } else if std::env::var("OPENROUTER_API_KEY")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .is_some()
+        {
+            (
+                "openrouter".to_string(),
+                "https://openrouter.ai/api".to_string(),
+                "anthropic/claude-sonnet-4-6".to_string(),
+            )
+        } else {
+            return None;
+        };
+
+        let mut config = Self::default();
+        config.provider.kind = kind;
+        config.provider.base_url = base_url;
+        config.provider.model = model;
+
+        // Sensible defaults for zero-config mode
+        config.security.allowed_root = ".".to_string();
+        config.security.allowed_commands = vec![
+            "ls".to_string(),
+            "pwd".to_string(),
+            "cat".to_string(),
+            "head".to_string(),
+            "tail".to_string(),
+            "find".to_string(),
+            "grep".to_string(),
+            "wc".to_string(),
+            "diff".to_string(),
+            "git".to_string(),
+            "echo".to_string(),
+            "date".to_string(),
+            "which".to_string(),
+            "env".to_string(),
+            "cargo".to_string(),
+            "npm".to_string(),
+            "node".to_string(),
+            "python".to_string(),
+            "python3".to_string(),
+            "pip".to_string(),
+        ];
+        config.memory.backend = "sqlite".to_string();
+
+        Some(config)
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.provider.kind.trim().is_empty() {
             return Err(anyhow!("provider.kind must not be empty"));

@@ -28,6 +28,27 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// The simplest way to use AgentZero. No config file needed.
+    ///
+    /// Auto-detects provider from API key env vars. Just set ANTHROPIC_API_KEY,
+    /// OPENAI_API_KEY, or OPENROUTER_API_KEY and go.
+    Run {
+        /// Message to send (positional, no -m flag needed).
+        #[arg(trailing_var_arg = true)]
+        message: Vec<String>,
+        /// Security preset: sandbox (read-only), dev (read+write+git), full (everything).
+        #[arg(long, default_value = "dev")]
+        preset: String,
+        /// Stream tokens incrementally as they arrive.
+        #[arg(long)]
+        stream: bool,
+        /// Override the provider (e.g. anthropic, openai, openrouter).
+        #[arg(short, long)]
+        provider: Option<String>,
+        /// Override the model name.
+        #[arg(long)]
+        model: Option<String>,
+    },
     /// Create a starter agentzero.toml in the current directory.
     Onboard {
         /// Run the full interactive wizard (default is quick setup).

@@ -726,9 +726,9 @@ First-class agent-to-agent communication with human participation. Agents are ma
 
 Config file becomes optional power layer, not required.
 
-- [ ] **Auto-detect provider** — `load_or_infer()` in loader.rs, `inferred_from_env()` on config model
-- [ ] **`agentzero run`** — Simplest entry point, positional message, no -m flag
-- [ ] **Security presets** — `preset_sandbox()`, `preset_dev()`, `preset_full()` on `ToolSecurityPolicy`
+- [x] **Auto-detect provider** — `load_or_infer()` in loader.rs, `inferred_from_env()` on config model. Detects ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY.
+- [x] **`agentzero run`** — Simplest entry point, positional message args, no -m flag, auto-detects provider
+- [x] **Security presets** — `preset_sandbox()`, `preset_dev()`, `preset_full()` on `ToolSecurityPolicy`
 - [ ] **Runtime from config** — `build_runtime_from_config()` accepts in-memory config
 - [ ] **Site docs** — Update quickstart, config reference
 

@@ -6,6 +6,33 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let ctx = CommandContext::from_current_dir(cli.config.clone(), cli.data_dir.clone())?;
 
     match cli.command {
+        Commands::Run {
+            message,
+            preset: _preset,
+            stream,
+            provider,
+            model,
+        } => {
+            let msg = message.join(" ");
+            if msg.is_empty() {
+                anyhow::bail!(
+                    "usage: agentzero run <message>\n\nExample: agentzero run write me a haiku"
+                );
+            }
+            // Run delegates to the Agent command handler — the config
+            // auto-detection happens in the runtime layer via load_or_infer.
+            commands::agent::AgentCommand::run(
+                &ctx,
+                commands::agent::AgentOptions {
+                    message: msg,
+                    provider,
+                    model,
+                    profile: None,
+                    stream,
+                },
+            )
+            .await
+        }
         Commands::Onboard {
             interactive,
             force,

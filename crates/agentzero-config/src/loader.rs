@@ -5,6 +5,29 @@ use config::{Config, Environment, File};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Load config from file if it exists, otherwise infer from environment.
+///
+/// This is the primary entry point for zero-config mode. If a config file
+/// exists at `path`, it is loaded normally. Otherwise, the provider is
+/// auto-detected from well-known API key environment variables.
+pub fn load_or_infer(path: &Path) -> anyhow::Result<AgentZeroConfig> {
+    if path.exists() {
+        return load(path);
+    }
+
+    // No config file — try to infer from environment
+    if let Some(config) = AgentZeroConfig::inferred_from_env() {
+        return Ok(config);
+    }
+
+    Err(anyhow!(
+        "no config file found at {} and no API key detected in environment.\n\
+         Set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY\n\
+         Or run `agentzero onboard` for guided setup.",
+        path.display()
+    ))
+}
+
 pub fn load(path: &Path) -> anyhow::Result<AgentZeroConfig> {
     let dotenv_overrides = load_dotenv_chain(path)?;
 

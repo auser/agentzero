@@ -114,6 +114,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
     use crate::cli::Commands;
 
     match command {
+        Commands::Run { .. } => "run",
         Commands::Onboard { .. } => "onboard",
         #[cfg(feature = "gateway")]
         Commands::Gateway { .. } => "gateway",

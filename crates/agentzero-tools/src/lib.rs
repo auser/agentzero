@@ -226,4 +226,45 @@ impl ToolSecurityPolicy {
             wasm_dev_plugin_dir: None,
         }
     }
+
+    /// Sandbox preset: read-only tools, no network, no shell write access.
+    pub fn preset_sandbox(workspace_root: PathBuf) -> Self {
+        Self::default_for_workspace(workspace_root)
+        // default_for_workspace already has everything disabled
+    }
+
+    /// Development preset: read + write + git + shell, no network tools.
+    pub fn preset_dev(workspace_root: PathBuf) -> Self {
+        let mut policy = Self::default_for_workspace(workspace_root);
+        policy.enable_write_file = true;
+        policy.enable_git = true;
+        policy.enable_cron = true;
+        policy.enable_agents_ipc = true;
+        policy.enable_domain_tools = true;
+        policy
+    }
+
+    /// Full preset: everything enabled.
+    pub fn preset_full(workspace_root: PathBuf) -> Self {
+        let mut policy = Self::default_for_workspace(workspace_root);
+        policy.enable_write_file = true;
+        policy.enable_git = true;
+        policy.enable_cron = true;
+        policy.enable_web_search = true;
+        policy.enable_browser = true;
+        policy.enable_browser_open = true;
+        policy.enable_http_request = true;
+        policy.enable_web_fetch = true;
+        policy.enable_url_validation = true;
+        policy.enable_agents_ipc = true;
+        policy.enable_html_extract = true;
+        policy.enable_code_interpreter = true;
+        policy.enable_tts = true;
+        policy.enable_image_gen = true;
+        policy.enable_video_gen = true;
+        policy.enable_agent_manage = true;
+        policy.enable_domain_tools = true;
+        policy.enable_self_config = true;
+        policy
+    }
 }
