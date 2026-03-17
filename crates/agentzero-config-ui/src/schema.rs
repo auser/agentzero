@@ -189,6 +189,7 @@ fn build_security_policy_descriptor() -> NodeTypeDescriptor {
         ("enable_cron", "Enable Cron", false),
         ("enable_agents_ipc", "Enable Agents IPC", true),
         ("enable_agent_manage", "Enable Agent Manage", false),
+        ("enable_domain_tools", "Enable Domain Tools", false),
         ("enable_mcp", "Enable MCP", false),
         ("enable_composio", "Enable Composio", false),
         ("enable_pushover", "Enable Pushover", false),
@@ -1018,6 +1019,13 @@ pub fn build_tool_summaries() -> Vec<ToolSummary> {
             "orchestration",
             false,
             Some("enable_agent_manage"),
+        ),
+        tool(
+            "domain_search",
+            "Domain-driven research: create domains, search sources, verify findings, run workflows",
+            "research",
+            false,
+            Some("enable_domain_tools"),
         ),
         tool(
             "composio",

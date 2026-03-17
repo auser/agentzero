@@ -20,6 +20,7 @@ pub mod delegate;
 pub mod delegate_coordination_status;
 #[cfg(feature = "document-tools")]
 pub mod docx_read;
+pub mod domain;
 pub mod file_edit;
 pub mod git_operations;
 pub mod glob_search;
@@ -71,6 +72,10 @@ pub use delegate::{DelegateTool, ToolBuilder};
 pub use delegate_coordination_status::DelegateCoordinationStatusTool;
 #[cfg(feature = "document-tools")]
 pub use docx_read::DocxReadTool;
+pub use domain::{
+    DomainCreateTool, DomainInfoTool, DomainLearnTool, DomainLessonsTool, DomainListTool,
+    DomainSearchTool, DomainUpdateTool, DomainVerifyTool, DomainWorkflowTool,
+};
 pub use file_edit::FileEditTool;
 pub use git_operations::GitOperationsTool;
 pub use glob_search::GlobSearchTool;
@@ -139,6 +144,7 @@ pub struct ToolSecurityPolicy {
     pub enable_video_gen: bool,
     pub enable_autopilot: bool,
     pub enable_agent_manage: bool,
+    pub enable_domain_tools: bool,
     pub enable_wasm_plugins: bool,
     pub wasm_global_plugin_dir: Option<PathBuf>,
     pub wasm_project_plugin_dir: Option<PathBuf>,
@@ -211,6 +217,7 @@ impl ToolSecurityPolicy {
             enable_video_gen: false,
             enable_autopilot: false,
             enable_agent_manage: false,
+            enable_domain_tools: false,
             enable_wasm_plugins: false,
             wasm_global_plugin_dir: None,
             wasm_project_plugin_dir: None,

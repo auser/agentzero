@@ -13,10 +13,8 @@ import { test, expect } from '@playwright/test'
  * (e.g. agents created, runs submitted).
  */
 
-// Shared state across tests in this file
-let paired = false
-
-test.describe.configure({ mode: 'serial' })
+// Each test logs in via the token login form.
+// Set AGENTZERO_TEST_TOKEN to a valid paired token.
 
 // ---------------------------------------------------------------------------
 // Login & Pairing
@@ -38,35 +36,19 @@ test.describe('Login & Pairing', () => {
     await page.goto('/login')
     await page.getByRole('textbox', { name: /XXXX/ }).fill('000000')
     await page.getByRole('button', { name: 'Pair' }).click()
-    // Should show an error (either "Pairing failed" or an API error)
-    await expect(page.locator('p.text-destructive, p:has-text("failed")')).toBeVisible({ timeout: 5000 })
+    // Should show an error in the pairing card
+    const pairingForm = page.locator('form').filter({ hasText: 'Pairing Code' })
+    await expect(pairingForm.locator('p.text-destructive')).toBeVisible({ timeout: 5000 })
   })
 
-  test('pairs successfully with token login', async ({ page }) => {
-    // Use the existing paired token from localStorage if available,
-    // otherwise this test requires manual pairing code setup.
-    // For CI, use the token login path with a known bearer token.
-    await page.goto('/login')
-    await page.evaluate(() => localStorage.clear())
-    await page.goto('/login')
+  test('connects with token login', async ({ page }) => {
+    const token = process.env.AGENTZERO_TEST_TOKEN
+    if (!token) { test.skip(); return }
 
-    // Try pairing via the gateway health to check if it's up
-    const health = await page.request.get('http://localhost:42617/health')
-    expect(health.ok()).toBeTruthy()
-
-    // For automated tests, pair by calling the API directly
-    // and injecting the token into localStorage
-    const pairResponse = await page.request.get('http://localhost:42617/health')
-    if (pairResponse.ok()) {
-      // We need a valid token. Try to get one from existing paired tokens.
-      // If the gateway has paired tokens, we can use the token login form.
-      // For this test, we'll set up auth via evaluate.
-      await page.evaluate(() => {
-        const auth = { state: { token: null, baseUrl: 'http://localhost:42617' }, version: 0 }
-        localStorage.setItem('agentzero-auth', JSON.stringify(auth))
-      })
-    }
-    paired = true
+    await page.goto('/login')
+    await page.getByPlaceholder('az_...').fill(token)
+    await page.getByRole('button', { name: 'Connect' }).click()
+    await expect(page.getByText('Active Agents')).toBeVisible({ timeout: 10_000 })
   })
 })
 
@@ -74,29 +56,32 @@ test.describe('Login & Pairing', () => {
 // Helper: ensure authenticated
 // ---------------------------------------------------------------------------
 
+/**
+ * Ensure the page is authenticated. Navigates to /login, sets the token
+ * in localStorage, and waits for the app to redirect to /dashboard.
+ * Requires AGENTZERO_TEST_TOKEN env var.
+ */
 async function ensureAuth(page: import('@playwright/test').Page) {
-  // Check if already authenticated
-  const stored = await page.evaluate(() => {
-    const raw = localStorage.getItem('agentzero-auth')
-    if (!raw) return null
-    try {
-      const parsed = JSON.parse(raw)
-      return parsed?.state?.token
-    } catch {
-      return null
-    }
-  })
-  if (stored) return
+  const envToken = process.env.AGENTZERO_TEST_TOKEN
+  if (!envToken) throw new Error('Set AGENTZERO_TEST_TOKEN env var.')
 
-  // Pair via API and store token
-  const res = await page.request.get('http://localhost:42617/health')
-  if (!res.ok()) throw new Error('Gateway not running')
+  // Check if already authenticated (page might already be on the app)
+  const url = page.url()
+  if (url.includes('localhost:5173') && !url.includes('/login')) {
+    // Already on an app page — check if token is set
+    const hasToken = await page.evaluate(() => {
+      const raw = localStorage.getItem('agentzero-auth')
+      return raw ? JSON.parse(raw)?.state?.token : null
+    })
+    if (hasToken) return
+  }
 
-  // Set baseUrl so the UI can talk to the gateway
-  await page.evaluate(() => {
-    const auth = { state: { token: null, baseUrl: 'http://localhost:42617' }, version: 0 }
-    localStorage.setItem('agentzero-auth', JSON.stringify(auth))
-  })
+  // Navigate to login and use the Token Login form
+  await page.goto('/login')
+  await page.getByPlaceholder('az_...').fill(envToken)
+  await page.getByRole('button', { name: 'Connect' }).click()
+  // Token login navigates to /dashboard client-side (no round-trip)
+  await expect(page.getByText('Active Agents')).toBeVisible({ timeout: 10_000 })
 }
 
 // ---------------------------------------------------------------------------
@@ -107,8 +92,8 @@ test.describe('Dashboard', () => {
   test('loads and shows gateway status', async ({ page }) => {
     await ensureAuth(page)
     await page.goto('/dashboard')
-    await expect(page.getByText('Dashboard')).toBeVisible()
-    await expect(page.getByText('Gateway')).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    await expect(page.getByText('Active Agents')).toBeVisible({ timeout: 10_000 })
   })
 })
 
@@ -207,7 +192,7 @@ test.describe('Runs', () => {
     await page.getByRole('button', { name: 'Submit' }).click()
 
     // Wait for run to appear in the table
-    await expect(page.getByRole('cell', { name: /run-/ })).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByRole('cell', { name: /run-/ }).first()).toBeVisible({ timeout: 10_000 })
 
     // Wait for completion (poll every 2s for up to 30s)
     await expect(page.getByText('Completed')).toBeVisible({ timeout: 30_000 })
@@ -227,8 +212,9 @@ test.describe('Runs', () => {
 
     // Switch to events tab
     await page.getByRole('tab', { name: 'Tool Events' }).click()
-    await expect(page.getByText('created')).toBeVisible()
-    await expect(page.getByText('completed')).toBeVisible()
+    const eventsPanel = page.getByRole('tabpanel', { name: 'Tool Events' })
+    await expect(eventsPanel.getByText('created')).toBeVisible()
+    await expect(eventsPanel.getByText('completed', { exact: true })).toBeVisible()
   })
 })
 
@@ -240,14 +226,14 @@ test.describe('Chat', () => {
   test('connects via WebSocket and shows Connected', async ({ page }) => {
     await ensureAuth(page)
     await page.goto('/chat')
-    await expect(page.getByText('Connected')).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByText('Connected', { exact: true })).toBeVisible({ timeout: 5_000 })
     await expect(page.getByPlaceholder('Message…')).toBeVisible()
   })
 
   test('sends a message and receives a response', async ({ page }) => {
     await ensureAuth(page)
     await page.goto('/chat')
-    await expect(page.getByText('Connected')).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByText('Connected', { exact: true })).toBeVisible({ timeout: 5_000 })
 
     await page.getByPlaceholder('Message…').fill('Say OK')
     await page.locator('form').getByRole('button').click()
@@ -374,9 +360,9 @@ test.describe('Channels', () => {
     await page.goto('/channels')
     await expect(page.getByRole('heading', { name: 'Channels' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Messaging' })).toBeVisible()
-    await expect(page.getByText('Telegram')).toBeVisible()
-    await expect(page.getByText('Discord')).toBeVisible()
-    await expect(page.getByText('Slack')).toBeVisible()
+    await expect(page.getByText('Telegram').first()).toBeVisible()
+    await expect(page.getByText('Discord').first()).toBeVisible()
+    await expect(page.getByText('Slack').first()).toBeVisible()
   })
 })
 

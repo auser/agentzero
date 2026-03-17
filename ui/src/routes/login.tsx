@@ -24,15 +24,16 @@ function LoginPage() {
   const [token, setToken] = useState('')
   const [pairingCode, setPairingCode] = useState('')
   const [baseUrl, setBaseUrl] = useState('http://localhost:42617')
-  const [error, setError] = useState('')
+  const [tokenError, setTokenError] = useState('')
+  const [pairError, setPairError] = useState('')
   const [loading, setLoading] = useState(false)
   const { setToken: saveToken, setBaseUrl: saveBaseUrl } = useAuthStore()
   const navigate = useNavigate()
 
   async function handleTokenLogin(e: React.FormEvent) {
     e.preventDefault()
-    setError('')
-    if (!token.trim()) { setError('Token is required'); return }
+    setTokenError('')
+    if (!token.trim()) { setTokenError('Token is required'); return }
     saveBaseUrl(normalizeUrl(baseUrl))
     saveToken(token.trim())
     void navigate({ to: '/dashboard' })
@@ -40,7 +41,7 @@ function LoginPage() {
 
   async function handlePair(e: React.FormEvent) {
     e.preventDefault()
-    setError('')
+    setPairError('')
     setLoading(true)
     try {
       saveBaseUrl(normalizeUrl(baseUrl))
@@ -48,7 +49,7 @@ function LoginPage() {
       saveToken(res.token)
       void navigate({ to: '/dashboard' })
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Pairing failed')
+      setPairError(err instanceof ApiError ? err.message : 'Pairing failed')
     } finally {
       setLoading(false)
     }
@@ -91,7 +92,7 @@ function LoginPage() {
                   type="password"
                 />
               </div>
-              {error && <p className="text-xs text-destructive">{error}</p>}
+              {tokenError && <p className="text-xs text-destructive">{tokenError}</p>}
               <Button type="submit" className="w-full">Connect</Button>
             </form>
           </CardContent>
@@ -112,7 +113,7 @@ function LoginPage() {
                   placeholder="XXXX-XXXX"
                 />
               </div>
-              {error && <p className="text-xs text-destructive">{error}</p>}
+              {pairError && <p className="text-xs text-destructive">{pairError}</p>}
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? 'Pairing…' : 'Pair'}
               </Button>

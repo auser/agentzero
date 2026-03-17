@@ -98,6 +98,7 @@ pub fn load_tool_security_policy(
         enable_video_gen: config.media_gen.video_gen.enabled,
         enable_autopilot: config.autopilot.enabled,
         enable_agent_manage: config.agent.enable_agent_manage,
+        enable_domain_tools: config.agent.enable_domain_tools,
         enable_wasm_plugins: config.security.plugin.wasm_enabled,
         wasm_global_plugin_dir: config.security.plugin.global_plugin_dir.map(PathBuf::from),
         wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),
@@ -114,6 +115,7 @@ pub fn load_tool_security_policy(
         policy.enable_tts = false;
         policy.enable_image_gen = false;
         policy.enable_video_gen = false;
+        policy.enable_domain_tools = false;
         // Restrict URL access to localhost only.
         policy.url_access.allow_loopback = true;
         policy.url_access.block_private_ip = false;

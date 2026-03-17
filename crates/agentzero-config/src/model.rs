@@ -568,6 +568,9 @@ pub struct AgentSettings {
     /// Enable the `agent_manage` tool for creating/managing persistent agents.
     #[serde(default)]
     pub enable_agent_manage: bool,
+    /// Enable domain-driven research tools (domain_create, domain_search, etc.).
+    #[serde(default)]
+    pub enable_domain_tools: bool,
 }
 
 fn default_tool_timeout_ms() -> u64 {
@@ -597,6 +600,7 @@ impl Default for AgentSettings {
             tool_selection_model: None,
             summarization: SummarizationSettings::default(),
             enable_agent_manage: false,
+            enable_domain_tools: false,
         }
     }
 }

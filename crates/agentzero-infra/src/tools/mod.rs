@@ -17,7 +17,9 @@ pub use agentzero_tools::{
     AgentsIpcTool, ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool,
     CodeInterpreterTool, ComposioTool, ContentSearchTool, CronAddTool, CronListTool, CronPauseTool,
     CronRemoveTool, CronResumeTool, CronUpdateTool, DelegateCoordinationStatusTool, DelegateTool,
-    FileEditTool, GitOperationsTool, GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool,
+    DomainCreateTool, DomainInfoTool, DomainLearnTool, DomainLessonsTool, DomainListTool,
+    DomainSearchTool, DomainUpdateTool, DomainVerifyTool, DomainWorkflowTool, FileEditTool,
+    GitOperationsTool, GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool,
     HardwareMemoryReadTool, HttpRequestTool, ImageGenTool, ImageInfoTool, MemoryForgetTool,
     MemoryRecallTool, MemoryStoreTool, ModelRoutingConfigTool, PdfReadTool, ProcessTool,
     ProxyConfigTool, PushoverTool, ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool,
@@ -181,6 +183,18 @@ fn default_tools_inner(
         tools.push(Box::new(agentzero_autopilot::tools::ProposalVoteTool));
         tools.push(Box::new(agentzero_autopilot::tools::MissionStatusTool));
         tools.push(Box::new(agentzero_autopilot::tools::TriggerFireTool));
+    }
+
+    if policy.enable_domain_tools {
+        tools.push(Box::new(DomainCreateTool));
+        tools.push(Box::new(DomainUpdateTool));
+        tools.push(Box::new(DomainListTool));
+        tools.push(Box::new(DomainInfoTool));
+        tools.push(Box::new(DomainSearchTool::default()));
+        tools.push(Box::new(DomainVerifyTool::default()));
+        tools.push(Box::new(DomainWorkflowTool));
+        tools.push(Box::new(DomainLearnTool));
+        tools.push(Box::new(DomainLessonsTool));
     }
 
     if policy.enable_composio {
