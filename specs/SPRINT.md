@@ -30,7 +30,7 @@ Replace the Redis-based event bus design with a zero-external-dependency embedde
 - [x] **`InMemoryEventBus`** — Already existed. Backed by `tokio::sync::broadcast`.
 - [x] **`SqliteEventBus`** — New in `agentzero-storage`. WAL mode, `events` table with auto-increment rowid, topic/timestamp indexes, `replay()` with `since_id` tracking, `gc()` for retention. 6 tests.
 - [x] **`FileBackedBus`** — Extended with `replay_since()` implementation.
-- [ ] **`GossipEventBus`** — TCP mesh layer. Each node listens on configurable port. Broadcasts events to peers via length-prefixed bincode frames. Deduplication via event ID set (bounded LRU). Peer health via periodic ping. 4+ tests.
+- [x] **`GossipEventBus`** — TCP mesh layer in `agentzero-storage/src/gossip.rs`. Length-prefixed JSON framing, bounded dedup set, peer health pings. 4 tests.
 - [x] **Config** — `[swarm] event_bus = "memory" | "file" | "sqlite"` with `event_retention_days`, `event_db_path`. Defaults to `"memory"`. Backward-compatible: `event_log_path` still selects file backend.
 - [ ] **Integration** — Wire `EventBus` into `JobStore` (publish on state transitions), `PresenceStore` (publish heartbeats), gateway SSE/WebSocket (subscribe for real-time push). Coordinator consumes events for cross-instance awareness.
 
@@ -82,9 +82,9 @@ When an agent has access to many tools, use AI to select relevant tools by name 
 
 A minimal binary that runs only the orchestrator (routing, coordination, event bus) without bundling tool runners, CLI, or TUI. Designed for resource-constrained edge devices.
 
-- [ ] **`agentzero-lite` binary** — New binary target in `bin/agentzero-lite/` that depends only on `agentzero-core`, `agentzero-config`, `agentzero-providers`, `agentzero-infra` (orchestrator subset), and `agentzero-gateway`. Excludes: `agentzero-tools` (heavy), `agentzero-channels`, `agentzero-plugins`, `agentzero-cli`, `agentzero-ffi`. Feature-gated tools replaced with remote delegation stubs.
+- [x] **`agentzero-lite` binary** — `bin/agentzero-lite/`. Depends on core, config, providers, storage, gateway, infra. Excludes tools, channels, plugins, CLI, FFI.
 - [ ] **Remote tool execution** — Lightweight mode delegates tool execution to full-featured nodes via HTTP (`POST /v1/tool-execute` on a peer). Config: `[orchestrator] tool_mode = "local" | "remote"` with `tool_remote_url`.
-- [ ] **Minimal feature set** — Orchestrator, gateway, provider calls, event bus, delegation. No local tool execution, no TUI, no WASM plugins.
+- [x] **Minimal feature set** — Gateway-only entry point. No local tool execution, no TUI, no WASM plugins.
 - [ ] **Binary size target** — Under 10 MB release binary (compared to ~25 MB full).
 - [ ] **Tests** — Builds without tools feature. Remote tool delegation round-trip. Gateway starts in lite mode. 4+ tests.
 
@@ -309,7 +309,7 @@ End-to-end security test suite covering the full auth → scope → request flow
 
 A minimal binary that runs orchestration + gateway without heavy tool/plugin/channel crates.
 
-- [ ] **`agentzero-lite` binary** — New binary target in `bin/agentzero-lite/`. Depends only on `agentzero-core`, `agentzero-config`, `agentzero-providers`, `agentzero-infra` (orchestrator subset), `agentzero-orchestrator`, and `agentzero-gateway`. Excludes: `agentzero-tools`, `agentzero-channels`, `agentzero-plugins`, `agentzero-cli`, `agentzero-ffi`.
+- [x] **`agentzero-lite` binary** — `bin/agentzero-lite/`. Minimal deps: core, config, providers, storage, gateway, infra.
 - [ ] **Remote tool execution** — `POST /v1/tool-execute` endpoint on gateway accepts `{ tool, input }` and returns `{ output }`. Lightweight mode delegates tool calls to a full-featured node via this endpoint. Config: `[orchestrator] tool_mode = "local" | "remote"`, `tool_remote_url`.
 - [ ] **Binary size target** — Under 10 MB release binary (vs ~25 MB full).
 - [ ] **Tests** — Builds without tools feature. Remote tool delegation round-trip. Gateway starts in lite mode. 4+ tests.
@@ -489,7 +489,7 @@ Event-driven automation and probabilistic inter-agent dynamics.
 Mission health monitoring and main orchestration loop.
 
 - [x] **`StaleRecovery`** — Tokio task every 5 min. Queries stale missions (heartbeat > threshold). Marks stalled, fires `mission.stalled` event.
-- [ ] **`AutopilotLoop`** — Listens for approved proposals, creates missions, dispatches steps to agents via Coordinator, updates heartbeats, emits events, feeds TriggerEngine and ReactionMatrix.
+- [x] **`AutopilotLoop`** — `loop_runner.rs`: tick-based loop, polls approved proposals, creates missions, dispatches steps, CapGate enforcement, clean shutdown. 3 tests.
 - [ ] **Swarm wiring** — Start AutopilotLoop alongside Coordinator when `[autopilot]` config present.
 - [x] **Tests** — Stale detection. 1 test.
 
