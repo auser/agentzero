@@ -3,8 +3,8 @@ use crate::handlers::{
     emergency_stop, forget_memory, get_agent, get_config, get_tools, health, health_live,
     health_ready, job_cancel, job_events, job_list, job_result, job_status, job_transcript,
     legacy_webhook, list_approvals, list_memory, metrics, openapi_spec, pair, ping, recall_memory,
-    sse_events, sse_run_stream, update_agent, v1_chat_completions, v1_models, webhook,
-    webhook_with_agent, ws_chat, ws_run_subscribe,
+    sse_events, sse_run_stream, update_agent, update_config, v1_chat_completions, v1_models,
+    webhook, webhook_with_agent, ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -53,7 +53,7 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/events", get(sse_events))
         .route("/v1/estop", post(emergency_stop))
         .route("/v1/tools", get(get_tools))
-        .route("/v1/config", get(get_config))
+        .route("/v1/config", get(get_config).put(update_config))
         .route("/v1/memory", get(list_memory))
         .route("/v1/memory/recall", post(recall_memory))
         .route("/v1/memory/forget", post(forget_memory))

@@ -43,6 +43,7 @@ mime_guess = { version = "2", optional = true }
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 http-body-util = "0.1"

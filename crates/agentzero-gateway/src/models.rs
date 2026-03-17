@@ -480,6 +480,23 @@ pub(crate) struct ConfigResponse {
     pub(crate) sections: Vec<ConfigSection>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConfigUpdateRequest {
+    pub(crate) sections: Vec<ConfigUpdateSection>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConfigUpdateSection {
+    pub(crate) key: String,
+    pub(crate) value: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ConfigUpdateResponse {
+    pub(crate) updated: bool,
+    pub(crate) sections_written: usize,
+}
+
 // ---------------------------------------------------------------------------
 // Memory endpoints (/v1/memory)
 // ---------------------------------------------------------------------------
