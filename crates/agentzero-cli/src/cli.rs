@@ -721,6 +721,21 @@ pub enum SkillCommands {
     },
     /// List available skill scaffold templates.
     Templates,
+    /// Add a skill from the marketplace, git URL, or local path.
+    Add {
+        /// Skill name (built-in), git URL, or local path.
+        source: String,
+        /// Install globally (~/.agentzero/) instead of per-project.
+        #[arg(long)]
+        global: bool,
+    },
+    /// Show detailed information about a skill.
+    Info {
+        /// Skill name to inspect.
+        name: String,
+    },
+    /// Discover all skills from project and global directories.
+    Discover,
 }
 
 #[derive(Debug, Subcommand)]

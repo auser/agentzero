@@ -691,6 +691,75 @@ Visual agent management in the React Flow browser editor.
 
 ---
 
+## Sprint 47: Simplification — Skills Marketplace, Agent Conversations, Zero-Config
+
+**Goal:** Transform AgentZero from a development lab into a tool people use daily. Skills marketplace for extensibility, first-class autonomous agent-to-agent conversations with human participation, optional config, and a clean CLI. Inspired by Paperclip's org-hierarchy/heartbeat model.
+
+**Plan:** `specs/plans/13-simplification.md`
+
+---
+
+### Phase 1: Skills Marketplace (HIGH)
+
+Installable, shareable skill packs. Built-in skills + community marketplace. Skills are the universal extension — they can provide agents, tools, channels, `/` commands, and config. Extensions via WASM, HTTP bridge, or script (Python/JS). Per-project (`$PWD/.agentzero/skills/`) or global (`~/.agentzero/skills/`).
+
+- [x] **Skill package format** — `skill.toml` + `AGENT.md` + `config.toml` + extensions dir; per-project or global. Tools/channels via WASM, HTTP bridge, or script (Python/JS). Includes workflow pack support (coordination graphs, nodes, edges, entry points, cron, dependencies).
+- [x] **Skill lifecycle CLI** — `agentzero skill add/info/discover` commands (plus existing list/install/remove/test/new/audit/templates). 29 tests.
+- [x] **Skill registry & discovery** — `discover_skills()`, `install_skill()`, `remove_skill()`, `load_skill_from_dir()` in `agentzero-config::skills`. 13 tests.
+- [ ] **Built-in skill templates** — `telegram-bot`, `discord-bot`, `slack-bot`, `code-reviewer`, `scheduler`, `research-assistant`, `devops-monitor`
+- [ ] **Skill-provided `/` commands** — Skills declare commands in `skill.toml`, merged into channel command parser
+- [ ] **Site docs** — `site/src/content/docs/guides/skills.md`
+
+### Phase 2: Agent Conversations (HIGH)
+
+First-class agent-to-agent communication with human participation. Agents are maximally capable by default — only `name` is required; all tools, all topics, all agents available unless restricted.
+
+- [x] **Markdown agent definitions** — `agents/<name>.md` with YAML frontmatter. Only `name` required; defaults: all tools, all topics, all agents, production preset
+- [x] **Agent discovery** — `discover_agents()`, `parse_agent_file()` in `agentzero-config`. Project-local (`$PWD/agents/`, `$PWD/.agentzero/agents/`) overrides global (`~/.agentzero/agents/`).
+- [ ] **`@agent` routing** — CLI, channels, and agent-to-agent all support `@name` routing
+- [ ] **Conversation threads** — `thread_id` on IPC messages + events, transport-agnostic (file IPC / event bus / HTTP)
+- [ ] **Heartbeat-driven cycles** — Paperclip-inspired: agents wake on cron schedule, process inbox, delegate, sleep. Per-agent budget caps.
+- [ ] **`/` conversation commands** — `/agents`, `/talk <agent>`, `/thread`, `/join <thread>`, `/broadcast`
+- [ ] **Site docs** — Update `site/src/content/docs/guides/multi-agent.md`
+
+### Phase 3: Optional Config (MEDIUM)
+
+Config file becomes optional power layer, not required.
+
+- [ ] **Auto-detect provider** — `load_or_infer()` in loader.rs, `inferred_from_env()` on config model
+- [ ] **`agentzero run`** — Simplest entry point, positional message, no -m flag
+- [ ] **Security presets** — `preset_sandbox()`, `preset_dev()`, `preset_full()` on `ToolSecurityPolicy`
+- [ ] **Runtime from config** — `build_runtime_from_config()` accepts in-memory config
+- [ ] **Site docs** — Update quickstart, config reference
+
+### Phase 4: CLI Simplification (MEDIUM)
+
+Clean UI with 9 top-level commands, rest under `admin`.
+
+- [ ] **CLI restructure** — Top-level: run, agent, agents, onboard, status, auth, skill, cron, admin
+- [ ] **Admin subcommand** — All operational commands nested under `agentzero admin`
+- [ ] **Aliases** — `chat`, `ask`, `setup`
+- [ ] **Backward compat** — Old commands work via hidden aliases
+- [ ] **Site docs** — Update `site/src/content/docs/reference/commands.md`
+
+### Phase 5: Tool Registry Cleanup (MEDIUM)
+
+Builder pattern for tool registration, supports skill-provided tools.
+
+- [ ] **ToolRegistry builder** — `with_core()`, `with_files()`, `with_network()`, `with_skill_tools()`, etc.
+- [ ] **Refactor `default_tools()`** — Replace if-chain with registry builder
+- [ ] **Site docs** — Update `site/src/content/docs/reference/tools.md`
+- [ ] **README.md** — Update with new CLI commands, skills system, agent conversations
+- [ ] **SPRINT.md** — Keep checkboxes current throughout implementation
+
+### Future Enhancement: Markdown Config (Backlog)
+
+Natural-language configuration via markdown. Instead of TOML, users write a free-form `.agentzero/config.md` and the agent loop interprets it at startup.
+
+- [ ] **Markdown config parser** — LLM-powered config interpretation from natural language markdown
+
+---
+
 ## Backlog
 
 ### Embedded Binary Size Reduction (HIGH)

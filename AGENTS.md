@@ -154,6 +154,36 @@ All code must follow idiomatic Rust. These are not suggestions — they are mand
   - **Explain the "why"**: when proposing a solution, articulate why this approach solves the root cause and why simpler/narrower fixes are insufficient.
 - If the proper fix is large, scope it explicitly and propose a phased plan — but never substitute a band-aid for phase 1.
 
+## Workflow Packs
+
+A **workflow pack** is the primary unit of distribution in the marketplace. Unlike installing a single skill, channel, or plugin in isolation, a workflow pack delivers a **complete coordination graph** — everything needed for an end-to-end workflow, bundled and installable as one unit.
+
+### What a pack contains
+A workflow pack may include any combination of:
+- **Coordination graph** — the orchestration definition that wires agents, skills, and tools into a directed workflow (the "brain" of the pack).
+- **Agents** — one or more agent definitions with roles, system prompts, tool access policies, and delegation rules.
+- **Custom skills** — skill implementations (WASM plugins or native) that the workflow depends on.
+- **Tool configurations** — pre-configured tool bindings, security policies, and autonomy settings.
+- **Channel adapters** — optional integrations (Slack, Discord, Telegram, webhooks) that the workflow can surface through.
+- **Cron schedules** — time-triggered entry points into the coordination graph.
+- **Assets & prompts** — prompt templates, few-shot examples, configuration defaults, and static assets the workflow needs.
+
+### Design principles for packs
+1. **Self-contained** — a pack must declare all of its dependencies explicitly. Installing a pack should not require the user to manually wire up additional components.
+2. **Composable** — packs can depend on other packs. A "customer support" pack might compose an "email triage" sub-pack with a "knowledge retrieval" sub-pack.
+3. **Overridable** — users can override any component of a pack (swap an agent's model, replace a skill implementation, adjust the coordination graph) without forking the entire pack.
+4. **Versioned** — packs follow semver. Breaking changes to the coordination graph or agent contracts require a major version bump.
+5. **Sandboxed** — pack execution respects the same security policies as individual tools and plugins. A pack cannot escalate beyond the permissions granted to its constituent components.
+
+### Coordination graph
+The coordination graph is the defining artifact of a pack. It specifies:
+- The **nodes** (agents, skills, tools, decision points) in the workflow.
+- The **edges** (data flow, delegation, conditional branching) connecting them.
+- **Entry points** (user-triggered, cron-triggered, webhook-triggered, event-triggered).
+- **Termination conditions** and output contracts.
+
+Think of a pack not as "a bag of plugins" but as a **runnable workflow definition** — a first-class, shareable, installable coordination graph with all its dependencies resolved.
+
 ## Preferred PR Checklist
 - [ ] Functionality implemented
 - [ ] Success-path tests added

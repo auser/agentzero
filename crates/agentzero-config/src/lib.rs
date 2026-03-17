@@ -4,9 +4,11 @@
 //! maps the config model into security policies (`ToolSecurityPolicy`,
 //! `AuditPolicy`) consumed by the runtime.
 
+pub mod agents;
 mod loader;
 mod model;
 mod policy;
+pub mod skills;
 mod templates;
 pub mod watcher;
 pub mod writer;

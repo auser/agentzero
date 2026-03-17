@@ -1,5 +1,6 @@
 use crate::cli::SkillCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
+use agentzero_config::skills::{discover_skills, install_skill, list_builtin_skills, SkillSource};
 use agentzero_tools::skills::SkillStore;
 use async_trait::async_trait;
 
@@ -121,10 +122,133 @@ impl AgentZeroCommand for SkillCommand {
                     println!("  {t} — entry: src/main.{ext}");
                 }
             }
+            SkillCommands::Add { source, global } => {
+                let target_dir = if global {
+                    home_agentzero_dir().unwrap_or_else(|| ctx.data_dir.clone())
+                } else {
+                    ctx.workspace_root.join(".agentzero")
+                };
+
+                let skill_source = SkillSource::parse(&source);
+
+                // Show available built-in skills if source is "list" or help
+                if source == "list" || source == "help" {
+                    println!("Available built-in skills:");
+                    for name in list_builtin_skills() {
+                        println!("  - {name}");
+                    }
+                    println!("\nInstall with: agentzero skill add <name>");
+                    println!("Or from git:  agentzero skill add https://github.com/user/skill");
+                    return Ok(());
+                }
+
+                let skill = install_skill(&skill_source, &target_dir)?;
+                println!("Installed skill `{}`", skill.name());
+                println!("  source: {}", skill.source);
+                println!("  dir: {}", skill.dir.display());
+                if skill.manifest.workflow.is_some() {
+                    println!("  type: workflow pack");
+                }
+                if let Some(prompt) = &skill.agent_prompt {
+                    let preview = if prompt.len() > 80 {
+                        format!("{}...", &prompt[..80])
+                    } else {
+                        prompt.clone()
+                    };
+                    println!("  agent: {preview}");
+                }
+            }
+            SkillCommands::Info { name } => {
+                let global_dir = home_agentzero_dir();
+                let skills = discover_skills(Some(&ctx.workspace_root), global_dir.as_deref());
+
+                let skill = skills
+                    .iter()
+                    .find(|s| s.name() == name)
+                    .ok_or_else(|| anyhow::anyhow!("skill `{name}` not found"))?;
+
+                println!("Skill: {}", skill.name());
+                println!("  version: {}", skill.manifest.skill.version);
+                println!("  description: {}", skill.manifest.skill.description);
+                if !skill.manifest.skill.author.is_empty() {
+                    println!("  author: {}", skill.manifest.skill.author);
+                }
+                println!("  source: {}", skill.source);
+                println!("  dir: {}", skill.dir.display());
+                if !skill.manifest.skill.provides.is_empty() {
+                    println!("  provides: {}", skill.manifest.skill.provides.join(", "));
+                }
+                if !skill.manifest.skill.keywords.is_empty() {
+                    println!("  keywords: {}", skill.manifest.skill.keywords.join(", "));
+                }
+                if !skill.manifest.tools.is_empty() {
+                    println!("  tools:");
+                    for tool in &skill.manifest.tools {
+                        println!("    - {} ({})", tool.name, tool.kind);
+                    }
+                }
+                if !skill.manifest.commands.is_empty() {
+                    println!("  commands:");
+                    for cmd in &skill.manifest.commands {
+                        println!("    - /{} — {}", cmd.name, cmd.description);
+                    }
+                }
+                if let Some(wf) = &skill.manifest.workflow {
+                    println!("  workflow: {}", wf.name);
+                    println!("    nodes: {}", wf.nodes.len());
+                    println!("    edges: {}", wf.edges.len());
+                    println!("    entry points: {}", wf.entry_points.len());
+                    if !wf.cron.is_empty() {
+                        println!("    cron schedules: {}", wf.cron.len());
+                    }
+                }
+                if let Some(prompt) = &skill.agent_prompt {
+                    println!("  agent prompt:");
+                    for line in prompt.lines().take(5) {
+                        println!("    {line}");
+                    }
+                    if prompt.lines().count() > 5 {
+                        println!("    ...");
+                    }
+                }
+            }
+            SkillCommands::Discover => {
+                let global_dir = home_agentzero_dir();
+                let skills = discover_skills(Some(&ctx.workspace_root), global_dir.as_deref());
+
+                if skills.is_empty() {
+                    println!("No skills discovered.");
+                    println!("Install a built-in skill: agentzero skill add <name>");
+                    println!("Available: {}", list_builtin_skills().join(", "));
+                } else {
+                    println!("Discovered {} skill(s):", skills.len());
+                    for skill in &skills {
+                        let kind = if skill.manifest.workflow.is_some() {
+                            "pack"
+                        } else {
+                            "skill"
+                        };
+                        println!(
+                            "  - {} v{} [{}] ({}) — {}",
+                            skill.name(),
+                            skill.manifest.skill.version,
+                            kind,
+                            skill.source,
+                            skill.manifest.skill.description,
+                        );
+                    }
+                }
+            }
         }
 
         Ok(())
     }
+}
+
+fn home_agentzero_dir() -> Option<std::path::PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(|h| std::path::PathBuf::from(h).join(".agentzero"))
 }
 
 fn template_extension(template: &str) -> &str {
@@ -400,6 +524,145 @@ mod tests {
         SkillCommand::run(&ctx, SkillCommands::Templates)
             .await
             .expect("templates list should succeed");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn skill_add_builtin_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        SkillCommand::run(
+            &ctx,
+            SkillCommands::Add {
+                source: "code-reviewer".to_string(),
+                global: false,
+            },
+        )
+        .await
+        .expect("add builtin skill should succeed");
+
+        // Verify skill was installed to project-local dir
+        let skill_dir = dir.join(".agentzero/skills/code-reviewer");
+        assert!(skill_dir.join("skill.toml").exists());
+        assert!(skill_dir.join("AGENT.md").exists());
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn skill_add_duplicate_fails_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        SkillCommand::run(
+            &ctx,
+            SkillCommands::Add {
+                source: "scheduler".to_string(),
+                global: false,
+            },
+        )
+        .await
+        .expect("first add should succeed");
+
+        let err = SkillCommand::run(
+            &ctx,
+            SkillCommands::Add {
+                source: "scheduler".to_string(),
+                global: false,
+            },
+        )
+        .await
+        .expect_err("duplicate add should fail");
+        assert!(err.to_string().contains("already installed"));
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn skill_discover_after_add_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        SkillCommand::run(
+            &ctx,
+            SkillCommands::Add {
+                source: "research-assistant".to_string(),
+                global: false,
+            },
+        )
+        .await
+        .expect("add should succeed");
+
+        SkillCommand::run(&ctx, SkillCommands::Discover)
+            .await
+            .expect("discover should succeed");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn skill_info_after_add_success_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        SkillCommand::run(
+            &ctx,
+            SkillCommands::Add {
+                source: "code-reviewer".to_string(),
+                global: false,
+            },
+        )
+        .await
+        .expect("add should succeed");
+
+        SkillCommand::run(
+            &ctx,
+            SkillCommands::Info {
+                name: "code-reviewer".to_string(),
+            },
+        )
+        .await
+        .expect("info should succeed");
+
+        fs::remove_dir_all(dir).expect("temp dir should be removed");
+    }
+
+    #[tokio::test]
+    async fn skill_info_missing_fails_negative_path() {
+        let dir = temp_dir();
+        let ctx = CommandContext {
+            workspace_root: dir.clone(),
+            data_dir: dir.clone(),
+            config_path: dir.join("agentzero.toml"),
+        };
+
+        let err = SkillCommand::run(
+            &ctx,
+            SkillCommands::Info {
+                name: "nonexistent".to_string(),
+            },
+        )
+        .await
+        .expect_err("info on missing skill should fail");
+        assert!(err.to_string().contains("not found"));
 
         fs::remove_dir_all(dir).expect("temp dir should be removed");
     }
