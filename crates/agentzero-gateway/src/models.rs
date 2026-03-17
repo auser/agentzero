@@ -294,11 +294,15 @@ pub(crate) struct JobListItem {
     pub(crate) status: &'static str,
     pub(crate) agent_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) parent_run_id: Option<String>,
+    pub(crate) depth: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) result: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
     pub(crate) tokens_used: u64,
     pub(crate) cost_microdollars: u64,
+    pub(crate) created_at_epoch_ms: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -596,6 +600,49 @@ pub(crate) struct ApprovalsListResponse {
     pub(crate) object: &'static str,
     pub(crate) data: Vec<serde_json::Value>,
     pub(crate) total: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Agent stats endpoint (/v1/agents/:agent_id/stats)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AgentStatsResponse {
+    pub(crate) agent_id: String,
+    pub(crate) total_runs: usize,
+    pub(crate) running_count: usize,
+    pub(crate) completed_count: usize,
+    pub(crate) failed_count: usize,
+    pub(crate) total_cost_microdollars: u64,
+    pub(crate) total_tokens_used: u64,
+    pub(crate) tool_usage: std::collections::HashMap<String, u64>,
+}
+
+// ---------------------------------------------------------------------------
+// Topology endpoint (/v1/topology)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TopologyResponse {
+    pub(crate) nodes: Vec<TopologyNode>,
+    pub(crate) edges: Vec<TopologyEdge>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TopologyNode {
+    pub(crate) agent_id: String,
+    pub(crate) name: String,
+    pub(crate) status: String,
+    pub(crate) active_run_count: usize,
+    pub(crate) total_cost_microdollars: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct TopologyEdge {
+    pub(crate) from_agent_id: String,
+    pub(crate) to_agent_id: String,
+    pub(crate) run_id: String,
+    pub(crate) edge_type: &'static str,
 }
 
 impl From<StatusCode> for GatewayError {

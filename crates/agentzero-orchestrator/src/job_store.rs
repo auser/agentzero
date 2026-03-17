@@ -7,7 +7,7 @@ use agentzero_core::event_bus::Event;
 use agentzero_core::{EventBus, JobStatus, Lane, RunId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 /// Kind of event that occurred during a run's lifecycle.
@@ -94,6 +94,8 @@ pub struct JobRecord {
     /// Organization that owns this job (multi-tenancy isolation).
     /// `None` for backward compatibility with single-tenant deployments.
     pub org_id: Option<String>,
+    /// Wall-clock creation timestamp (milliseconds since UNIX epoch).
+    pub created_at_epoch_ms: u64,
 }
 
 /// Thread-safe store for tracking async agent runs.
@@ -159,6 +161,10 @@ impl JobStore {
     ) -> RunId {
         let run_id = RunId::new();
         let now = Instant::now();
+        let epoch_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         let record = JobRecord {
             run_id: run_id.clone(),
             status: JobStatus::Pending,
@@ -172,6 +178,7 @@ impl JobStore {
             tags: HashMap::new(),
             claimed_by: None,
             org_id,
+            created_at_epoch_ms: epoch_ms,
         };
         self.jobs.write().await.insert(run_id.clone(), record);
         let _ = self.notify.send((run_id.clone(), JobStatus::Pending));
@@ -477,6 +484,37 @@ impl JobStore {
         for id in &expired {
             self.event_log.remove(id).await;
         }
+    }
+
+    /// List all jobs for a given agent, optionally filtered by status.
+    pub async fn list_by_agent(&self, agent_id: &str) -> Vec<JobRecord> {
+        self.jobs
+            .read()
+            .await
+            .values()
+            .filter(|r| r.agent_id == agent_id)
+            .cloned()
+            .collect()
+    }
+
+    /// Count tool call events per tool name across all runs for an agent.
+    pub async fn agent_tool_frequency(&self, agent_id: &str) -> HashMap<String, u64> {
+        let run_ids: Vec<RunId> = {
+            let jobs = self.jobs.read().await;
+            jobs.values()
+                .filter(|r| r.agent_id == agent_id)
+                .map(|r| r.run_id.clone())
+                .collect()
+        };
+        let mut freq: HashMap<String, u64> = HashMap::new();
+        for run_id in &run_ids {
+            for event in self.event_log.get(run_id).await {
+                if let EventKind::ToolCall { name } = &event.kind {
+                    *freq.entry(name.clone()).or_default() += 1;
+                }
+            }
+        }
+        freq
     }
 
     /// Total number of tracked jobs.

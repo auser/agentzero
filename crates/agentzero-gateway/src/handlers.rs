@@ -1,17 +1,19 @@
 use crate::api_keys::Scope;
 use crate::auth::{authorize_request, authorize_with_scope};
 use crate::models::{
-    AgentDetailResponse, AgentListResponse, ApiFallbackResponse, ApprovalsListResponse,
-    AsyncSubmitRequest, AsyncSubmitResponse, CancelQuery, CancelResponse, ChatCompletionsRequest,
-    ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice, CompletionChoiceMessage,
-    ConfigResponse, ConfigSection, ConfigUpdateRequest, ConfigUpdateResponse, CreateAgentRequest,
-    CreateAgentResponse, CreateCronRequest, CronJobResponse, CronListResponse, EstopResponse,
-    EventItem, EventListResponse, EventStreamQuery, GatewayError, HealthResponse, JobListItem,
-    JobListQuery, JobListResponse, JobStatusResponse, LivenessResponse, MemoryForgetRequest,
-    MemoryForgetResponse, MemoryListItem, MemoryListQuery, MemoryListResponse, MemoryRecallRequest,
-    ModelItem, ModelsResponse, PairRequest, PairResponse, PingRequest, PingResponse, ReadyResponse,
-    ToolSummary, ToolsResponse, TranscriptResponse, UpdateAgentRequest, UpdateCronRequest,
-    WebhookPayload, WebhookQuery, WebhookResponse, WsRunQuery,
+    AgentDetailResponse, AgentListResponse, AgentStatsResponse, ApiFallbackResponse,
+    ApprovalsListResponse, AsyncSubmitRequest, AsyncSubmitResponse, CancelQuery, CancelResponse,
+    ChatCompletionsRequest, ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice,
+    CompletionChoiceMessage, ConfigResponse, ConfigSection, ConfigUpdateRequest,
+    ConfigUpdateResponse, CreateAgentRequest, CreateAgentResponse, CreateCronRequest,
+    CronJobResponse, CronListResponse, EstopResponse, EventItem, EventListResponse,
+    EventStreamQuery, GatewayError, HealthResponse, JobListItem, JobListQuery, JobListResponse,
+    JobStatusResponse, LivenessResponse, MemoryForgetRequest, MemoryForgetResponse, MemoryListItem,
+    MemoryListQuery, MemoryListResponse, MemoryRecallRequest, ModelItem, ModelsResponse,
+    PairRequest, PairResponse, PingRequest, PingResponse, ReadyResponse, ToolSummary,
+    ToolsResponse, TopologyEdge, TopologyNode, TopologyResponse, TranscriptResponse,
+    UpdateAgentRequest, UpdateCronRequest, WebhookPayload, WebhookQuery, WebhookResponse,
+    WsRunQuery,
 };
 use crate::state::GatewayState;
 use crate::util::{generate_session_token, now_epoch_secs};
@@ -1091,14 +1093,21 @@ pub(crate) async fn job_list(
                 }
                 agentzero_core::JobStatus::Cancelled => ("cancelled", None, None),
             };
+            let depth = match &r.lane {
+                agentzero_core::Lane::SubAgent { depth, .. } => *depth,
+                _ => 0,
+            };
             JobListItem {
                 run_id: r.run_id.0.clone(),
                 status: status_str,
                 agent_id: r.agent_id.clone(),
+                parent_run_id: r.parent_run_id.as_ref().map(|id| id.0.clone()),
+                depth,
                 result,
                 error,
                 tokens_used: r.tokens_used,
                 cost_microdollars: r.cost_microdollars,
+                created_at_epoch_ms: r.created_at_epoch_ms,
             }
         })
         .collect();
@@ -1304,6 +1313,149 @@ pub(crate) async fn agents_list(
         data,
         total,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Agent stats & topology
+// ---------------------------------------------------------------------------
+
+/// GET /v1/agents/:agent_id/stats — per-agent aggregated metrics.
+pub(crate) async fn agent_stats(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+) -> Result<Json<AgentStatsResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let jobs = job_store.list_by_agent(&agent_id).await;
+    let tool_usage = job_store.agent_tool_frequency(&agent_id).await;
+
+    let mut running_count = 0usize;
+    let mut completed_count = 0usize;
+    let mut failed_count = 0usize;
+    let mut total_cost: u64 = 0;
+    let mut total_tokens: u64 = 0;
+
+    for job in &jobs {
+        match &job.status {
+            agentzero_core::JobStatus::Running => running_count += 1,
+            agentzero_core::JobStatus::Completed { .. } => completed_count += 1,
+            agentzero_core::JobStatus::Failed { .. } => failed_count += 1,
+            _ => {}
+        }
+        total_cost = total_cost.saturating_add(job.cost_microdollars);
+        total_tokens = total_tokens.saturating_add(job.tokens_used);
+    }
+
+    Ok(Json(AgentStatsResponse {
+        agent_id,
+        total_runs: jobs.len(),
+        running_count,
+        completed_count,
+        failed_count,
+        total_cost_microdollars: total_cost,
+        total_tokens_used: total_tokens,
+        tool_usage,
+    }))
+}
+
+/// GET /v1/topology — live agent topology snapshot.
+pub(crate) async fn topology(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Result<Json<TopologyResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let job_store = state
+        .job_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    // Collect all agents from both stores.
+    let mut agent_map: std::collections::HashMap<String, TopologyNode> =
+        std::collections::HashMap::new();
+
+    if let Some(store) = &state.agent_store {
+        for record in store.list() {
+            agent_map.insert(
+                record.agent_id.clone(),
+                TopologyNode {
+                    agent_id: record.agent_id.clone(),
+                    name: record.name.clone(),
+                    status: match record.status {
+                        agentzero_orchestrator::AgentStatus::Active => "active",
+                        agentzero_orchestrator::AgentStatus::Stopped => "stopped",
+                    }
+                    .to_string(),
+                    active_run_count: 0,
+                    total_cost_microdollars: 0,
+                },
+            );
+        }
+    }
+
+    if let Some(presence) = &state.presence_store {
+        for r in presence.list_all().await {
+            agent_map.entry(r.agent_id.clone()).or_insert_with(|| {
+                let status = match r.status {
+                    agentzero_orchestrator::PresenceStatus::Alive => "active",
+                    agentzero_orchestrator::PresenceStatus::Stale => "stale",
+                    agentzero_orchestrator::PresenceStatus::Dead => "stopped",
+                };
+                TopologyNode {
+                    agent_id: r.agent_id.clone(),
+                    name: r.agent_id.clone(),
+                    status: status.to_string(),
+                    active_run_count: 0,
+                    total_cost_microdollars: 0,
+                }
+            });
+        }
+    }
+
+    // Build edges from running jobs with parent_run_id.
+    let all_jobs = job_store.list_all(None).await;
+    let mut edges = Vec::new();
+
+    // Index jobs by run_id for parent lookups.
+    let job_index: std::collections::HashMap<&str, &agentzero_orchestrator::JobRecord> =
+        all_jobs.iter().map(|j| (j.run_id.0.as_str(), j)).collect();
+
+    for job in &all_jobs {
+        // Update node stats.
+        if let Some(node) = agent_map.get_mut(&job.agent_id) {
+            if matches!(job.status, agentzero_core::JobStatus::Running) {
+                node.active_run_count += 1;
+                node.status = "running".to_string();
+            }
+            node.total_cost_microdollars = node
+                .total_cost_microdollars
+                .saturating_add(job.cost_microdollars);
+        }
+
+        // Build delegation edges from parent→child.
+        if let Some(parent_id) = &job.parent_run_id {
+            if let Some(parent_job) = job_index.get(parent_id.0.as_str()) {
+                if parent_job.agent_id != job.agent_id {
+                    edges.push(TopologyEdge {
+                        from_agent_id: parent_job.agent_id.clone(),
+                        to_agent_id: job.agent_id.clone(),
+                        run_id: job.run_id.0.clone(),
+                        edge_type: "delegation",
+                    });
+                }
+            }
+        }
+    }
+
+    let nodes: Vec<TopologyNode> = agent_map.into_values().collect();
+
+    Ok(Json(TopologyResponse { nodes, edges }))
 }
 
 // ---------------------------------------------------------------------------

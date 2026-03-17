@@ -25,7 +25,7 @@ pub use event_bus::{
 };
 pub use fanout::{execute_fanout, FanOutResult, FanOutStep};
 pub use gossip::{GossipConfig, GossipEventBus};
-pub use job_store::{EventKind, EventLog, JobStore, RunEvent};
+pub use job_store::{EventKind, EventLog, JobRecord, JobStore, RunEvent};
 pub use lanes::{LaneConfig, LaneManager, LaneReceivers, WorkItem, WorkResult};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use presence::{PresenceRecord, PresenceStatus, PresenceStore};

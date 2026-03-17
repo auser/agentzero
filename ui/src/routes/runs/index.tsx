@@ -13,8 +13,9 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { CostDisplay } from '@/components/shared/CostDisplay'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useRunStream } from '@/hooks/useRunStream'
-import { Plus, X, AlertTriangle } from 'lucide-react'
+import { Plus, X, AlertTriangle, GitBranch, List } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import { ToolTimeline } from '@/components/runs/ToolTimeline'
 
 export const Route = createFileRoute('/runs/')({
   component: RunsPage,
@@ -64,6 +65,7 @@ function RunDetailPanel({ run, onClose }: { run: RunListItem; onClose: () => voi
           <TabsList className="w-full">
             <TabsTrigger value="transcript" className="flex-1">Transcript</TabsTrigger>
             <TabsTrigger value="events" className="flex-1">Tool Events</TabsTrigger>
+            <TabsTrigger value="timeline" className="flex-1">Timeline</TabsTrigger>
             {run.status === 'running' && (
               <TabsTrigger value="stream" className="flex-1">Live</TabsTrigger>
             )}
@@ -105,6 +107,14 @@ function RunDetailPanel({ run, onClose }: { run: RunListItem; onClose: () => voi
                 {!events?.events.length && (
                   <p className="text-xs text-muted-foreground text-center py-4">No events</p>
                 )}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="timeline" className="flex-1 min-h-0">
+            <ScrollArea className="h-full">
+              <div className="p-1">
+                <ToolTimeline events={events?.events ?? []} />
               </div>
             </ScrollArea>
           </TabsContent>
@@ -185,6 +195,39 @@ function SubmitRunSheet({ open, onClose }: { open: boolean; onClose: () => void 
   )
 }
 
+/** Order runs as a flat list or a tree (parents followed by children). */
+function orderRuns(runs: RunListItem[], tree: boolean): RunListItem[] {
+  if (!tree) return runs
+  const byId = new Map(runs.map((r) => [r.run_id, r]))
+  const childrenOf = new Map<string | null, RunListItem[]>()
+  for (const run of runs) {
+    const parentKey = run.parent_run_id ?? null
+    const list = childrenOf.get(parentKey) ?? []
+    list.push(run)
+    childrenOf.set(parentKey, list)
+  }
+  const result: RunListItem[] = []
+  function walk(parentId: string | null) {
+    const children = childrenOf.get(parentId) ?? []
+    for (const child of children) {
+      result.push(child)
+      walk(child.run_id)
+    }
+  }
+  // Start from roots (runs whose parent_run_id is not in the set).
+  const rootParents = new Set<string | null>()
+  for (const run of runs) {
+    const pid = run.parent_run_id ?? null
+    if (pid === null || !byId.has(pid)) {
+      rootParents.add(pid)
+    }
+  }
+  for (const pid of rootParents) {
+    walk(pid)
+  }
+  return result
+}
+
 function RunsPage() {
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<RunStatus | 'all'>('all')
@@ -192,6 +235,7 @@ function RunsPage() {
   const [submitOpen, setSubmitOpen] = useState(false)
   const [cancelTarget, setCancelTarget] = useState<RunListItem | null>(null)
   const [estopOpen, setEstopOpen] = useState(false)
+  const [treeView, setTreeView] = useState(false)
 
   const { data, isPending } = useQuery({
     queryKey: ['runs', { status: statusFilter }],
@@ -230,8 +274,8 @@ function RunsPage() {
         </div>
       </div>
 
-      {/* Status filter */}
-      <div className="flex gap-1.5 flex-wrap">
+      {/* Status filter + view toggle */}
+      <div className="flex gap-1.5 flex-wrap items-center">
         {STATUS_OPTIONS.map(({ label, value }) => (
           <Button
             key={value}
@@ -243,6 +287,17 @@ function RunsPage() {
             {label}
           </Button>
         ))}
+        <div className="ml-auto">
+          <Button
+            size="sm"
+            variant={treeView ? 'secondary' : 'outline'}
+            className="h-7 text-xs"
+            onClick={() => setTreeView((v) => !v)}
+          >
+            {treeView ? <GitBranch className="h-3.5 w-3.5 mr-1" /> : <List className="h-3.5 w-3.5 mr-1" />}
+            {treeView ? 'Tree' : 'Flat'}
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-lg border border-border overflow-hidden">
@@ -268,18 +323,27 @@ function RunsPage() {
                 <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No runs</TableCell>
               </TableRow>
             )}
-            {data?.data.map((run) => (
+            {orderRuns(data?.data ?? [], treeView).map((run) => (
               <TableRow
                 key={run.run_id}
                 className="cursor-pointer hover:bg-muted/30"
                 onClick={() => setSelectedRun(run)}
               >
-                <TableCell className="font-mono text-xs text-muted-foreground">{run.run_id.slice(0, 16)}…</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">
+                  {treeView && run.depth > 0 && (
+                    <span className="text-muted-foreground/40 mr-1">{'  '.repeat(run.depth)}└─</span>
+                  )}
+                  {run.run_id.slice(0, 16)}…
+                </TableCell>
                 <TableCell><StatusBadge status={run.status} /></TableCell>
                 <TableCell className="text-xs">{run.agent_id}</TableCell>
                 <TableCell><CostDisplay microdollars={run.cost_microdollars} className="text-xs" /></TableCell>
                 <TableCell className="text-xs text-muted-foreground">
-                  {run.accepted_at ? formatDistanceToNow(new Date(run.accepted_at), { addSuffix: true }) : '—'}
+                  {run.created_at_epoch_ms
+                    ? formatDistanceToNow(new Date(run.created_at_epoch_ms), { addSuffix: true })
+                    : run.accepted_at
+                      ? formatDistanceToNow(new Date(run.accepted_at), { addSuffix: true })
+                      : '—'}
                 </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   {(run.status === 'pending' || run.status === 'running') && (
