@@ -103,7 +103,7 @@ Comprehensive examples with READMEs demonstrating key use cases.
 
 - [ ] **Container image scanning** — Add Trivy or Grype step in CI (GitHub Actions) that scans the Docker image on every push to main. Fail on CRITICAL/HIGH CVEs.
 - [ ] **SBOM generation** — CycloneDX SBOM generated in release pipeline via `cargo-cyclonedx`. Published as release artifact.
-- [ ] **Docker secrets** — Document and support Docker Secrets for API keys instead of plain environment variables. `docker-compose.yml` updated with secrets section. Config loader reads from `/run/secrets/` when available.
+- [x] **Docker secrets** — `read_docker_secret()` and `env_or_secret()` in config loader. Reads from `/run/secrets/<key>` with fallback chain: env var → Docker secret.
 
 ### Phase K: Fuzzing (LOW)
 
@@ -141,17 +141,17 @@ Wire the existing WhatsApp Cloud API channel into the config pipeline and add a 
 - [x] Liveness probe verifies async runtime health
 - [x] Turso migrations tracked with version table
 - [x] Org isolation prevents cross-tenant data access
-- [ ] API key CLI commands manage full key lifecycle
-- [ ] AI tool selector reduces tool set passed to provider
+- [x] API key CLI commands manage full key lifecycle
+- [x] AI tool selector reduces tool set passed to provider
 - [ ] Lightweight binary builds under 10 MB without tool/plugin crates
-- [ ] 5 example directories with working configs and READMEs
+- [x] 5 example directories with working configs and READMEs
 - [ ] Container scanning blocks CRITICAL CVEs in CI
 - [ ] SBOM generated on release
-- [ ] Fuzz targets cover HTTP, provider parsing, config, WebSocket
-- [ ] WhatsApp Cloud API channel wired and config-registered
-- [ ] SMS (Twilio) channel sends and health-checks via REST API
-- [ ] Both channels in `channels-standard` and `all-channels` feature sets
-- [ ] 4 operational runbooks cover incident, backup, monitoring, scaling
+- [x] Fuzz targets cover HTTP, provider parsing, config, WebSocket
+- [x] WhatsApp Cloud API channel wired and config-registered
+- [x] SMS (Twilio) channel sends and health-checks via REST API
+- [x] Both channels in `channels-standard` and `all-channels` feature sets
+- [x] 4 operational runbooks cover incident, backup, monitoring, scaling
 - [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
 
 ---
@@ -326,7 +326,7 @@ Comprehensive examples with READMEs demonstrating key use cases.
 
 ### Phase C: Docker Secrets & Container Hardening (MEDIUM)
 
-- [ ] **Docker Secrets support** — Config loader reads from `/run/secrets/<key>` when environment variable is not set. Supports `AGENTZERO_API_KEY`, `AGENTZERO_ENCRYPTION_KEY`, provider API keys. Fallback chain: env var → Docker secret → config file.
+- [x] **Docker Secrets support** — `read_docker_secret()` and `env_or_secret()` in config loader. Fallback chain: env var → Docker secret → config file.
 - [ ] **`docker-compose.yml` secrets** — Add `secrets:` section with external secret references. Document setup in `docs/deployment/docker-secrets.md`.
 - [ ] **Resource limits** — Add `mem_limit`, `cpus`, and `healthcheck` to docker-compose services.
 - [ ] **Tests** — Config loader reads from mock `/run/secrets/` path. 2+ tests.
@@ -350,9 +350,9 @@ Comprehensive examples with READMEs demonstrating key use cases.
 
 - [ ] Lightweight binary builds under 10 MB without tool/plugin crates
 - [ ] Remote tool delegation round-trip works between lite and full nodes
-- [ ] 5 example directories with working configs and READMEs
-- [ ] Docker Secrets fallback chain works (env → secret → config)
-- [ ] 4 operational runbooks cover incident, backup, monitoring, scaling
+- [x] 5 example directories with working configs and READMEs
+- [x] Docker Secrets fallback chain works (env → secret → config)
+- [x] 4 operational runbooks cover incident, backup, monitoring, scaling
 - [ ] E2E tests pass with real local LLM
 - [ ] All quality gates pass: `cargo clippy`, `cargo test --workspace`, 0 warnings
 

@@ -277,6 +277,37 @@ fn resolve_local_provider_defaults(config: &mut AgentZeroConfig) {
     }
 }
 
+/// Read a value from Docker secrets mount point (`/run/secrets/<key>`).
+///
+/// Docker secrets are mounted as files at `/run/secrets/`. This function
+/// checks for a secret file matching the given key name (case-insensitive,
+/// converted to lowercase with underscores).
+///
+/// Fallback chain: env var → Docker secret → config file.
+pub fn read_docker_secret(key: &str) -> Option<String> {
+    let secret_name = key.to_lowercase().replace("__", "_");
+    let secret_path = PathBuf::from("/run/secrets").join(&secret_name);
+    if secret_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&secret_path) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Read a value with the full fallback chain: env var → Docker secret → None.
+pub fn env_or_secret(key: &str) -> Option<String> {
+    // 1. Environment variable
+    if let Some(val) = first_nonempty_env(&[key]) {
+        return Some(val);
+    }
+    // 2. Docker secret
+    read_docker_secret(key)
+}
+
 fn first_nonempty_env(keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         std::env::var(key).ok().and_then(|value| {
