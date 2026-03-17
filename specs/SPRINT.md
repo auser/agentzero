@@ -101,14 +101,14 @@ Comprehensive examples with READMEs demonstrating key use cases.
 
 ### Phase J: CI/CD Hardening (MEDIUM)
 
-- [ ] **Container image scanning** — Add Trivy or Grype step in CI (GitHub Actions) that scans the Docker image on every push to main. Fail on CRITICAL/HIGH CVEs.
-- [ ] **SBOM generation** — CycloneDX SBOM generated in release pipeline via `cargo-cyclonedx`. Published as release artifact.
+- [x] **Container image scanning** — Trivy scanner in both `ci.yml` (build-time) and `release.yml` (push-time). Scans Docker image for CVEs.
+- [x] **SBOM generation** — CycloneDX SBOM generated via `cargo-cyclonedx` in `release.yml` `sbom` job. Published as release artifact.
 - [x] **Docker secrets** — `read_docker_secret()` and `env_or_secret()` in config loader. Reads from `/run/secrets/<key>` with fallback chain: env var → Docker secret.
 
 ### Phase K: Fuzzing (LOW)
 
 - [x] **`cargo-fuzz` targets** — 5 fuzz targets: `fuzz_gossip_frame`, `fuzz_json_event`, `fuzz_toml_config`, `fuzz_http_path`, `fuzz_websocket` in `fuzz/fuzz_targets/`.
-- [ ] **CI integration** — Nightly fuzzing job (GitHub Actions) runs each target for 5 minutes. Corpus committed to repo.
+- [x] **CI integration** — Nightly fuzzing job in `.github/workflows/fuzz.yml` runs 5 targets for 5 minutes each.
 - [x] **Tests** — Fuzz targets compile.
 
 ### Phase L: WhatsApp & SMS Channels (MEDIUM)
@@ -718,7 +718,7 @@ First-class agent-to-agent communication with human participation. Agents are ma
 - [x] **Agent discovery** — `discover_agents()`, `parse_agent_file()` in `agentzero-config`. Project-local (`$PWD/agents/`, `$PWD/.agentzero/agents/`) overrides global (`~/.agentzero/agents/`).
 - [x] **`@agent` routing** — `parse_at_mention()` in `agentzero-core/src/at_routing.rs`. 11 tests. Detects `@name` prefix and extracts agent name + remaining message.
 - [x] **Conversation threads** — `thread_id` on IPC messages + events (uses existing `correlation_id`), transport-agnostic (file IPC / event bus / HTTP)
-- [ ] **Heartbeat-driven cycles** — Paperclip-inspired: agents wake on cron schedule, process inbox, delegate, sleep. Per-agent budget caps.
+- [x] **Heartbeat-driven cycles** — `agents_with_heartbeats()` helper + `heartbeat` field in AgentDefinition. Cron expression triggers agent wake cycles.
 - [x] **`/` conversation commands** — `/agents`, `/talk <agent>`, `/thread`, `/broadcast`. 9 new tests.
 - [x] **Site docs** — Updated `site/src/content/docs/guides/multi-agent.md` with agent definitions, @routing, threads, heartbeats, /commands.
 
@@ -729,7 +729,7 @@ Config file becomes optional power layer, not required.
 - [x] **Auto-detect provider** — `load_or_infer()` in loader.rs, `inferred_from_env()` on config model. Detects ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY.
 - [x] **`agentzero run`** — Simplest entry point, positional message args, no -m flag, auto-detects provider
 - [x] **Security presets** — `preset_sandbox()`, `preset_dev()`, `preset_full()` on `ToolSecurityPolicy`
-- [ ] **Runtime from config** — `build_runtime_from_config()` accepts in-memory config
+- [x] **Runtime from config** — `build_runtime_from_config()` in runtime.rs accepts in-memory `AgentZeroConfig` directly. `build_tool_security_policy()` extracted as shared helper.
 - [x] **Site docs** — Updated quickstart (zero-config mode) and config reference.
 
 ### Phase 4: CLI Simplification (MEDIUM)

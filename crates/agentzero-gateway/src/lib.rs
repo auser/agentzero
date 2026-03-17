@@ -6,6 +6,8 @@
 pub mod api_keys;
 mod audit;
 mod auth;
+#[cfg(feature = "autopilot")]
+mod autopilot_routes;
 mod banner;
 pub mod gateway_channel;
 mod gateway_metrics;

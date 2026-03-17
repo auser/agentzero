@@ -66,6 +66,28 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/ws/runs/:run_id", get(ws_run_subscribe))
         .route("/api/*path", get(api_fallback));
 
+    // Autopilot routes (autopilot feature).
+    #[cfg(feature = "autopilot")]
+    {
+        use crate::autopilot_routes::{
+            approve_proposal, autopilot_stats, get_mission, list_missions, list_proposals,
+            list_triggers, reject_proposal, toggle_trigger,
+        };
+
+        router = router
+            .route("/v1/autopilot/proposals", get(list_proposals))
+            .route(
+                "/v1/autopilot/proposals/:id/approve",
+                post(approve_proposal),
+            )
+            .route("/v1/autopilot/proposals/:id/reject", post(reject_proposal))
+            .route("/v1/autopilot/missions", get(list_missions))
+            .route("/v1/autopilot/missions/:id", get(get_mission))
+            .route("/v1/autopilot/triggers", get(list_triggers))
+            .route("/v1/autopilot/triggers/:id/toggle", post(toggle_trigger))
+            .route("/v1/autopilot/stats", get(autopilot_stats));
+    }
+
     // Noise Protocol handshake and transport routes (privacy feature).
     #[cfg(feature = "privacy")]
     {

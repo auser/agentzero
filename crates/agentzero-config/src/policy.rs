@@ -14,6 +14,22 @@ pub fn load_tool_security_policy(
     config_path: &Path,
 ) -> anyhow::Result<ToolSecurityPolicy> {
     let config = load(config_path)?;
+    build_tool_security_policy(workspace_root, config_path, &config)
+}
+
+/// Build a `ToolSecurityPolicy` from an in-memory config.
+///
+/// This is the shared implementation used by both `load_tool_security_policy`
+/// (which loads from a file first) and callers that already have a config
+/// (e.g. zero-config / env-inferred mode).
+///
+/// `config_path` may point to a non-existent file when running in zero-config
+/// mode; it is only used for locating MCP server definitions.
+pub fn build_tool_security_policy(
+    workspace_root: &Path,
+    config_path: &Path,
+    config: &crate::model::AgentZeroConfig,
+) -> anyhow::Result<ToolSecurityPolicy> {
     let allowed_root = resolve_allowed_root(workspace_root, &config.security.allowed_root)?;
 
     let url_cfg = &config.security.url_access;
@@ -39,7 +55,7 @@ pub fn load_tool_security_policy(
             max_write_bytes: config.security.write_file.max_write_bytes,
         },
         shell: ShellPolicy {
-            allowed_commands: config.security.allowed_commands,
+            allowed_commands: config.security.allowed_commands.clone(),
             max_args: config.security.shell.max_args,
             max_arg_length: config.security.shell.max_arg_length,
             max_output_bytes: config.security.shell.max_output_bytes,
@@ -72,7 +88,7 @@ pub fn load_tool_security_policy(
             workspace_root,
             &config.security.mcp.allowed_servers,
         ),
-        allowed_mcp_servers: config.security.mcp.allowed_servers,
+        allowed_mcp_servers: config.security.mcp.allowed_servers.clone(),
         enable_git,
         enable_cron: true,
         enable_web_search: config.web_search.enabled,
@@ -101,9 +117,24 @@ pub fn load_tool_security_policy(
         enable_domain_tools: config.agent.enable_domain_tools,
         enable_self_config: config.agent.enable_self_config,
         enable_wasm_plugins: config.security.plugin.wasm_enabled,
-        wasm_global_plugin_dir: config.security.plugin.global_plugin_dir.map(PathBuf::from),
-        wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),
-        wasm_dev_plugin_dir: config.security.plugin.dev_plugin_dir.map(PathBuf::from),
+        wasm_global_plugin_dir: config
+            .security
+            .plugin
+            .global_plugin_dir
+            .as_ref()
+            .map(PathBuf::from),
+        wasm_project_plugin_dir: config
+            .security
+            .plugin
+            .project_plugin_dir
+            .as_ref()
+            .map(PathBuf::from),
+        wasm_dev_plugin_dir: config
+            .security
+            .plugin
+            .dev_plugin_dir
+            .as_ref()
+            .map(PathBuf::from),
     };
 
     // Privacy enforcement: local_only mode disables outbound network tools.
@@ -139,18 +170,25 @@ pub struct AuditPolicy {
 
 pub fn load_audit_policy(workspace_root: &Path, config_path: &Path) -> anyhow::Result<AuditPolicy> {
     let config = load(config_path)?;
+    Ok(build_audit_policy(workspace_root, &config))
+}
 
+/// Build an `AuditPolicy` from an in-memory config (no file I/O).
+pub fn build_audit_policy(
+    workspace_root: &Path,
+    config: &crate::model::AgentZeroConfig,
+) -> AuditPolicy {
     if !config.security.audit.enabled {
-        return Ok(AuditPolicy {
+        return AuditPolicy {
             enabled: false,
             path: resolve_path(workspace_root, "./agentzero-audit.log"),
-        });
+        };
     }
 
-    Ok(AuditPolicy {
+    AuditPolicy {
         enabled: true,
         path: resolve_path(workspace_root, &config.security.audit.path),
-    })
+    }
 }
 
 fn resolve_allowed_root(workspace_root: &Path, configured_root: &str) -> anyhow::Result<PathBuf> {

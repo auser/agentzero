@@ -3,7 +3,8 @@ use crate::audit::FileAuditSink;
 use crate::tools::default_tools_with_store;
 use agentzero_auth::AuthManager;
 use agentzero_config::{
-    load, load_audit_policy, load_env_var, load_tool_security_policy, AudioConfig,
+    build_audit_policy, build_tool_security_policy, load, load_audit_policy, load_env_var,
+    load_tool_security_policy, AgentZeroConfig, AudioConfig,
 };
 use agentzero_core::common::local_providers::{is_local_provider, local_provider_meta};
 use agentzero_core::delegation::DelegateConfig;
@@ -138,69 +139,8 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
     // Look up model capabilities for the agent loop.
     let caps = model_capabilities(&config.provider.kind, &config.provider.model);
 
-    // Build cost calculator closure if pricing is available for this model.
-    let cost_calculator = agentzero_providers::model_pricing(
-        &config.provider.kind,
-        &config.provider.model,
-    )
-    .map(|pricing| {
-        std::sync::Arc::new(move |input_tokens: u64, output_tokens: u64| -> u64 {
-            agentzero_providers::compute_cost_microdollars(&pricing, input_tokens, output_tokens)
-        }) as std::sync::Arc<dyn Fn(u64, u64) -> u64 + Send + Sync>
-    });
+    let provider = build_provider_stack(&config, &key, &transport_config)?;
 
-    let primary_provider: Box<dyn agentzero_core::Provider> =
-        if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
-            agentzero_providers::build_provider_with_privacy(
-                &config.provider.kind,
-                config.provider.base_url.clone(),
-                key,
-                config.provider.model.clone(),
-                transport_config.clone(),
-                &config.privacy.mode,
-            )?
-        } else {
-            agentzero_providers::build_provider_with_transport(
-                &config.provider.kind,
-                config.provider.base_url.clone(),
-                key,
-                config.provider.model.clone(),
-                transport_config.clone(),
-            )
-        };
-
-    // Wrap with fallback chain if configured.
-    let provider: Box<dyn agentzero_core::Provider> =
-        if config.provider.fallback_providers.is_empty() {
-            primary_provider
-        } else {
-            let mut chain: Vec<(String, Box<dyn agentzero_core::Provider>)> =
-                Vec::with_capacity(1 + config.provider.fallback_providers.len());
-            chain.push((config.provider.kind.clone(), primary_provider));
-
-            for entry in &config.provider.fallback_providers {
-                let fb_key = entry
-                    .api_key_env
-                    .as_ref()
-                    .and_then(|env_var| std::env::var(env_var).ok())
-                    .unwrap_or_default();
-                let fb_provider = agentzero_providers::build_provider_with_transport(
-                    &entry.kind,
-                    entry.base_url.clone(),
-                    fb_key,
-                    entry.model.clone(),
-                    transport_config.clone(),
-                );
-                let label = format!("{}:{}", entry.kind, entry.model);
-                chain.push((label, fb_provider));
-            }
-
-            tracing::info!(
-                chain_len = chain.len(),
-                "provider fallback chain configured"
-            );
-            Box::new(agentzero_providers::FallbackProvider::new(chain))
-        };
     let memory = build_memory_store(&req.config_path).await?;
     let tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
     let mut tools: Vec<Box<dyn Tool>> =
@@ -211,89 +151,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
     let audit_path = audit_policy.path.clone();
 
     Ok(RuntimeExecution {
-        config: AgentConfig {
-            max_tool_iterations: config.agent.max_tool_iterations,
-            request_timeout_ms: config.agent.request_timeout_ms,
-            memory_window_size: config.agent.memory_window_size,
-            max_prompt_chars: config.agent.max_prompt_chars,
-            parallel_tools: config.agent.parallel_tools,
-            gated_tools: config.autonomy.always_ask.iter().cloned().collect(),
-            loop_detection_no_progress_threshold: config.agent.loop_detection_no_progress_threshold,
-            loop_detection_ping_pong_cycles: config.agent.loop_detection_ping_pong_cycles,
-            loop_detection_failure_streak: config.agent.loop_detection_failure_streak,
-            research: agentzero_core::ResearchPolicy {
-                enabled: config.research.enabled,
-                trigger: match config.research.trigger.as_str() {
-                    "always" => agentzero_core::ResearchTrigger::Always,
-                    "keywords" => agentzero_core::ResearchTrigger::Keywords,
-                    "length" => agentzero_core::ResearchTrigger::Length,
-                    "question" => agentzero_core::ResearchTrigger::Question,
-                    _ => agentzero_core::ResearchTrigger::Never,
-                },
-                keywords: config.research.keywords.clone(),
-                min_message_length: config.research.min_message_length,
-                max_iterations: config.research.max_iterations,
-                show_progress: config.research.show_progress,
-            },
-            reasoning: agentzero_core::ReasoningConfig {
-                enabled: config.runtime.reasoning_enabled,
-                level: config.provider_options.reasoning_level.clone(),
-            },
-            hooks: agentzero_core::HookPolicy {
-                enabled: config.agent.hooks.enabled,
-                timeout_ms: config.agent.hooks.timeout_ms,
-                fail_closed: config.agent.hooks.fail_closed,
-                default_mode: parse_hook_mode(&config.agent.hooks.on_error_default)?,
-                low_tier_mode: config
-                    .agent
-                    .hooks
-                    .on_error_low
-                    .as_deref()
-                    .map(parse_hook_mode)
-                    .transpose()?
-                    .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
-                medium_tier_mode: config
-                    .agent
-                    .hooks
-                    .on_error_medium
-                    .as_deref()
-                    .map(parse_hook_mode)
-                    .transpose()?
-                    .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
-                high_tier_mode: config
-                    .agent
-                    .hooks
-                    .on_error_high
-                    .as_deref()
-                    .map(parse_hook_mode)
-                    .transpose()?
-                    .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
-            },
-            model_supports_tool_use: caps.map_or(true, |c| c.tool_use),
-            model_supports_vision: caps.is_some_and(|c| c.vision),
-            system_prompt: config.agent.system_prompt.clone(),
-            privacy_boundary: config.privacy.mode.clone(),
-            tool_boundaries: config.security.tool_boundaries.clone(),
-            cost_calculator,
-            tool_timeout_ms: config.agent.tool_timeout_ms,
-            tool_selection: config
-                .agent
-                .tool_selection
-                .clone()
-                .unwrap_or_default()
-                .parse()
-                .unwrap_or(agentzero_core::ToolSelectionMode::All),
-            tool_selection_model: config.agent.tool_selection_model.clone(),
-            summarization: agentzero_core::SummarizationConfig {
-                enabled: config.agent.summarization.enabled,
-                keep_recent: config.agent.summarization.keep_recent,
-                min_entries_for_summarization: config
-                    .agent
-                    .summarization
-                    .min_entries_for_summarization,
-                max_summary_chars: config.agent.summarization.max_summary_chars,
-            },
-        },
+        config: build_agent_config(&config, caps)?,
         provider,
         memory,
         tools,
@@ -333,6 +191,287 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             )),
             // "ai" selector requires a provider — wired at a higher level.
             _ => None,
+        },
+    })
+}
+
+/// Build a `RuntimeExecution` from an in-memory config.
+///
+/// This enables zero-config mode where the config is inferred from env vars
+/// rather than loaded from a file. The caller provides the resolved
+/// `AgentZeroConfig`, a workspace root, and an optional conversation id.
+pub async fn build_runtime_from_config(
+    config: AgentZeroConfig,
+    workspace_root: PathBuf,
+    conversation_id: Option<String>,
+) -> anyhow::Result<RuntimeExecution> {
+    // Use the workspace root as the data directory (no config file to derive from).
+    let data_dir = workspace_root.clone();
+
+    // Resolve base URL from catalog when the default doesn't match the provider.
+    let mut config = config;
+    resolve_base_url_from_catalog(&mut config);
+
+    // API key: try provider-specific env var, then OPENAI_API_KEY, then allow
+    // empty for local providers.
+    let key = resolve_api_key_from_env(&config.provider.kind)?;
+
+    let router = build_model_router(&config);
+    let delegate_agents = build_delegate_agents(&config);
+
+    let transport_config = agentzero_providers::TransportConfig {
+        timeout_ms: config.provider.transport.timeout_ms,
+        max_retries: config.provider.transport.max_retries,
+        circuit_breaker_threshold: config.provider.transport.circuit_breaker_threshold,
+        circuit_breaker_reset_ms: config.provider.transport.circuit_breaker_reset_ms,
+    };
+
+    let caps = model_capabilities(&config.provider.kind, &config.provider.model);
+
+    let provider = build_provider_stack(&config, &key, &transport_config)?;
+
+    // Use a synthetic config_path rooted in the workspace for MCP/policy lookups.
+    let synthetic_config_path = workspace_root.join("agentzero.toml");
+
+    let memory = build_memory_store_from_config(&config, &data_dir).await?;
+    let tool_policy = build_tool_security_policy(&workspace_root, &synthetic_config_path, &config)?;
+    let tools: Vec<Box<dyn Tool>> =
+        default_tools_with_store(&tool_policy, router, delegate_agents, None)?;
+    let audit_policy = build_audit_policy(&workspace_root, &config);
+
+    let audit_path = audit_policy.path.clone();
+
+    Ok(RuntimeExecution {
+        config: build_agent_config(&config, caps)?,
+        provider,
+        memory,
+        tools,
+        audit_sink: if audit_policy.enabled {
+            Some(Box::new(FileAuditSink::new(audit_path.clone())) as Box<dyn AuditSink>)
+        } else {
+            None
+        },
+        hook_sink: if config.agent.hooks.enabled {
+            Some(Box::new(AuditHookSink {
+                sink: FileAuditSink::new(audit_path),
+            }) as Box<dyn HookSink>)
+        } else {
+            None
+        },
+        conversation_id,
+        audio_config: if config.audio.api_key.is_some() {
+            Some(config.audio.clone())
+        } else {
+            None
+        },
+        max_tokens: config.agent.max_tokens.unwrap_or(0),
+        max_cost_microdollars: config
+            .agent
+            .max_cost_usd
+            .map(|usd| (usd * 1_000_000.0) as u64)
+            .unwrap_or(0),
+        cost_config: config.cost.clone(),
+        data_dir,
+        tool_selector: match config.agent.tool_selection.as_deref().unwrap_or("all") {
+            "keyword" => Some(Box::new(
+                crate::tool_selection::KeywordToolSelector::default(),
+            )),
+            _ => None,
+        },
+    })
+}
+
+/// Build the primary provider and optional fallback chain from config.
+fn build_provider_stack(
+    config: &AgentZeroConfig,
+    key: &str,
+    transport_config: &agentzero_providers::TransportConfig,
+) -> anyhow::Result<Box<dyn agentzero_core::Provider>> {
+    let primary_provider: Box<dyn agentzero_core::Provider> =
+        if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
+            agentzero_providers::build_provider_with_privacy(
+                &config.provider.kind,
+                config.provider.base_url.clone(),
+                key.to_string(),
+                config.provider.model.clone(),
+                transport_config.clone(),
+                &config.privacy.mode,
+            )?
+        } else {
+            agentzero_providers::build_provider_with_transport(
+                &config.provider.kind,
+                config.provider.base_url.clone(),
+                key.to_string(),
+                config.provider.model.clone(),
+                transport_config.clone(),
+            )
+        };
+
+    if config.provider.fallback_providers.is_empty() {
+        return Ok(primary_provider);
+    }
+
+    let mut chain: Vec<(String, Box<dyn agentzero_core::Provider>)> =
+        Vec::with_capacity(1 + config.provider.fallback_providers.len());
+    chain.push((config.provider.kind.clone(), primary_provider));
+
+    for entry in &config.provider.fallback_providers {
+        let fb_key = entry
+            .api_key_env
+            .as_ref()
+            .and_then(|env_var| std::env::var(env_var).ok())
+            .unwrap_or_default();
+        let fb_provider = agentzero_providers::build_provider_with_transport(
+            &entry.kind,
+            entry.base_url.clone(),
+            fb_key,
+            entry.model.clone(),
+            transport_config.clone(),
+        );
+        let label = format!("{}:{}", entry.kind, entry.model);
+        chain.push((label, fb_provider));
+    }
+
+    tracing::info!(
+        chain_len = chain.len(),
+        "provider fallback chain configured"
+    );
+    Ok(Box::new(agentzero_providers::FallbackProvider::new(chain)))
+}
+
+/// Resolve an API key purely from environment variables (no config file, no auth profiles).
+///
+/// Priority: provider-specific env var -> OPENAI_API_KEY -> empty (local providers).
+fn resolve_api_key_from_env(provider_kind: &str) -> anyhow::Result<String> {
+    // Provider-specific env vars.
+    let provider_env_var = match provider_kind {
+        "anthropic" => Some("ANTHROPIC_API_KEY"),
+        _ => None,
+    };
+    if let Some(env_var) = provider_env_var {
+        if let Ok(key) = std::env::var(env_var) {
+            if !key.is_empty() {
+                return Ok(key);
+            }
+        }
+    }
+
+    // Generic OPENAI_API_KEY.
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        if !key.is_empty() {
+            return Ok(key);
+        }
+    }
+
+    // Local providers don't require a key.
+    if is_local_provider(provider_kind) {
+        return Ok(String::new());
+    }
+
+    let env_hint = match provider_kind {
+        "anthropic" => "ANTHROPIC_API_KEY",
+        _ => "OPENAI_API_KEY",
+    };
+    anyhow::bail!(
+        "missing API key for provider '{provider_kind}': set {env_hint} environment variable"
+    )
+}
+
+/// Build the `AgentConfig` struct from a resolved `AgentZeroConfig`.
+///
+/// Shared between `build_runtime_execution` and `build_runtime_from_config`.
+fn build_agent_config(
+    config: &AgentZeroConfig,
+    caps: Option<agentzero_providers::ModelCapabilities>,
+) -> anyhow::Result<AgentConfig> {
+    let cost_calculator = agentzero_providers::model_pricing(
+        &config.provider.kind,
+        &config.provider.model,
+    )
+    .map(|pricing| {
+        std::sync::Arc::new(move |input_tokens: u64, output_tokens: u64| -> u64 {
+            agentzero_providers::compute_cost_microdollars(&pricing, input_tokens, output_tokens)
+        }) as std::sync::Arc<dyn Fn(u64, u64) -> u64 + Send + Sync>
+    });
+
+    Ok(AgentConfig {
+        max_tool_iterations: config.agent.max_tool_iterations,
+        request_timeout_ms: config.agent.request_timeout_ms,
+        memory_window_size: config.agent.memory_window_size,
+        max_prompt_chars: config.agent.max_prompt_chars,
+        parallel_tools: config.agent.parallel_tools,
+        gated_tools: config.autonomy.always_ask.iter().cloned().collect(),
+        loop_detection_no_progress_threshold: config.agent.loop_detection_no_progress_threshold,
+        loop_detection_ping_pong_cycles: config.agent.loop_detection_ping_pong_cycles,
+        loop_detection_failure_streak: config.agent.loop_detection_failure_streak,
+        research: agentzero_core::ResearchPolicy {
+            enabled: config.research.enabled,
+            trigger: match config.research.trigger.as_str() {
+                "always" => agentzero_core::ResearchTrigger::Always,
+                "keywords" => agentzero_core::ResearchTrigger::Keywords,
+                "length" => agentzero_core::ResearchTrigger::Length,
+                "question" => agentzero_core::ResearchTrigger::Question,
+                _ => agentzero_core::ResearchTrigger::Never,
+            },
+            keywords: config.research.keywords.clone(),
+            min_message_length: config.research.min_message_length,
+            max_iterations: config.research.max_iterations,
+            show_progress: config.research.show_progress,
+        },
+        reasoning: agentzero_core::ReasoningConfig {
+            enabled: config.runtime.reasoning_enabled,
+            level: config.provider_options.reasoning_level.clone(),
+        },
+        hooks: agentzero_core::HookPolicy {
+            enabled: config.agent.hooks.enabled,
+            timeout_ms: config.agent.hooks.timeout_ms,
+            fail_closed: config.agent.hooks.fail_closed,
+            default_mode: parse_hook_mode(&config.agent.hooks.on_error_default)?,
+            low_tier_mode: config
+                .agent
+                .hooks
+                .on_error_low
+                .as_deref()
+                .map(parse_hook_mode)
+                .transpose()?
+                .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
+            medium_tier_mode: config
+                .agent
+                .hooks
+                .on_error_medium
+                .as_deref()
+                .map(parse_hook_mode)
+                .transpose()?
+                .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
+            high_tier_mode: config
+                .agent
+                .hooks
+                .on_error_high
+                .as_deref()
+                .map(parse_hook_mode)
+                .transpose()?
+                .unwrap_or(parse_hook_mode(&config.agent.hooks.on_error_default)?),
+        },
+        model_supports_tool_use: caps.map_or(true, |c| c.tool_use),
+        model_supports_vision: caps.is_some_and(|c| c.vision),
+        system_prompt: config.agent.system_prompt.clone(),
+        privacy_boundary: config.privacy.mode.clone(),
+        tool_boundaries: config.security.tool_boundaries.clone(),
+        cost_calculator,
+        tool_timeout_ms: config.agent.tool_timeout_ms,
+        tool_selection: config
+            .agent
+            .tool_selection
+            .clone()
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(agentzero_core::ToolSelectionMode::All),
+        tool_selection_model: config.agent.tool_selection_model.clone(),
+        summarization: agentzero_core::SummarizationConfig {
+            enabled: config.agent.summarization.enabled,
+            keep_recent: config.agent.summarization.keep_recent,
+            min_entries_for_summarization: config.agent.summarization.min_entries_for_summarization,
+            max_summary_chars: config.agent.summarization.max_summary_chars,
         },
     })
 }
@@ -682,10 +821,21 @@ fn apply_provider_defaults(config: &mut agentzero_config::AgentZeroConfig, provi
 
 async fn build_memory_store(config_path: &Path) -> anyhow::Result<Box<dyn MemoryStore>> {
     let config = load(config_path)?;
+    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    build_memory_store_from_config(&config, config_dir).await
+}
+
+/// Build a memory store from an in-memory config.
+///
+/// `data_dir` is used to derive the encryption key for SQLite and as the
+/// default location for the database file.
+async fn build_memory_store_from_config(
+    config: &AgentZeroConfig,
+    data_dir: &Path,
+) -> anyhow::Result<Box<dyn MemoryStore>> {
     match config.memory.backend.as_str() {
         "sqlite" => {
-            let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
-            let key = StorageKey::from_config_dir(config_dir)?;
+            let key = StorageKey::from_config_dir(data_dir)?;
             Ok(Box::new(SqliteMemoryStore::open(
                 &config.memory.sqlite_path,
                 Some(&key),

@@ -81,6 +81,11 @@ pub enum AgentSource {
     Config,
 }
 
+/// Get all agents that have heartbeat schedules defined.
+pub fn agents_with_heartbeats(agents: &[AgentDefinition]) -> Vec<&AgentDefinition> {
+    agents.iter().filter(|a| a.heartbeat.is_some()).collect()
+}
+
 // ─── Discovery ───────────────────────────────────────────────────────────────
 
 /// Discover all agent definitions from filesystem.
@@ -499,6 +504,64 @@ You are a helpful assistant.
         assert_eq!(agents[0].name, "helper");
 
         fs::remove_dir_all(project).expect("cleanup");
+    }
+
+    #[test]
+    fn agents_with_heartbeats_returns_only_heartbeat_agents() {
+        let agents = vec![
+            AgentDefinition {
+                name: "watcher".to_string(),
+                heartbeat: Some("*/5 * * * *".to_string()),
+                ..make_default_agent("watcher")
+            },
+            AgentDefinition {
+                name: "helper".to_string(),
+                heartbeat: None,
+                ..make_default_agent("helper")
+            },
+            AgentDefinition {
+                name: "monitor".to_string(),
+                heartbeat: Some("0 * * * *".to_string()),
+                ..make_default_agent("monitor")
+            },
+        ];
+
+        let result = agents_with_heartbeats(&agents);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name, "watcher");
+        assert_eq!(result[0].heartbeat.as_deref(), Some("*/5 * * * *"));
+        assert_eq!(result[1].name, "monitor");
+        assert_eq!(result[1].heartbeat.as_deref(), Some("0 * * * *"));
+    }
+
+    #[test]
+    fn agents_with_heartbeats_empty_when_none_have_heartbeats() {
+        let agents = vec![make_default_agent("a"), make_default_agent("b")];
+        let result = agents_with_heartbeats(&agents);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn agents_with_heartbeats_empty_input() {
+        let agents: Vec<AgentDefinition> = Vec::new();
+        let result = agents_with_heartbeats(&agents);
+        assert!(result.is_empty());
+    }
+
+    fn make_default_agent(name: &str) -> AgentDefinition {
+        AgentDefinition {
+            name: name.to_string(),
+            model: None,
+            tools: Vec::new(),
+            preset: default_preset(),
+            listens_to: default_listens_to(),
+            talks_to: Vec::new(),
+            heartbeat: None,
+            budget_usd_monthly: None,
+            system_prompt: String::new(),
+            source: AgentSource::File,
+            file_path: None,
+        }
     }
 
     #[test]

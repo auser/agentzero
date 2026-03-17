@@ -29,7 +29,10 @@ pub use model::{
     SwarmConfig, SwarmRouterConfig, SyscallAnomalyConfig, TlsConfig, UrlAccessConfig,
     WasmRuntimeConfig, WasmSecurityConfig, WebFetchConfig, WebSearchConfig, WriteFileConfig,
 };
-pub use policy::{load_audit_policy, load_tool_security_policy, AuditPolicy};
+pub use policy::{
+    build_audit_policy, build_tool_security_policy, load_audit_policy, load_tool_security_policy,
+    AuditPolicy,
+};
 pub use templates::{
     discover_shared_templates, discover_templates, list_template_sources,
     template_paths_for_workspace, template_search_dirs, ResolvedTemplate, TemplateFile,
