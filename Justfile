@@ -146,6 +146,14 @@ ui-build:
 ui-dev:
     cd ui && pnpm run dev
 
+# Run Playwright e2e tests (requires daemon + ui-dev running)
+ui-test:
+    cd ui && pnpm test:e2e
+
+# Run Playwright e2e tests with visible browser
+ui-test-headed:
+    cd ui && pnpm test:e2e:headed
+
 # Full release build: UI first, then Rust with embedded-ui feature
 build-full: ui-build
     cargo build --release --features embedded-ui
