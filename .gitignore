@@ -9,6 +9,7 @@
 # Environment/config secrets
 .env
 .env.*
+!.env.example
 
 # Site build
 /gh-pages/

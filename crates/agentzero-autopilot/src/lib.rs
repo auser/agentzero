@@ -8,6 +8,7 @@
 
 pub mod cap_gate;
 pub mod config;
+pub mod loop_runner;
 pub mod reaction_matrix;
 pub mod stale_recovery;
 pub mod supabase;
@@ -17,6 +18,7 @@ pub mod types;
 
 pub use cap_gate::{CapGate, CapGateResult};
 pub use config::AutopilotConfig;
+pub use loop_runner::AutopilotLoop;
 pub use reaction_matrix::ReactionMatrix;
 pub use stale_recovery::StaleRecovery;
 pub use supabase::SupabaseClient;

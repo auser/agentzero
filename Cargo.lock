@@ -319,6 +319,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentzero-lite"
+version = "0.6.0"
+dependencies = [
+ "agentzero-config",
+ "agentzero-core",
+ "agentzero-gateway",
+ "agentzero-infra",
+ "agentzero-providers",
+ "agentzero-storage",
+ "anyhow",
+ "clap",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "agentzero-orchestrator"
 version = "0.6.0"
 dependencies = [

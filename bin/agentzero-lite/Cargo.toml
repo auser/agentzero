@@ -1,0 +1,25 @@
+[package]
+name = "agentzero-lite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Lightweight AgentZero orchestrator for resource-constrained devices"
+publish = false
+
+[[bin]]
+name = "agentzero-lite"
+path = "src/main.rs"
+
+[dependencies]
+agentzero-core = { workspace = true }
+agentzero-config = { workspace = true }
+agentzero-providers = { workspace = true }
+agentzero-storage = { workspace = true }
+agentzero-gateway = { workspace = true }
+agentzero-infra = { workspace = true }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
