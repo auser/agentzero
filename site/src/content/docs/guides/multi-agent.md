@@ -323,6 +323,163 @@ See [examples/business-office/](https://github.com/auser/agentzero/tree/main/exa
 
 ---
 
+## Markdown Agent Definitions
+
+In addition to TOML-based agent configuration, you can define agents as Markdown files in the `agents/` directory at your project root. Each file defines one agent with its persona, instructions, and configuration in a human-readable format.
+
+### Creating an agent definition
+
+Create a file at `agents/<name>.md`:
+
+```markdown
+<!-- agents/reviewer.md -->
+---
+provider: anthropic
+model: claude-sonnet-4-6
+max_iterations: 15
+allowed_tools:
+  - read_file
+  - glob_search
+  - content_search
+  - git_operations
+---
+
+# Reviewer
+
+You are a senior code reviewer. When asked to review code:
+
+1. Read the diff using `git_operations`
+2. Check each change for correctness, security issues, and style
+3. Search for related patterns in the codebase with `content_search`
+4. Provide specific feedback referencing file paths and line numbers
+
+Be constructive. Distinguish between must-fix issues and suggestions.
+```
+
+The YAML frontmatter contains the agent's configuration (provider, model, tools). The Markdown body becomes the agent's system prompt.
+
+### Discovery
+
+Agent definitions are loaded from the `agents/` directory in the project root. Files are named `<agent-name>.md` — the filename (without extension) becomes the agent's routing name.
+
+```
+project/
+├── agents/
+│   ├── reviewer.md
+│   ├── coder.md
+│   └── researcher.md
+├── agentzero.toml
+└── ...
+```
+
+Markdown-defined agents merge with TOML-defined agents. If both define an agent with the same name, the Markdown definition takes priority.
+
+### @agent routing
+
+Route messages to a specific agent using the `@agent` prefix:
+
+```bash
+agentzero agent -m "@reviewer check the last commit for security issues"
+agentzero agent -m "@coder implement a rate limiter in src/middleware.rs"
+agentzero agent -m "@researcher find best practices for Rust error handling"
+```
+
+When no `@agent` prefix is present, the message goes to the default agent (or the swarm router, if configured).
+
+---
+
+## Conversation Threads
+
+Agents can participate in threaded conversations using a `thread_id`. Threads maintain context across multiple messages, enabling back-and-forth dialogue.
+
+### Starting a thread
+
+```bash
+# Start a new thread (auto-generates thread_id)
+agentzero agent -m "Let's plan the API redesign" --new-thread
+
+# Continue an existing thread
+agentzero agent -m "What about error handling?" --thread <thread_id>
+```
+
+### Thread commands
+
+| Command | Description |
+|---|---|
+| `/thread` | Show the current thread ID and message count |
+| `/thread list` | List all active threads |
+| `/thread switch <id>` | Switch to a different thread |
+| `/thread new` | Start a new thread |
+
+Threads are stored in the memory backend (SQLite or Turso) and persist across sessions.
+
+---
+
+## Heartbeat-Driven Cycles
+
+For long-running autonomous agents, heartbeat cycles provide a periodic execution loop. The agent wakes at a configurable interval, checks for pending work, and executes tasks.
+
+```toml
+[agent.heartbeat]
+enabled = true
+interval_secs = 300              # wake every 5 minutes
+idle_action = "check_channels"   # what to do when no pending tasks
+max_consecutive_idle = 12        # stop after 12 idle cycles (1 hour)
+```
+
+During each heartbeat cycle, the agent:
+
+1. Checks for new messages on configured channels
+2. Processes any pending cron-triggered tasks
+3. Reviews and advances in-progress workflows
+4. Reports status if configured to do so
+
+Heartbeat mode is useful for always-on agents that monitor channels, process scheduled tasks, or maintain long-running workflows.
+
+---
+
+## Multi-Agent CLI Commands
+
+These commands manage agents, conversations, and coordination from the CLI:
+
+### `/agents` — manage agent definitions
+
+```bash
+agentzero agents list            # List all agents (TOML + Markdown)
+agentzero agents create --name Aria --description "Travel planner" \
+  --model claude-sonnet-4-6 --provider anthropic --keywords travel,booking
+agentzero agents get --id agent_abc123
+agentzero agents update --id agent_abc123 --model gpt-4o
+agentzero agents delete --id agent_abc123
+```
+
+### `/talk` — send a message to a specific agent
+
+```bash
+agentzero talk reviewer "Check the latest PR for issues"
+agentzero talk coder "Add input validation to the signup endpoint"
+```
+
+This is equivalent to using `@agent` routing but as a dedicated command.
+
+### `/thread` — manage conversation threads
+
+```bash
+agentzero thread list            # List active threads
+agentzero thread show <id>       # Show thread messages
+agentzero thread new             # Start a new thread
+```
+
+### `/broadcast` — send a message to all agents
+
+```bash
+agentzero broadcast "Project deadline moved to Friday — adjust priorities"
+```
+
+All configured agents receive the message. Responses are collected and returned. Useful for announcements or coordination signals.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -335,3 +492,6 @@ See [examples/business-office/](https://github.com/auser/agentzero/tree/main/exa
 | `converse` tool not available | Not in `allowed_tools` | Add `"converse"` to the agent's `allowed_tools` |
 | Conversation stops unexpectedly | Turn limit reached | Increase `max_turns` in `[*.conversation]` |
 | Conversation timeout | Agent takes too long to respond | Increase `turn_timeout_secs` |
+| `@agent` routing not working | No agent with that name defined | Check `agents/` directory and `[agents.*]` in config |
+| Markdown agent not loading | File not in `agents/` directory | Ensure the file is at `<project-root>/agents/<name>.md` |
+| Thread context missing | Wrong `thread_id` | Use `agentzero thread list` to find the correct ID |

@@ -1,0 +1,25 @@
+# Chatbot Example — Minimal single-agent configuration
+#
+# The simplest possible AgentZero setup: one agent with basic tools.
+# Great as a first example for new users.
+#
+# Usage:
+#   export ANTHROPIC_API_KEY="sk-..."
+#   agentzero agent -m "Hello, what can you do?" --config examples/chatbot/config.toml
+
+[provider]
+kind = "anthropic"
+model = "claude-sonnet-4-6"
+
+[memory]
+backend = "sqlite"
+sqlite_path = "./chatbot.db"
+
+[agent]
+mode = "development"
+max_tool_iterations = 10
+memory_window_size = 20
+
+[security]
+allowed_root = "."
+allowed_commands = ["ls", "pwd", "cat", "head", "tail", "find", "grep", "wc", "echo", "date"]

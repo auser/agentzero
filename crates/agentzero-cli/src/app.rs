@@ -223,5 +223,62 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             )
             .await
         }
+        Commands::Chat {
+            message,
+            provider,
+            model,
+        } => {
+            commands::agent::AgentCommand::run(
+                &ctx,
+                commands::agent::AgentOptions {
+                    message,
+                    provider,
+                    model,
+                    profile: None,
+                    stream: true,
+                },
+            )
+            .await
+        }
+        Commands::Ask { message } => {
+            let msg = message.join(" ");
+            if msg.is_empty() {
+                anyhow::bail!(
+                    "usage: agentzero ask <message>\n\nExample: agentzero ask write me a haiku"
+                );
+            }
+            commands::agent::AgentCommand::run(
+                &ctx,
+                commands::agent::AgentOptions {
+                    message: msg,
+                    provider: None,
+                    model: None,
+                    profile: None,
+                    stream: false,
+                },
+            )
+            .await
+        }
+        Commands::Setup { interactive, yes } => {
+            commands::onboard::OnboardCommand::run(
+                &ctx,
+                commands::onboard::OnboardOptions {
+                    interactive,
+                    force: false,
+                    channels_only: false,
+                    api_key: None,
+                    yes,
+                    provider: None,
+                    base_url: None,
+                    model: None,
+                    memory: None,
+                    memory_path: None,
+                    no_totp: false,
+                    allowed_root: None,
+                    allowed_commands: Vec::new(),
+                },
+            )
+            .await
+        }
     }
 }

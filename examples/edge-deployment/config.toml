@@ -1,0 +1,38 @@
+# Edge Deployment Example — Lightweight mode for resource-constrained devices
+#
+# Designed for Raspberry Pi, embedded systems, or any device where the full
+# binary is too large. Uses remote tool execution to delegate heavy tools
+# to a full-featured node.
+#
+# Usage:
+#   export OPENROUTER_API_KEY="sk-..."
+#   agentzero gateway --config examples/edge-deployment/config.toml
+
+[provider]
+kind = "openrouter"
+model = "anthropic/claude-haiku-4-5"
+
+[memory]
+backend = "sqlite"
+sqlite_path = "./edge.db"
+
+[agent]
+mode = "production"
+max_tool_iterations = 5
+memory_window_size = 10
+request_timeout_ms = 60000
+
+[security]
+allowed_root = "."
+allowed_commands = ["ls", "pwd", "cat", "date", "uname", "df", "free", "uptime"]
+
+[gateway]
+host = "0.0.0.0"
+port = 8080
+
+# Cost controls for edge deployment
+[cost]
+enabled = true
+daily_limit_usd = 1.0
+monthly_limit_usd = 10.0
+warn_at_percent = 80

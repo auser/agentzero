@@ -9,6 +9,43 @@ This guide walks you through every step to get AgentZero running, from installat
 If you just want a bot responding on Telegram, Discord, or Slack with tools enabled, see [Always-On Agent in 5 Minutes](/agentzero/guides/always-on/).
 :::
 
+## Zero-Config Mode
+
+If you just want to try AgentZero without writing any configuration files, set an API key environment variable and run:
+
+```bash
+# Anthropic
+ANTHROPIC_API_KEY=sk-ant-... agentzero run "hello"
+
+# OpenAI
+OPENAI_API_KEY=sk-... agentzero run "hello"
+
+# OpenRouter (access all models)
+OPENAI_API_KEY=sk-or-v1-... agentzero run "hello"
+```
+
+Zero-config mode auto-detects the provider from the environment variable name and applies the `sandbox` security preset. No `agentzero.toml` file is needed.
+
+### Security presets
+
+When running without a config file, AgentZero applies a security preset. You can select one explicitly:
+
+```bash
+agentzero run --preset sandbox "list files in this directory"
+agentzero run --preset dev "fix the failing test in src/lib.rs"
+agentzero run --preset full "deploy the staging environment"
+```
+
+| Preset | Read Tools | Write Tools | Network Tools | Shell Commands |
+|---|---|---|---|---|
+| `sandbox` (default) | Enabled | Disabled | Disabled | `ls`, `pwd`, `cat`, `echo` |
+| `dev` | Enabled | Enabled | Enabled | Common dev tools (`git`, `cargo`, `npm`, `grep`, `find`, etc.) |
+| `full` | Enabled | Enabled | Enabled | All commands (use with caution) |
+
+The `sandbox` preset is safe for exploration. Use `dev` for development workflows where the agent needs to read and write files, run tests, and access the network. Use `full` only in trusted environments.
+
+---
+
 ## Prerequisites
 
 You need **one** of the following:

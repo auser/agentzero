@@ -26,6 +26,40 @@ agentzero [OPTIONS] <COMMAND>
 
 ---
 
+## Simplified CLI
+
+Running `agentzero --help` shows the 8 essential commands most users need. Operational commands (daemon, service, cron, memory, etc.) still work but are hidden from the default help output to reduce noise.
+
+### Command aliases
+
+| Alias | Equivalent | Description |
+|---|---|---|
+| `agentzero run "hello"` | `agentzero agent -m "hello"` | Send a one-shot message |
+| `agentzero chat` | `agentzero agent --interactive` | Start an interactive chat session |
+| `agentzero ask "question"` | `agentzero agent -m "question"` | Alias for `run` |
+| `agentzero setup` | `agentzero onboard --interactive` | Interactive configuration wizard |
+
+These aliases make common operations faster. The original commands continue to work with all their flags.
+
+### Essential commands (shown in --help)
+
+```bash
+agentzero run "message"       # Send a one-shot message
+agentzero chat                # Interactive chat session
+agentzero setup               # Interactive configuration wizard
+agentzero status              # Quick health check
+agentzero skill add <name>    # Install a skill
+agentzero tools list          # List available tools
+agentzero auth login          # Configure credentials
+agentzero --help              # Show this list
+```
+
+### Operational commands (hidden from --help, still available)
+
+All commands documented below continue to work. Run `agentzero <command> --help` for details on any specific command, or `agentzero --help-all` to see every command.
+
+---
+
 ## Core Commands
 
 ### `agent`

@@ -4,25 +4,42 @@ A lightweight, security-first agent runtime and CLI built entirely in Rust. Sing
 
 ## Quick start
 
+### Zero-config (fastest)
+
+Set an API key and go — no config file needed:
+
+```bash
+# Anthropic
+ANTHROPIC_API_KEY=sk-ant-... agentzero run "hello"
+
+# OpenAI
+OPENAI_API_KEY=sk-... agentzero run "hello"
+
+# OpenRouter (access all models)
+OPENAI_API_KEY=sk-or-v1-... agentzero run "hello"
+```
+
+### Full setup
+
 ```bash
 # Install
 curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash
 
 # Configure (interactive wizard)
-agentzero onboard --interactive
+agentzero setup
 
 # Set your API key (or use `agentzero auth setup-token`)
 export OPENAI_API_KEY="sk-..."
 
 # Send a message
-agentzero agent -m "Hello, what can you do?"
+agentzero run "Hello, what can you do?"
 ```
 
 ### Use a local model (no API key needed)
 
 ```bash
 agentzero onboard --provider ollama --model llama3.1:8b --yes
-agentzero agent -m "Hello"
+agentzero run "Hello"
 ```
 
 ### Use Anthropic directly
@@ -30,7 +47,7 @@ agentzero agent -m "Hello"
 ```bash
 agentzero onboard --provider anthropic --model claude-sonnet-4-6 --yes
 export ANTHROPIC_API_KEY="sk-ant-..."
-agentzero agent -m "Hello"
+agentzero run "Hello"
 ```
 
 ### Use OpenRouter (access all models)
@@ -38,7 +55,7 @@ agentzero agent -m "Hello"
 ```bash
 agentzero onboard --provider openrouter --model anthropic/claude-sonnet-4-6 --yes
 export OPENAI_API_KEY="sk-or-v1-..."
-agentzero agent -m "Hello"
+agentzero run "Hello"
 ```
 
 ## What it does
@@ -47,16 +64,61 @@ AgentZero runs an agentic loop: you send a message, the agent reasons about it, 
 
 ```bash
 # Multi-step task — the agent figures out the tool calls
-agentzero agent -m "Find all Rust files with TODO comments and list them with line numbers"
+agentzero run "Find all Rust files with TODO comments and list them with line numbers"
+
+# Interactive chat session
+agentzero chat
 
 # Streaming output
-agentzero agent -m "Explain this codebase" --stream
+agentzero run "Explain this codebase" --stream
 
 # Override provider/model for one request
-agentzero agent -m "Hello" --provider openai --model gpt-4o
+agentzero run "Hello" --provider openai --model gpt-4o
 
 # Debug mode — see every tool call
-agentzero -vvv agent -m "your task"
+agentzero -vvv run "your task"
+```
+
+## Skills
+
+Skills are installable behavior packages that extend the agent with tools, personas, and configuration:
+
+```bash
+# Install a skill from the built-in catalog
+agentzero skill add code-reviewer
+
+# The agent now knows how to review code
+agentzero run "Review the changes in the last commit"
+
+# Other built-in skills
+agentzero skill add research-assistant
+agentzero skill add scheduler
+agentzero skill add devops-monitor
+```
+
+See the [Skills Guide](https://auser.github.io/agentzero/guides/skills/) for creating custom skills and workflow packs.
+
+## Agent Definitions
+
+Define specialized agents as Markdown files in the `agents/` directory:
+
+```markdown
+<!-- agents/reviewer.md -->
+---
+provider: anthropic
+model: claude-sonnet-4-6
+allowed_tools: [read_file, git_operations, content_search]
+---
+
+# Reviewer
+You are a senior code reviewer. Analyze diffs for correctness, security, and style.
+```
+
+Route messages to specific agents with the `@agent` prefix:
+
+```bash
+agentzero run "@reviewer check the last commit for security issues"
+agentzero run "@coder implement rate limiting in src/middleware.rs"
 ```
 
 ## Features at a glance
@@ -254,12 +316,27 @@ Gateway endpoints:
 
 ## CLI commands
 
+### Essential commands (shown in `--help`)
+
 ```bash
-agentzero onboard          # Interactive setup
-agentzero agent -m "..."   # Send a message
+agentzero run "message"       # Send a one-shot message (alias: ask)
+agentzero chat                # Interactive chat session
+agentzero setup               # Interactive configuration wizard
+agentzero status              # Quick health check
+agentzero skill add <name>    # Install a skill
+agentzero tools list          # List available tools
+agentzero auth login          # Configure credentials
+```
+
+### All commands
+
+```bash
+agentzero onboard          # Interactive setup (same as `setup`)
+agentzero agent -m "..."   # Send a message (same as `run`)
 agentzero agents list      # Manage persistent agents
+agentzero talk <agent> "m" # Send message to a specific agent
+agentzero broadcast "msg"  # Send message to all agents
 agentzero gateway          # Start HTTP gateway
-agentzero status           # Quick status check
 agentzero doctor models    # Diagnose model availability
 agentzero providers        # List supported providers
 agentzero models list      # List available models
@@ -267,7 +344,6 @@ agentzero config show      # View effective config
 agentzero auth list        # Manage credentials
 agentzero cron list        # Manage scheduled tasks
 agentzero memory list      # Inspect memory store
-agentzero tools list       # List available tools
 agentzero dashboard        # Interactive terminal dashboard
 agentzero daemon start     # Background daemon
 agentzero service install  # OS service (systemd/OpenRC)

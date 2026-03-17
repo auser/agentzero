@@ -377,6 +377,36 @@ pub enum Commands {
         #[arg(long)]
         native: bool,
     },
+    /// Alias for `agent --stream` — interactive chat mode.
+    #[command(hide = true)]
+    Chat {
+        /// User message text to send.
+        #[arg(short, long)]
+        message: String,
+        /// Override the provider.
+        #[arg(short, long)]
+        provider: Option<String>,
+        /// Override the model name.
+        #[arg(long)]
+        model: Option<String>,
+    },
+    /// Alias for `run` — ask a quick question.
+    #[command(hide = true)]
+    Ask {
+        /// Message (positional).
+        #[arg(trailing_var_arg = true)]
+        message: Vec<String>,
+    },
+    /// Alias for `onboard` — setup wizard.
+    #[command(hide = true)]
+    Setup {
+        /// Run the full interactive wizard.
+        #[arg(long)]
+        interactive: bool,
+        /// Skip prompts and auto-accept defaults.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

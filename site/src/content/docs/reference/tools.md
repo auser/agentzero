@@ -555,22 +555,66 @@ For the full ABI specification, host callbacks, and manifest schema, see the [Pl
 
 ---
 
+## ToolRegistry Builder Pattern
+
+Tools are assembled at startup using the `ToolRegistry` builder. The registry collects native tools, WASM plugins, MCP server tools, and skill-provided tools into a single unified set that the agent loop iterates over.
+
+### How it works
+
+```rust
+let registry = ToolRegistry::builder()
+    .add_defaults()                    // 50+ built-in tools
+    .add_plugins(&plugin_dir)?         // WASM plugins from discovery paths
+    .add_mcp_tools(&mcp_config)?      // MCP server tools
+    .add_skill_tools(&skill_dir)?     // Tools provided by installed skills
+    .apply_policy(&security_policy)    // Filter by ToolSecurityPolicy
+    .build();
+```
+
+Each step is additive — tools from later steps can override earlier ones with the same name. The final `.apply_policy()` call filters the registry against the active `ToolSecurityPolicy`, removing any tools that are not permitted.
+
+### How skills provide tools
+
+Skills can contribute tools through three mechanisms:
+
+| Mechanism | How | Isolation |
+|---|---|---|
+| WASM plugin | `extensions/*.wasm` + `manifest.json` in the skill package | Sandboxed (same as regular WASM plugins) |
+| Script tool | `extensions/*.sh` or `extensions/*.py` — executed as subprocess with JSON stdin/stdout | OS process isolation |
+| HTTP bridge | `extensions/*.json` — proxies tool calls to an HTTP endpoint | Network boundary |
+
+Skill-provided tools are namespaced as `skill__{skill_name}__{tool_name}` to avoid collisions with built-in tools. The agent sees them in `tools list` alongside native tools.
+
+### Security presets
+
+When running in zero-config mode (no `agentzero.toml`), the `ToolSecurityPolicy` is derived from a preset:
+
+| Preset | `read_file` | `write_file` | `shell` | `web_search` | `http_request` |
+|---|---|---|---|---|---|
+| `sandbox` | Enabled | Disabled | Limited (`ls`, `pwd`, `cat`, `echo`) | Disabled | Disabled |
+| `dev` | Enabled | Enabled | Common dev tools | Enabled | Enabled |
+| `full` | Enabled | Enabled | All commands | Enabled | Enabled |
+
+Select a preset with `agentzero run --preset dev "task"`. When a config file is present, the preset is ignored and the explicit `[security]` section takes effect.
+
+---
+
 ## Skills
 
-Skills are higher-level composable behaviors built on top of tools.
+Skills are reusable agent behavior packages that can bundle tools, personas, and configuration. See the [Skills Guide](/agentzero/guides/skills/) for the full walkthrough.
 
 ```bash
+# Install a skill from the built-in catalog
+agentzero skill add code-reviewer
+
 # List installed skills
 agentzero skill list
 
-# Install a skill
-agentzero skill install --name my-skill --source local
-
-# Test a skill
-agentzero skill test --name my-skill
+# Show skill details
+agentzero skill info code-reviewer
 
 # Remove a skill
-agentzero skill remove --name my-skill
+agentzero skill remove code-reviewer
 ```
 
 ---

@@ -1,0 +1,64 @@
+# Multi-Agent Team — Researcher + Writer + Reviewer
+#
+# Three agents collaborate on tasks via delegation and IPC.
+# The router classifies incoming messages and dispatches to the best agent.
+#
+# Usage:
+#   export OPENROUTER_API_KEY="sk-..."
+#   agentzero gateway --config examples/multi-agent-team/config.toml
+
+[provider]
+kind = "openrouter"
+model = "anthropic/claude-sonnet-4-6"
+
+[memory]
+backend = "sqlite"
+sqlite_path = "./team.db"
+
+[agent]
+mode = "development"
+max_tool_iterations = 15
+memory_window_size = 30
+
+[security]
+allowed_root = "."
+allowed_commands = ["ls", "pwd", "cat", "head", "tail", "find", "grep", "wc", "diff", "git", "echo", "date"]
+
+[security.write_file]
+enabled = true
+max_write_bytes = 65536
+
+[swarm]
+enabled = true
+event_bus = "memory"
+
+[swarm.router]
+provider = "openrouter"
+model = "anthropic/claude-haiku-4-5"
+
+[swarm.agents.researcher]
+name = "Researcher"
+description = "Researches topics using web search and file reading. Expert at finding information and synthesizing sources."
+keywords = ["research", "find", "search", "investigate", "look up", "what is"]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4-6"
+allowed_tools = ["read_file", "glob_search", "content_search", "web_search", "web_fetch", "delegate", "agents_ipc", "memory_store", "memory_recall"]
+system_prompt = "You are a research specialist. When given a topic, search for information, read relevant files, and produce well-sourced research briefs. Delegate writing tasks to @writer."
+
+[swarm.agents.writer]
+name = "Writer"
+description = "Writes and edits documents, code, and reports based on research and instructions."
+keywords = ["write", "create", "draft", "document", "report", "code"]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4-6"
+allowed_tools = ["read_file", "write_file", "file_edit", "glob_search", "content_search", "shell", "git_operations", "delegate", "agents_ipc", "memory_store", "memory_recall"]
+system_prompt = "You are a writing specialist. Create clear, well-structured documents based on research and instructions. When your work needs review, delegate to @reviewer."
+
+[swarm.agents.reviewer]
+name = "Reviewer"
+description = "Reviews code and documents for quality, correctness, and style. Provides constructive feedback."
+keywords = ["review", "check", "audit", "feedback", "quality"]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4-6"
+allowed_tools = ["read_file", "glob_search", "content_search", "shell", "git_operations", "delegate", "agents_ipc", "memory_store", "memory_recall"]
+system_prompt = "You are a review specialist. Analyze code and documents for bugs, security issues, and style problems. Provide specific, actionable feedback with line numbers. If changes are needed, delegate to @writer."

@@ -589,7 +589,15 @@ struct BuiltinTemplate {
 
 /// List available built-in skill template names.
 pub fn list_builtin_skills() -> Vec<&'static str> {
-    vec!["code-reviewer", "scheduler", "research-assistant"]
+    vec![
+        "code-reviewer",
+        "scheduler",
+        "research-assistant",
+        "telegram-bot",
+        "discord-bot",
+        "slack-bot",
+        "devops-monitor",
+    ]
 }
 
 fn get_builtin_template(name: &str) -> anyhow::Result<BuiltinTemplate> {
@@ -669,6 +677,115 @@ When the user asks follow-up questions, build on previous research context.
 "#.to_string()),
             config_toml: None,
             readme: Some("# Research Assistant Skill\n\nWeb research and synthesis agent.\n\n## Usage\n\n```\nagentzero run \"@research-assistant what are the latest developments in WebAssembly?\"\n```\n".to_string()),
+        }),
+        "telegram-bot" => Ok(BuiltinTemplate {
+            skill_toml: r#"[skill]
+name = "telegram-bot"
+version = "0.1.0"
+description = "Telegram bot channel integration for AgentZero"
+keywords = ["telegram", "channel", "bot"]
+provides = ["channel", "agent"]
+"#.to_string(),
+            agent_md: Some(r#"---
+name: telegram-bot
+---
+
+You are a Telegram bot manager. You handle incoming messages from Telegram, route them to the appropriate agent or skill, and send responses back through the Telegram Bot API.
+
+Responsibilities:
+1. Process incoming Telegram messages and commands
+2. Route conversations to the correct agent based on context
+3. Format responses appropriately for Telegram (Markdown, inline keyboards)
+4. Manage bot commands and menu configuration
+5. Handle media messages (photos, documents, voice) when supported
+"#.to_string()),
+            config_toml: Some(r#"[channels.telegram]
+bot_token = "YOUR_TELEGRAM_BOT_TOKEN"
+"#.to_string()),
+            readme: Some("# Telegram Bot Skill\n\nTelegram bot channel integration for AgentZero.\n\n## Setup\n\n1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram\n2. Copy the bot token\n3. Set `bot_token` in the generated `config.toml` or via `TELEGRAM_BOT_TOKEN` env var\n4. Run `agentzero channel add telegram`\n\n## Usage\n\n```\nagentzero skill install telegram-bot\nagentzero channel add telegram\nagentzero daemon start\n```\n".to_string()),
+        }),
+        "discord-bot" => Ok(BuiltinTemplate {
+            skill_toml: r#"[skill]
+name = "discord-bot"
+version = "0.1.0"
+description = "Discord bot channel integration for AgentZero"
+keywords = ["discord", "channel", "bot"]
+provides = ["channel", "agent"]
+"#.to_string(),
+            agent_md: Some(r#"---
+name: discord-bot
+---
+
+You are a Discord bot manager. You handle incoming messages from Discord servers, route them to the appropriate agent or skill, and send responses back through the Discord API.
+
+Responsibilities:
+1. Process incoming Discord messages and slash commands
+2. Route conversations to the correct agent based on channel and context
+3. Format responses with Discord embeds and components when appropriate
+4. Manage slash command registration and permissions
+5. Handle threads, reactions, and other Discord-specific interactions
+"#.to_string()),
+            config_toml: Some(r#"[channels.discord]
+bot_token = "YOUR_DISCORD_BOT_TOKEN"
+"#.to_string()),
+            readme: Some("# Discord Bot Skill\n\nDiscord bot channel integration for AgentZero.\n\n## Setup\n\n1. Create a Discord application at https://discord.com/developers/applications\n2. Create a bot user and copy the token\n3. Set `bot_token` in the generated `config.toml` or via `DISCORD_BOT_TOKEN` env var\n4. Invite the bot to your server with the appropriate permissions\n\n## Usage\n\n```\nagentzero skill install discord-bot\nagentzero channel add discord\nagentzero daemon start\n```\n".to_string()),
+        }),
+        "slack-bot" => Ok(BuiltinTemplate {
+            skill_toml: r#"[skill]
+name = "slack-bot"
+version = "0.1.0"
+description = "Slack bot channel integration for AgentZero"
+keywords = ["slack", "channel", "bot"]
+provides = ["channel", "agent"]
+"#.to_string(),
+            agent_md: Some(r#"---
+name: slack-bot
+---
+
+You are a Slack bot manager. You handle incoming messages from Slack workspaces, route them to the appropriate agent or skill, and send responses back through the Slack API.
+
+Responsibilities:
+1. Process incoming Slack messages, mentions, and slash commands
+2. Route conversations to the correct agent based on channel and context
+3. Format responses with Slack Block Kit for rich messaging
+4. Manage app home tab and shortcut configurations
+5. Handle threads, reactions, and file uploads
+"#.to_string()),
+            config_toml: Some(r#"[channels.slack]
+bot_token = "YOUR_SLACK_BOT_TOKEN"
+app_token = "YOUR_SLACK_APP_TOKEN"
+"#.to_string()),
+            readme: Some("# Slack Bot Skill\n\nSlack bot channel integration for AgentZero.\n\n## Setup\n\n1. Create a Slack app at https://api.slack.com/apps\n2. Enable Socket Mode and generate an app-level token\n3. Install the app to your workspace and copy the bot token\n4. Set `bot_token` and `app_token` in the generated `config.toml` or via environment variables\n\n## Usage\n\n```\nagentzero skill install slack-bot\nagentzero channel add slack\nagentzero daemon start\n```\n".to_string()),
+        }),
+        "devops-monitor" => Ok(BuiltinTemplate {
+            skill_toml: r#"[skill]
+name = "devops-monitor"
+version = "0.1.0"
+description = "DevOps monitoring agent for health checks, alerts, and log analysis"
+keywords = ["devops", "monitoring", "health"]
+provides = ["agent"]
+"#.to_string(),
+            agent_md: Some(r#"---
+name: devops-monitor
+---
+
+You are a DevOps monitoring agent. You perform health checks, analyze logs, detect anomalies, and alert on infrastructure issues.
+
+Responsibilities:
+1. **Health checks**: Monitor service endpoints and report availability
+2. **Log analysis**: Parse and summarize log files, identify error patterns and anomalies
+3. **Alerting**: Notify when services are degraded or thresholds are exceeded
+4. **Diagnostics**: Help troubleshoot issues by correlating events across services
+5. **Reporting**: Generate status summaries and incident timelines
+
+When analyzing logs, look for:
+- Error rate spikes and new error patterns
+- Latency increases and timeout patterns
+- Resource exhaustion signals (disk, memory, connections)
+- Security-relevant events (failed auth, unusual access patterns)
+"#.to_string()),
+            config_toml: None,
+            readme: Some("# DevOps Monitor Skill\n\nDevOps monitoring agent for health checks, alerts, and log analysis.\n\n## Usage\n\n```\nagentzero skill install devops-monitor\nagentzero run \"@devops-monitor check the health of all services\"\nagentzero run \"@devops-monitor analyze the last hour of logs for errors\"\n```\n\n## Scheduling\n\nCombine with the scheduler skill for periodic health checks:\n\n```\nagentzero run \"@scheduler run @devops-monitor health check every 5 minutes\"\n```\n".to_string()),
         }),
         other => bail!(
             "unknown built-in skill `{other}`. Available: {}",

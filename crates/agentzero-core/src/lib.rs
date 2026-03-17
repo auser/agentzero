@@ -6,6 +6,7 @@
 
 pub mod agent;
 pub mod agent_store;
+pub mod at_routing;
 pub mod common;
 pub mod delegation;
 pub mod event_bus;
@@ -23,6 +24,7 @@ pub mod validation;
 pub use tracing;
 
 pub use agent::Agent;
+pub use at_routing::parse_at_mention;
 pub use event_bus::{Event, EventBus, EventSubscriber, FileBackedBus, InMemoryBus};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
