@@ -93,6 +93,7 @@ pub enum Commands {
     },
     /// Start the HTTP gateway server.
     #[cfg(feature = "gateway")]
+    #[command(hide = true)]
     Gateway {
         /// Host interface to bind (default: 127.0.0.1).
         #[arg(long)]
@@ -105,6 +106,7 @@ pub enum Commands {
         new_pairing: bool,
     },
     /// Manage the background daemon process.
+    #[command(hide = true)]
     Daemon {
         #[command(subcommand)]
         command: DaemonCommands,
@@ -143,6 +145,7 @@ pub enum Commands {
         command: CronCommands,
     },
     /// Manage lifecycle hooks and diagnostics.
+    #[command(hide = true)]
     Hooks {
         #[command(subcommand)]
         command: HookCommands,
@@ -153,17 +156,20 @@ pub enum Commands {
         command: SkillCommands,
     },
     /// Manage secure tunnel lifecycle.
+    #[command(hide = true)]
     Tunnel {
         #[command(subcommand)]
         command: TunnelCommands,
     },
     /// Plugin developer lifecycle commands.
     #[cfg(feature = "plugins")]
+    #[command(hide = true)]
     Plugin {
         #[command(subcommand)]
         command: PluginCommands,
     },
     /// List supported AI providers.
+    #[command(hide = true)]
     Providers {
         /// Emit machine-readable JSON output.
         #[arg(long)]
@@ -173,6 +179,7 @@ pub enum Commands {
         no_color: bool,
     },
     /// Engage, inspect, and resume emergency-stop states.
+    #[command(hide = true)]
     Estop {
         /// Level used when engaging estop from `agentzero estop`.
         #[arg(long, value_enum)]
@@ -190,46 +197,55 @@ pub enum Commands {
         command: Option<EstopCommands>,
     },
     /// Manage channels.
+    #[command(hide = true)]
     Channel {
         #[command(subcommand)]
         command: ChannelCommands,
     },
     /// Browse and validate integrations.
+    #[command(hide = true)]
     Integrations {
         #[command(subcommand)]
         command: IntegrationsCommands,
     },
     /// Discover and manage local AI model services.
+    #[command(hide = true)]
     Local {
         #[command(subcommand)]
         command: LocalCommands,
     },
     /// Manage provider model catalogs.
+    #[command(hide = true)]
     Models {
         #[command(subcommand)]
         command: ModelCommands,
     },
     /// Evaluate approval requirements for high-risk actions.
+    #[command(hide = true)]
     Approval {
         #[command(subcommand)]
         command: ApprovalCommands,
     },
     /// Manage actor identities and roles.
+    #[command(hide = true)]
     Identity {
         #[command(subcommand)]
         command: IdentityCommands,
     },
     /// Inspect and update coordination runtime status.
+    #[command(hide = true)]
     Coordination {
         #[command(subcommand)]
         command: CoordinationCommands,
     },
     /// Inspect and update accumulated runtime cost summary.
+    #[command(hide = true)]
     Cost {
         #[command(subcommand)]
         command: CostCommands,
     },
     /// Manage runtime goals.
+    #[command(hide = true)]
     Goals {
         #[command(subcommand)]
         command: GoalCommands,
@@ -237,11 +253,13 @@ pub enum Commands {
     /// Show a minimal status summary and recent memory count.
     Status,
     /// Run diagnostics for daemon/scheduler/channel freshness.
+    #[command(hide = true)]
     Doctor {
         #[command(subcommand)]
         command: DoctorCommands,
     },
     /// Manage OS service lifecycle.
+    #[command(hide = true)]
     Service {
         /// Init system to use: auto (detect), systemd, or openrc.
         #[arg(long, value_enum, default_value_t = ServiceInit::Auto)]
@@ -251,13 +269,16 @@ pub enum Commands {
     },
     /// Launch interactive terminal dashboard.
     #[cfg(feature = "tui")]
+    #[command(hide = true)]
     Dashboard,
     /// Migrate data from external runtimes.
+    #[command(hide = true)]
     Migrate {
         #[command(subcommand)]
         command: MigrateCommands,
     },
     /// Self-update operations.
+    #[command(hide = true)]
     Update {
         /// Check for updates without installing.
         #[arg(long)]
@@ -266,42 +287,50 @@ pub enum Commands {
         command: Option<UpdateCommands>,
     },
     /// Emit shell completion script to stdout.
+    #[command(hide = true)]
     Completions {
         /// Shell type to generate completions for.
         #[arg(long, value_enum)]
         shell: CompletionShell,
     },
     /// Configuration inspection commands.
+    #[command(hide = true)]
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
     },
     /// Memory store inspection and maintenance commands.
+    #[command(hide = true)]
     Memory {
         #[command(subcommand)]
         command: MemoryCommands,
     },
     /// Conversation branching and management commands.
+    #[command(hide = true)]
     Conversation {
         #[command(subcommand)]
         command: ConversationCommands,
     },
     /// Retrieval-augmented generation index operations.
+    #[command(hide = true)]
     Rag {
         #[command(subcommand)]
         command: RagCommands,
     },
     /// Hardware discovery and inspection commands (feature-gated runtime).
+    #[command(hide = true)]
     Hardware {
         #[command(subcommand)]
         command: HardwareCommands,
     },
     /// Peripheral registry commands (feature-gated runtime).
+    #[command(hide = true)]
     Peripheral {
         #[command(subcommand)]
         command: PeripheralCommands,
     },
     /// Inspect provider quotas, rate limits, and circuit breaker state.
+    #[command(hide = true)]
     ProvidersQuota {
         /// Provider name (defaults to configured default provider).
         #[arg(long)]
@@ -311,27 +340,32 @@ pub enum Commands {
         json: bool,
     },
     /// Template management — discover, scaffold, and validate template files.
+    #[command(hide = true)]
     Template {
         #[command(subcommand)]
         command: TemplateCommands,
     },
     /// Inspect registered tool definitions and schemas.
+    #[command(hide = true)]
     Tools {
         #[command(subcommand)]
         command: ToolsCommands,
     },
     /// Privacy mode status and key management.
+    #[command(hide = true)]
     Privacy {
         #[command(subcommand)]
         command: PrivacyCommands,
     },
     /// Export and import encrypted data stores for backup and disaster recovery.
+    #[command(hide = true)]
     Backup {
         #[command(subcommand)]
         command: BackupCommands,
     },
     /// Open the visual node graph configuration editor.
     #[cfg(feature = "config-ui")]
+    #[command(hide = true)]
     ConfigUi {
         /// Port for the config UI server.
         #[arg(long, default_value_t = 42618)]

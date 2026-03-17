@@ -736,10 +736,10 @@ Config file becomes optional power layer, not required.
 
 Clean UI with 9 top-level commands, rest under `admin`.
 
-- [ ] **CLI restructure** — Top-level: run, agent, agents, onboard, status, auth, skill, cron, admin
-- [ ] **Admin subcommand** — All operational commands nested under `agentzero admin`
+- [x] **CLI restructure** — Top-level: run, agent, agents, onboard, status, auth, skill, cron. All others hidden from --help.
+- [x] **Hidden admin commands** — Gateway, daemon, service, estop, channel, tunnel, plugin, providers, hooks, etc. still work but hidden from top-level help.
 - [ ] **Aliases** — `chat`, `ask`, `setup`
-- [ ] **Backward compat** — Old commands work via hidden aliases
+- [x] **Backward compat** — All commands still work, just hidden from --help
 - [ ] **Site docs** — Update `site/src/content/docs/reference/commands.md`
 
 ### Phase 5: Tool Registry Cleanup (MEDIUM)
