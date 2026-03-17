@@ -38,3 +38,4 @@ research
 **/target
 ui/test-results/
 .agentzero/
+ui/.vite/
