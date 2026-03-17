@@ -9,6 +9,7 @@ mod model;
 mod policy;
 mod templates;
 pub mod watcher;
+pub mod writer;
 
 pub use loader::{load, load_env_var, update_auto_approve};
 pub use model::{

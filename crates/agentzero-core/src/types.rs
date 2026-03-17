@@ -480,6 +480,9 @@ pub struct ToolContext {
     /// Maximum cost budget in micro-dollars (0 = unlimited).
     #[serde(default)]
     pub max_cost_microdollars: u64,
+    /// Path to the agentzero.toml config file (for self-configuration tools).
+    #[serde(default)]
+    pub config_path: Option<String>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -534,6 +537,7 @@ impl ToolContext {
             event_bus: None,
             agent_id: None,
             conversation_id: None,
+            config_path: None,
             depth: 0,
             run_id: None,
             parent_run_id: None,
@@ -544,6 +548,11 @@ impl ToolContext {
             max_tokens: 0,
             max_cost_microdollars: 0,
         }
+    }
+
+    /// Create a default context for the given workspace root (for tests and tools).
+    pub fn default_for_workspace(workspace_root: &str) -> Self {
+        Self::new(workspace_root.to_string())
     }
 
     /// Check if this execution has been cancelled.

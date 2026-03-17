@@ -99,6 +99,7 @@ pub fn load_tool_security_policy(
         enable_autopilot: config.autopilot.enabled,
         enable_agent_manage: config.agent.enable_agent_manage,
         enable_domain_tools: config.agent.enable_domain_tools,
+        enable_self_config: config.agent.enable_self_config,
         enable_wasm_plugins: config.security.plugin.wasm_enabled,
         wasm_global_plugin_dir: config.security.plugin.global_plugin_dir.map(PathBuf::from),
         wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),

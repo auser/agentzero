@@ -498,6 +498,43 @@ pub(crate) struct ConfigUpdateResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Cron endpoints (/v1/cron)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CronJobResponse {
+    pub(crate) id: String,
+    pub(crate) schedule: String,
+    pub(crate) message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) agent_id: Option<String>,
+    pub(crate) enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CronListResponse {
+    pub(crate) jobs: Vec<CronJobResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CreateCronRequest {
+    pub(crate) schedule: String,
+    pub(crate) message: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpdateCronRequest {
+    #[serde(default)]
+    pub(crate) enabled: Option<bool>,
+    #[serde(default)]
+    pub(crate) schedule: Option<String>,
+    #[serde(default)]
+    pub(crate) message: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Memory endpoints (/v1/memory)
 // ---------------------------------------------------------------------------
 

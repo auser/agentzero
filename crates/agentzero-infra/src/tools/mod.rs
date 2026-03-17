@@ -1,5 +1,8 @@
 mod agent_manage;
+mod config_manage;
 mod mcp;
+mod plugin_scaffold;
+mod skill_manage;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
 
@@ -12,6 +15,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use agent_manage::AgentManageTool;
+pub use config_manage::ConfigManageTool;
+pub use plugin_scaffold::PluginScaffoldTool;
+pub use skill_manage::SkillManageTool;
 
 pub use agentzero_tools::{
     AgentsIpcTool, ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool,
@@ -209,6 +215,12 @@ fn default_tools_inner(
         if let Some(ref store) = agent_store {
             tools.push(Box::new(AgentManageTool::new(Arc::clone(store))));
         }
+    }
+
+    if policy.enable_self_config {
+        tools.push(Box::new(ConfigManageTool));
+        tools.push(Box::new(SkillManageTool));
+        tools.push(Box::new(PluginScaffoldTool));
     }
 
     #[cfg(feature = "wasm-plugins")]

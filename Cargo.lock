@@ -262,6 +262,7 @@ dependencies = [
  "agentzero-orchestrator",
  "agentzero-providers",
  "agentzero-storage",
+ "agentzero-tools",
  "anyhow",
  "async-stream",
  "async-trait",
