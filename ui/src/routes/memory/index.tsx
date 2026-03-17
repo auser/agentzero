@@ -78,8 +78,8 @@ function MemoryPage() {
           <p className="text-xs text-muted-foreground">{data.total} entries</p>
           <ScrollArea className="h-[60vh]">
             <div className="space-y-2 pr-2">
-              {data.data.map((entry) => (
-                <div key={entry.id} className="rounded-lg border border-border p-3 space-y-1">
+              {data.data.map((entry, i) => (
+                <div key={entry.id ?? i} className="rounded-lg border border-border p-3 space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-medium capitalize">{entry.role}</span>
