@@ -746,8 +746,8 @@ Clean UI with 9 top-level commands, rest under `admin`.
 
 Builder pattern for tool registration, supports skill-provided tools.
 
-- [ ] **ToolRegistry builder** — `with_core()`, `with_files()`, `with_network()`, `with_skill_tools()`, etc.
-- [ ] **Refactor `default_tools()`** — Replace if-chain with registry builder
+- [x] **ToolRegistry builder** — `with_core()`, `with_files()`, `with_network()`, `with_cron()`, `with_ipc()`, `with_media()`, `with_domain()`, `with_integrations()`, `with_self_config()`, `with_mcp()`, `with_wasm_plugins()`, `with_autopilot()`, `with_delegation()`, `with_preset()`. 4 tests.
+- [x] **Refactor `default_tools()`** — Replaced 200-line if-chain with 3-line `ToolRegistry::new().with_preset(...).build()`
 - [ ] **Site docs** — Update `site/src/content/docs/reference/tools.md`
 - [ ] **README.md** — Update with new CLI commands, skills system, agent conversations
 - [ ] **SPRINT.md** — Keep checkboxes current throughout implementation

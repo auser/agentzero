@@ -2,6 +2,7 @@ mod agent_manage;
 mod config_manage;
 mod mcp;
 mod plugin_scaffold;
+pub mod registry;
 mod skill_manage;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
@@ -10,7 +11,6 @@ use agentzero_core::agent_store::AgentStoreApi;
 use agentzero_core::delegation::DelegateConfig;
 use agentzero_core::routing::ModelRouter;
 use agentzero_core::{DepthPolicy, Tool};
-use agentzero_tools::ToolBuilder;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -65,217 +65,9 @@ fn default_tools_inner(
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
     agent_store: Option<Arc<dyn AgentStoreApi>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    let mut tools: Vec<Box<dyn Tool>> = vec![
-        Box::new(ReadFileTool::new(policy.read_file.clone())),
-        Box::new(ShellTool::new(policy.shell.clone())),
-        Box::new(GlobSearchTool),
-        Box::new(ContentSearchTool),
-        Box::new(MemoryStoreTool),
-        Box::new(MemoryRecallTool),
-        Box::new(MemoryForgetTool),
-        Box::new(ImageInfoTool),
-        #[cfg(feature = "document-tools")]
-        Box::new(DocxReadTool),
-        Box::new(PdfReadTool),
-        Box::new(ScreenshotTool),
-        Box::new(TaskPlanTool::default()),
-        Box::new(ProcessTool::default()),
-        Box::new(SubAgentSpawnTool::default()),
-        Box::new(SubAgentListTool),
-        Box::new(SubAgentManageTool),
-        Box::new(CliDiscoveryTool),
-        Box::new(ProxyConfigTool),
-        Box::new(DelegateCoordinationStatusTool),
-        Box::new(SopListTool),
-        Box::new(SopStatusTool),
-        Box::new(SopAdvanceTool),
-        Box::new(SopApproveTool),
-        Box::new(SopExecuteTool),
-        Box::new(HardwareBoardInfoTool),
-        Box::new(HardwareMemoryMapTool),
-        Box::new(HardwareMemoryReadTool),
-        Box::new(WasmModuleTool),
-        Box::new(WasmToolExecTool),
-    ];
-
-    if policy.enable_write_file {
-        tools.push(Box::new(WriteFileTool::new(policy.write_file.clone())));
-        tools.push(Box::new(ApplyPatchTool));
-        tools.push(Box::new(FileEditTool::new(
-            policy.write_file.allowed_root.clone(),
-            policy.write_file.max_write_bytes,
-        )));
-    }
-
-    if policy.enable_git {
-        tools.push(Box::new(GitOperationsTool::new()));
-    }
-
-    if policy.enable_cron {
-        tools.push(Box::new(CronAddTool));
-        tools.push(Box::new(CronListTool));
-        tools.push(Box::new(CronRemoveTool));
-        tools.push(Box::new(CronUpdateTool));
-        tools.push(Box::new(CronPauseTool));
-        tools.push(Box::new(CronResumeTool));
-        tools.push(Box::new(ScheduleTool));
-    }
-
-    if policy.enable_web_search {
-        tools.push(Box::new(WebSearchTool::new(
-            policy.web_search_config.clone(),
-        )));
-    }
-
-    if policy.enable_browser {
-        tools.push(Box::new(BrowserTool::default()));
-    }
-
-    if policy.enable_browser_open {
-        tools.push(Box::new(BrowserOpenTool::default()));
-    }
-
-    if policy.enable_http_request {
-        tools.push(Box::new(
-            HttpRequestTool::default().with_url_policy(policy.url_access.clone()),
-        ));
-    }
-
-    if policy.enable_web_fetch {
-        tools.push(Box::new(
-            WebFetchTool::default().with_url_policy(policy.url_access.clone()),
-        ));
-    }
-
-    #[cfg(feature = "document-tools")]
-    if policy.enable_html_extract {
-        tools.push(Box::new(HtmlExtractTool));
-    }
-
-    if policy.enable_url_validation {
-        tools.push(Box::new(
-            UrlValidationTool::default().with_url_policy(policy.url_access.clone()),
-        ));
-    }
-
-    if policy.enable_agents_ipc {
-        tools.push(Box::new(AgentsIpcTool));
-    }
-
-    if policy.enable_mcp && !policy.mcp_servers.is_empty() {
-        let mcp_tools = create_mcp_tools(&policy.mcp_servers)?;
-        tools.extend(mcp_tools);
-    }
-
-    if policy.enable_code_interpreter {
-        tools.push(Box::new(CodeInterpreterTool::default()));
-    }
-
-    if policy.enable_tts {
-        tools.push(Box::new(TtsTool::default()));
-    }
-
-    if policy.enable_image_gen {
-        tools.push(Box::new(ImageGenTool::default()));
-    }
-
-    if policy.enable_video_gen {
-        tools.push(Box::new(VideoGenTool::default()));
-    }
-
-    #[cfg(feature = "autopilot")]
-    if policy.enable_autopilot {
-        tools.push(Box::new(agentzero_autopilot::tools::ProposalCreateTool));
-        tools.push(Box::new(agentzero_autopilot::tools::ProposalVoteTool));
-        tools.push(Box::new(agentzero_autopilot::tools::MissionStatusTool));
-        tools.push(Box::new(agentzero_autopilot::tools::TriggerFireTool));
-    }
-
-    if policy.enable_domain_tools {
-        tools.push(Box::new(DomainCreateTool));
-        tools.push(Box::new(DomainUpdateTool));
-        tools.push(Box::new(DomainListTool));
-        tools.push(Box::new(DomainInfoTool));
-        tools.push(Box::new(DomainSearchTool::default()));
-        tools.push(Box::new(DomainVerifyTool::default()));
-        tools.push(Box::new(DomainWorkflowTool));
-        tools.push(Box::new(DomainLearnTool));
-        tools.push(Box::new(DomainLessonsTool));
-    }
-
-    if policy.enable_composio {
-        tools.push(Box::new(ComposioTool));
-    }
-
-    if policy.enable_pushover {
-        tools.push(Box::new(PushoverTool));
-    }
-
-    if policy.enable_agent_manage {
-        if let Some(ref store) = agent_store {
-            tools.push(Box::new(AgentManageTool::new(Arc::clone(store))));
-        }
-    }
-
-    if policy.enable_self_config {
-        tools.push(Box::new(ConfigManageTool));
-        tools.push(Box::new(SkillManageTool));
-        tools.push(Box::new(PluginScaffoldTool));
-    }
-
-    #[cfg(feature = "wasm-plugins")]
-    if policy.enable_wasm_plugins {
-        use agentzero_plugins::package::{discover_plugins, filter_by_state, PluginState};
-        use agentzero_plugins::wasm::WasmIsolationPolicy;
-
-        let discovered = discover_plugins(
-            policy.wasm_global_plugin_dir.as_deref(),
-            policy.wasm_project_plugin_dir.as_deref(),
-            policy.wasm_dev_plugin_dir.as_deref(),
-        );
-
-        // Filter out disabled plugins via state.json
-        let discovered = if let Some(ref global_dir) = policy.wasm_global_plugin_dir {
-            let state = PluginState::load(global_dir);
-            filter_by_state(discovered, &state)
-        } else {
-            discovered
-        };
-
-        let mut isolation = WasmIsolationPolicy::default();
-        // Privacy enforcement: disable network for plugins when network tools
-        // are disabled (e.g., local_only mode).
-        if !policy.enable_http_request && !policy.enable_web_fetch {
-            isolation.allow_network = false;
-        }
-        for plugin in discovered {
-            match WasmTool::from_manifest(
-                plugin.manifest.clone(),
-                plugin.wasm_path.clone(),
-                isolation.clone(),
-            ) {
-                Ok(tool) => tools.push(Box::new(tool)),
-                Err(e) => {
-                    tracing::warn!("skipping wasm plugin {}: {e}", plugin.manifest.id);
-                }
-            }
-        }
-    }
-
-    if let Some(r) = router {
-        tools.push(Box::new(ModelRoutingConfigTool::new(r)));
-    }
-
-    if let Some(agents) = delegate_agents {
-        if !agents.is_empty() {
-            let policy_for_builder = policy.clone();
-            let builder: ToolBuilder =
-                Arc::new(move || default_tools(&policy_for_builder, None, None));
-            tools.push(Box::new(DelegateTool::new(agents, 0, builder)));
-        }
-    }
-
-    Ok(tools)
+    registry::ToolRegistry::new()
+        .with_preset(policy, router, delegate_agents, agent_store.as_ref())
+        .map(|r| r.build())
 }
 
 /// Build the default tool set, then filter by depth policy.
