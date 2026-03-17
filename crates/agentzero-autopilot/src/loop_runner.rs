@@ -331,42 +331,49 @@ impl AutopilotLoop {
 
     /// Emit events for completed/failed missions and evaluate triggers + reactions.
     async fn fire_triggers(&self) {
-        let missions = self.active_missions.read().await;
+        // Collect events from terminal missions while holding only a read lock.
+        let events: Vec<AutopilotEvent> = {
+            let missions = self.active_missions.read().await;
+            missions
+                .iter()
+                .filter_map(|mission| {
+                    let event_type = match mission.status {
+                        MissionStatus::Completed => "mission.completed",
+                        MissionStatus::Failed => "mission.failed",
+                        MissionStatus::Stalled => "mission.stalled",
+                        _ => return None,
+                    };
+                    Some(
+                        AutopilotEvent::new(
+                            event_type,
+                            &mission.assigned_agent,
+                            serde_json::json!({
+                                "mission_id": mission.id,
+                                "title": mission.title,
+                            }),
+                        )
+                        .with_correlation(mission.id.clone()),
+                    )
+                })
+                .collect()
+        };
+        // Read lock on active_missions is dropped here.
 
-        for mission in missions.iter() {
-            let event_type = match mission.status {
-                MissionStatus::Completed => "mission.completed",
-                MissionStatus::Failed => "mission.failed",
-                MissionStatus::Stalled => "mission.stalled",
-                _ => continue,
-            };
-
-            let event = AutopilotEvent::new(
-                event_type,
-                &mission.assigned_agent,
-                serde_json::json!({
-                    "mission_id": mission.id,
-                    "title": mission.title,
-                }),
-            )
-            .with_correlation(mission.id.clone());
-
-            // Evaluate trigger rules.
-            let trigger_actions = self.trigger_engine.evaluate(&event).await;
+        // Process events against triggers and reaction matrix.
+        for event in &events {
+            let trigger_actions = self.trigger_engine.evaluate(event).await;
             for (rule_id, action) in &trigger_actions {
                 info!(
                     rule_id = %rule_id,
                     action = ?action,
-                    mission_id = %mission.id,
                     "trigger fired for mission event"
                 );
                 self.trigger_engine.mark_fired(rule_id).await;
             }
 
-            // Evaluate reaction matrix.
             let rm = self.reaction_matrix.read().await;
             if let Some(matrix) = rm.as_ref() {
-                let reaction_actions = matrix.evaluate(&event).await;
+                let reaction_actions = matrix.evaluate(event).await;
                 for ra in &reaction_actions {
                     info!(
                         target_agent = %ra.target_agent,
@@ -380,22 +387,21 @@ impl AutopilotLoop {
         }
 
         // Clean up terminal missions from the active list and update resource snapshot.
-        let mut missions_mut = self.active_missions.write().await;
-        let terminal_count = missions_mut
+        let mut missions = self.active_missions.write().await;
+        let terminal_count = missions
             .iter()
             .filter(|m| m.is_terminal() || m.status == MissionStatus::Stalled)
             .count();
 
         if terminal_count > 0 {
-            missions_mut.retain(|m| !m.is_terminal() && m.status != MissionStatus::Stalled);
+            missions.retain(|m| !m.is_terminal() && m.status != MissionStatus::Stalled);
 
-            // Update concurrent mission count.
             let mut resource = self.resource_snapshot.write().await;
-            resource.concurrent_missions = missions_mut.len();
+            resource.concurrent_missions = missions.len();
 
             debug!(
                 removed = terminal_count,
-                remaining = missions_mut.len(),
+                remaining = missions.len(),
                 "cleaned up terminal missions"
             );
         }

@@ -10,14 +10,28 @@ services:
       # - ./agentzero.toml:/data/agentzero.toml:ro
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       # Set to "production" to enforce TLS + auth validation on startup
       # - AGENTZERO_ENV=production
+    # Docker Secrets: mount API keys as files at /run/secrets/<name>.
+    # The config loader reads from /run/secrets/ when env vars are not set.
+    # To use: docker secret create anthropic_api_key ./key-file
+    secrets:
+      - source: anthropic_api_key
+        target: anthropic_api_key
+      - source: openai_api_key
+        target: openai_api_key
+      - source: openrouter_api_key
+        target: openrouter_api_key
+      - source: agentzero_data_key
+        target: agentzero_data_key
     restart: unless-stopped
     deploy:
       resources:
         limits:
           memory: 512M
-          cpus: "1.0"
+          cpus: "2.0"
         reservations:
           memory: 128M
           cpus: "0.25"
@@ -30,3 +44,15 @@ services:
 
 volumes:
   agentzero-data:
+
+# Docker Secrets (external — create with `docker secret create <name> <file>`).
+# These are optional; env vars work as a simpler alternative.
+secrets:
+  anthropic_api_key:
+    external: true
+  openai_api_key:
+    external: true
+  openrouter_api_key:
+    external: true
+  agentzero_data_key:
+    external: true

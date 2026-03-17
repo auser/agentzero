@@ -707,7 +707,7 @@ Installable, shareable skill packs. Built-in skills + community marketplace. Ski
 - [x] **Skill lifecycle CLI** — `agentzero skill add/info/discover` commands (plus existing list/install/remove/test/new/audit/templates). 29 tests.
 - [x] **Skill registry & discovery** — `discover_skills()`, `install_skill()`, `remove_skill()`, `load_skill_from_dir()` in `agentzero-config::skills`. 13 tests.
 - [x] **Built-in skill templates** — 7 templates: `code-reviewer`, `scheduler`, `research-assistant`, `telegram-bot`, `discord-bot`, `slack-bot`, `devops-monitor`.
-- [ ] **Skill-provided `/` commands** — Skills declare commands in `skill.toml`, merged into channel command parser
+- [x] **Skill-provided `/` commands** — `register_skill_commands()` + `parse_command_with_skills()` in commands.rs. `ChatCommand::SkillCommand` variant. 7 tests.
 - [x] **Site docs** — `site/src/content/docs/guides/skills.md`
 
 ### Phase 2: Agent Conversations (HIGH)

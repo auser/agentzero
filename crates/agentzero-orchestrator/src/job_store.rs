@@ -249,6 +249,21 @@ impl JobStore {
                 drop(jobs);
                 self.event_log.append(run_id, EventKind::Running).await;
                 let _ = self.notify.send((run_id.clone(), JobStatus::Running));
+
+                // Publish to distributed event bus if configured.
+                if let Some(ref bus) = self.event_bus {
+                    let payload = serde_json::json!({
+                        "run_id": run_id.as_str(),
+                        "status": "running",
+                        "claimed_by": agent_id,
+                    })
+                    .to_string();
+                    let event = Event::new("job.running", "job_store", payload);
+                    if let Err(e) = bus.publish(event).await {
+                        tracing::warn!(error = %e, "failed to publish job claim event");
+                    }
+                }
+
                 return true;
             }
         }
@@ -305,6 +320,21 @@ impl JobStore {
             record.updated_at = Instant::now();
             drop(jobs);
             let _ = self.notify.send((run_id.clone(), JobStatus::Cancelled));
+            self.event_log.append(run_id, EventKind::Cancelled).await;
+
+            // Publish to distributed event bus if configured.
+            if let Some(ref bus) = self.event_bus {
+                let payload = serde_json::json!({
+                    "run_id": run_id.as_str(),
+                    "status": "cancelled",
+                })
+                .to_string();
+                let event = Event::new("job.cancelled", "job_store", payload);
+                if let Err(e) = bus.publish(event).await {
+                    tracing::warn!(error = %e, "failed to publish job cancel event");
+                }
+            }
+
             true
         } else {
             false
@@ -338,6 +368,20 @@ impl JobStore {
             if did_cancel {
                 let _ = self.notify.send((current.clone(), JobStatus::Cancelled));
                 self.event_log.append(&current, EventKind::Cancelled).await;
+
+                // Publish to distributed event bus if configured.
+                if let Some(ref bus) = self.event_bus {
+                    let payload = serde_json::json!({
+                        "run_id": current.as_str(),
+                        "status": "cancelled",
+                    })
+                    .to_string();
+                    let event = Event::new("job.cancelled", "job_store", payload);
+                    if let Err(e) = bus.publish(event).await {
+                        tracing::warn!(error = %e, "failed to publish cascade cancel event");
+                    }
+                }
+
                 cancelled.push(current.clone());
             }
 
@@ -1143,5 +1187,58 @@ mod tests {
         store.update_status(&run_id, JobStatus::Running).await;
         let record = store.get(&run_id).await.expect("job");
         assert_eq!(record.status, JobStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn event_bus_publishes_on_cancel() {
+        let bus = Arc::new(agentzero_core::InMemoryBus::default_capacity());
+        let store = JobStore::new().with_event_bus(bus.clone());
+        let mut sub = bus.subscribe();
+
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+        store.update_status(&run_id, JobStatus::Running).await;
+
+        // Drain the pending + running events.
+        for _ in 0..2 {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+                .await
+                .expect("timeout")
+                .expect("recv");
+        }
+
+        // Cancel the job.
+        assert!(store.cancel(&run_id).await);
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+        assert_eq!(event.topic, "job.cancelled");
+        assert!(event.payload.contains(run_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn event_bus_publishes_on_try_claim() {
+        let bus = Arc::new(agentzero_core::InMemoryBus::default_capacity());
+        let store = JobStore::new().with_event_bus(bus.clone());
+        let mut sub = bus.subscribe();
+
+        let run_id = store.submit("agent".to_string(), Lane::Main, None).await;
+
+        // Drain the pending event.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+
+        // Claim the job.
+        assert!(store.try_claim(&run_id, "claimer-agent").await);
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+        assert_eq!(event.topic, "job.running");
+        assert!(event.payload.contains("claimer-agent"));
     }
 }

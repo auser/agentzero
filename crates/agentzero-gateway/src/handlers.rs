@@ -2050,6 +2050,94 @@ pub(crate) async fn sse_events(
 }
 
 // ---------------------------------------------------------------------------
+// Event bus SSE stream endpoint (axum Sse)
+// ---------------------------------------------------------------------------
+
+/// `GET /v1/events/stream` — SSE stream using axum's typed `Sse` response.
+///
+/// Subscribes to the shared `EventBus` and pushes events as Server-Sent Events.
+/// Supports optional `topic` query parameter to filter events by topic prefix.
+/// This is the preferred endpoint for real-time event delivery; `/v1/events`
+/// is the original implementation retained for backward compatibility.
+pub(crate) async fn sse_events_stream(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    query: axum::extract::Query<EventStreamQuery>,
+) -> Result<Response, GatewayError> {
+    // EventSource cannot set headers, so accept token as query param fallback.
+    let effective_headers = if headers.get("authorization").is_none() {
+        if let Some(ref token) = query.token {
+            let mut h = headers.clone();
+            if let Ok(val) = axum::http::HeaderValue::from_str(&format!("Bearer {token}")) {
+                h.insert("authorization", val);
+            }
+            h
+        } else {
+            headers
+        }
+    } else {
+        headers
+    };
+    authorize_with_scope(&state, &effective_headers, false, &Scope::RunsRead)?;
+
+    let event_bus = state
+        .event_bus
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?
+        .clone();
+
+    let topic_filter = query.topic.clone();
+
+    let mut subscriber = event_bus.subscribe();
+
+    let stream = async_stream::stream! {
+        let deadline = Instant::now() + Duration::from_secs(600);
+
+        loop {
+            tokio::select! {
+                result = subscriber.recv() => {
+                    match result {
+                        Ok(event) => {
+                            // Filter by topic prefix if specified.
+                            if let Some(ref prefix) = topic_filter {
+                                if !event.topic.starts_with(prefix.as_str()) {
+                                    continue;
+                                }
+                            }
+                            let data = json!({
+                                "id": event.id,
+                                "topic": event.topic,
+                                "source": event.source,
+                                "payload": event.payload,
+                                "timestamp_ms": event.timestamp_ms,
+                            });
+                            yield Ok::<_, std::convert::Infallible>(
+                                axum::response::sse::Event::default()
+                                    .event(&event.topic)
+                                    .data(data.to_string())
+                            );
+                        }
+                        Err(_) => return,
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    yield Ok(
+                        axum::response::sse::Event::default()
+                            .event("error")
+                            .data(r#"{"type":"error","message":"stream timeout"}"#)
+                    );
+                    return;
+                }
+            }
+        }
+    };
+
+    Ok(axum::response::sse::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response())
+}
+
+// ---------------------------------------------------------------------------
 // OpenAPI spec endpoint
 // ---------------------------------------------------------------------------
 

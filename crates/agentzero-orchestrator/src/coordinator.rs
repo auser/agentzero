@@ -99,6 +99,9 @@ pub struct Coordinator {
     presence: Option<Arc<PresenceStore>>,
     /// Optional agent store + paths for periodic sync (hot-loading).
     store_sync: Option<StoreSyncConfig>,
+    /// Optional autopilot configuration for the autonomous mission loop.
+    #[cfg(feature = "autopilot")]
+    autopilot_config: Option<agentzero_autopilot::AutopilotConfig>,
 }
 
 /// Configuration for periodic agent store synchronization.
@@ -128,6 +131,8 @@ impl Coordinator {
             shutdown_grace_ms,
             presence: None,
             store_sync: None,
+            #[cfg(feature = "autopilot")]
+            autopilot_config: None,
         }
     }
 
@@ -143,6 +148,16 @@ impl Coordinator {
     /// hot-load any new agents (or deregister deleted/stopped ones).
     pub fn with_store_sync(mut self, config: StoreSyncConfig) -> Self {
         self.store_sync = Some(config);
+        self
+    }
+
+    /// Enable the autonomous autopilot loop.
+    ///
+    /// When set and `enabled = true` in the config, the coordinator will spawn
+    /// the [`agentzero_autopilot::AutopilotLoop`] alongside its other loops.
+    #[cfg(feature = "autopilot")]
+    pub fn with_autopilot(mut self, config: agentzero_autopilot::AutopilotConfig) -> Self {
+        self.autopilot_config = Some(config);
         self
     }
 
@@ -452,6 +467,31 @@ impl Coordinator {
             None
         };
 
+        // Optional: autopilot loop for autonomous mission orchestration.
+        let autopilot_loop: Option<JoinHandle<()>> = {
+            #[cfg(feature = "autopilot")]
+            {
+                match &coord.autopilot_config {
+                    Some(ap_config) if ap_config.enabled => {
+                        tracing::info!("starting autopilot loop alongside coordinator");
+                        let autopilot = agentzero_autopilot::AutopilotLoop::new(ap_config.clone());
+                        let s5 = shutdown.clone();
+                        Some(tokio::spawn(async move {
+                            autopilot.run(s5).await;
+                        }))
+                    }
+                    _ => {
+                        tracing::debug!("autopilot not enabled, skipping");
+                        None
+                    }
+                }
+            }
+            #[cfg(not(feature = "autopilot"))]
+            {
+                None
+            }
+        };
+
         // Wait for shutdown signal or any loop to exit.
         tokio::select! {
             _ = shutdown.changed() => {
@@ -468,6 +508,9 @@ impl Coordinator {
             }
             r = async { match sync_loop { Some(h) => h.await, None => std::future::pending().await } } => {
                 if let Err(e) = r { tracing::error!(error = %e, "store sync loop panicked"); }
+            }
+            r = async { match autopilot_loop { Some(h) => h.await, None => std::future::pending().await } } => {
+                if let Err(e) = r { tracing::error!(error = %e, "autopilot loop panicked"); }
             }
         }
 

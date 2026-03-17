@@ -30,6 +30,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 mod token_store;
+mod tool_execute;
 mod util;
 
 use agentzero_config::watcher::ConfigWatcher;

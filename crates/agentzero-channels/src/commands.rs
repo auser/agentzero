@@ -1,4 +1,5 @@
 use crate::ChannelMessage;
+use agentzero_config::skills::InstalledSkill;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -53,6 +54,13 @@ pub enum ChatCommand {
     Thread,
     /// `/broadcast <message>` — send a message to all agents.
     Broadcast(String),
+    /// A command provided by an installed skill (e.g. `/review`).
+    SkillCommand {
+        /// The command name without the leading `/`.
+        name: String,
+        /// The skill that declares this command.
+        skill_name: String,
+    },
 }
 
 /// Try to parse a message as a runtime command.
@@ -84,6 +92,69 @@ pub fn parse_command(text: &str) -> Option<ChatCommand> {
         "/broadcast" => arg.map(ChatCommand::Broadcast),
         _ => None,
     }
+}
+
+/// Registered skill command: `(command_name, skill_name, description)`.
+pub type SkillCommandEntry = (String, String, String);
+
+/// Register commands from installed skills into the command parser.
+///
+/// Skills declare commands in `skill.toml` like:
+/// ```toml
+/// [[commands]]
+/// name = "review"
+/// description = "Start a code review"
+/// handler = "agent"
+/// ```
+///
+/// Returns `(command_name, skill_name, description)` triples that can be
+/// passed to [`parse_command_with_skills`] for matching.
+pub fn register_skill_commands(skills: &[InstalledSkill]) -> Vec<SkillCommandEntry> {
+    let mut entries = Vec::new();
+    for skill in skills {
+        for cmd in &skill.manifest.commands {
+            entries.push((
+                cmd.name.clone(),
+                skill.name().to_string(),
+                cmd.description.clone(),
+            ));
+        }
+    }
+    entries
+}
+
+/// Try to parse a message as a command, also checking skill-provided commands.
+///
+/// Built-in commands take precedence. If the message is a `/` command that
+/// doesn't match any built-in, the skill commands list is consulted.
+pub fn parse_command_with_skills(
+    text: &str,
+    skill_commands: &[SkillCommandEntry],
+) -> Option<ChatCommand> {
+    // First try built-in commands.
+    if let Some(cmd) = parse_command(text) {
+        return Some(cmd);
+    }
+
+    // If it starts with `/`, check skill commands.
+    let trimmed = text.trim();
+    if !trimmed.starts_with('/') {
+        return None;
+    }
+
+    let parts: Vec<&str> = trimmed.splitn(2, char::is_whitespace).collect();
+    let cmd_name = parts[0][1..].to_lowercase(); // strip leading '/'
+
+    for (name, skill_name, _desc) in skill_commands {
+        if name.to_lowercase() == cmd_name {
+            return Some(ChatCommand::SkillCommand {
+                name: name.clone(),
+                skill_name: skill_name.clone(),
+            });
+        }
+    }
+
+    None
 }
 
 /// Handle a parsed command and produce a response string.
@@ -180,6 +251,9 @@ pub fn handle_command_with_context(
         ),
         ChatCommand::Broadcast(message) => CommandResult::Response(
             format!("Broadcasting to all agents: \"{message}\" (requires runtime integration)"),
+        ),
+        ChatCommand::SkillCommand { name, skill_name } => CommandResult::Response(
+            format!("Routing to skill `{skill_name}` command `/{name}`."),
         ),
     }
 }
@@ -588,6 +662,143 @@ mod tests {
                 assert!(text.contains("/talk"));
                 assert!(text.contains("/thread"));
                 assert!(text.contains("/broadcast"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+    }
+
+    // --- Skill-provided command tests ---
+
+    fn test_skill_commands() -> Vec<SkillCommandEntry> {
+        vec![
+            (
+                "review".to_string(),
+                "code-reviewer".to_string(),
+                "Start a code review".to_string(),
+            ),
+            (
+                "schedule".to_string(),
+                "scheduler".to_string(),
+                "Schedule a task".to_string(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn skill_command_parsed_correctly() {
+        let skill_cmds = test_skill_commands();
+        let result = parse_command_with_skills("/review", &skill_cmds);
+        assert_eq!(
+            result,
+            Some(ChatCommand::SkillCommand {
+                name: "review".to_string(),
+                skill_name: "code-reviewer".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn skill_command_case_insensitive() {
+        let skill_cmds = test_skill_commands();
+        let result = parse_command_with_skills("/REVIEW", &skill_cmds);
+        assert_eq!(
+            result,
+            Some(ChatCommand::SkillCommand {
+                name: "review".to_string(),
+                skill_name: "code-reviewer".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn unknown_skill_command_falls_through_to_none() {
+        let skill_cmds = test_skill_commands();
+        let result = parse_command_with_skills("/unknown-cmd", &skill_cmds);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn builtin_command_takes_precedence_over_skill() {
+        // Even if a skill declares "help", the built-in /help wins.
+        let skill_cmds = vec![(
+            "help".to_string(),
+            "my-skill".to_string(),
+            "Skill help".to_string(),
+        )];
+        let result = parse_command_with_skills("/help", &skill_cmds);
+        assert_eq!(result, Some(ChatCommand::Help));
+    }
+
+    #[test]
+    fn non_command_returns_none_with_skills() {
+        let skill_cmds = test_skill_commands();
+        let result = parse_command_with_skills("hello world", &skill_cmds);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn register_skill_commands_extracts_entries() {
+        use agentzero_config::skills::{
+            InstalledSkill, SkillCommand as SkillCmd, SkillManifest, SkillMeta,
+        };
+
+        let skill = InstalledSkill {
+            manifest: SkillManifest {
+                skill: SkillMeta {
+                    name: "test-skill".to_string(),
+                    version: "1.0.0".to_string(),
+                    description: String::new(),
+                    author: String::new(),
+                    keywords: vec![],
+                    requires: vec![],
+                    provides: vec![],
+                },
+                channel: None,
+                tools: vec![],
+                commands: vec![
+                    SkillCmd {
+                        name: "deploy".to_string(),
+                        description: "Deploy the app".to_string(),
+                        handler: "agent".to_string(),
+                        target: None,
+                    },
+                    SkillCmd {
+                        name: "rollback".to_string(),
+                        description: "Rollback last deploy".to_string(),
+                        handler: "tool".to_string(),
+                        target: Some("rollback_tool".to_string()),
+                    },
+                ],
+                workflow: None,
+                dependencies: vec![],
+            },
+            dir: std::path::PathBuf::from("/tmp/test"),
+            source: "project".to_string(),
+            agent_prompt: None,
+            agent_frontmatter: None,
+            config_fragment: None,
+        };
+
+        let entries = register_skill_commands(&[skill]);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, "deploy");
+        assert_eq!(entries[0].1, "test-skill");
+        assert_eq!(entries[0].2, "Deploy the app");
+        assert_eq!(entries[1].0, "rollback");
+        assert_eq!(entries[1].1, "test-skill");
+    }
+
+    #[test]
+    fn skill_command_handle_returns_routing_response() {
+        let cmd = ChatCommand::SkillCommand {
+            name: "review".to_string(),
+            skill_name: "code-reviewer".to_string(),
+        };
+        let msg = test_msg("/review");
+        match handle_command(&cmd, &msg) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("code-reviewer"));
+                assert!(text.contains("/review"));
             }
             CommandResult::PassThrough => panic!("expected Response"),
         }

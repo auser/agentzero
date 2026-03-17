@@ -3954,6 +3954,55 @@ async fn sse_events_without_event_bus_returns_503() {
 }
 
 #[tokio::test]
+async fn sse_events_stream_returns_event_stream_content_type() {
+    // Verify /v1/events/stream returns text/event-stream when event bus is wired.
+    let bus = std::sync::Arc::new(agentzero_core::InMemoryBus::default_capacity());
+    let state = GatewayState::test_with_bearer(Some("tok")).with_event_bus(bus);
+    let app = build_router(state, &default_config());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/events/stream")
+                .header("authorization", "Bearer tok")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .expect("content-type header")
+        .to_str()
+        .expect("valid str");
+    assert!(
+        ct.contains("text/event-stream"),
+        "expected text/event-stream, got {ct}"
+    );
+}
+
+#[tokio::test]
+async fn sse_events_stream_without_event_bus_returns_503() {
+    // /v1/events/stream without event bus should return 503.
+    let state = GatewayState::test_with_bearer(Some("tok"));
+    let app = build_router(state, &default_config());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/events/stream")
+                .header("authorization", "Bearer tok")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
 async fn presence_store_heartbeat_publishes_to_shared_event_bus() {
     // Verify PresenceStore wired with a bus emits presence.heartbeat on heartbeat().
     use agentzero_core::{EventBus, InMemoryBus};

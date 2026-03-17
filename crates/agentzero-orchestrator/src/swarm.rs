@@ -297,6 +297,26 @@ pub async fn build_swarm_with_presence(
         });
     }
 
+    // Wire autopilot loop if enabled in config.
+    // The config crate's AutopilotConfig and the autopilot crate's AutopilotConfig
+    // are structurally identical serde types, so we round-trip through JSON.
+    #[cfg(feature = "autopilot")]
+    {
+        if config.autopilot.enabled {
+            match serde_json::to_value(&config.autopilot)
+                .and_then(|v| serde_json::from_value::<agentzero_autopilot::AutopilotConfig>(v))
+            {
+                Ok(ap_config) => {
+                    tracing::info!("wiring autopilot loop into coordinator");
+                    coord = coord.with_autopilot(ap_config);
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to convert autopilot config, skipping");
+                }
+            }
+        }
+    }
+
     // ── Pass 1: Build all agents and create task channels ───────────────
 
     let mut built_agents: Vec<BuiltAgent> = Vec::new();

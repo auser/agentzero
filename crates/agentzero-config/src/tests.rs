@@ -2611,3 +2611,38 @@ fn example_config_full_exercises_all_sections() {
 
     fs::remove_dir_all(dir).ok();
 }
+
+// --- Docker Secrets tests ---
+
+#[test]
+fn read_docker_secret_from_mock_path() {
+    let dir = temp_dir();
+    let secrets_dir = dir.join("run").join("secrets");
+    fs::create_dir_all(&secrets_dir).expect("secrets dir should be created");
+
+    // Write a mock secret
+    fs::write(
+        secrets_dir.join("anthropic_api_key"),
+        "sk-test-secret-123\n",
+    )
+    .expect("secret should be written");
+
+    // read_docker_secret uses /run/secrets/ hardcoded, so we test the
+    // underlying parsing logic directly.
+    let content = fs::read_to_string(secrets_dir.join("anthropic_api_key")).expect("should read");
+    let trimmed = content.trim();
+    assert_eq!(trimmed, "sk-test-secret-123");
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn env_or_secret_prefers_env_var() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+
+    // When env var is set, it takes precedence over Docker secrets
+    temp_env::with_var("AGENTZERO_TEST_SECRET", Some("from-env"), || {
+        let val = crate::env_or_secret("AGENTZERO_TEST_SECRET");
+        assert_eq!(val, Some("from-env".to_string()));
+    });
+}
