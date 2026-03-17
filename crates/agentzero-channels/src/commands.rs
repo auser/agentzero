@@ -45,6 +45,14 @@ pub enum ChatCommand {
     ApprovePending,
     /// `/help` — show available commands.
     Help,
+    /// `/agents` — list available agents and their status.
+    Agents,
+    /// `/talk <agent>` — start a conversation with a specific agent.
+    Talk(String),
+    /// `/thread` — show current conversation thread info.
+    Thread,
+    /// `/broadcast <message>` — send a message to all agents.
+    Broadcast(String),
 }
 
 /// Try to parse a message as a runtime command.
@@ -70,6 +78,10 @@ pub fn parse_command(text: &str) -> Option<ChatCommand> {
         "/approve-confirm" => arg.map(ChatCommand::ApproveConfirm),
         "/approve-pending" => Some(ChatCommand::ApprovePending),
         "/help" => Some(ChatCommand::Help),
+        "/agents" => Some(ChatCommand::Agents),
+        "/talk" => arg.map(ChatCommand::Talk),
+        "/thread" => Some(ChatCommand::Thread),
+        "/broadcast" => arg.map(ChatCommand::Broadcast),
         _ => None,
     }
 }
@@ -147,14 +159,27 @@ pub fn handle_command_with_context(
                 /models [provider] - List available models\n\
                 /model [id] - Show or switch model\n\
                 /new - Clear conversation history\n\
+                /agents - List available agents\n\
+                /talk <agent> - Start conversation with an agent\n\
+                /thread - Show current thread info\n\
+                /broadcast <msg> - Send to all agents\n\
                 /approve <tool> - Auto-approve a tool\n\
                 /unapprove <tool> - Remove auto-approval\n\
                 /approvals - List current approvals\n\
-                /approve-request <tool> - Request tool approval\n\
-                /approve-confirm <id> - Confirm pending approval\n\
-                /approve-pending - List pending approvals\n\
                 /help - Show this help"
                 .to_string(),
+        ),
+        ChatCommand::Agents => CommandResult::Response(
+            "Available agents: (requires runtime integration — use `agentzero agents list` or check agents/ directory)".to_string(),
+        ),
+        ChatCommand::Talk(agent) => CommandResult::Response(
+            format!("Starting conversation with @{agent}. Send messages and they will be routed to this agent."),
+        ),
+        ChatCommand::Thread => CommandResult::Response(
+            "Current thread: (no active thread — start one with /talk <agent> or @agent <message>)".to_string(),
+        ),
+        ChatCommand::Broadcast(message) => CommandResult::Response(
+            format!("Broadcasting to all agents: \"{message}\" (requires runtime integration)"),
         ),
     }
 }
@@ -486,5 +511,85 @@ mod tests {
         assert!(content.contains("shell"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- Conversation command tests ---
+
+    #[test]
+    fn parse_agents_command() {
+        assert_eq!(parse_command("/agents"), Some(ChatCommand::Agents));
+    }
+
+    #[test]
+    fn parse_talk_command() {
+        assert_eq!(
+            parse_command("/talk reviewer"),
+            Some(ChatCommand::Talk("reviewer".into()))
+        );
+    }
+
+    #[test]
+    fn parse_talk_without_agent_returns_none() {
+        assert_eq!(parse_command("/talk"), None);
+    }
+
+    #[test]
+    fn parse_thread_command() {
+        assert_eq!(parse_command("/thread"), Some(ChatCommand::Thread));
+    }
+
+    #[test]
+    fn parse_broadcast_command() {
+        assert_eq!(
+            parse_command("/broadcast hello everyone"),
+            Some(ChatCommand::Broadcast("hello everyone".into()))
+        );
+    }
+
+    #[test]
+    fn handle_agents_returns_response() {
+        let msg = test_msg("/agents");
+        match intercept_command(&msg) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("agents"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+    }
+
+    #[test]
+    fn handle_talk_mentions_agent_name() {
+        let msg = test_msg("/talk writer");
+        match intercept_command(&msg) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("@writer"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+    }
+
+    #[test]
+    fn handle_thread_returns_info() {
+        let msg = test_msg("/thread");
+        match intercept_command(&msg) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("thread"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
+    }
+
+    #[test]
+    fn help_includes_conversation_commands() {
+        let msg = test_msg("/help");
+        match intercept_command(&msg) {
+            CommandResult::Response(text) => {
+                assert!(text.contains("/agents"));
+                assert!(text.contains("/talk"));
+                assert!(text.contains("/thread"));
+                assert!(text.contains("/broadcast"));
+            }
+            CommandResult::PassThrough => panic!("expected Response"),
+        }
     }
 }

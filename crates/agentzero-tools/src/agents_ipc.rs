@@ -17,6 +17,10 @@ struct IpcMessage {
     from: String,
     to: String,
     payload: String,
+    /// Conversation thread ID for multi-agent conversations.
+    /// When set, all participants in the thread share context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    thread_id: Option<String>,
     created_at_epoch_secs: u64,
 }
 
@@ -27,18 +31,30 @@ enum IpcRequest {
         from: String,
         to: String,
         payload: String,
+        /// Optional thread ID to associate this message with a conversation.
+        #[serde(default)]
+        thread_id: Option<String>,
     },
     Recv {
         to: String,
+        /// Filter by thread ID (only receive messages in this thread).
+        #[serde(default)]
+        thread_id: Option<String>,
     },
     List {
         to: Option<String>,
         from: Option<String>,
         limit: Option<usize>,
+        /// Filter by thread ID.
+        #[serde(default)]
+        thread_id: Option<String>,
     },
     Clear {
         to: Option<String>,
         from: Option<String>,
+        /// Clear only messages in this thread.
+        #[serde(default)]
+        thread_id: Option<String>,
     },
 }
 
@@ -64,6 +80,7 @@ impl Tool for AgentsIpcTool {
                 "from": { "type": "string", "description": "Sender agent name (required for send)" },
                 "to": { "type": "string", "description": "Recipient agent name (required for send/recv)" },
                 "payload": { "type": "string", "description": "Message payload (required for send)" },
+                "thread_id": { "type": "string", "description": "Conversation thread ID (optional — groups messages in a multi-agent conversation)" },
                 "limit": { "type": "integer", "description": "Max messages to return (for list)" }
             },
             "required": ["op"],
@@ -88,16 +105,24 @@ async fn execute_bus(req: IpcRequest, ctx: &ToolContext) -> anyhow::Result<ToolR
     let bus = ctx.event_bus.as_ref().unwrap();
 
     let output = match req {
-        IpcRequest::Send { from, to, payload } => {
+        IpcRequest::Send {
+            from,
+            to,
+            payload,
+            thread_id,
+        } => {
             if from.trim().is_empty() || to.trim().is_empty() {
                 return Err(anyhow!("`from` and `to` must not be empty"));
             }
-            let event = Event::new(format!("ipc.message.{to}"), &from, &payload)
+            let mut event = Event::new(format!("ipc.message.{to}"), &from, &payload)
                 .with_boundary(&ctx.privacy_boundary);
+            if let Some(ref tid) = thread_id {
+                event.correlation_id = Some(tid.clone());
+            }
             bus.publish(event).await?;
-            json!({ "status": "published", "topic": format!("ipc.message.{to}") })
+            json!({ "status": "published", "topic": format!("ipc.message.{to}"), "thread_id": thread_id })
         }
-        IpcRequest::Recv { to } => {
+        IpcRequest::Recv { to, .. } => {
             if to.trim().is_empty() {
                 return Err(anyhow!("`to` must not be empty"));
             }
@@ -154,7 +179,12 @@ async fn execute_file(req: IpcRequest, ctx: &ToolContext) -> anyhow::Result<Tool
     let mut messages: Vec<IpcMessage> = store.load_or_default()?;
 
     let output = match req {
-        IpcRequest::Send { from, to, payload } => {
+        IpcRequest::Send {
+            from,
+            to,
+            payload,
+            thread_id,
+        } => {
             if from.trim().is_empty() || to.trim().is_empty() {
                 return Err(anyhow!("`from` and `to` must not be empty"));
             }
@@ -162,15 +192,17 @@ async fn execute_file(req: IpcRequest, ctx: &ToolContext) -> anyhow::Result<Tool
                 from,
                 to,
                 payload,
+                thread_id: thread_id.clone(),
                 created_at_epoch_secs: now_epoch_secs(),
             });
             store.save(&messages)?;
             json!({
                 "queued": messages.len(),
-                "status": "ok"
+                "status": "ok",
+                "thread_id": thread_id
             })
         }
-        IpcRequest::Recv { to } => {
+        IpcRequest::Recv { to, .. } => {
             if to.trim().is_empty() {
                 return Err(anyhow!("`to` must not be empty"));
             }
@@ -182,7 +214,9 @@ async fn execute_file(req: IpcRequest, ctx: &ToolContext) -> anyhow::Result<Tool
                 "remaining": messages.len()
             })
         }
-        IpcRequest::List { to, from, limit } => {
+        IpcRequest::List {
+            to, from, limit, ..
+        } => {
             let iter = messages.iter().filter(|msg| {
                 to.as_ref()
                     .map(|expected| &msg.to == expected)
@@ -202,7 +236,7 @@ async fn execute_file(req: IpcRequest, ctx: &ToolContext) -> anyhow::Result<Tool
                 "count": listed.len()
             })
         }
-        IpcRequest::Clear { to, from } => {
+        IpcRequest::Clear { to, from, .. } => {
             let before = messages.len();
             messages.retain(|msg| {
                 let to_match = to

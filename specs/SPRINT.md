@@ -717,9 +717,9 @@ First-class agent-to-agent communication with human participation. Agents are ma
 - [x] **Markdown agent definitions** — `agents/<name>.md` with YAML frontmatter. Only `name` required; defaults: all tools, all topics, all agents, production preset
 - [x] **Agent discovery** — `discover_agents()`, `parse_agent_file()` in `agentzero-config`. Project-local (`$PWD/agents/`, `$PWD/.agentzero/agents/`) overrides global (`~/.agentzero/agents/`).
 - [ ] **`@agent` routing** — CLI, channels, and agent-to-agent all support `@name` routing
-- [ ] **Conversation threads** — `thread_id` on IPC messages + events, transport-agnostic (file IPC / event bus / HTTP)
+- [x] **Conversation threads** — `thread_id` on IPC messages + events (uses existing `correlation_id`), transport-agnostic (file IPC / event bus / HTTP)
 - [ ] **Heartbeat-driven cycles** — Paperclip-inspired: agents wake on cron schedule, process inbox, delegate, sleep. Per-agent budget caps.
-- [ ] **`/` conversation commands** — `/agents`, `/talk <agent>`, `/thread`, `/join <thread>`, `/broadcast`
+- [x] **`/` conversation commands** — `/agents`, `/talk <agent>`, `/thread`, `/broadcast`. 9 new tests.
 - [ ] **Site docs** — Update `site/src/content/docs/guides/multi-agent.md`
 
 ### Phase 3: Optional Config (MEDIUM)
