@@ -36,3 +36,4 @@ examples/research-pipeline/research/
 research/events.jsonl
 research
 **/target
+ui/test-results/
