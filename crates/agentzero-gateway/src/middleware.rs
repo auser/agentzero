@@ -329,7 +329,7 @@ pub fn cors_preflight_response(allowed_origins: &[String], origin: &str) -> Resp
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin)
         .header(
             header::ACCESS_CONTROL_ALLOW_METHODS,
-            "GET, POST, PUT, DELETE, OPTIONS",
+            "GET, POST, PUT, PATCH, DELETE, OPTIONS",
         )
         .header(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
