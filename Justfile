@@ -132,6 +132,24 @@ build-sizes:
     cargo build -p agentzero --profile release-min --no-default-features --features memory-sqlite,plugins,tls-native -q
     echo "  plugins+native-tls: $(du -h target/release-min/agentzero | cut -f1)"
 
+# ── Platform Control UI ──────────────────────────
+
+# Install platform UI dependencies
+ui-install:
+    cd ui && pnpm install
+
+# Build platform UI (outputs to ui/dist/)
+ui-build:
+    cd ui && pnpm run build
+
+# Dev mode: Vite dev server with proxy to gateway (http://localhost:5173)
+ui-dev:
+    cd ui && pnpm run dev
+
+# Full release build: UI first, then Rust with embedded-ui feature
+build-full: ui-build
+    cargo build --release --features embedded-ui
+
 # ── Config UI ────────────────────────────────────
 
 # Launch the visual node graph config editor (browser)

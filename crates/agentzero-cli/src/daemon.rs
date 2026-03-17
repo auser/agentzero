@@ -4,6 +4,24 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+const PORT_SCAN_LIMIT: u16 = 100;
+
+/// Return the first port in `[start, start + PORT_SCAN_LIMIT)` that can be
+/// bound on `host`. Uses a brief `TcpListener::bind` probe — the listener is
+/// dropped immediately so the port is free for the actual server to claim.
+pub fn find_available_port(host: &str, start: u16) -> anyhow::Result<u16> {
+    let end = start.saturating_add(PORT_SCAN_LIMIT);
+    for port in start..end {
+        if std::net::TcpListener::bind(format!("{host}:{port}")).is_ok() {
+            return Ok(port);
+        }
+    }
+    anyhow::bail!(
+        "no available port found in range {start}–{} on {host}",
+        end - 1
+    )
+}
+
 const STATE_FILE: &str = "daemon_state.json";
 const PID_FILE: &str = "daemon.pid";
 const DEFAULT_LOG_FILE: &str = "daemon.log";

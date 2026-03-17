@@ -1,7 +1,8 @@
 use crate::handlers::{
     agents_list, api_chat, api_fallback, async_submit, create_agent, dashboard, delete_agent,
-    emergency_stop, get_agent, health, health_live, health_ready, job_cancel, job_events, job_list,
-    job_result, job_status, job_transcript, legacy_webhook, metrics, openapi_spec, pair, ping,
+    emergency_stop, forget_memory, get_agent, get_config, get_tools, health, health_live,
+    health_ready, job_cancel, job_events, job_list, job_result, job_status, job_transcript,
+    legacy_webhook, list_approvals, list_memory, metrics, openapi_spec, pair, ping, recall_memory,
     sse_events, sse_run_stream, update_agent, v1_chat_completions, v1_models, webhook,
     webhook_with_agent, ws_chat, ws_run_subscribe,
 };
@@ -51,6 +52,12 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/hooks/:channel/:agent_id", post(webhook_with_agent))
         .route("/v1/events", get(sse_events))
         .route("/v1/estop", post(emergency_stop))
+        .route("/v1/tools", get(get_tools))
+        .route("/v1/config", get(get_config))
+        .route("/v1/memory", get(list_memory))
+        .route("/v1/memory/recall", post(recall_memory))
+        .route("/v1/memory/forget", post(forget_memory))
+        .route("/v1/approvals", get(list_approvals))
         .route("/v1/openapi.json", get(openapi_spec))
         .route("/ws/chat", get(ws_chat))
         .route("/ws/runs/:run_id", get(ws_run_subscribe))
@@ -94,6 +101,12 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         }
     }
 
+    // SPA static file serving (embedded-ui feature).
+    #[cfg(feature = "embedded-ui")]
+    {
+        router = router.fallback(static_handler);
+    }
+
     // Correlation ID middleware (outermost — propagates or generates X-Request-Id).
     router = router.layer(from_fn(middleware::correlation_id));
 
@@ -134,6 +147,71 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
     }
 
     router.with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// Embedded SPA static file serving (embedded-ui feature)
+// ---------------------------------------------------------------------------
+
+/// Embedded platform-control UI assets built by `cd ui && pnpm run build`.
+#[cfg(feature = "embedded-ui")]
+#[derive(rust_embed::Embed)]
+#[folder = "../../ui/dist"]
+#[prefix = ""]
+#[include = "*.html"]
+#[include = "*.js"]
+#[include = "*.css"]
+#[include = "*.svg"]
+#[include = "*.png"]
+#[include = "*.ico"]
+#[include = "*.woff2"]
+#[include = "*.json"]
+struct UiAssets;
+
+/// Serve embedded SPA assets with SPA fallback to index.html.
+#[cfg(feature = "embedded-ui")]
+async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
+    use axum::body::Body;
+    use axum::http::{header, StatusCode};
+    use axum::response::Response;
+
+    let path = uri.path().trim_start_matches('/');
+
+    if let Some(file) = UiAssets::get(path) {
+        let mime = mime_guess::from_path(path).first_or_octet_stream();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, mime.as_ref())
+            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+            .body(Body::from(file.data.to_vec()))
+            .unwrap_or_else(|_| {
+                Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::empty())
+                    .expect("fallback response should build")
+            });
+    }
+
+    // SPA fallback: serve index.html for all unmatched paths.
+    if let Some(index) = UiAssets::get("index.html") {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(Body::from(index.data.to_vec()))
+            .unwrap_or_else(|_| {
+                Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::empty())
+                    .expect("fallback response should build")
+            });
+    }
+
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(Body::from("UI not built. Run: cd ui && pnpm run build"))
+        .expect("503 response should build")
 }
 
 /// GET /v1/privacy/info — returns gateway privacy capabilities.

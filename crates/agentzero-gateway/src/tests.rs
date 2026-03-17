@@ -1736,9 +1736,9 @@ async fn v1_agents_list_with_presence() {
     assert_eq!(json["total"], 2);
     let data = json["data"].as_array().unwrap();
     assert_eq!(data.len(), 2);
-    // All should be alive (just registered).
+    // All should be "active" (PresenceStatus::Alive maps to "active" for UI consistency).
     for agent in data {
-        assert_eq!(agent["status"], "alive");
+        assert_eq!(agent["status"], "active");
     }
 }
 

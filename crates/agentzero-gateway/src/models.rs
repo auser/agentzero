@@ -229,6 +229,9 @@ pub(crate) struct EventStreamQuery {
     /// Optional topic prefix filter (e.g. "job." or "presence.").
     #[serde(default)]
     pub(crate) topic: Option<String>,
+    /// Auth token passed as query param (EventSource cannot set headers).
+    #[serde(default)]
+    pub(crate) token: Option<String>,
 }
 
 /// Query params for WebSocket run subscription.
@@ -327,15 +330,8 @@ pub(crate) struct TranscriptResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct AgentListResponse {
     pub(crate) object: &'static str,
-    pub(crate) data: Vec<AgentListItem>,
+    pub(crate) data: Vec<AgentDetailResponse>,
     pub(crate) total: usize,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct AgentListItem {
-    pub(crate) agent_id: String,
-    pub(crate) status: &'static str,
-    pub(crate) ttl_secs: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -407,6 +403,9 @@ pub(crate) struct UpdateAgentRequest {
     #[serde(default)]
     pub(crate) channels:
         Option<std::collections::HashMap<String, agentzero_orchestrator::AgentChannelConfig>>,
+    /// Toggle agent status: "active" or "stopped".
+    #[serde(default)]
+    pub(crate) status: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -441,6 +440,105 @@ pub(crate) struct CreateAgentResponse {
 pub(crate) struct WebhookQuery {
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Tools endpoint (/v1/tools)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ToolSummary {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) category: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) input_schema: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ToolsResponse {
+    pub(crate) object: &'static str,
+    pub(crate) tools: Vec<ToolSummary>,
+    pub(crate) total: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Config endpoint (/v1/config)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ConfigSection {
+    pub(crate) key: String,
+    pub(crate) value: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ConfigResponse {
+    pub(crate) sections: Vec<ConfigSection>,
+}
+
+// ---------------------------------------------------------------------------
+// Memory endpoints (/v1/memory)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MemoryListItem {
+    pub(crate) role: String,
+    pub(crate) content: String,
+    pub(crate) conversation_id: String,
+    pub(crate) agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) created_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MemoryListResponse {
+    pub(crate) object: &'static str,
+    pub(crate) data: Vec<MemoryListItem>,
+    pub(crate) total: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct MemoryListQuery {
+    #[serde(default)]
+    pub(crate) q: Option<String>,
+    #[serde(default)]
+    pub(crate) limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct MemoryRecallRequest {
+    pub(crate) query: String,
+    #[serde(default)]
+    pub(crate) limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct MemoryForgetRequest {
+    #[serde(default)]
+    pub(crate) conversation_id: Option<String>,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) role: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MemoryForgetResponse {
+    pub(crate) forgotten: bool,
+    pub(crate) message: String,
+}
+
+// ---------------------------------------------------------------------------
+// Approvals endpoint (/v1/approvals) — stub
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ApprovalsListResponse {
+    pub(crate) object: &'static str,
+    pub(crate) data: Vec<serde_json::Value>,
+    pub(crate) total: usize,
 }
 
 impl From<StatusCode> for GatewayError {

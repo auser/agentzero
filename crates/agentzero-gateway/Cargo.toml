@@ -13,13 +13,14 @@ default = []
 privacy = ["agentzero-core/privacy", "dep:base64"]
 telemetry = ["agentzero-infra/telemetry"]
 tls = ["dep:axum-server"]
+embedded-ui = ["dep:rust-embed", "dep:mime_guess"]
 
 [dependencies]
 anyhow.workspace = true
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
 agentzero-infra = { workspace = true }
-agentzero-storage = { workspace = true, features = ["pool"] }
+agentzero-storage = { workspace = true, features = ["pool", "storage-encrypted"] }
 agentzero-channels = { workspace = true }
 agentzero-orchestrator = { workspace = true }
 agentzero-providers = { workspace = true }
@@ -37,6 +38,8 @@ serde_json.workspace = true
 sha2.workspace = true
 subtle = "2"
 axum-server = { workspace = true, features = ["tls-rustls"], optional = true }
+rust-embed = { version = "8", features = ["include-exclude"], optional = true }
+mime_guess = { version = "2", optional = true }
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true

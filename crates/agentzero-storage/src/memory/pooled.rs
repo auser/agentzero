@@ -52,8 +52,20 @@ impl PooledMemoryStore {
         // Run schema migrations on a single connection at startup.
         {
             let conn = pool.get().context("failed to get init connection")?;
-            conn.execute(MEMORY_SCHEMA, [])
-                .context("failed to create memory table")?;
+            if let Err(e) = conn.execute(MEMORY_SCHEMA, []) {
+                if is_key_mismatch(&e) {
+                    agentzero_core::tracing::warn!(
+                        path = %path.display(),
+                        "memory database encrypted with a different key; \
+                         recreating (conversation history will be lost)"
+                    );
+                    drop(conn);
+                    drop(pool);
+                    fs::remove_file(path).context("failed to remove stale memory database")?;
+                    return PooledMemoryStore::open(path, key, pool_size);
+                }
+                return Err(map_db_open_error(e, path)).context("failed to create memory table");
+            }
             run_migrations(&conn)?;
         }
 
@@ -63,6 +75,25 @@ impl PooledMemoryStore {
 
 fn hex_encode_key(key: &StorageKey) -> String {
     key.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn is_key_mismatch(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if f.code == rusqlite::ffi::ErrorCode::NotADatabase
+    )
+}
+
+fn map_db_open_error(e: rusqlite::Error, path: &Path) -> anyhow::Error {
+    if is_key_mismatch(&e) {
+        return anyhow::anyhow!(
+            "database at '{}' is encrypted with a different key; \
+             delete the file to create a fresh database",
+            path.display()
+        );
+    }
+    anyhow::Error::from(e)
 }
 
 /// r2d2 connection customizer: runs `PRAGMA key` on each new connection.

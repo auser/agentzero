@@ -609,6 +609,76 @@ Visual agent management in the React Flow browser editor.
 
 ---
 
+## Sprint 46: Platform Control UI
+
+**Goal:** Build a comprehensive web SPA at `ui/` that controls the entire platform — chat, agents, runs, tools, channels, models, config, memory, cron, approvals, and real-time events. Designed Tauri-embeddable from day one.
+
+**Baseline:** Sprint 45 complete (2,311 tests, 0 clippy warnings). Persistent agent management shipped.
+
+**Plan:** `specs/plans/platform-control-ui.md`
+
+---
+
+### Phase A: UI Scaffold (HIGH)
+
+- [ ] `feat/platform-ui` branch from `main`
+- [ ] `ui/` directory: `npm create vite@latest` + React 19 + TypeScript
+- [ ] Dependencies: TanStack Router/Query, Zustand, shadcn/ui, Tailwind v4, Recharts, Lucide
+- [ ] `vite.config.ts` with dev proxy to gateway (all `/v1`, `/ws`, `/health`, `/pair`, `/api`, `/metrics`)
+- [ ] Root layout: `Shell.tsx` (sidebar + topbar + `<Outlet>`), auth guard, `useGlobalEvents()` hook
+
+### Phase B: Core Pages (HIGH)
+
+- [ ] **Dashboard** — health cards, active runs, cost summary, estop quick action
+- [ ] **Chat** — WebSocket `/ws/chat` streaming, model/agent selectors, SSE fallback
+- [ ] **Agents** — table + create/edit/delete sheet, status toggle, `PATCH /v1/agents/:id`
+- [ ] **Runs** — table + right drawer (transcript, events, live stream tabs), cancel/estop
+
+### Phase C: Management Pages (MEDIUM)
+
+- [ ] **Tools** — grouped by category, enable/disable toggles, JSON schema accordion
+- [ ] **Channels** — 30+ platform cards, connection status, configure sheet
+- [ ] **Models** — provider-grouped list, set default, refresh, routing rules
+- [ ] **Config** — schema-driven accordion for 25+ TOML sections, import/export
+
+### Phase D: Advanced Pages (MEDIUM)
+
+- [ ] **Memory** — browse/search/delete entries, recall and forget panels
+- [ ] **Schedule** — cron job CRUD with schedule picker
+- [ ] **Approvals** — pending queue with approve/deny
+- [ ] **Events** — global SSE stream viewer with topic filter
+
+### Phase E: Gateway Additions (HIGH)
+
+- [ ] `GET /v1/tools` — tool list with metadata and schema
+- [ ] `GET/DELETE /v1/memory`, `POST /v1/memory/recall`, `POST /v1/memory/forget`
+- [ ] `GET/POST/PATCH/DELETE /v1/cron`
+- [ ] `GET /v1/approvals`, `POST /v1/approvals/:id/approve|deny`
+- [ ] `GET/PATCH /v1/config`
+- [ ] `?token=` query param support on `/v1/events` SSE
+
+### Phase F: Gateway Static Serving (MEDIUM)
+
+- [ ] `embedded-ui` Cargo feature in `crates/agentzero-gateway/Cargo.toml`
+- [ ] `rust-embed` `UiAssets` struct + `static_handler` (copy from config-ui pattern)
+- [ ] `.fallback(static_handler)` in `router.rs` behind feature flag
+- [ ] `build.rs` auto-build trigger
+- [ ] Justfile recipes: `ui-install`, `ui-build`, `ui-dev`, `build-full`
+
+### Acceptance Criteria (Sprint 46)
+
+- [ ] `cd ui && npm run build` — zero TypeScript errors
+- [ ] `cargo build --features embedded-ui` — compiles, 0 clippy warnings
+- [ ] `agentzero gateway` → `http://localhost:8080` → full UI loads
+- [ ] Dashboard live-updates via SSE without polling
+- [ ] Chat page streams responses via WebSocket
+- [ ] Agents CRUD works end-to-end
+- [ ] Runs table tracks jobs to completion with transcript
+- [ ] `npm run dev` — Vite dev proxy works against live gateway
+- [ ] All existing tests pass: `cargo test --workspace`
+
+---
+
 ## Backlog
 
 ### Embedded Binary Size Reduction (HIGH)

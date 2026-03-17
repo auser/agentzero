@@ -54,6 +54,7 @@ impl SqliteMemoryStore {
                 let conn = Connection::open(path)?;
                 conn.execute_batch(&format!("PRAGMA key = \"x'{hex_key}'\""))?;
                 conn.execute(MEMORY_SCHEMA, [])
+                    .map_err(|e| map_db_open_error(e, path))
                     .context("failed to create memory table after migration")?;
                 run_versioned_migrations(&conn)?;
                 return Ok(Self {
@@ -65,8 +66,22 @@ impl SqliteMemoryStore {
         #[cfg(not(feature = "storage-encrypted"))]
         let _ = key; // suppress unused warning for plain SQLite builds
 
-        conn.execute(MEMORY_SCHEMA, [])
-            .context("failed to create memory table")?;
+        if let Err(e) = conn.execute(MEMORY_SCHEMA, []) {
+            if is_key_mismatch(&e) {
+                // The DB was encrypted with a different key. The conversation
+                // history is inaccessible, so recreate the file automatically
+                // rather than crashing the agent.
+                agentzero_core::tracing::warn!(
+                    path = %path.display(),
+                    "memory database encrypted with a different key; \
+                     recreating (conversation history will be lost)"
+                );
+                drop(conn);
+                fs::remove_file(path).context("failed to remove stale memory database")?;
+                return SqliteMemoryStore::open(path, key);
+            }
+            return Err(map_db_open_error(e, path)).context("failed to create memory table");
+        }
         run_versioned_migrations(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -189,6 +204,27 @@ fn current_schema_version() -> u32 {
 #[cfg(feature = "storage-encrypted")]
 fn hex_encode_key(key: &StorageKey) -> String {
     key.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn is_key_mismatch(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if f.code == rusqlite::ffi::ErrorCode::NotADatabase
+    )
+}
+
+/// Map a rusqlite error to a human-friendly message when the database is
+/// encrypted with a different key (SQLITE_NOTADB, code 26).
+fn map_db_open_error(e: rusqlite::Error, path: &Path) -> anyhow::Error {
+    if is_key_mismatch(&e) {
+        return anyhow::anyhow!(
+            "database at '{}' is encrypted with a different key; \
+             delete the file to create a fresh database",
+            path.display()
+        );
+    }
+    anyhow::Error::from(e)
 }
 
 /// Returns `true` if the file at `path` starts with the SQLite magic header,

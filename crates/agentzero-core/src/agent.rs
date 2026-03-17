@@ -1164,7 +1164,37 @@ impl Agent {
                 });
             }
 
+            // Detect when the most recent tool result will be truncated away.
+            // This causes the model to call the same tool again (apparent loop)
+            // even though the tool succeeded. Warn early so the user knows to
+            // raise max_prompt_chars in their config.
+            let last_tool_result_chars = messages.last().and_then(|m| {
+                if matches!(m, ConversationMessage::ToolResult(_)) {
+                    Some(m.char_count())
+                } else {
+                    None
+                }
+            });
+            let pre_truncate_len = messages.len();
             truncate_messages(&mut messages, self.config.max_prompt_chars);
+            if let Some(result_chars) = last_tool_result_chars {
+                let still_present = messages
+                    .last()
+                    .is_some_and(|m| matches!(m, ConversationMessage::ToolResult(_)));
+                if !still_present || messages.len() < pre_truncate_len {
+                    warn!(
+                        request_id = %request_id,
+                        iteration = iteration,
+                        tool_result_chars = result_chars,
+                        max_prompt_chars = self.config.max_prompt_chars,
+                        "tool result truncated from context: tool result ({} chars) exceeds \
+                         available budget within max_prompt_chars={}; the model will likely \
+                         call the same tool again — raise max_prompt_chars in your config",
+                        result_chars,
+                        self.config.max_prompt_chars,
+                    );
+                }
+            }
 
             self.hook(
                 "before_provider_call",

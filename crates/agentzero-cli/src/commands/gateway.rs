@@ -1,4 +1,5 @@
 use crate::command_core::{AgentZeroCommand, CommandContext};
+use crate::daemon::find_available_port;
 use async_trait::async_trait;
 
 pub struct GatewayOptions {
@@ -20,9 +21,13 @@ impl AgentZeroCommand for GatewayCommand {
                 .map(|c| c.gateway.host.clone())
                 .unwrap_or_else(|| "127.0.0.1".to_string())
         });
-        let port = opts
+        let requested_port = opts
             .port
             .unwrap_or_else(|| cfg.as_ref().map(|c| c.gateway.port).unwrap_or(8080));
+        let port = find_available_port(&host, requested_port)?;
+        if port != requested_port {
+            println!("port {requested_port} is in use, using port {port} instead");
+        }
         let token_store_path = ctx.data_dir.join("gateway-paired-tokens.json");
         agentzero_gateway::run(
             &host,

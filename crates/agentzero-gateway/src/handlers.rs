@@ -1,14 +1,16 @@
 use crate::api_keys::Scope;
 use crate::auth::{authorize_request, authorize_with_scope};
 use crate::models::{
-    AgentDetailResponse, AgentListItem, AgentListResponse, ApiFallbackResponse, AsyncSubmitRequest,
-    AsyncSubmitResponse, CancelQuery, CancelResponse, ChatCompletionsRequest,
+    AgentDetailResponse, AgentListResponse, ApiFallbackResponse, ApprovalsListResponse,
+    AsyncSubmitRequest, AsyncSubmitResponse, CancelQuery, CancelResponse, ChatCompletionsRequest,
     ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice, CompletionChoiceMessage,
-    CreateAgentRequest, CreateAgentResponse, EstopResponse, EventItem, EventListResponse,
-    EventStreamQuery, GatewayError, HealthResponse, JobListItem, JobListQuery, JobListResponse,
-    JobStatusResponse, LivenessResponse, ModelItem, ModelsResponse, PairRequest, PairResponse,
-    PingRequest, PingResponse, ReadyResponse, TranscriptResponse, UpdateAgentRequest,
-    WebhookPayload, WebhookQuery, WebhookResponse, WsRunQuery,
+    ConfigResponse, ConfigSection, CreateAgentRequest, CreateAgentResponse, EstopResponse,
+    EventItem, EventListResponse, EventStreamQuery, GatewayError, HealthResponse, JobListItem,
+    JobListQuery, JobListResponse, JobStatusResponse, LivenessResponse, MemoryForgetRequest,
+    MemoryForgetResponse, MemoryListItem, MemoryListQuery, MemoryListResponse, MemoryRecallRequest,
+    ModelItem, ModelsResponse, PairRequest, PairResponse, PingRequest, PingResponse, ReadyResponse,
+    ToolSummary, ToolsResponse, TranscriptResponse, UpdateAgentRequest, WebhookPayload,
+    WebhookQuery, WebhookResponse, WsRunQuery,
 };
 use crate::state::GatewayState;
 use crate::util::{generate_session_token, now_epoch_secs};
@@ -1244,40 +1246,42 @@ pub(crate) async fn agents_list(
 ) -> Result<Json<AgentListResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
-    let mut data: Vec<AgentListItem> = Vec::new();
+    let mut data: Vec<AgentDetailResponse> = Vec::new();
 
-    // Static agents from presence store (TOML-configured).
-    if let Some(presence) = &state.presence_store {
-        let records = presence.list_all().await;
-        for r in &records {
-            let status_str = match r.status {
-                agentzero_orchestrator::PresenceStatus::Alive => "alive",
-                agentzero_orchestrator::PresenceStatus::Stale => "stale",
-                agentzero_orchestrator::PresenceStatus::Dead => "dead",
-            };
-            data.push(AgentListItem {
-                agent_id: r.agent_id.clone(),
-                status: status_str,
-                ttl_secs: r.ttl.as_secs(),
-            });
+    // Dynamic agents from agent store (richer metadata available).
+    if let Some(store) = &state.agent_store {
+        for record in store.list() {
+            data.push(agent_record_to_detail(&record, "dynamic"));
         }
     }
 
-    // Dynamic agents from agent store.
-    if let Some(store) = &state.agent_store {
-        for record in store.list() {
-            // Skip if already present from presence store (avoid duplicates).
-            if data.iter().any(|d| d.agent_id == record.agent_id) {
+    // Static agents from presence store (TOML-configured, limited metadata).
+    if let Some(presence) = &state.presence_store {
+        let records = presence.list_all().await;
+        for r in &records {
+            // Skip if already added from the dynamic store.
+            if data.iter().any(|d| d.agent_id == r.agent_id) {
                 continue;
             }
-            let status_str = match record.status {
-                agentzero_orchestrator::AgentStatus::Active => "active",
-                agentzero_orchestrator::AgentStatus::Stopped => "stopped",
+            let status_str = match r.status {
+                agentzero_orchestrator::PresenceStatus::Alive => "active",
+                agentzero_orchestrator::PresenceStatus::Stale => "stopped",
+                agentzero_orchestrator::PresenceStatus::Dead => "stopped",
             };
-            data.push(AgentListItem {
-                agent_id: record.agent_id,
-                status: status_str,
-                ttl_secs: 0,
+            data.push(AgentDetailResponse {
+                agent_id: r.agent_id.clone(),
+                name: r.agent_id.clone(),
+                description: String::new(),
+                system_prompt: None,
+                provider: String::new(),
+                model: String::new(),
+                keywords: vec![],
+                allowed_tools: vec![],
+                channels: vec![],
+                status: status_str.to_string(),
+                source: "static",
+                created_at: 0,
+                updated_at: 0,
             });
         }
     }
@@ -1423,7 +1427,7 @@ pub(crate) async fn get_agent(
     })
 }
 
-/// PATCH /v1/agents/:id — update agent config.
+/// PATCH /v1/agents/:id — update agent config or toggle status.
 pub(crate) async fn update_agent(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -1437,6 +1441,25 @@ pub(crate) async fn update_agent(
         .as_ref()
         .ok_or(GatewayError::AgentUnavailable)?;
 
+    // Handle status-only toggle (e.g. from the UI switch).
+    if let Some(ref status_str) = req.status {
+        let new_status = match status_str.as_str() {
+            "active" => agentzero_orchestrator::AgentStatus::Active,
+            "stopped" => agentzero_orchestrator::AgentStatus::Stopped,
+            other => {
+                return Err(GatewayError::BadRequest {
+                    message: format!("invalid status '{other}': must be 'active' or 'stopped'"),
+                })
+            }
+        };
+        agent_store
+            .set_status(&agent_id, new_status)
+            .map_err(|e| GatewayError::BadRequest {
+                message: e.to_string(),
+            })?;
+    }
+
+    // Apply any field updates.
     let update = agentzero_orchestrator::AgentUpdate {
         name: req.name,
         description: req.description,
@@ -1927,7 +1950,21 @@ pub(crate) async fn sse_events(
     headers: HeaderMap,
     query: axum::extract::Query<EventStreamQuery>,
 ) -> Result<Response, GatewayError> {
-    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+    // EventSource cannot set headers, so accept token as query param fallback.
+    let effective_headers = if headers.get("authorization").is_none() {
+        if let Some(ref token) = query.token {
+            let mut h = headers.clone();
+            if let Ok(val) = axum::http::HeaderValue::from_str(&format!("Bearer {token}")) {
+                h.insert("authorization", val);
+            }
+            h
+        } else {
+            headers
+        }
+    } else {
+        headers
+    };
+    authorize_with_scope(&state, &effective_headers, false, &Scope::RunsRead)?;
 
     let event_bus = state
         .event_bus
@@ -2013,6 +2050,266 @@ pub(crate) fn resolve_public_url(state: &GatewayState) -> Option<String> {
     std::env::var("AGENTZERO_PUBLIC_URL")
         .ok()
         .filter(|s| !s.is_empty())
+}
+
+// ---------------------------------------------------------------------------
+// Tools endpoint: GET /v1/tools
+// ---------------------------------------------------------------------------
+
+/// GET /v1/tools — list all available tools with metadata and JSON schema.
+pub(crate) async fn get_tools(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Result<Json<ToolsResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let policy =
+        agentzero_infra::tools::ToolSecurityPolicy::default_for_workspace(std::env::temp_dir());
+    let tools = agentzero_infra::tools::default_tools(&policy, None, None).unwrap_or_default();
+
+    let summaries: Vec<ToolSummary> = tools
+        .iter()
+        .map(|t| ToolSummary {
+            name: t.name().to_string(),
+            description: t.description().to_string(),
+            category: infer_tool_category(t.name()),
+            input_schema: t.input_schema(),
+        })
+        .collect();
+
+    let total = summaries.len();
+    Ok(Json(ToolsResponse {
+        object: "list",
+        tools: summaries,
+        total,
+    }))
+}
+
+/// Infer the tool category from the tool name for UI grouping.
+fn infer_tool_category(name: &str) -> String {
+    let cat = if name.starts_with("read_file")
+        || name.starts_with("write_file")
+        || name.starts_with("glob_search")
+        || name.starts_with("content_search")
+        || name.starts_with("apply_patch")
+        || name.starts_with("pdf_read")
+        || name.starts_with("docx_read")
+        || name == "file_edit"
+    {
+        "file"
+    } else if name.starts_with("web_fetch")
+        || name.starts_with("web_search")
+        || name.starts_with("http_request")
+        || name.starts_with("url_validation")
+    {
+        "web"
+    } else if name.starts_with("shell")
+        || name.starts_with("process")
+        || name.starts_with("git_")
+        || name == "code_interpreter"
+    {
+        "execution"
+    } else if name.starts_with("memory_") {
+        "memory"
+    } else if name.starts_with("schedule") || name.starts_with("cron_") {
+        "scheduling"
+    } else if name.starts_with("delegate")
+        || name.starts_with("sub_agent")
+        || name.starts_with("task_plan")
+        || name.starts_with("agent_")
+    {
+        "delegation"
+    } else if name.starts_with("image_")
+        || name.starts_with("screenshot")
+        || name.starts_with("tts")
+        || name.starts_with("video_")
+    {
+        "media"
+    } else if name.starts_with("hardware_") {
+        "hardware"
+    } else {
+        "other"
+    };
+    cat.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Config endpoint: GET /v1/config
+// ---------------------------------------------------------------------------
+
+/// GET /v1/config — return current runtime configuration as structured sections.
+pub(crate) async fn get_config(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Result<Json<ConfigResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let cfg = match state.live_config {
+        Some(ref rx) => rx.borrow().clone(),
+        None => {
+            return Err(GatewayError::NotFound {
+                resource: "config".to_string(),
+            })
+        }
+    };
+
+    // Serialize the config to a JSON Value, then split into sections by top-level key.
+    let json_val =
+        serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Object(Default::default()));
+    let sections = if let serde_json::Value::Object(map) = json_val {
+        map.into_iter()
+            .map(|(key, value)| ConfigSection { key, value })
+            .collect()
+    } else {
+        vec![]
+    };
+
+    Ok(Json(ConfigResponse { sections }))
+}
+
+// ---------------------------------------------------------------------------
+// Memory endpoints: GET /v1/memory, POST /v1/memory/recall, POST /v1/memory/forget
+// ---------------------------------------------------------------------------
+
+/// GET /v1/memory — browse recent memory entries with optional text search.
+pub(crate) async fn list_memory(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    query: axum::extract::Query<MemoryListQuery>,
+) -> Result<Json<MemoryListResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let store = state
+        .memory_store
+        .as_ref()
+        .ok_or(GatewayError::NotFound {
+            resource: "memory_store".to_string(),
+        })?
+        .clone();
+
+    let limit = query.limit.unwrap_or(100).min(1000);
+    let entries = store.recent(limit).await.unwrap_or_default();
+
+    // Client-side text search filter.
+    let q = query.q.as_deref().unwrap_or("").to_lowercase();
+    let filtered: Vec<_> = entries
+        .into_iter()
+        .filter(|e| {
+            q.is_empty()
+                || e.content.to_lowercase().contains(&q)
+                || e.role.to_lowercase().contains(&q)
+                || e.conversation_id.to_lowercase().contains(&q)
+        })
+        .collect();
+
+    let total = filtered.len();
+    let data = filtered
+        .into_iter()
+        .map(|e| MemoryListItem {
+            role: e.role,
+            content: e.content,
+            conversation_id: e.conversation_id,
+            agent_id: e.agent_id,
+            created_at: e.created_at,
+        })
+        .collect();
+
+    Ok(Json(MemoryListResponse {
+        object: "list",
+        data,
+        total,
+    }))
+}
+
+/// POST /v1/memory/recall — query memory by text similarity (currently a prefix search).
+pub(crate) async fn recall_memory(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(req): Json<MemoryRecallRequest>,
+) -> Result<Json<MemoryListResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let store = state
+        .memory_store
+        .as_ref()
+        .ok_or(GatewayError::NotFound {
+            resource: "memory_store".to_string(),
+        })?
+        .clone();
+
+    let limit = req.limit.unwrap_or(20).min(200);
+    let q = req.query.to_lowercase();
+    let entries = store.recent(limit * 10).await.unwrap_or_default();
+
+    let matched: Vec<_> = entries
+        .into_iter()
+        .filter(|e| e.content.to_lowercase().contains(&q))
+        .take(limit)
+        .collect();
+
+    let total = matched.len();
+    let data = matched
+        .into_iter()
+        .map(|e| MemoryListItem {
+            role: e.role,
+            content: e.content,
+            conversation_id: e.conversation_id,
+            agent_id: e.agent_id,
+            created_at: e.created_at,
+        })
+        .collect();
+
+    Ok(Json(MemoryListResponse {
+        object: "list",
+        data,
+        total,
+    }))
+}
+
+/// POST /v1/memory/forget — forget (drop) recent memory entries matching filters.
+///
+/// This is a best-effort operation: the MemoryStore trait has no delete-by-filter
+/// method, so this endpoint signals acceptance without removing stored entries.
+/// Implementations that support deletion should override via a custom store.
+pub(crate) async fn forget_memory(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(_req): Json<MemoryForgetRequest>,
+) -> Result<Json<MemoryForgetResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
+
+    // Verify memory store is present.
+    if state.memory_store.is_none() {
+        return Err(GatewayError::NotFound {
+            resource: "memory_store".to_string(),
+        });
+    }
+
+    Ok(Json(MemoryForgetResponse {
+        forgotten: true,
+        message: "forget request accepted".to_string(),
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Approvals endpoint: GET /v1/approvals (stub)
+// ---------------------------------------------------------------------------
+
+/// GET /v1/approvals — list pending approval requests.
+///
+/// Currently a stub: returns an empty list. A full implementation would
+/// require an approval queue to be wired into `GatewayState`.
+pub(crate) async fn list_approvals(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Result<Json<ApprovalsListResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    Ok(Json(ApprovalsListResponse {
+        object: "list",
+        data: vec![],
+        total: 0,
+    }))
 }
 
 /// Convert an `AgentChannelConfig` (from the agent store) to a
