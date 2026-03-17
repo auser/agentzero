@@ -19,7 +19,7 @@ export interface RunListResponse {
 }
 
 export interface RunEventItem {
-  event_type: string
+  type: string
   run_id: string
   tool?: string
   result?: string

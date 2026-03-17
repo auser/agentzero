@@ -95,7 +95,7 @@ function RunDetailPanel({ run, onClose }: { run: RunListItem; onClose: () => voi
                 {(events?.events ?? []).map((e, i) => (
                   <div key={i} className="rounded border border-border p-2 text-xs space-y-0.5">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{e.event_type}</span>
+                      <span className="font-medium">{e.type}</span>
                       {e.tool && <span className="text-muted-foreground font-mono">{e.tool}</span>}
                     </div>
                     {e.result && <p className="text-muted-foreground truncate">{e.result}</p>}
@@ -279,7 +279,7 @@ function RunsPage() {
                 <TableCell className="text-xs">{run.agent_id}</TableCell>
                 <TableCell><CostDisplay microdollars={run.cost_microdollars} className="text-xs" /></TableCell>
                 <TableCell className="text-xs text-muted-foreground">
-                  {formatDistanceToNow(new Date(run.accepted_at), { addSuffix: true })}
+                  {run.accepted_at ? formatDistanceToNow(new Date(run.accepted_at), { addSuffix: true }) : '—'}
                 </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   {(run.status === 'pending' || run.status === 'running') && (

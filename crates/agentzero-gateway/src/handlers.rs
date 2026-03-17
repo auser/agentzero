@@ -1805,10 +1805,17 @@ pub(crate) fn status_frame(
 /// is specified, otherwise raw status events.
 pub(crate) async fn sse_run_stream(
     State(state): State<GatewayState>,
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     Path(run_id_str): Path<String>,
     query: axum::extract::Query<WsRunQuery>,
 ) -> Result<Response, GatewayError> {
+    if !headers.contains_key(axum::http::header::AUTHORIZATION) {
+        if let Some(ref token) = query.token {
+            if let Ok(val) = format!("Bearer {token}").parse() {
+                headers.insert(axum::http::header::AUTHORIZATION, val);
+            }
+        }
+    }
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
     let job_store = state
