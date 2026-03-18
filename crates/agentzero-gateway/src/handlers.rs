@@ -2723,3 +2723,56 @@ pub(crate) fn agent_channel_to_instance_config(
     }
     instance
 }
+
+// ---------------------------------------------------------------------------
+// Remote tool execution (lite mode delegation)
+// ---------------------------------------------------------------------------
+
+/// `POST /v1/tool-execute` — Execute a tool remotely.
+///
+/// Lite-mode nodes delegate tool calls to full-featured nodes via this endpoint.
+/// Currently a stub: returns the tool name with a "not yet wired" message for
+/// known tool prefixes, and 404 for unknown tools.
+pub(crate) async fn tool_execute(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::ToolExecuteRequest>,
+) -> Result<Json<crate::models::ToolExecuteResponse>, GatewayError> {
+    authorize_request(&state, &headers, false)?;
+
+    let known_prefixes = [
+        "read_file",
+        "write_file",
+        "search",
+        "shell",
+        "http",
+        "memory",
+        "delegate",
+        "cron",
+        "agent_manage",
+    ];
+
+    let is_known = known_prefixes
+        .iter()
+        .any(|prefix| body.tool.starts_with(prefix));
+
+    if !is_known {
+        return Err(GatewayError::BadRequest {
+            message: format!("unknown tool: {}", body.tool),
+        });
+    }
+
+    let input_summary = if body.input.is_object() {
+        format!("{} keys", body.input.as_object().map_or(0, |m| m.len()))
+    } else {
+        body.input.to_string()
+    };
+
+    Ok(Json(crate::models::ToolExecuteResponse {
+        tool: body.tool,
+        output: format!(
+            "remote tool execution not yet wired — stub response (input: {input_summary})"
+        ),
+        error: None,
+    }))
+}

@@ -330,6 +330,8 @@ dependencies = [
  "agentzero-storage",
  "anyhow",
  "clap",
+ "reqwest",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

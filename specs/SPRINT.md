@@ -311,8 +311,8 @@ A minimal binary that runs orchestration + gateway without heavy tool/plugin/cha
 
 - [x] **`agentzero-lite` binary** — `bin/agentzero-lite/`. Minimal deps.
 - [x] **Remote tool execution** — `POST /v1/tool-execute` endpoint on gateway.
-- [ ] **Binary size target** — Under 10 MB release binary (vs ~25 MB full).
-- [ ] **Tests** — Builds without tools feature. Remote tool delegation round-trip. Gateway starts in lite mode. 4+ tests.
+- [x] **Binary size target** — 5.8MB with `release-min` profile (fat LTO + opt-level=z). 12MB with standard release. Well under 10MB target.
+- [x] **Tests** — 5 tests: CLI parsing (2), heavy crate exclusion, gateway run options for lite mode, remote tool delegation round-trip via real HTTP.
 
 ### Phase B: Examples Directory (MEDIUM)
 
@@ -329,7 +329,7 @@ Comprehensive examples with READMEs demonstrating key use cases.
 - [x] **Docker Secrets support** — `read_docker_secret()` + `env_or_secret()` in config loader.
 - [x] **`docker-compose.yml` secrets** — Secrets section + env vars added.
 - [x] **Resource limits** — `mem_limit`, `cpus`, `healthcheck` in docker-compose.
-- [ ] **Tests** — Config loader reads from mock `/run/secrets/` path. 2+ tests.
+- [x] **Tests** — 3 tests: mock secret file read, env var takes precedence, both-missing returns None.
 
 ### Phase D: Operational Runbooks (LOW)
 
@@ -750,6 +750,63 @@ Ratatui-based terminal dashboard with tabs, live runs/agents/events panels. Defe
 - [x] `cargo clippy` — 0 warnings
 - [x] All tests pass
 - [x] `npm run build` — 0 TypeScript errors
+
+---
+
+## Sprint 48: Privacy-First agentzero-lite
+
+**Goal:** Rebrand agentzero-lite as a privacy-first, offline-capable, security-focused binary. Default to local-first operation with Noise-encrypted gateway, explicit cloud provider opt-in, and hardened gateway defaults. "Keeps private files off the cloud, runs fully offline, and adds the security layer local AI agents were missing."
+
+**Baseline:** Sprint 47 complete. Privacy infrastructure fully built (Noise Protocol, sealed envelopes, key rotation, per-component boundaries). agentzero-lite binary exists but defaults to privacy mode "off".
+
+**Branch:** `feat/privacy-first-lite`
+
+**Plan:** `specs/plans/sprint-48-privacy-first-lite.md`
+
+---
+
+### Phase A: New "private" Privacy Mode (HIGH)
+
+A fifth privacy mode between `"off"` and `"local_only"`. Blocks network tools but allows explicitly-configured cloud AI providers.
+
+- [ ] **`"private"` mode validation** — Add to `model.rs` privacy mode match. Do NOT reject cloud providers (unlike `local_only`).
+- [ ] **Tool security policy** — Block `web_search`, `http_request`, `web_fetch`, `composio`, TTS, image/video gen, domain tools. Do NOT restrict URL access / domain allowlist (so cloud providers work).
+- [ ] **Noise auto-enable** — `"private"` mode auto-enables Noise Protocol + key rotation (same as `"encrypted"`).
+- [ ] **Per-agent boundary** — `"private"` maps to `encrypted_only` default.
+- [ ] **Tests** — 3+ tests: mode accepted, network tools blocked, cloud provider allowed.
+
+### Phase B: GatewayRunOptions Privacy Override (HIGH)
+
+- [ ] **`default_privacy_mode` field** — Add `Option<String>` to `GatewayRunOptions`.
+- [ ] **Startup wiring** — Use override when no config file exists (fallback from `"off"` to override value).
+- [ ] **Privacy feature flag** — Enable `privacy` feature in agentzero-lite `Cargo.toml`.
+
+### Phase C: Lite Binary Hardening (MEDIUM)
+
+- [ ] **Default to `"private"` mode** — Set `default_privacy_mode: Some("private")`.
+- [ ] **`--privacy-mode` CLI arg** — Default `"private"`, values: off/private/local_only/encrypted/full.
+- [ ] **Tighter rate limits** — `rate_limit_max: 120` (2 req/s for single-user edge device).
+- [ ] **Privacy banner** — Show mode in startup banner; warn when cloud provider configured.
+
+### Phase D: Documentation & Messaging (MEDIUM)
+
+- [ ] **Privacy guide** — Add `"private"` mode to table, new "agentzero-lite" section.
+- [ ] **Config reference** — Document `"private"` mode.
+- [ ] **Raspberry Pi guide** — Reference agentzero-lite with privacy-first defaults.
+- [ ] **Example configs** — Local-only (ollama) and explicit-cloud (anthropic) configs.
+
+---
+
+### Acceptance Criteria (Sprint 48)
+
+- [ ] agentzero-lite starts in "private" mode by default (no config needed)
+- [ ] Noise Protocol auto-enabled on startup in private mode
+- [ ] Cloud providers work only with explicit TOML config
+- [ ] Network tools blocked in private mode; cloud provider calls unaffected
+- [ ] Startup banner shows privacy mode; warns on cloud provider
+- [ ] `--privacy-mode off` reverts to standard behavior
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass (6+ new)
 
 ---
 

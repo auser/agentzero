@@ -11,7 +11,7 @@ mod templates;
 pub mod watcher;
 pub mod writer;
 
-pub use loader::{load, load_env_var, update_auto_approve};
+pub use loader::{env_or_secret, load, load_env_var, read_docker_secret, update_auto_approve};
 pub use model::{
     AgentSettings, AgentZeroConfig, AudioConfig, AuditConfig, AutonomyConfig, BrowserConfig,
     ChannelsGlobalConfig, ComposioConfig, ComputerUseConfig, CostConfig, CredentialProfile,

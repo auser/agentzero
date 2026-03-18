@@ -645,6 +645,23 @@ pub(crate) struct TopologyEdge {
     pub(crate) edge_type: &'static str,
 }
 
+// ---------------------------------------------------------------------------
+// Remote tool execution (lite mode delegation)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ToolExecuteRequest {
+    pub(crate) tool: String,
+    pub(crate) input: Value,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ToolExecuteResponse {
+    pub(crate) tool: String,
+    pub(crate) output: String,
+    pub(crate) error: Option<String>,
+}
+
 impl From<StatusCode> for GatewayError {
     fn from(status: StatusCode) -> Self {
         match status {

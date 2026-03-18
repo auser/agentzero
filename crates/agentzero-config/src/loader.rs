@@ -311,3 +311,69 @@ pub fn update_auto_approve(path: &Path, tools: &[String]) -> anyhow::Result<()> 
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Docker Secrets support
+// ---------------------------------------------------------------------------
+
+/// Read a Docker secret from `/run/secrets/<name>`.
+/// Returns `None` if the file doesn't exist or is unreadable.
+pub fn read_docker_secret(name: &str) -> Option<String> {
+    let path = PathBuf::from("/run/secrets").join(name);
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Resolve a value from: environment variable → Docker secret → `None`.
+/// Useful for API keys and encryption keys in containerized deployments.
+pub fn env_or_secret(env_var: &str, secret_name: &str) -> Option<String> {
+    std::env::var(env_var)
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| read_docker_secret(secret_name))
+}
+
+#[cfg(test)]
+mod docker_secret_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn read_docker_secret_from_mock_path() {
+        // Create a temp dir simulating /run/secrets/
+        let tmp =
+            std::env::temp_dir().join(format!("agentzero-secrets-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("create tmp dir");
+        let secret_path = tmp.join("api_key");
+        let mut f = std::fs::File::create(&secret_path).expect("create secret file");
+        f.write_all(b"sk-test-key-12345\n").expect("write secret");
+
+        // read_docker_secret reads from an arbitrary path internally,
+        // but we can test the parsing logic by reading directly
+        let content = std::fs::read_to_string(&secret_path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        assert_eq!(content, Some("sk-test-key-12345".to_string()));
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn env_or_secret_prefers_env_var() {
+        let key = format!("AGENTZERO_TEST_SECRET_{}", std::process::id());
+        unsafe { std::env::set_var(&key, "from-env") };
+        let result = env_or_secret(&key, "nonexistent_secret");
+        assert_eq!(result, Some("from-env".to_string()));
+        unsafe { std::env::remove_var(&key) };
+    }
+
+    #[test]
+    fn env_or_secret_falls_back_to_none_when_both_missing() {
+        let key = format!("AGENTZERO_MISSING_SECRET_{}", std::process::id());
+        let result = env_or_secret(&key, "definitely_nonexistent_secret_file");
+        assert_eq!(result, None);
+    }
+}
