@@ -10,7 +10,7 @@ Previous sprints archived to `specs/sprints/33-38-production-hardening-scaling.m
 
 **Baseline:** Sprint 38 complete (2,163 tests, 0 clippy warnings). All CRITICAL/HIGH security and reliability gaps closed. Per-identity rate limiting, provider fallback, OpenAPI, backup/restore, TLS, HSTS, audit logging all shipped.
 
-**Plan:** `specs/plans/10-full-production-platform.md`
+**Plan:** `specs/plans/17-full-production-platform.md`
 
 ---
 
@@ -115,7 +115,7 @@ Comprehensive examples with READMEs demonstrating key use cases.
 
 Wire the existing WhatsApp Cloud API channel into the config pipeline and add a new Twilio SMS channel.
 
-**Plan:** `specs/plans/11-whatsapp-sms-channels.md`
+**Plan:** `specs/plans/18-whatsapp-sms-channels.md`
 
 - [x] **WhatsApp wiring** — Add `"whatsapp"` arm to `register_one()` in `channel_setup.rs`. Maps `access_token`, `channel_id` → `phone_number_id`, `token` → `verify_token`. 2 tests. *(Shipped in Sprint 40 Phase E)*
 - [x] **`ChannelInstanceConfig` new fields** — `account_sid: Option<String>`, `from_number: Option<String>` for Twilio SMS. *(Shipped in Sprint 40 Phase E)*
@@ -364,7 +364,7 @@ Comprehensive examples with READMEs demonstrating key use cases.
 
 **Baseline:** Sprint 42 planned. All prior sprints complete (AI tool selection, gossip event bus, CLI API key management, WhatsApp/SMS channels, CI/CD hardening, security/observability, persistent API keys).
 
-**Plan:** `specs/plans/12-agent-as-a-service.md`
+**Plan:** `specs/plans/20-agent-as-a-service.md`
 
 ---
 
@@ -539,7 +539,7 @@ SQL migration and template configs.
 
 **Baseline:** Sprint 44 complete. AgentStore, AgentRouter, Coordinator dynamic registration, agent CRUD API, webhook proxy all shipped. Config UI has TOML-based agent nodes but no persistent agent management.
 
-**Plan:** `specs/plans/agent-manage-cli-configui.md`
+**Plan:** `specs/plans/22-agent-manage-cli-configui.md`
 
 ---
 
@@ -615,7 +615,7 @@ Visual agent management in the React Flow browser editor.
 
 **Baseline:** Sprint 45 complete (2,311 tests, 0 clippy warnings). Persistent agent management shipped.
 
-**Plan:** `specs/plans/platform-control-ui.md`
+**Plan:** `specs/plans/23-platform-control-ui.md`
 
 ---
 
@@ -761,7 +761,7 @@ Ratatui-based terminal dashboard with tabs, live runs/agents/events panels. Defe
 
 **Branch:** `feat/privacy-first-lite`
 
-**Plan:** `specs/plans/sprint-48-privacy-first-lite.md`
+**Plan:** `specs/plans/24-privacy-first-lite.md`
 
 ---
 
@@ -810,13 +810,134 @@ A fifth privacy mode between `"off"` and `"local_only"`. Blocks network tools bu
 
 ---
 
+## Sprint 49: Competitive Extension — MCP Server Mode + WASM Plugin Signing + Semantic Memory
+
+**Goal:** Close the three highest-leverage competitive gaps: expose AgentZero's 48 tools as an MCP server (enabling Claude Desktop, Cursor, Windsurf integration), add Ed25519 manifest signing for WASM plugins, and add vector embedding-based semantic memory recall. Three parallel tracks with no cross-dependencies.
+
+**Baseline:** Sprint 48 complete. Privacy-first lite mode shipped.
+
+**Plan:** `specs/plans/24-competitive-extension-mcp-a2a.md`
+
+**Branch:** `feat/competitive-extension-mcp-a2a`
+
+---
+
+### Track A: MCP Server Mode (HIGH)
+
+Core `McpServer` struct exposing tools via JSON-RPC 2.0. Two transports: stdio (for Claude Desktop) and HTTP/SSE (for gateway). Wires up the existing `tool_execute` stub for real execution.
+
+- [ ] **`McpServer` core** — `crates/agentzero-infra/src/mcp_server.rs`: `initialize`, `tools/list`, `tools/call` handlers. Maps `Tool::name()`, `description()`, `input_schema()` to MCP schema.
+- [ ] **stdio transport** — `crates/agentzero-cli/src/mcp_serve.rs`: `agentzero mcp-serve` subcommand reading JSON-RPC from stdin/stdout.
+- [ ] **Gateway HTTP transport** — `crates/agentzero-gateway/src/mcp_routes.rs`: `POST /mcp/message` + `GET /mcp/sse` with session management.
+- [ ] **Wire up `tool_execute`** — `crates/agentzero-gateway/src/handlers.rs`: connect the stub at line ~2736 to actual tool execution (benefits both MCP and REST API).
+- [ ] **Integration test** — Install as MCP server in Claude Desktop config, verify `tools/list` returns all tools, execute a tool.
+
+### Track B: WASM Plugin Manifest Signing (MEDIUM)
+
+Ed25519 signing at package time, verification at load time. Backward-compatible (unsigned plugins still work when `require_signed` is false).
+
+- [ ] **Signing module** — `crates/agentzero-plugins/src/signing.rs`: `sign_manifest()`, `verify_manifest()`, `generate_keypair()` using `ed25519-dalek`.
+- [ ] **Manifest fields** — Add `signature: Option<String>` and `signing_key_id: Option<String>` to `PluginManifest` in `package.rs`.
+- [ ] **Load-time verification** — Check signature in `wasm.rs` before executing. Add `require_signed: bool` to `WasmIsolationPolicy`.
+- [ ] **CLI commands** — `agentzero plugin sign` and `agentzero plugin verify` subcommands.
+- [ ] **Test** — Generate keypair, sign plugin, verify load succeeds with valid sig and fails with tampered sig.
+
+### Track C: Vector Embeddings & Semantic Memory (MEDIUM)
+
+Add embedding-based semantic recall to the memory system. Currently all recall is recency-based (`ORDER BY id DESC`). Feature-gated behind `embeddings` — no binary size impact when disabled.
+
+- [ ] **EmbeddingProvider trait** — `crates/agentzero-core/src/embedding.rs`: `embed(text) -> Vec<f32>`, `dimensions()`, plus cosine similarity function.
+- [ ] **API embedding provider** — `crates/agentzero-providers/src/embedding.rs`: `ApiEmbeddingProvider` calling OpenAI `text-embedding-3-small` etc. via existing `HttpTransport`.
+- [ ] **Schema migration v6** — `crates/agentzero-storage/src/memory/sqlite.rs`: `ALTER TABLE memory ADD COLUMN embedding BLOB DEFAULT NULL`.
+- [ ] **MemoryEntry + MemoryStore** — Add `embedding: Option<Vec<f32>>` to `MemoryEntry`, add `semantic_recall()` and `append_with_embedding()` to `MemoryStore` trait.
+- [ ] **SQLite/pooled/Turso backends** — Implement `semantic_recall()` (load candidates, cosine similarity in Rust, top-k) and `append_with_embedding()` (store as little-endian f32 BLOB).
+- [ ] **Memory tools** — Enhance `MemoryRecallTool` with optional `semantic: true` parameter.
+- [ ] **Test** — Store entries with embeddings, recall by similarity, verify ranking. Test migration v6 on existing databases.
+
+---
+
+### Acceptance Criteria (Sprint 49)
+
+- [ ] `agentzero mcp-serve` runs as MCP server over stdio
+- [ ] Claude Desktop can discover and invoke AgentZero tools via MCP
+- [ ] Gateway exposes `/mcp/message` and `/mcp/sse` endpoints
+- [ ] `POST /v1/tool-execute` actually executes tools (no longer a stub)
+- [ ] Ed25519 plugin signing and verification works end-to-end
+- [ ] Unsigned plugins still load when `require_signed = false`
+- [ ] `semantic_recall()` returns entries ranked by cosine similarity
+- [ ] Migration v6 applies cleanly on existing databases
+- [ ] `embeddings` feature flag compiles cleanly when enabled/disabled
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass
+
+---
+
+## Sprint 50: Google A2A Protocol + Vertical Agent Packages
+
+**Goal:** Add Google A2A protocol support for cross-framework agent interop, plus 2 new vertical agent packages (OSINT, Social Media).
+
+**Plan:** `specs/plans/24-competitive-extension-mcp-a2a.md`
+
+---
+
+### Track A: A2A Protocol Support (HIGH)
+
+Implement Google's Agent-to-Agent protocol. Server side: Agent Card discovery + task lifecycle. Client side: `A2aAgentEndpoint` implementing `AgentEndpoint` so external A2A agents become first-class swarm participants via `ConverseTool`.
+
+- [ ] **A2A types** — `crates/agentzero-core/src/a2a_types.rs`: `AgentCard`, `Task`, `TaskState`, `Message`, `Part`, `Artifact`.
+- [ ] **A2A server** — `crates/agentzero-gateway/src/a2a.rs`: `GET /.well-known/agent.json` (Agent Card) + `POST /a2a` (tasks/send, tasks/get, tasks/cancel, tasks/sendSubscribe).
+- [ ] **A2A client** — `crates/agentzero-orchestrator/src/a2a_client.rs`: `A2aAgentEndpoint` implementing `AgentEndpoint` for calling external A2A agents.
+- [ ] **Config** — Add `[a2a]` section to config model for external agent URLs and auth.
+- [ ] **Swarm integration** — Register `A2aAgentEndpoint` instances in `swarm.rs` from config.
+- [ ] **Test** — Fetch Agent Card, send task, verify lifecycle through completion.
+
+### Track B: Vertical Agent Packages 1-2 (MEDIUM)
+
+Config-only (no code changes). Each package: `agentzero.toml` + README + test script under `examples/`.
+
+- [ ] **OSINT/Research Analyst** — 5 agents: source-finder, data-collector, fact-checker, analyst, report-writer.
+- [ ] **Social Media Manager** — 4 agents: content-strategist, copywriter, scheduler, analytics-reporter.
+
+---
+
+### Acceptance Criteria (Sprint 50)
+
+- [ ] `GET /.well-known/agent.json` returns valid Agent Card
+- [ ] External A2A clients can send tasks and receive results via `POST /a2a`
+- [ ] AgentZero can call external A2A agents via `ConverseTool`
+- [ ] OSINT and Social Media example packages run end-to-end
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass
+
+---
+
+## Sprint 51: Remaining Verticals + Polish
+
+**Goal:** Ship 2 more vertical packages (Browser QA, Lead Gen), integration test the full MCP + A2A + verticals stack, update docs.
+
+**Plan:** `specs/plans/24-competitive-extension-mcp-a2a.md`
+
+- [ ] **Browser Automation / QA** — 3 agents using `browser_tool`, `screenshot`, `shell`.
+- [ ] **Lead Generation** — 4 agents using `web_search`, `http_request`, `memory_store`.
+- [ ] **Cross-feature integration tests** — MCP server + A2A + vertical packages.
+- [ ] **Documentation updates** — Site docs, example READMEs, API reference.
+
+### Acceptance Criteria (Sprint 51)
+
+- [ ] 4 total vertical packages under `examples/`, all passing end-to-end
+- [ ] MCP + A2A documented in site docs
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass
+
+---
+
 ## Backlog
 
 ### Embedded Binary Size Reduction (HIGH)
 
 Reduce the `embedded` profile binary for resource-constrained devices. Currently 10.1MB (budget temporarily at 11MB), target 5-8MB. Phased approach: feature-gate tools into tiers, add plain SQLite option (no sqlcipher), make WASM plugins optional, minimize reqwest features, audit with cargo-bloat.
 
-**Plan:** `specs/plans/embedded-binary-size-reduction.md`
+**Plan:** `specs/plans/21-embedded-binary-size-reduction.md`
 
 - [ ] **Phase 1: Tool tiering** — Split tool registration into `core`/`extended`/`full` tiers. Embedded compiles only `core` (file ops, shell, memory, sub-agents). Target: -500KB to -1MB.
 - [ ] **Phase 2: Plain SQLite** — Add `memory-sqlite-plain` feature without bundled-sqlcipher encryption. Target: -2MB.

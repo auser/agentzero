@@ -28,8 +28,9 @@ docs-lint:
 
 # -- Test ─────────────────────────────────────────
 
-# Run tests
+# Run tests (compile with progress, then run)
 test:
+    cargo test --workspace --no-run
     cargo nextest run --workspace
 
 # Run tests with verbose output
