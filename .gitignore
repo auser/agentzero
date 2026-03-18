@@ -39,3 +39,6 @@ research
 ui/test-results/
 .agentzero/
 ui/.vite/
+
+# Keep nextest/cargo config tracked
+!.config/
