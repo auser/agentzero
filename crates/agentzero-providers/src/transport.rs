@@ -616,7 +616,9 @@ mod tests {
 
     #[tokio::test]
     async fn health_probe_unreachable_for_invalid_host() {
-        let result = health_probe("http://192.0.2.1:1", "", "openai").await;
+        // Use localhost port 1 for instant ECONNREFUSED instead of 192.0.2.1
+        // which waits for the full 10s TCP timeout.
+        let result = health_probe("http://127.0.0.1:1", "", "openai").await;
         assert!(matches!(result, HealthProbeResult::Unreachable { .. }));
     }
 
