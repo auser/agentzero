@@ -85,7 +85,7 @@ A minimal binary that runs only the orchestrator (routing, coordination, event b
 - [x] **`agentzero-lite` binary** — `bin/agentzero-lite/`. Minimal deps: core, config, providers, storage, gateway, infra.
 - [x] **Remote tool execution** — `POST /v1/tool-execute` on gateway. Stub handler with tool name routing.
 - [x] **Minimal feature set** — Gateway-only entry point. No local tool execution, no TUI, no WASM plugins.
-- [ ] **Binary size target** — Currently 12MB release, target <10MB. Needs tool tiering + reqwest trimming.
+- [x] **Binary size target** — 5.8MB with `release-min` profile (fat LTO + opt-level=z). 12MB with standard release. Well under 10MB target.
 - [x] **Tests** — 3 tests: CLI parsing, heavy crate exclusion verification. Builds without tools feature.
 
 ### Phase I: Examples Directory (MEDIUM)

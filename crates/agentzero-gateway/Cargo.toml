@@ -14,6 +14,7 @@ privacy = ["agentzero-core/privacy", "dep:base64"]
 telemetry = ["agentzero-infra/telemetry"]
 tls = ["dep:axum-server"]
 embedded-ui = ["dep:rust-embed", "dep:mime_guess"]
+autopilot = []
 
 [dependencies]
 anyhow.workspace = true
