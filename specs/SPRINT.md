@@ -931,11 +931,328 @@ Config-only (no code changes). Each package: `agentzero.toml` + README + test sc
 
 ---
 
+## Sprint 52: Containerization, Structured Logging & E2E Ollama Testing
+
+**Goal:** Ship production container infrastructure (multi-stage Docker, Compose, multi-arch CI), add JSON structured logging for container deployments, and create CI-integrated end-to-end tests using a real local LLM. Three parallel tracks with no cross-dependencies.
+
+**Baseline:** Sprint 51 complete.
+
+**Plans:** `specs/plans/10-containerization.md`, `specs/plans/07-structured-logging.md`, `specs/plans/14-e2e-ollama-testing.md`
+
+---
+
+### Track A: Containerization (HIGH)
+
+Multi-stage Docker build, docker-compose, and CI pipeline for container-based deployment.
+
+- [ ] **Multi-stage Dockerfile** — Builder stage (Rust 1.82+, cargo-chef for layer caching) + Runtime stage (Debian slim, non-root user `agentzero:agentzero`, ca-certificates). Expose port 3000. HEALTHCHECK via `/health`.
+- [ ] **.dockerignore** — Exclude `target/`, `.git/`, `node_modules/`, `*.md`, test fixtures.
+- [ ] **docker-compose.yml** — Service definition with volumes (`./data:/data`), environment variables, resource limits (`mem_limit: 512m`, `cpus: 1.0`), healthcheck. Optional Redis service for future distributed bus.
+- [ ] **CI container pipeline** — GitHub Actions workflow: build multi-arch images (amd64 + arm64) via `docker/build-push-action`, push to `ghcr.io`. Tag with git SHA + `latest`. Run on push to main + release tags.
+- [ ] **Justfile recipes** — `docker-build`, `docker-build-minimal`, `docker-up`, `docker-down`, `docker-logs`.
+- [ ] **Tests** — Dockerfile builds successfully, container starts and `/health` returns 200, compose stack starts.
+
+### Track B: Structured Logging (MEDIUM)
+
+JSON log output for container log aggregation (CloudWatch, Datadog, Loki).
+
+**Plan:** `specs/plans/07-structured-logging.md`
+
+- [ ] **`LoggingConfig`** — Add to `agentzero-config/src/model.rs`: `format` (`text`/`json`, default `text`), `per_module_levels` (`HashMap<String, String>`).
+- [ ] **JSON subscriber** — Update `tracing_subscriber` initialization to output JSON when `format = "json"`. Self-contained JSON objects: `{"timestamp", "level", "target", "message", "fields", "span"}`.
+- [ ] **Per-module log levels** — Apply `EnvFilter` directives from `per_module_levels` config (e.g., `agentzero_gateway=debug, agentzero_providers=warn`).
+- [ ] **Daemon mode** — Respect `format` config in daemon log rotation. JSON format writes one object per line.
+- [ ] **Docker default** — Default to JSON format when `AGENTZERO_LOG_FORMAT=json` env var set (containers auto-detect).
+- [ ] **Tests** — JSON output parses as valid JSON, per-module levels apply correctly, env var override works.
+
+### Track C: E2E Testing with Local LLM (MEDIUM)
+
+CI-integrated end-to-end tests using Ollama for real LLM completions.
+
+**Plan:** `specs/plans/14-e2e-ollama-testing.md`
+
+- [ ] **Test helpers** — `ollama_provider()` factory + `require_ollama()` async health check (skips gracefully when unavailable). In `agentzero-providers/tests/`.
+- [ ] **5 test functions** — `ollama_basic_completion`, `ollama_streaming_completion`, `ollama_tool_use` (RuntimeExecution + EchoTool), `ollama_multi_turn_conversation`, `ollama_router_classification`. All `#[ignore]` by default.
+- [ ] **Nextest config** — `[test-groups.ollama]` with `max-threads = 1`, 60s timeout.
+- [ ] **CI workflow** — `e2e-ollama` GitHub Actions job: install Ollama, pull `llama3.2:latest`, run `cargo nextest run --run-ignored only -E 'test(ollama)'`.
+- [ ] **Justfile** — `test-ollama` recipe.
+
+---
+
+### Acceptance Criteria (Sprint 52)
+
+- [ ] `docker build .` produces working container image
+- [ ] `docker compose up` starts the full stack with health checks
+- [ ] Multi-arch CI pushes images to ghcr.io on main/release
+- [ ] `AGENTZERO_LOG_FORMAT=json` produces valid JSON log lines
+- [ ] Per-module log levels configurable via TOML
+- [ ] E2E Ollama tests pass with real LLM (completion, streaming, tool use, multi-turn, routing)
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass
+
+---
+
+## Sprint 53: Database Connection Pooling & API Polish
+
+**Goal:** Replace `Mutex<Connection>` with r2d2 connection pooling for SQLite throughput, and add OpenAPI spec generation + constant-time auth + structured error responses. Foundational for future RBAC work.
+
+**Baseline:** Sprint 52 complete.
+
+**Plans:** `specs/plans/05-database-pooling-migrations.md`, `specs/plans/06-api-polish.md`
+
+**Note:** Migration framework already exists (schema_version table, versioned migrations shipped in Sprints 39-41). This sprint adds connection pooling and WAL optimization on top.
+
+---
+
+### Phase A: Connection Pooling (HIGH)
+
+Replace single-connection `Mutex<Connection>` with r2d2 pool for concurrent access.
+
+**Plan:** `specs/plans/05-database-pooling-migrations.md`
+
+- [ ] **r2d2 pool** — Add `r2d2` + `r2d2_sqlite` to `agentzero-storage`. Replace `Mutex<Connection>` in `SqliteMemoryStore` and `PooledMemoryStore` with `r2d2::Pool<SqliteConnectionManager>`. Max 4 connections (WAL mode safe).
+- [ ] **WAL mode optimization** — Set `PRAGMA journal_mode=WAL`, `PRAGMA cache_size=-8000` (8MB), `PRAGMA busy_timeout=5000` on pool initialization.
+- [ ] **Data retention** — Add `retention_days: Option<u32>` to `MemoryConfig`. Background task calls `purge_old_entries()` (DELETE WHERE timestamp < cutoff) on configurable interval.
+- [ ] **Tests** — Concurrent read/write stress test, pool exhaustion behavior, WAL mode verification, retention purge.
+
+### Phase B: API Polish (MEDIUM)
+
+OpenAPI spec, constant-time auth, and structured errors.
+
+**Plan:** `specs/plans/06-api-polish.md`
+
+**Note:** Liveness probe (`/health/live`) already shipped in Sprint 39 Phase D. Readiness probe (`/health/ready`) with dependency checks already exists.
+
+- [ ] **Constant-time token comparison** — Replace `==` with `subtle::ConstantTimeEq` for bearer token verification in `auth.rs`. Add `subtle` dependency.
+- [ ] **OpenAPI specification** — Add `utoipa` dependency, annotate handler functions and request/response types with `#[utoipa::path(...)]` and `#[derive(ToSchema)]`. Serve `GET /v1/openapi.json`.
+- [ ] **Structured error responses** — Ensure all error responses include `{"type": "...", "message": "...", "request_id": "..."}`. Create `ApiError` type implementing `IntoResponse`.
+- [ ] **Tests** — Timing-safe comparison works, OpenAPI JSON is valid, error responses have required fields.
+
+---
+
+### Acceptance Criteria (Sprint 53)
+
+- [ ] SQLite memory store uses r2d2 pool (no more Mutex<Connection>)
+- [ ] Concurrent access doesn't block (WAL mode verified)
+- [ ] Old memory entries purged after retention period
+- [ ] `GET /v1/openapi.json` returns valid OpenAPI 3.0 spec
+- [ ] Bearer token auth uses constant-time comparison
+- [ ] All error responses include type, message, request_id
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass
+
+---
+
+## Sprint 54: OpenTelemetry & Distributed Tracing
+
+**Goal:** Add OpenTelemetry integration for distributed tracing across provider calls, agent delegations, and tool executions. Feature-gated behind `otel` — no binary size impact when disabled. Complements existing Prometheus metrics and correlation ID middleware.
+
+**Baseline:** Sprint 53 complete. Correlation ID middleware (X-Request-ID) already shipped in Sprint 41.
+
+**Plan:** `specs/plans/04-opentelemetry.md`
+
+---
+
+### Phase A: OpenTelemetry SDK Integration (HIGH)
+
+- [ ] **`otel` feature flag** — Add to `agentzero-gateway/Cargo.toml` and workspace. Deps: `opentelemetry`, `opentelemetry-otlp`, `opentelemetry_sdk`, `tracing-opentelemetry`.
+- [ ] **OTLP exporter** — Initialize `opentelemetry_otlp::new_exporter()` with configurable endpoint (`OTEL_EXPORTER_OTLP_ENDPOINT` or `[telemetry] otlp_endpoint`). Wire as `tracing_subscriber` layer alongside existing fmt layer.
+- [ ] **Config** — `TelemetryConfig` in `model.rs`: `otlp_endpoint: Option<String>`, `service_name: String` (default `"agentzero"`), `sample_rate: f64` (default `1.0`).
+- [ ] **Graceful shutdown** — `opentelemetry::global::shutdown_tracer_provider()` on SIGTERM.
+
+### Phase B: W3C Trace Context Propagation (MEDIUM)
+
+- [ ] **Traceparent header** — Read incoming `traceparent` header in correlation ID middleware, create child span. Write `traceparent` on outgoing provider HTTP calls.
+- [ ] **Provider spans** — Add `tracing::info_span!("provider.complete", provider = ..., model = ...)` to Anthropic and OpenAI provider `complete*` methods.
+- [ ] **Tool execution spans** — Add `tracing::info_span!("tool.execute", tool = ...)` wrapping `Tool::execute()` calls.
+- [ ] **Agent delegation spans** — Add spans in coordinator for agent routing and delegation.
+
+### Phase C: Build Integration (LOW)
+
+- [ ] **Justfile** — `build-otel` recipe: `cargo build --features otel`.
+- [ ] **Docker** — Optional `--build-arg FEATURES=otel` in Dockerfile for telemetry-enabled images.
+- [ ] **Tests** — Feature compiles cleanly when enabled/disabled. Span creation doesn't panic without subscriber.
+
+---
+
+### Acceptance Criteria (Sprint 54)
+
+- [ ] `cargo build --features otel` compiles with OTLP exporter
+- [ ] Traces appear in Jaeger/Tempo when `otlp_endpoint` configured
+- [ ] `traceparent` header propagated through provider calls
+- [ ] Provider, tool, and delegation spans visible in trace waterfall
+- [ ] Zero overhead when `otel` feature disabled
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass
+
+---
+
+## Sprint 55: MiniMax-Inspired Feature Parity — Code Interpreter, Context Summarization, Media Generation
+
+**Goal:** Add three high-value agent capabilities inspired by competitive analysis: sandboxed code execution (Python/JS), LLM-based context window summarization, and media generation tools (TTS, image, video). Each is independently useful and parallelizable.
+
+**Baseline:** Sprint 54 complete.
+
+**Plan:** `specs/plans/19-minimax-parity.md`
+
+---
+
+### Phase A: Code Interpreter (HIGH)
+
+Sandboxed Python/JavaScript execution via subprocess.
+
+- [ ] **`CodeInterpreterTool`** — New tool in `agentzero-tools`. Accepts `language` (python/javascript/typescript), `code` (string). Executes in sandbox directory via `tokio::process::Command`. Returns stdout + stderr.
+- [ ] **Sandbox isolation** — Temporary directory per execution. Configurable timeout (`timeout_ms`, default 30000). Output size cap (`max_output_bytes`, default 100KB). No network access (future: seccomp/landlock).
+- [ ] **Config** — `[code_interpreter]` section: `enabled`, `timeout_ms`, `max_output_bytes`, `allowed_languages`, `sandbox_dir`.
+- [ ] **Security policy** — `enable_code_interpreter: bool` on `ToolSecurityPolicy`. Default `false`.
+- [ ] **Tests** — Python hello world, JS execution, timeout enforcement, output truncation, disallowed language rejected.
+
+### Phase B: Context Summarization (HIGH)
+
+LLM-based summarization of old conversation entries when history exceeds context threshold.
+
+- [ ] **`ContextSummarizer`** — New module in `agentzero-infra`. When conversation entries exceed `min_entries` threshold, summarize oldest entries (keeping `keep_recent` verbatim). Cache summaries keyed by content hash.
+- [ ] **Provider integration** — Uses agent's configured provider for summarization call. Prompt: "Summarize the following conversation context concisely, preserving key facts, decisions, and action items."
+- [ ] **Fallback** — On summarization failure, fall back to hard-truncation (drop oldest entries).
+- [ ] **Config** — `[agent.summarization]`: `enabled` (default false), `keep_recent` (default 10), `min_entries` (default 20), `max_summary_chars` (default 2000).
+- [ ] **Tests** — Summarization triggers at threshold, cache hit on repeated context, fallback on error, keep_recent entries preserved.
+
+### Phase C: Media Generation Tools (MEDIUM)
+
+TTS, image generation, and video generation tools.
+
+- [ ] **`TtsTool`** — OpenAI TTS API (`/v1/audio/speech`). Accepts `text`, `voice` (alloy/echo/fable/onyx/nova/shimmer), `model` (tts-1/tts-1-hd). Saves MP3 to `{workspace}/.agentzero/media/`. Returns file path.
+- [ ] **`ImageGenTool`** — DALL-E 3 API (`/v1/images/generations`). Accepts `prompt`, `size` (1024x1024/1792x1024/1024x1792), `quality` (standard/hd). Downloads and saves PNG. Returns file path.
+- [ ] **`VideoGenTool`** — MiniMax Hailuo API. Accepts `prompt`. Polls for completion. Downloads and saves MP4. Returns file path.
+- [ ] **`Audio` content part** — Add `Audio` variant to `ContentPart` enum in `agentzero-core` for TTS output in conversation.
+- [ ] **Config** — `[media_gen.tts]`, `[media_gen.image_gen]`, `[media_gen.video_gen]` sections with `enabled`, `api_key`, `default_model`.
+- [ ] **Security policy** — `enable_tts`, `enable_image_gen`, `enable_video_gen` flags. Default `false`.
+- [ ] **Tests** — Tool schema validation, mock API response handling, file path generation, disabled-by-default verification.
+
+### Phase D: Browser Tool Enhancement (LOW)
+
+- [ ] **`ExecuteJs` action** — Add to `BrowserAction` enum. Executes arbitrary JavaScript in page context, returns result.
+- [ ] **`Content` action** — Extract full page text content (innerText).
+- [ ] **Schema sync** — Update `input_schema()` to reflect all available actions.
+- [ ] **Tests** — ExecuteJs returns result, Content extracts text.
+
+---
+
+### Acceptance Criteria (Sprint 55)
+
+- [ ] Code interpreter executes Python and JavaScript with timeout enforcement
+- [ ] Context summarization reduces conversation history while preserving key information
+- [ ] TTS tool generates audio files via OpenAI API
+- [ ] Image generation tool creates images via DALL-E 3
+- [ ] Video generation tool creates videos via MiniMax Hailuo
+- [ ] All media tools gated behind security policy flags (disabled by default)
+- [ ] Browser tool supports ExecuteJs and Content actions
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass
+
+---
+
+## Sprint 56: WASM Runtime Migration — wasmi Interpreter
+
+**Goal:** Replace wasmtime with wasmi as the default WASM runtime. wasmi is a pure-Rust interpreter that dramatically reduces binary size and enables embedded/WASM targets. wasmtime remains available as opt-in JIT backend for performance-critical deployments.
+
+**Baseline:** Sprint 55 complete.
+
+**Plan:** `specs/plans/03-wasm-runtime-migration.md`
+
+---
+
+### Phase A: wasmi Backend (HIGH)
+
+- [ ] **Cargo.toml restructure** — Add `wasmi` to workspace deps. Rename `wasm-plugins` feature to `wasm-runtime` (wasmi, default). New `wasm-jit` feature (wasmtime, opt-in). Both enable `wasm-plugins` base feature.
+- [ ] **wasmi backend** — New `WasmiEngine` in `agentzero-plugins`. Implement `Module::new()`, `Instance::new()`, fuel metering for timeouts, `ResourceLimiter` for memory caps. WASI integration via `wasmi_wasi`.
+- [ ] **Plugin warming** — Pre-compile `.wasm` modules at init time (`Module::new()`) and cache compiled form. Execute from cached module on each call.
+- [ ] **wasm_bridge.rs** — Expose `WasmEngine`/`WasmModule` type aliases that resolve to wasmi or wasmtime based on feature flag.
+
+### Phase B: Re-gate wasmtime (MEDIUM)
+
+- [ ] **Feature gate** — Move all wasmtime code behind `#[cfg(feature = "wasm-jit")]`. Ensure `wasm-runtime` (wasmi) is the default.
+- [ ] **Test parity** — All existing WASM plugin tests pass with both backends. Add `#[cfg_attr]` to run tests with active backend.
+- [ ] **Timeout/memory assertions** — Adjust test thresholds (wasmi is slower than JIT; fuel units differ from wasmtime epochs).
+
+### Phase C: Binary Size Validation (MEDIUM)
+
+- [ ] **Size comparison** — Measure binary size with wasmi vs wasmtime. Target: wasmi saves 2-4MB.
+- [ ] **Embedded profile** — Update `release-min` profile. Verify agentzero-lite builds with wasmi.
+- [ ] **cargo-bloat** — Run `cargo bloat --release --crates` before/after, document savings.
+
+---
+
+### Acceptance Criteria (Sprint 56)
+
+- [ ] `cargo build --features wasm-runtime` uses wasmi (default)
+- [ ] `cargo build --features wasm-jit` uses wasmtime (opt-in)
+- [ ] All WASM plugin tests pass with both backends
+- [ ] Fuel metering enforces execution timeouts
+- [ ] Binary size reduced by 2-4MB vs wasmtime-only build
+- [ ] Plugin warming eliminates cold-start compilation penalty
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass
+
+---
+
+## Sprint 57: Scaling & Operational Readiness
+
+**Goal:** Ship provider fallback chains (automatic retry on circuit-open/5xx), backup/restore CLI, and production environment validation. Completes the operational readiness story.
+
+**Baseline:** Sprint 56 complete. Per-identity rate limiting and circuit breakers already shipped in Sprints 38-41.
+
+**Plan:** `specs/plans/14-scaling-ops.md`
+
+**Note:** Per-identity rate limiting (Sprint 41), Prometheus metrics (Sprint 38), and circuit breakers (Sprint 39) already shipped. This sprint covers the remaining gaps.
+
+---
+
+### Phase A: Provider Fallback Chain (HIGH)
+
+Automatic failover between providers on circuit-open or 5xx errors.
+
+- [ ] **`FallbackProvider`** — Wrapper struct in `agentzero-providers` implementing `Provider` trait. Takes `Vec<Box<dyn Provider>>`. Tries providers in order; on circuit-open or 5xx, falls to next.
+- [ ] **Metrics** — `agentzero_provider_fallback_total` counter with `from_provider`, `to_provider` labels.
+- [ ] **Config** — `[provider.fallback]` section: ordered list of provider names. E.g., `fallback = ["anthropic", "openai", "ollama"]`.
+- [ ] **Tests** — Primary succeeds (no fallback), primary fails → secondary succeeds, all fail → error propagated, metrics recorded.
+
+### Phase B: Backup & Restore CLI (HIGH)
+
+Export and import all persistent state.
+
+- [ ] **`agentzero backup export <output>`** — Create tar.gz containing: encrypted API key store, memory SQLite DB, agent store, cron store, config TOML. Include `manifest.json` with version, timestamp, checksums.
+- [ ] **`agentzero backup restore <archive>`** — Validate checksums, extract to data directory. Refuse if version incompatible. `--force` flag to overwrite existing data.
+- [ ] **Tests** — Export → restore roundtrip, checksum validation, version mismatch rejection, `--force` overwrite.
+
+### Phase C: Production Environment Validation (MEDIUM)
+
+Strict validation when `AGENTZERO_ENV=production`.
+
+- [ ] **`AGENTZERO_ENV`** — New env var: `development` (default) / `production`. In production mode, reject startup if: no TLS configured (unless `allow_insecure`), no API key auth configured, debug logging enabled.
+- [ ] **Startup warnings** — In development mode, warn about insecure defaults (no TLS, no auth, debug logging).
+- [ ] **Docker healthcheck** — Conditional: `/health/ready` in production, `/health/live` in development.
+- [ ] **Tests** — Production rejects no-TLS, production rejects no-auth, development allows insecure, env var parsing.
+
+---
+
+### Acceptance Criteria (Sprint 57)
+
+- [ ] Provider fallback tries next provider on circuit-open/5xx
+- [ ] `agentzero backup export` creates valid archive with checksums
+- [ ] `agentzero backup restore` roundtrips all persistent state
+- [ ] `AGENTZERO_ENV=production` rejects insecure configurations at startup
+- [ ] Fallback metrics visible in `/metrics` endpoint
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass
+
+---
+
 ## Backlog
 
 ### Embedded Binary Size Reduction (HIGH)
 
-Reduce the `embedded` profile binary for resource-constrained devices. Currently 10.1MB (budget temporarily at 11MB), target 5-8MB. Phased approach: feature-gate tools into tiers, add plain SQLite option (no sqlcipher), make WASM plugins optional, minimize reqwest features, audit with cargo-bloat.
+Reduce the `embedded` profile binary for resource-constrained devices. Currently 10.1MB (budget temporarily at 11MB), target 5-8MB. Phased approach: feature-gate tools into tiers, add plain SQLite option (no sqlcipher), minimize reqwest features, audit with cargo-bloat.
 
 **Plan:** `specs/plans/21-embedded-binary-size-reduction.md`
 
@@ -947,7 +1264,54 @@ Reduce the `embedded` profile binary for resource-constrained devices. Currently
 - [ ] **Phase 6: Binary compression** — Evaluate UPX for deployment-time compression.
 - [ ] **CI: cargo-bloat report** — Add size breakdown as CI artifact for tracking trends.
 
-### TUI Dashboard Enhancement
+### iOS Swift Support (HIGH)
+
+Full iOS support via UniFFI: XCFramework packaging, Swift Package Manager integration, and SwiftUI reference app. Large effort (~12-18 days).
+
+**Plan:** `specs/plans/02-ios-swift-support.md`
+
+- [ ] **Phase 1:** Shared bridge crate refactoring — Extract FFI types into platform-neutral crate
+- [ ] **Phase 2:** iOS target compilation — `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`
+- [ ] **Phase 3:** Swift binding generation — `uniffi-bindgen` auto-generates Swift types
+- [ ] **Phase 4:** XCFramework packaging — Bundle static library + headers for Xcode
+- [ ] **Phase 5:** Swift Package Manager integration — `Package.swift` for SPM distribution
+- [ ] **Phase 6:** SwiftUI reference app — Demo app exercising core agent functionality
+- [ ] **Phase 7:** CI/CD — GitHub Actions multi-arch iOS builds
+- [ ] **Phase 8:** Testing — Rust-level + Swift-level + integration tests
+
+### Multi-Tenancy & RBAC — Full User/Org Model (CRITICAL)
+
+Full user/organization identity model with role-based access control. Extends the org_id isolation and API key scopes shipped in Sprints 39-41 with proper User/Org entities, role hierarchy, and admin management API. 3-sprint effort.
+
+**Plan:** `specs/plans/08-multi-tenancy-rbac.md`
+
+**Sprint A — Identity & API Keys:**
+- [ ] User/Org models (`organizations`, `users`, `api_keys` tables)
+- [ ] Roles: Owner/Admin/Operator/Viewer with scope inheritance
+- [ ] Auth middleware: extract `RequestContext` (user_id, org_id, roles) from API key
+- [ ] Backward-compatible: single-tenant mode (default) behaves exactly as today
+
+**Sprint B — Tenant Isolation:**
+- [ ] Memory queries scoped by org_id (extends existing org_id column)
+- [ ] Agent configurations per-org
+- [ ] Per-tenant rate limiting with DashMap buckets
+
+**Sprint C — Management API:**
+- [ ] Admin endpoints: `POST/GET /v1/admin/organizations`, `/users`, `/api-keys`
+- [ ] CLI commands: `agentzero org create`, `agentzero user create`, `agentzero apikey create/revoke`
+
+### Redis / NATS Event Bus Backend (MEDIUM)
+
+Add Redis pub/sub (and future NATS) as alternative event bus backends for horizontal scaling beyond gossip mesh. Gossip bus (shipped Sprint 40) works for small clusters; Redis/NATS better for large deployments.
+
+**Plan:** `specs/plans/09-distributed-event-bus.md`
+
+- [ ] **Redis backend** — Feature-gated `bus-redis`. `RedisEventBus` implementing `EventBus` trait via redis pub/sub + capped list persistence.
+- [ ] **Config** — `event_bus = "redis"` + `redis_url` in `[swarm]`.
+- [ ] **Horizontal scaling** — Multiple instances share Redis, route events via correlation_id.
+- [ ] **NATS alternative** (future) — Extensible trait-based design accommodates NATS JetStream.
+
+### TUI Dashboard Enhancement (MEDIUM)
 
 Upgrade the Ratatui CLI dashboard with live data from gateway APIs. Tab-based navigation (Overview, Runs, Agents, Events), HTTP client for gateway polling, auto-refresh via `tokio::select!`, and regression warnings. See Sprint 47 Phase D.
 
@@ -959,27 +1323,7 @@ Upgrade the Ratatui CLI dashboard with live data from gateway APIs. Tab-based na
 - [ ] Events tab: scrolling SSE event stream with topic color coding
 - [ ] Regression warnings in Overview tab
 
-### Lightweight Orchestrator Mode
-
-A minimal binary that runs only the orchestrator (routing, coordination, event bus) without bundling tool runners, CLI, or TUI. Designed for resource-constrained edge devices. See Sprint 39 Phase H for details.
-
-### Examples Directory
-
-Comprehensive examples with READMEs demonstrating key use cases: research-pipeline, business-office, chatbot, multi-agent-team, edge-deployment. See Sprint 39 Phase I for details.
-
-### Operational Runbooks
-
-Incident response, backup & recovery, monitoring setup, and scaling runbooks. See Sprint 39 Phase M for details.
-
-### E2E Testing with Local LLM
-
-CI-integrated end-to-end tests using a real local LLM server.
-
-- [ ] CI-integrated e2e tests using Ollama + tinyllama
-- [ ] Real provider completion, streaming, tool use, multi-turn tests
-- [ ] Orchestrator routing test with real LLM classification
-
-### Fleet Mode (mvmctl + mvmd Integration)
+### Fleet Mode (mvmctl + mvmd Integration) (HIGH)
 
 Agent-as-a-Service backed by Firecracker microVM isolation via mvmctl/mvmd. Feature-gated behind `"fleet"`.
 
@@ -991,7 +1335,7 @@ Agent-as-a-Service backed by Firecracker microVM isolation via mvmctl/mvmd. Feat
 - [ ] Autoscaling across cloud providers (Hetzner, AWS, GCP, DigitalOcean)
 - [ ] Per-agent Turso auto-provisioning for memory durability across instances
 
-### Multi-Node Orchestration (Full Distributed)
+### Multi-Node Orchestration — Full Distributed (HIGH)
 
 Full multi-node distributed orchestration beyond gossip event bus. See `specs/sprints/backlog.md` for details.
 
