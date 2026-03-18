@@ -39,6 +39,8 @@ The gateway binds to `127.0.0.1` (localhost only) by default. Setting `allow_pub
 | `POST` | `/v1/noise/handshake/ik` | None | Noise IK handshake (feature-gated) |
 | `POST` | `/v1/relay/submit` | None | Submit sealed envelope (relay mode, feature-gated) |
 | `GET` | `/v1/relay/poll/:routing_id` | None | Poll sealed envelopes (relay mode, feature-gated) |
+| `GET` | `/v1/agents/:agent_id/stats` | Bearer | Per-agent aggregated metrics (runs, cost, tokens, tool usage) |
+| `GET` | `/v1/topology` | Bearer | Live agent topology snapshot (nodes + delegation edges) |
 | `GET` | `/v1/autopilot/proposals` | Bearer | List autopilot proposals (feature-gated) |
 | `POST` | `/v1/autopilot/proposals/:id/approve` | Bearer | Approve an autopilot proposal (feature-gated) |
 | `POST` | `/v1/autopilot/proposals/:id/reject` | Bearer | Reject an autopilot proposal (feature-gated) |
@@ -215,6 +217,75 @@ Available when `relay_mode = true` in gateway config:
 - `GET /v1/relay/poll/:routing_id` — Poll for envelopes addressed to a routing ID.
 
 The relay strips identifying headers (`X-Forwarded-For`, `X-Real-IP`, `Via`) from all requests.
+
+## Observability Endpoints
+
+### Agent Stats (`GET /v1/agents/:agent_id/stats`)
+
+Returns aggregated metrics for a specific agent: total runs, status breakdown, cost, token usage, and tool call frequency.
+
+```bash
+curl http://127.0.0.1:42617/v1/agents/coder/stats \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{
+  "agent_id": "coder",
+  "total_runs": 42,
+  "running_count": 1,
+  "completed_count": 38,
+  "failed_count": 3,
+  "total_cost_microdollars": 1250000,
+  "total_tokens_used": 845000,
+  "tool_usage": {
+    "read_file": 120,
+    "write_file": 45,
+    "shell": 30,
+    "web_search": 8
+  }
+}
+```
+
+### Topology (`GET /v1/topology`)
+
+Returns a live snapshot of the agent topology — agents as nodes with status and active run counts, and delegation links as edges between agents.
+
+```bash
+curl http://127.0.0.1:42617/v1/topology \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{
+  "nodes": [
+    {
+      "agent_id": "coordinator",
+      "name": "Coordinator",
+      "status": "running",
+      "active_run_count": 2,
+      "total_cost_microdollars": 500000
+    },
+    {
+      "agent_id": "coder",
+      "name": "Coder",
+      "status": "running",
+      "active_run_count": 1,
+      "total_cost_microdollars": 250000
+    }
+  ],
+  "edges": [
+    {
+      "from_agent_id": "coordinator",
+      "to_agent_id": "coder",
+      "run_id": "run-abc123",
+      "edge_type": "delegation"
+    }
+  ]
+}
+```
+
+Edges are derived from running jobs with `parent_run_id` — when a child run's parent belongs to a different agent, a delegation edge is created.
 
 ## Metrics
 

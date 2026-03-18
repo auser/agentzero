@@ -323,6 +323,43 @@ See [examples/business-office/](https://github.com/auser/agentzero/tree/main/exa
 
 ---
 
+## Observability
+
+When running multiple agents, visibility into what each agent is doing becomes critical. AgentZero provides built-in observability through the web dashboard and API.
+
+### Agent Topology
+
+The dashboard shows a live topology graph of all active agents and their delegation relationships. Agents appear as nodes colored by status (green = running, blue = active, gray = idle). Delegation links appear as directed edges between agents.
+
+The topology data is available via `GET /v1/topology` and refreshes every 3 seconds in the dashboard.
+
+### Delegation Tree View
+
+The Runs page supports a **Tree** view (toggle the Flat/Tree button) that groups runs by their delegation hierarchy. Parent runs appear at the top level, and child runs are indented below their parent with visual connectors. Each run shows its `depth` in the delegation chain.
+
+### Per-Agent Analytics
+
+Click the stats button on any agent row to see aggregated metrics:
+
+- **Total runs** with status breakdown (running, completed, failed)
+- **Cost and token usage** totals
+- **Success rate** percentage
+- **Tool usage frequency** — a bar chart showing which tools the agent calls most often
+
+Available via `GET /v1/agents/:agent_id/stats`.
+
+### Regression Detection
+
+When multiple agents modify files in the same delegation tree, AgentZero can detect potential conflicts — cases where one agent may be undoing another's work.
+
+The `FileModificationTracker` monitors `tool.file_written` events and flags when two different agents modify the same file within the same correlation tree (delegation chain). Conflicts are published as `regression.file_conflict` events on the event bus and appear as warning banners on the dashboard.
+
+### Tool Call Timeline
+
+Each run's detail panel includes a **Timeline** tab showing a color-coded sequential view of every tool call the agent made during that run. This helps identify patterns, bottlenecks, and unexpected tool usage.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
