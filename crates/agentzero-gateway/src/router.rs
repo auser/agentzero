@@ -1,11 +1,11 @@
 use crate::handlers::{
-    agents_list, api_chat, api_fallback, async_submit, create_agent, create_cron, dashboard,
-    delete_agent, delete_cron, emergency_stop, forget_memory, get_agent, get_config, get_tools,
-    health, health_live, health_ready, job_cancel, job_events, job_list, job_result, job_status,
-    job_transcript, legacy_webhook, list_approvals, list_cron, list_memory, metrics, openapi_spec,
-    pair, ping, recall_memory, sse_events, sse_run_stream, update_agent, update_config,
-    update_cron, v1_chat_completions, v1_models, webhook, webhook_with_agent, ws_chat,
-    ws_run_subscribe,
+    agent_stats, agents_list, api_chat, api_fallback, async_submit, create_agent, create_cron,
+    dashboard, delete_agent, delete_cron, emergency_stop, forget_memory, get_agent, get_config,
+    get_tools, health, health_live, health_ready, job_cancel, job_events, job_list, job_result,
+    job_status, job_transcript, legacy_webhook, list_approvals, list_cron, list_memory, metrics,
+    openapi_spec, pair, ping, recall_memory, sse_events, sse_run_stream, topology, update_agent,
+    update_config, update_cron, v1_chat_completions, v1_models, webhook, webhook_with_agent,
+    ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -50,6 +50,8 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
             "/v1/agents/:agent_id",
             get(get_agent).patch(update_agent).delete(delete_agent),
         )
+        .route("/v1/agents/:agent_id/stats", get(agent_stats))
+        .route("/v1/topology", get(topology))
         .route("/v1/hooks/:channel/:agent_id", post(webhook_with_agent))
         .route("/v1/events", get(sse_events))
         .route("/v1/estop", post(emergency_stop))

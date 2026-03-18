@@ -12,6 +12,8 @@ import { Link } from '@tanstack/react-router'
 import { MessageSquare, PlayCircle, AlertTriangle, Activity } from 'lucide-react'
 import { useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
+import { TopologyGraph } from '@/components/dashboard/TopologyGraph'
+import { RegressionBanner } from '@/components/shared/RegressionBanner'
 
 export const Route = createFileRoute('/dashboard/')({
   component: DashboardPage,
@@ -75,6 +77,10 @@ function DashboardPage() {
           </Button>
         </div>
       </div>
+
+      <RegressionBanner />
+
+      <TopologyGraph />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

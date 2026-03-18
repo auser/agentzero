@@ -13,6 +13,8 @@ pub mod loop_detection;
 pub mod metrics;
 #[cfg(feature = "privacy")]
 pub mod privacy;
+pub mod regression;
+pub mod regression_bus;
 pub mod routing;
 pub mod security;
 pub mod types;

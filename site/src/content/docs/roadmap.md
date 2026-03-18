@@ -112,6 +112,31 @@ description: AgentZero development roadmap — completed milestones and future d
 - 38 tests, 0 clippy warnings
 - Workspace version 0.6.0
 
+### Persistent Agent Management (Sprint 45)
+
+- **`agent_manage` LLM tool** — Agents can create/manage other agents during conversation
+- **CLI `agentzero agents`** — Full CRUD subcommands (create, list, get, update, delete, status)
+- **Config UI agents panel** — Browser-based persistent agent management with status toggles
+- **Coordinator store sync** — Hot-loading newly created agents without restart
+- 2,311 tests, 0 clippy warnings
+
+### Platform Control UI (Sprint 46)
+
+- **Full web SPA** at `ui/` — React 19 + TanStack Router/Query + Tailwind v4 + Recharts
+- **12 pages** — Dashboard, Chat (WebSocket streaming), Agents CRUD, Runs (with detail panel), Tools, Channels, Models, Config editor, Memory, Schedule (cron CRUD), Approvals, Events (SSE stream viewer)
+- **Gateway static serving** — `embedded-ui` feature embeds the SPA via `rust-embed`
+- **Playwright e2e tests** covering all pages
+
+### Multi-Agent Dashboard & Observability (Sprint 47)
+
+- **Agent topology graph** — Canvas-based live DAG visualization of agents and delegation links
+- **`GET /v1/topology`** — Live agent topology snapshot (nodes + edges)
+- **`GET /v1/agents/:id/stats`** — Per-agent metrics (runs, cost, tokens, tool usage frequency)
+- **Delegation tree view** — Runs page flat/tree toggle showing parent-child run hierarchy
+- **Per-agent cost charts** — Recharts bar chart of tool usage + summary cards
+- **Tool call timeline** — Color-coded sequential timeline in run detail panel
+- **Regression detection** — `FileModificationTracker` detects when agents modify the same file in a delegation tree; warnings surface via event bus and dashboard banner
+
 ## Planned
 
 ### Registry Repo, Audio Streaming & Image Generation (Sprint 31)
@@ -125,12 +150,13 @@ description: AgentZero development roadmap — completed milestones and future d
 
 - iOS XCFramework packaging for Swift FFI
 - Android AAR packaging for Kotlin FFI
-- Agent-to-agent collaboration protocols
-- Cost tracking dashboard
+- TUI dashboard enhancement (live runs, agents, events in terminal)
+- Lightweight orchestrator binary (sub-10MB edge deployment)
 
 ### Long-Term
 
-- Distributed agent coordination
+- Fleet mode with Firecracker microVM isolation
+- Multi-node distributed orchestration
 - Self-hosted model fine-tuning integration
 - Enterprise audit and compliance features
 

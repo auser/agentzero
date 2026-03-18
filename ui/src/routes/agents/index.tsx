@@ -10,8 +10,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
-import { Plus, Pencil, Trash2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, BarChart3 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import { AgentCostChart } from '@/components/agents/AgentCostChart'
 
 export const Route = createFileRoute('/agents/')({
   component: AgentsPage,
@@ -49,6 +50,7 @@ function AgentsPage() {
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editingAgent, setEditingAgent] = useState<AgentListItem | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<AgentListItem | null>(null)
+  const [statsAgent, setStatsAgent] = useState<AgentListItem | null>(null)
   const [form, setForm] = useState<FormData>(emptyForm)
 
   const { data, isPending } = useQuery({
@@ -191,6 +193,13 @@ function AgentsPage() {
                   <div className="flex gap-1">
                     <Button
                       variant="ghost" size="icon" className="h-7 w-7"
+                      onClick={() => setStatsAgent(agent)}
+                      title="View stats"
+                    >
+                      <BarChart3 className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost" size="icon" className="h-7 w-7"
                       onClick={() => openEdit(agent)}
                       disabled={agent.source === 'static'}
                     >
@@ -279,6 +288,18 @@ function AgentsPage() {
           setDeleteTarget(null)
         }}
       />
+
+      {/* Agent stats panel */}
+      <Sheet open={statsAgent !== null} onOpenChange={(v) => { if (!v) setStatsAgent(null) }}>
+        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>{statsAgent?.name} — Stats</SheetTitle>
+          </SheetHeader>
+          <div className="py-4">
+            {statsAgent && <AgentCostChart agentId={statsAgent.agent_id} />}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

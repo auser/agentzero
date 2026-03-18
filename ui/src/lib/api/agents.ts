@@ -37,6 +37,17 @@ export interface UpdateAgentPayload extends Partial<Omit<CreateAgentPayload, 'na
   status?: 'active' | 'stopped'
 }
 
+export interface AgentStatsResponse {
+  agent_id: string
+  total_runs: number
+  running_count: number
+  completed_count: number
+  failed_count: number
+  total_cost_microdollars: number
+  total_tokens_used: number
+  tool_usage: Record<string, number>
+}
+
 export const agentsApi = {
   list: (signal?: AbortSignal) =>
     api.get<AgentListResponse>('/v1/agents', signal),
@@ -52,4 +63,7 @@ export const agentsApi = {
 
   delete: (id: string) =>
     api.delete<void>(`/v1/agents/${id}`),
+
+  stats: (id: string, signal?: AbortSignal) =>
+    api.get<AgentStatsResponse>(`/v1/agents/${id}/stats`, signal),
 }

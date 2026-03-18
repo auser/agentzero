@@ -6,10 +6,14 @@ export interface RunListItem {
   run_id: string
   status: RunStatus
   agent_id: string
+  parent_run_id?: string
+  depth: number
   accepted_at: string
   result?: string
   error?: string
+  tokens_used?: number
   cost_microdollars?: number
+  created_at_epoch_ms: number
 }
 
 export interface RunListResponse {

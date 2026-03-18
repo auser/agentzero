@@ -718,30 +718,39 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "storage-encrypted")]
-    async fn sqlite_encrypted_rejects_wrong_key() {
-        let db_path = temp_db_path();
-        let key_a = test_key();
+    async fn sqlite_encrypted_wrong_key_recreates_db() {
+        use crate::crypto::StorageKey;
 
-        // Create encrypted DB with key A
+        let db_path = temp_db_path();
+        let key_a = StorageKey::from_bytes([0xAA; 32]);
+        let key_b = StorageKey::from_bytes([0xBB; 32]);
+
+        // Create encrypted DB with key A and store data
         {
             let store = SqliteMemoryStore::open(&db_path, Some(&key_a))
                 .expect("store should open with key A");
             store
                 .append(MemoryEntry {
                     role: "user".to_string(),
-                    content: "data".to_string(),
+                    content: "secret data".to_string(),
                     ..Default::default()
                 })
                 .await
                 .expect("append should succeed");
         }
 
-        // Try to open with different key B — should fail
-        let key_b = test_key();
-        let result = SqliteMemoryStore::open(&db_path, Some(&key_b));
+        // Open with different key B — DB auto-recreated (production behavior)
+        let store_b = SqliteMemoryStore::open(&db_path, Some(&key_b))
+            .expect("open with wrong key should auto-recreate");
+
+        // Data from key A should be gone
+        let entries = store_b
+            .recent(100)
+            .await
+            .expect("recent should succeed on recreated DB");
         assert!(
-            result.is_err(),
-            "opening encrypted DB with wrong key should fail"
+            entries.is_empty(),
+            "data encrypted with key A should not be accessible after recreate"
         );
 
         fs::remove_file(db_path).expect("test db should be removed");
