@@ -175,6 +175,14 @@ mod tests {
 
     #[test]
     fn from_config_dir_creates_key_file_if_missing() {
+        // Skip if AGENTZERO_DATA_KEY env var is set (from_config_dir reads
+        // the env var first, bypassing file creation — causes flaky failures
+        // when running in parallel with tests that set the env var).
+        if std::env::var(super::KEY_ENV_NAME).is_ok() {
+            eprintln!("skipping: {} env var is set", super::KEY_ENV_NAME);
+            return;
+        }
+
         let dir = unique_temp_dir();
         let kf = key_file_path(&dir);
         assert!(!kf.exists());
