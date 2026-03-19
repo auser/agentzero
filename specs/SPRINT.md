@@ -849,11 +849,11 @@ Ed25519 signing at package time, verification at load time. Backward-compatible 
 Add embedding-based semantic recall to the memory system. Currently all recall is recency-based (`ORDER BY id DESC`).
 
 - [x] **EmbeddingProvider trait** — `crates/agentzero-core/src/embedding.rs`: `embed(text) -> Vec<f32>`, `dimensions()`, cosine similarity, embedding byte encoding. 9 tests.
-- [ ] **API embedding provider** — `crates/agentzero-providers/src/embedding.rs`: `ApiEmbeddingProvider` (deferred — trait is ready, provider impl needs external API test infrastructure).
+- [x] **API embedding provider** — `crates/agentzero-providers/src/embedding.rs`: `ApiEmbeddingProvider` calling OpenAI-compatible `/v1/embeddings` endpoint. 4 tests (dimensions, URL trimming, error handling, mock server response parsing).
 - [x] **Schema migration v6** — `ALTER TABLE memory ADD COLUMN embedding BLOB DEFAULT NULL`. Applied to SQLite and pooled backends.
 - [x] **MemoryEntry + MemoryStore** — Added `embedding: Option<Vec<f32>>` to `MemoryEntry`, added `semantic_recall()` and `append_with_embedding()` to `MemoryStore` trait with default impls.
 - [x] **SQLite backend** — Full `semantic_recall()` (load candidates with embeddings, cosine similarity in Rust, top-k) and `append_with_embedding()` (little-endian f32 BLOB). Pooled backend `row_to_entry` updated.
-- [ ] **Memory tools** — `MemoryRecallTool` uses separate JSON KV store; `semantic_recall()` available on `MemoryStore` trait for runtime/agent loop use. Tool enhancement deferred to when `ToolContext` gains memory store reference.
+- [x] **SemanticRecallTool** — New `semantic_recall` tool in `crates/agentzero-tools/src/semantic_recall.rs`. Takes `Arc<dyn MemoryStore>` + `Arc<dyn EmbeddingProvider>` at construction. 4 tests (ranked results, empty store, limit enforcement, invalid input).
 - [x] **Test** — Schema version assertion updated. All SELECT queries include embedding column. Fork conversation copies embeddings.
 
 ---

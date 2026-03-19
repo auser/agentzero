@@ -8,6 +8,7 @@ mod anthropic;
 #[cfg(feature = "local-model")]
 pub mod builtin;
 mod catalog;
+pub mod embedding;
 mod fallback;
 #[cfg(feature = "local-model")]
 pub mod model_manager;

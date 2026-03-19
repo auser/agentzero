@@ -40,6 +40,7 @@ pub mod pushover;
 pub mod read_file;
 pub mod schedule;
 pub mod screenshot;
+pub mod semantic_recall;
 pub mod shell;
 pub mod shell_parse;
 pub mod skills;
