@@ -17,7 +17,7 @@ agentzero-config = { workspace = true }
 agentzero-providers = { workspace = true }
 agentzero-storage = { workspace = true }
 agentzero-gateway = { workspace = true, features = ["privacy"] }
-agentzero-infra = { workspace = true, features = ["tools-core"] }
+agentzero-infra = { workspace = true, features = ["tools-extended"] }
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true
