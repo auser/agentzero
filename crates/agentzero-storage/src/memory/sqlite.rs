@@ -57,6 +57,12 @@ impl SqliteMemoryStore {
                     .map_err(|e| map_db_open_error(e, path))
                     .context("failed to create memory table after migration")?;
                 run_versioned_migrations(&conn)?;
+                conn.execute_batch(
+                    "PRAGMA journal_mode = WAL; \
+                     PRAGMA busy_timeout = 5000; \
+                     PRAGMA cache_size = -8000;",
+                )
+                .ok();
                 return Ok(Self {
                     conn: Mutex::new(conn),
                 });
@@ -83,6 +89,17 @@ impl SqliteMemoryStore {
             return Err(map_db_open_error(e, path)).context("failed to create memory table");
         }
         run_versioned_migrations(&conn)?;
+
+        // WAL mode: better concurrent read performance (safe with Mutex<Connection>).
+        // busy_timeout: wait up to 5s when another connection holds a lock.
+        // cache_size: 8MB for faster queries on larger databases.
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL; \
+             PRAGMA busy_timeout = 5000; \
+             PRAGMA cache_size = -8000;",
+        )
+        .ok(); // Non-fatal: WAL is an optimization, not a requirement.
+
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -614,6 +631,18 @@ impl MemoryStore for SqliteMemoryStore {
         }
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         Ok(scored.into_iter().take(limit).map(|(_, e)| e).collect())
+    }
+}
+
+impl SqliteMemoryStore {
+    /// Delete entries older than `retention_days` days. Returns the number deleted.
+    pub fn purge_old_entries(&self, retention_days: u32) -> anyhow::Result<u64> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let deleted = conn.execute(
+            "DELETE FROM memory WHERE created_at < unixepoch() - ?1 * 86400",
+            params![retention_days],
+        )?;
+        Ok(deleted as u64)
     }
 }
 

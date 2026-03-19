@@ -81,3 +81,20 @@ jobs:
           name: coverage
           path: coverage
 
+  e2e-ollama:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+      - name: Start Ollama and pull model
+        run: |
+          ollama serve &
+          sleep 3
+          ollama pull llama3.2:latest
+      - name: Install nextest
+        run: cargo install cargo-nextest --locked
+      - name: Run Ollama e2e tests
+        run: cargo nextest run -p agentzero-infra --test e2e_ollama --run-ignored only --test-threads 1 --profile ci
