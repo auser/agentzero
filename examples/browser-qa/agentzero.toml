@@ -1,0 +1,84 @@
+# AgentZero — Browser Automation / QA
+#
+# Three-agent swarm for automated browser testing and quality assurance.
+# Agents: test-planner → browser-runner → report-generator
+#
+# Quick start:
+#   1. Set ANTHROPIC_API_KEY
+#   2. Run `agentzero gateway --config examples/browser-qa/agentzero.toml`
+#   3. Send: "Test the login flow at https://example.com"
+
+[provider]
+kind = "anthropic"
+model = "claude-sonnet-4-6"
+
+[memory]
+backend = "sqlite"
+sqlite_path = "./browser-qa.db"
+
+[agent]
+mode = "production"
+max_tool_iterations = 40
+request_timeout_ms = 180_000
+
+[security]
+allowed_root = "."
+allowed_commands = ["ls", "cat", "grep", "head", "tail", "date", "mkdir", "python3"]
+
+[security.write_file]
+enabled = true
+max_write_bytes = 262144
+
+[browser]
+enabled = true
+
+# --- Swarm ---
+
+[swarm]
+enabled = true
+
+[swarm.agents.test-planner]
+system_prompt = """You are a QA Test Planner agent.
+Given a target URL or application description, create a structured test plan.
+Identify critical user flows to test: login, navigation, forms, error states, responsiveness.
+Output a numbered test case list with: test name, steps, expected results, priority (P0-P3).
+Consider edge cases, accessibility, and cross-browser concerns.
+Save the test plan as a markdown file."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["web_search", "web_fetch", "memory_store", "memory_recall", "write_file"]
+agentic = true
+
+[swarm.agents.browser-runner]
+system_prompt = """You are a Browser Test Runner agent.
+Given a test plan from the test-planner, execute each test case using the browser tool.
+Navigate to pages, interact with elements, take screenshots at key steps.
+For each test case, record: PASS/FAIL, actual result, screenshots, any errors encountered.
+Use the screenshot tool to capture visual evidence.
+Save results and screenshots to files organized by test case."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["browser_tool", "browser_open", "screenshot", "shell", "write_file", "read_file", "memory_store", "memory_recall"]
+agentic = true
+
+[swarm.agents.report-generator]
+system_prompt = """You are a QA Report Generator agent.
+Compile browser test results into a comprehensive QA report.
+Structure: Summary (pass/fail counts) → Critical Failures → All Results → Screenshots → Recommendations.
+Highlight any P0/P1 failures prominently.
+Include improvement suggestions and regression risk assessment.
+Save as a markdown report with linked screenshots."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["memory_recall", "read_file", "write_file", "glob_search"]
+agentic = true
+
+# Pipeline: test-planner → browser-runner → report-generator
+[[swarm.pipelines]]
+name = "browser-qa"
+trigger = "default"
+steps = [
+    { agent = "test-planner" },
+    { agent = "browser-runner" },
+    { agent = "report-generator" },
+]

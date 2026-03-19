@@ -239,3 +239,62 @@ If a server fails to connect at startup (missing binary, timeout, protocol error
 | `npx` command not found | Node.js not installed | Install Node.js and npm |
 | Server skipped at startup | Server failed to connect | Check the server command and args, run manually to debug |
 | Tool call returns error | Server-side error | Enable `-vvv` for debug logs showing the JSON-RPC exchange |
+
+---
+
+## MCP Server Mode
+
+AgentZero can also run **as** an MCP server, exposing its tools to any MCP client (Claude Desktop, Cursor, Windsurf, etc.).
+
+### stdio Transport (Claude Desktop)
+
+Run AgentZero as an MCP server over stdin/stdout:
+
+```bash
+agentzero mcp-serve
+```
+
+This reads JSON-RPC messages from stdin and writes responses to stdout. Configure it in Claude Desktop's MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "agentzero": {
+      "command": "agentzero",
+      "args": ["mcp-serve"]
+    }
+  }
+}
+```
+
+All tools registered in your `agentzero.toml` (file ops, shell, web search, etc.) become available as MCP tools.
+
+### HTTP Transport (Gateway)
+
+When the gateway starts with a config, the MCP server is automatically initialized. Use the HTTP endpoint:
+
+```
+POST /mcp/message
+Content-Type: application/json
+
+{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+```
+
+### Tool Execution via REST API
+
+The `POST /v1/tool-execute` endpoint executes tools directly (used by lite-mode nodes for remote delegation):
+
+```bash
+curl -X POST http://localhost:8080/v1/tool-execute \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "read_file", "input": {"path": "/tmp/test.txt"}}'
+```
+
+### Supported MCP Methods
+
+| Method | Description |
+|--------|-------------|
+| `initialize` | Handshake — returns server capabilities |
+| `tools/list` | List all available tools with schemas |
+| `tools/call` | Execute a tool by name with arguments |
+| `ping` | Health check |

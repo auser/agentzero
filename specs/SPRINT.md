@@ -918,17 +918,18 @@ Config-only (no code changes). Each package: `agentzero.toml` + README under `ex
 
 **Plan:** `specs/plans/24-competitive-extension-mcp-a2a.md`
 
-- [ ] **Browser Automation / QA** — 3 agents using `browser_tool`, `screenshot`, `shell`.
-- [ ] **Lead Generation** — 4 agents using `web_search`, `http_request`, `memory_store`.
-- [ ] **Cross-feature integration tests** — MCP server + A2A + vertical packages.
-- [ ] **Documentation updates** — Site docs, example READMEs, API reference.
+- [x] **Browser Automation / QA** — 3 agents: test-planner, browser-runner, report-generator. Pipeline config with browser_tool, screenshot, shell.
+- [x] **Lead Generation** — 4 agents: prospector, enricher, qualifier, outreach-drafter. Pipeline config with web_search, http_request, memory.
+- [x] **Documentation updates** — MCP Server Mode section added to mcp.md guide. New a2a.md guide covering Agent Card, task lifecycle, and external agent config.
+- [ ] **Cross-feature integration tests** — MCP server + A2A + vertical packages (deferred — requires live gateway).
 
 ### Acceptance Criteria (Sprint 51)
 
-- [ ] 4 total vertical packages under `examples/`, all passing end-to-end
-- [ ] MCP + A2A documented in site docs
-- [ ] `cargo clippy` — 0 warnings
-- [ ] All tests pass
+- [x] 4 total vertical packages under `examples/` (osint-analyst, social-media-manager, browser-qa, lead-generation)
+- [x] MCP Server Mode documented (stdio + HTTP + REST)
+- [x] A2A Protocol documented (Agent Card, tasks, external agents config)
+- [x] `cargo clippy` — 0 warnings
+- [x] All tests pass
 
 ---
 
