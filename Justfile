@@ -342,6 +342,10 @@ docker-logs:
 
 # ── E2E Ollama Testing ──────────────────────────────────────────────
 
+# Build with OpenTelemetry tracing support
+build-otel:
+    cargo build --release -p agentzero --features telemetry
+
 # Run E2E tests against a local Ollama instance
 test-ollama:
     cargo nextest run --run-ignored only -E 'test(ollama)' --test-threads 1
