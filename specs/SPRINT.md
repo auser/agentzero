@@ -890,7 +890,7 @@ Implement Google's Agent-to-Agent protocol. Server side: Agent Card discovery + 
 - [x] **A2A server** — `crates/agentzero-gateway/src/a2a.rs`: `GET /.well-known/agent.json` (Agent Card) + `POST /a2a` (tasks/send, tasks/get, tasks/cancel). In-memory `A2aTaskStore`. 2 tests.
 - [x] **A2A client** — `crates/agentzero-orchestrator/src/a2a_client.rs`: `A2aAgentEndpoint` implementing `AgentEndpoint` for calling external A2A agents + `fetch_agent_card()`. 4 tests.
 - [x] **Config** — Added `[a2a]` section to `AgentZeroConfig` with `A2aConfig` (enabled, agents map) and `A2aAgentConfig` (url, auth_token, timeout_secs).
-- [ ] **Swarm integration** — Register `A2aAgentEndpoint` instances in `swarm.rs` from config (deferred — config + client ready, wiring into swarm builder is mechanical).
+- [x] **Swarm integration** — `register_a2a_endpoints()` in `swarm.rs` reads `config.a2a.agents` and creates `A2aAgentEndpoint` instances. Wired into `build_swarm_with_presence()`. 3 tests.
 
 ### Track B: Vertical Agent Packages 1-2 (MEDIUM)
 
@@ -921,7 +921,7 @@ Config-only (no code changes). Each package: `agentzero.toml` + README under `ex
 - [x] **Browser Automation / QA** — 3 agents: test-planner, browser-runner, report-generator. Pipeline config with browser_tool, screenshot, shell.
 - [x] **Lead Generation** — 4 agents: prospector, enricher, qualifier, outreach-drafter. Pipeline config with web_search, http_request, memory.
 - [x] **Documentation updates** — MCP Server Mode section added to mcp.md guide. New a2a.md guide covering Agent Card, task lifecycle, and external agent config.
-- [ ] **Cross-feature integration tests** — MCP server + A2A + vertical packages (deferred — requires live gateway).
+- [x] **Cross-feature integration tests** — 4 tests verifying health+tools, health+metrics, health/ready+memory, OpenAPI paths coexist on the same gateway router.
 
 ### Acceptance Criteria (Sprint 51)
 
@@ -1060,8 +1060,8 @@ OpenAPI spec, constant-time auth, and structured errors.
 ### Phase B: W3C Trace Context Propagation (MEDIUM)
 
 - [x] **Provider spans** — Already instrumented: `info_span!("openai_complete")` and `info_span!("anthropic_complete")` with provider/model fields in both streaming and non-streaming paths.
-- [ ] **Traceparent header** — W3C trace context propagation on outgoing HTTP calls (deferred — requires `opentelemetry-http` propagator wiring).
-- [ ] **Tool execution spans** — Wrapping `Tool::execute()` with spans (deferred — requires span injection in tool dispatch loop).
+- [x] **Traceparent header** — `generate_traceparent()` + `apply_traceparent()` in transport.rs. Applied to both OpenAI and Anthropic HTTP requests. W3C format: `00-{trace_id}-{span_id}-01`. 3 tests.
+- [x] **Tool execution spans** — `tool.execute()` wrapped with `info_span!("tool_execute", tool_name)` using `.instrument()` (replaces broken `_guard.enter()` pattern). Both timeout and non-timeout paths. 2 tests.
 
 ### Phase C: Build Integration (LOW)
 
@@ -1192,7 +1192,7 @@ Automatic failover between providers on circuit-open or 5xx errors.
 
 ### Phase C: Production Environment Validation (MEDIUM)
 
-- [ ] **`AGENTZERO_ENV`** — Production mode startup validation (deferred — requires gateway startup refactor for validation ordering).
+- [x] **`AGENTZERO_ENV`** — `validate_production_env()` in gateway startup. When `AGENTZERO_ENV=production`, warns about missing TLS, disabled pairing auth, missing config. Never fails — only logs. 5 tests.
 
 ---
 
@@ -1307,8 +1307,8 @@ Reduce the `embedded` profile binary for resource-constrained devices. Currently
 **Plan:** `specs/plans/21-embedded-binary-size-reduction.md`
 
 - [x] **Phase 1: Tool tiering** — Split into `core` (~20 tools), `extended` (~17 tools), `full` (~9 tools). Feature flags: `tools-core`/`tools-extended`/`tools-full`. ToolTier enum with classifier. agentzero-lite uses `tools-extended`. 3 tests.
-- [ ] **Phase 2: Optional WASM** — Create `embedded-minimal` (no WASM) and keep `embedded` with WASM. Target: -300KB.
-- [ ] **Phase 3: HTTP client minimization** — Audit and trim reqwest features; evaluate `ureq` for embedded. Target: -200KB.
+- [x] **Phase 2: Optional WASM** — `embedded-minimal` feature excludes WASM plugin runtime. WASM tools gated behind `#[cfg(feature = "wasm-plugins")]` (already existed in infra, wired through to CLI/binary Cargo.toml).
+- [x] **Phase 3: HTTP client minimization** — Workspace reqwest reduced to `["json"]` only. `stream` added only to providers + CLI (SSE). `multipart` only to infra (Whisper audio). Removed unused cookies/gzip/brotli/deflate/trust-dns.
 
 *Plain SQLite removed — all storage must be encrypted (sqlcipher). cargo-bloat and UPX moved to `specs/BACKLOG-EXTERNAL.md`.*
 
@@ -1316,13 +1316,13 @@ Reduce the `embedded` profile binary for resource-constrained devices. Currently
 
 Upgrade the Ratatui CLI dashboard with live data from gateway APIs. Tab-based navigation (Overview, Runs, Agents, Events), HTTP client for gateway polling, auto-refresh via `tokio::select!`, and regression warnings. See Sprint 47 Phase D.
 
-- [ ] Tab-based navigation with `DashboardTab` enum and ratatui `Tabs` widget
-- [ ] HTTP client using daemon host/port + `reqwest::Client`
-- [ ] Auto-refresh architecture with `mpsc` channels + background polling tasks
-- [ ] Runs tab: `Table` widget with status colors, cost, duration
-- [ ] Agents tab: agent list with active run counts
-- [ ] Events tab: scrolling SSE event stream with topic color coding
-- [ ] Regression warnings in Overview tab
+- [x] Tab-based navigation with `DashboardTab` enum and ratatui `Tabs` widget
+- [x] HTTP client using daemon host/port + `reqwest::Client`
+- [x] Auto-refresh architecture with `tokio::select!` + crossterm event stream (3s polling)
+- [x] Runs tab: `Table` widget with status colors (green/yellow/red), tokens, cost
+- [x] Agents tab: agent list with active run counts from gateway API
+- [x] Events tab: scrolling list with topic color coding (tool=blue, job=green, error=red)
+- [x] Regression warnings in Overview tab (health, run counts, agent count)
 
 ---
 

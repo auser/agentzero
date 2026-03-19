@@ -20,6 +20,7 @@ memory-turso = ["agentzero-storage/memory-turso", "agentzero-infra/memory-turso"
 rag = []
 hardware = []
 channels-standard = ["agentzero-channels/channels-standard"]
+embedded-minimal = ["memory-sqlite", "tools-full"]
 plugins = ["dep:agentzero-plugins", "agentzero-plugins?/wasm-runtime", "agentzero-infra/wasm-plugins"]
 plugin-dev = ["plugins", "agentzero-plugins?/plugin-dev"]
 wasm-jit = ["plugins", "agentzero-infra/wasm-jit"]
@@ -57,8 +58,8 @@ crossterm = { version = "0.28", optional = true }
 futures-util.workspace = true
 inquire = { version = "0.7", optional = true }
 rand = "0.8"
-ratatui = { version = "0.28", optional = true }
-reqwest.workspace = true
+ratatui = { version = "0.29", optional = true }
+reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"

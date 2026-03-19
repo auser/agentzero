@@ -230,7 +230,14 @@ pub enum Commands {
     },
     /// Launch interactive terminal dashboard.
     #[cfg(feature = "tui")]
-    Dashboard,
+    Dashboard {
+        /// Gateway host to connect to (enables live gateway TUI mode).
+        #[arg(long)]
+        host: Option<String>,
+        /// Gateway port to connect to (default: 8080, implies --host 127.0.0.1 if not set).
+        #[arg(long)]
+        port: Option<u16>,
+    },
     /// Migrate data from external runtimes.
     Migrate {
         #[command(subcommand)]

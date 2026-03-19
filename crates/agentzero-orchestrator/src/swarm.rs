@@ -6,6 +6,7 @@
 //! Uses a two-pass registration process so that the `ConverseTool` can be
 //! injected with references to all agents' task channels before workers start.
 
+use crate::a2a_client::A2aAgentEndpoint;
 use crate::agent_router::{AgentDescriptor, AgentRouter};
 use crate::coordinator::{Coordinator, TaskMessage};
 use crate::presence::PresenceStore;
@@ -394,7 +395,7 @@ pub async fn build_swarm_with_presence(
 
     // Build endpoint map from all agents' task senders (shared across all
     // ConverseTool instances).
-    let endpoints: HashMap<String, Arc<dyn AgentEndpoint>> = if any_wants_converse {
+    let mut endpoints: HashMap<String, Arc<dyn AgentEndpoint>> = if any_wants_converse {
         built_agents
             .iter()
             .map(|ba| {
@@ -409,6 +410,9 @@ pub async fn build_swarm_with_presence(
     } else {
         HashMap::new()
     };
+
+    // ── Register external A2A agents as swarm endpoints ──────────────
+    register_a2a_endpoints(config, &mut endpoints);
 
     for mut ba in built_agents {
         if ba.wants_converse {
@@ -435,4 +439,134 @@ pub async fn build_swarm_with_presence(
     }
 
     Ok(Some((coord, shutdown_tx)))
+}
+
+// ─── A2A endpoint registration ──────────────────────────────────────────────
+
+/// Register external A2A agents from config as swarm endpoints.
+///
+/// Each entry in `config.a2a.agents` becomes an `A2aAgentEndpoint` that can be
+/// reached through the `ConverseTool`, allowing local agents to delegate tasks
+/// to remote A2A-compatible agents.
+fn register_a2a_endpoints(
+    config: &AgentZeroConfig,
+    endpoints: &mut HashMap<String, Arc<dyn AgentEndpoint>>,
+) {
+    if !config.a2a.enabled {
+        return;
+    }
+
+    for (agent_id, agent_cfg) in &config.a2a.agents {
+        if agent_cfg.url.is_empty() {
+            tracing::warn!(
+                agent = %agent_id,
+                "skipping A2A agent with empty URL"
+            );
+            continue;
+        }
+
+        let endpoint = A2aAgentEndpoint::new(
+            agent_id.clone(),
+            agent_cfg.url.clone(),
+            agent_cfg.auth_token.clone(),
+            agent_cfg.timeout_secs,
+        );
+
+        tracing::info!(
+            agent = %agent_id,
+            url = %agent_cfg.url,
+            timeout_secs = agent_cfg.timeout_secs,
+            "registered external A2A agent endpoint"
+        );
+
+        endpoints.insert(agent_id.clone(), Arc::new(endpoint));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentzero_config::{A2aAgentConfig, A2aConfig};
+
+    fn make_config_with_a2a(
+        enabled: bool,
+        agents: HashMap<String, A2aAgentConfig>,
+    ) -> AgentZeroConfig {
+        AgentZeroConfig {
+            a2a: A2aConfig { enabled, agents },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn register_a2a_endpoints_adds_configured_agents() {
+        let mut agents = HashMap::new();
+        agents.insert(
+            "remote-coder".to_string(),
+            A2aAgentConfig {
+                url: "https://coder.example.com".to_string(),
+                auth_token: Some("tok-123".to_string()),
+                timeout_secs: 60,
+            },
+        );
+        agents.insert(
+            "remote-writer".to_string(),
+            A2aAgentConfig {
+                url: "https://writer.example.com".to_string(),
+                auth_token: None,
+                timeout_secs: 120,
+            },
+        );
+        let config = make_config_with_a2a(true, agents);
+
+        let mut endpoints: HashMap<String, Arc<dyn AgentEndpoint>> = HashMap::new();
+        register_a2a_endpoints(&config, &mut endpoints);
+
+        assert_eq!(endpoints.len(), 2);
+        assert!(endpoints.contains_key("remote-coder"));
+        assert!(endpoints.contains_key("remote-writer"));
+        assert_eq!(endpoints["remote-coder"].agent_id(), "remote-coder");
+        assert_eq!(endpoints["remote-writer"].agent_id(), "remote-writer");
+    }
+
+    #[test]
+    fn register_a2a_endpoints_skips_when_disabled() {
+        let mut agents = HashMap::new();
+        agents.insert(
+            "remote-agent".to_string(),
+            A2aAgentConfig {
+                url: "https://agent.example.com".to_string(),
+                auth_token: None,
+                timeout_secs: 30,
+            },
+        );
+        let config = make_config_with_a2a(false, agents);
+
+        let mut endpoints: HashMap<String, Arc<dyn AgentEndpoint>> = HashMap::new();
+        register_a2a_endpoints(&config, &mut endpoints);
+
+        assert!(
+            endpoints.is_empty(),
+            "should not register when a2a is disabled"
+        );
+    }
+
+    #[test]
+    fn register_a2a_endpoints_skips_empty_url() {
+        let mut agents = HashMap::new();
+        agents.insert(
+            "broken".to_string(),
+            A2aAgentConfig {
+                url: String::new(),
+                auth_token: None,
+                timeout_secs: 30,
+            },
+        );
+        let config = make_config_with_a2a(true, agents);
+
+        let mut endpoints: HashMap<String, Arc<dyn AgentEndpoint>> = HashMap::new();
+        register_a2a_endpoints(&config, &mut endpoints);
+
+        assert!(endpoints.is_empty(), "should skip agents with empty URL");
+    }
 }

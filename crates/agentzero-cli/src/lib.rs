@@ -142,7 +142,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Doctor { .. } => "doctor",
         Commands::Service { .. } => "service",
         #[cfg(feature = "tui")]
-        Commands::Dashboard => "dashboard",
+        Commands::Dashboard { .. } => "dashboard",
         Commands::Migrate { .. } => "migrate",
         Commands::Update { .. } => "update",
         Commands::Completions { .. } => "completions",
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn parse_cli_from_parses_dashboard_command() {
         let parsed = parse_cli_from(["agentzero", "dashboard"]).expect("dashboard should parse");
-        assert!(matches!(parsed.command, Commands::Dashboard));
+        assert!(matches!(parsed.command, Commands::Dashboard { .. }));
     }
 
     #[test]

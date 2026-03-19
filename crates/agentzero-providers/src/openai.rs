@@ -57,6 +57,7 @@ impl HttpTransport for ReqwestTransport {
         if !api_key.is_empty() {
             request = request.bearer_auth(api_key);
         }
+        request = crate::transport::apply_traceparent(request);
         let response = request.send().await.map_err(map_reqwest_error)?;
 
         let status = response.status().as_u16();

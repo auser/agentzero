@@ -20,7 +20,7 @@ autopilot = []
 anyhow.workspace = true
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
-agentzero-infra = { workspace = true }
+agentzero-infra = { workspace = true, features = ["tools-extended"] }
 agentzero-storage = { workspace = true, features = ["pool", "storage-encrypted"] }
 agentzero-channels = { workspace = true }
 agentzero-orchestrator = { workspace = true }

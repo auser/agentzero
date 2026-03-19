@@ -137,7 +137,15 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             command,
         } => commands::service::ServiceCommand::run(&ctx, command).await,
         #[cfg(feature = "tui")]
-        Commands::Dashboard => commands::dashboard::DashboardCommand::run(&ctx, ()).await,
+        Commands::Dashboard { host, port } => {
+            if host.is_some() || port.is_some() {
+                let h = host.as_deref().unwrap_or("127.0.0.1");
+                let p = port.unwrap_or(8080);
+                commands::dashboard_tui::run_dashboard_tui(h, p).await
+            } else {
+                commands::dashboard::DashboardCommand::run(&ctx, ()).await
+            }
+        }
         Commands::Migrate { command } => commands::update::MigrateCommand::run(&ctx, command).await,
         Commands::Update { check, command } => {
             let resolved = command.unwrap_or_else(|| {

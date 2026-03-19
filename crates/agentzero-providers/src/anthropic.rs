@@ -85,6 +85,7 @@ impl HttpTransport for ReqwestTransport {
         if use_bearer_auth {
             request = request.header("anthropic-beta", ANTHROPIC_OAUTH_BETA);
         }
+        request = crate::transport::apply_traceparent(request);
         let response = request
             .json(payload)
             .send()

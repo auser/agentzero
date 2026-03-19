@@ -14,17 +14,18 @@ pub mod writer;
 
 pub use loader::{env_or_secret, load, load_env_var, read_docker_secret, update_auto_approve};
 pub use model::{
-    AgentSettings, AgentZeroConfig, AudioConfig, AuditConfig, AutonomyConfig, BrowserConfig,
-    ChannelsGlobalConfig, ComposioConfig, ComputerUseConfig, CostConfig, CredentialProfile,
-    DelegateAgentConfig, DepthRuleConfig, EmbeddingRoute, EstopConfig, FanOutStepConfig,
-    GatewayConfig, HookSettings, HttpRequestConfig, IdentityConfig, LanesConfig, McpConfig,
-    McpServerEntry, McpServersFile, MemoryConfig, ModelProviderProfile, ModelRoute,
-    MultimodalConfig, NodeControlConfig, ObservabilityConfig, OtpConfig, OutboundLeakGuardConfig,
-    PerplexityFilterConfig, PipelineConfig, PipelineTriggerConfig, PluginConfig, ProviderConfig,
-    ProviderOptionsConfig, QueryClassificationConfig, QueryClassificationRule, ReadFileConfig,
-    ResearchConfig, RuntimeConfig, SecurityConfig, ShellConfig, SkillsConfig, SwarmAgentConfig,
-    SwarmConfig, SwarmRouterConfig, SyscallAnomalyConfig, TlsConfig, UrlAccessConfig,
-    WasmRuntimeConfig, WasmSecurityConfig, WebFetchConfig, WebSearchConfig, WriteFileConfig,
+    A2aAgentConfig, A2aConfig, AgentSettings, AgentZeroConfig, AudioConfig, AuditConfig,
+    AutonomyConfig, BrowserConfig, ChannelsGlobalConfig, ComposioConfig, ComputerUseConfig,
+    CostConfig, CredentialProfile, DelegateAgentConfig, DepthRuleConfig, EmbeddingRoute,
+    EstopConfig, FanOutStepConfig, GatewayConfig, HookSettings, HttpRequestConfig, IdentityConfig,
+    LanesConfig, McpConfig, McpServerEntry, McpServersFile, MemoryConfig, ModelProviderProfile,
+    ModelRoute, MultimodalConfig, NodeControlConfig, ObservabilityConfig, OtpConfig,
+    OutboundLeakGuardConfig, PerplexityFilterConfig, PipelineConfig, PipelineTriggerConfig,
+    PluginConfig, ProviderConfig, ProviderOptionsConfig, QueryClassificationConfig,
+    QueryClassificationRule, ReadFileConfig, ResearchConfig, RuntimeConfig, SecurityConfig,
+    ShellConfig, SkillsConfig, SwarmAgentConfig, SwarmConfig, SwarmRouterConfig,
+    SyscallAnomalyConfig, TlsConfig, UrlAccessConfig, WasmRuntimeConfig, WasmSecurityConfig,
+    WebFetchConfig, WebSearchConfig, WriteFileConfig,
 };
 pub use policy::{load_audit_policy, load_tool_security_policy, AuditPolicy};
 pub use templates::{

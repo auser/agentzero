@@ -13,6 +13,8 @@ pub mod cron;
 pub mod daemon;
 #[cfg(feature = "tui")]
 pub mod dashboard;
+#[cfg(feature = "tui")]
+pub mod dashboard_tui;
 pub mod doctor;
 pub mod estop;
 #[cfg(feature = "gateway")]

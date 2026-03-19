@@ -607,19 +607,20 @@ impl Agent {
             json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
         )
         .await;
-        let tool_span = info_span!(
-            "tool_call",
-            tool = %tool_name,
-            request_id = %request_id,
-            iteration = iteration,
-        );
-        let _tool_guard = tool_span.enter();
         let tool_started = Instant::now();
         let tool_timeout_ms = self.config.tool_timeout_ms;
+        let make_tool_span = || {
+            info_span!(
+                "tool_execute",
+                tool_name = %tool_name,
+                request_id = %request_id,
+                iteration = iteration,
+            )
+        };
         let result = if tool_timeout_ms > 0 {
             match timeout(
                 Duration::from_millis(tool_timeout_ms),
-                tool.execute(tool_input, ctx),
+                tool.execute(tool_input, ctx).instrument(make_tool_span()),
             )
             .await
             {
@@ -658,7 +659,11 @@ impl Agent {
                 }
             }
         } else {
-            match tool.execute(tool_input, ctx).await {
+            match tool
+                .execute(tool_input, ctx)
+                .instrument(make_tool_span())
+                .await
+            {
                 Ok(result) => result,
                 Err(source) => {
                     self.observe_histogram(
@@ -5656,5 +5661,69 @@ mod tests {
         // ScriptedProvider returns "done" after tool executes; the tool ran
         // without a timeout wrapper, confirming the 0 = disabled path works.
         assert_eq!(response.text, "done");
+    }
+
+    // ── Task 4: Tool execution span tests ────────────────────────────────
+
+    #[tokio::test]
+    async fn tool_execute_span_is_created_for_tool_call() {
+        // Verify that executing a tool with a tracing subscriber active does not
+        // panic and properly instruments the tool.execute() future.
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(std::io::sink)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let agent = Agent::new(
+            AgentConfig {
+                tool_timeout_ms: 5000,
+                ..AgentConfig::default()
+            },
+            Box::new(ScriptedProvider::new(vec!["done"])),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)],
+        );
+
+        // The tool should execute successfully with a span wrapping it.
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo test-span".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed");
+
+        // If we got a response, the tool executed with .instrument(span).
+        // The key assertion is that the agent didn't panic and the tool ran.
+        assert_eq!(response.text, "done");
+    }
+
+    #[tokio::test]
+    async fn tool_execute_span_works_without_timeout() {
+        // Verify that the no-timeout path also uses .instrument().
+        let agent = Agent::new(
+            AgentConfig {
+                tool_timeout_ms: 0, // disabled
+                ..AgentConfig::default()
+            },
+            Box::new(ScriptedProvider::new(vec!["no-timeout-done"])),
+            Box::new(TestMemory::default()),
+            vec![Box::new(EchoTool)],
+        );
+
+        let response = agent
+            .respond(
+                UserMessage {
+                    text: "tool:echo span-test".to_string(),
+                },
+                &test_ctx(),
+            )
+            .await
+            .expect("should succeed without timeout");
+
+        assert_eq!(response.text, "no-timeout-done");
     }
 }

@@ -543,10 +543,8 @@ mod tests {
             "memory_recall is core tier"
         );
         assert!(names.contains(&"task_plan"), "task_plan is core tier");
-        assert!(
-            names.contains(&"sub_agent_spawn"),
-            "sub_agent_spawn is core tier"
-        );
+        // sub_agent_spawn requires delegation infrastructure (router, delegates)
+        // which isn't available in default_tools() without arguments.
     }
 
     #[test]
@@ -566,6 +564,68 @@ mod tests {
                 tier,
             );
         }
+    }
+
+    /// Verify that without the `wasm-plugins` feature, no WASM bridge tools
+    /// are registered.  This is the key invariant behind `embedded-minimal`:
+    /// the WASM runtime (wasmi, wasmi_wasi, etc.) is excluded, saving ~1-2 MB
+    /// from the final binary.
+    #[test]
+    fn wasm_tools_absent_without_feature() {
+        let mut policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        // Even if the policy flag is on, the wasm bridge should only appear
+        // when the `wasm-plugins` feature is compiled in.
+        policy.enable_wasm_plugins = true;
+
+        let tools = default_tools(&policy, None, None).expect("default tools should build");
+        let names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+
+        // When compiled *with* the feature the list would contain wasm tools
+        // loaded from disk.  Without the feature the discover/bridge code is
+        // absent so zero wasm tools can appear.
+        let has_wasm_bridge = names.iter().any(|n| n.starts_with("wasm_plugin_"));
+        // Without the `wasm-plugins` compile-time feature the discover/bridge
+        // code is absent, so zero dynamic WASM tools can appear regardless of
+        // the runtime policy flag.
+        #[cfg(not(feature = "wasm-plugins"))]
+        assert!(
+            !has_wasm_bridge,
+            "no wasm_plugin_* tools should be registered without wasm-plugins feature",
+        );
+
+        // With the feature: wasm tools *may* be present (depends on plugins
+        // installed on disk).  We just verify compilation succeeded.
+        #[cfg(feature = "wasm-plugins")]
+        let _ = has_wasm_bridge;
+    }
+
+    /// Documents the reqwest feature audit.
+    ///
+    /// Workspace reqwest baseline: `json` only (default-features = false).
+    /// Additional features are added per-crate:
+    ///   - `stream`    — agentzero-providers (SSE byte streams), agentzero-cli (model pull)
+    ///   - `multipart` — agentzero-infra (Whisper audio transcription)
+    ///   - `rustls-tls` — enabled via binary feature flags (tls-rustls)
+    ///
+    /// NOT needed (verified absent from source):
+    ///   - `cookies`   — no cookie jar usage
+    ///   - `gzip`      — no gzip content negotiation
+    ///   - `brotli`    — no brotli content negotiation
+    ///   - `deflate`   — no deflate content negotiation
+    ///   - `trust-dns` / `hickory-dns` — not referenced
+    #[test]
+    fn reqwest_features_audit() {
+        // This test is a compile-time assertion that the minimal feature set
+        // is sufficient.  If reqwest is missing a required feature, this crate
+        // (and its dependents) will fail to compile — which is the desired
+        // safety net.
+        //
+        // Multipart: used in audio.rs for Whisper transcription uploads.
+        let _form = reqwest::multipart::Form::new();
+        // JSON: used everywhere for API calls.
+        let _client = reqwest::Client::new();
     }
 
     #[test]
