@@ -10,6 +10,9 @@
 .env
 .env.*
 
+# Local cargo config (fast linker, dev-only — must not affect CI)
+.cargo/config.toml
+
 # Site build
 /gh-pages/
 site/node_modules/
