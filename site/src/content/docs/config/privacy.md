@@ -9,7 +9,7 @@ All privacy settings live under the `[privacy]` section of `agentzero.toml`. The
 
 ```toml
 [privacy]
-mode = "off"                          # off | local_only | encrypted | full
+mode = "off"                          # off | private | local_only | encrypted | full
 block_cloud_providers = false          # Legacy flag (prefer mode = "local_only")
 enforce_local_provider = false         # Require local provider regardless of mode
 ```
@@ -34,7 +34,7 @@ max_sessions = 1000                   # Max concurrent active sessions
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable Noise Protocol encryption. Auto-enabled by `mode = "encrypted"` or `"full"`. |
+| `enabled` | bool | `false` | Enable Noise Protocol encryption. Auto-enabled by `mode = "private"`, `"encrypted"`, or `"full"`. |
 | `handshake_pattern` | string | `"XX"` | Noise handshake pattern. `XX` = mutual auth (recommended). `IK` = client knows server key. |
 | `session_timeout_secs` | u64 | `3600` | Seconds before a Noise session expires. Must be > 0. |
 | `max_sessions` | usize | `1000` | Maximum number of concurrent active sessions. Must be > 0. |
@@ -67,7 +67,7 @@ persist_path = "keys/"                 # Directory for persisting keys across re
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable automatic key rotation. Auto-enabled by `mode = "encrypted"` or `"full"`. |
+| `enabled` | bool | `false` | Enable automatic key rotation. Auto-enabled by `mode = "private"`, `"encrypted"`, or `"full"`. |
 | `interval_hours` | u64 | `24` | Hours between automatic key rotations. |
 | `persist_path` | string | `"keys/"` | Directory path for storing rotated keys. Relative to data directory. |
 

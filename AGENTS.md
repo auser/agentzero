@@ -47,9 +47,11 @@ Privacy and security are foundational to every decision in this project. They ar
 ### 3) Definition of done enforcement
 - A task is done only if:
 - Code is implemented.
-- Tests exist and pass.
-- Docs are updated (if behavior changes).
+- High-coverage tests exist and pass (see rule 1 for minimum requirements).
+- Site docs (`site/src/content/docs/`) are updated if behavior, config, or user-facing features change.
 - `specs/SPRINT.md` is updated.
+- **High-coverage tests are mandatory**: No task is considered complete until it has comprehensive test coverage. This means every code path, every error case, and every boundary condition introduced by the change is covered by tests. A feature without thorough tests is an incomplete feature — do not move on to the next task until tests are written and passing.
+- **Site docs are mandatory**: Every code change that adds, modifies, or removes user-facing behavior (config options, CLI flags, privacy modes, tool changes, API endpoints) must include corresponding updates to the relevant site docs. This includes guides, config references, and the README if applicable. Do not consider a task done until docs reflect the current state.
 
 ### 4) Quality gates (must pass before merge)
 - `cargo fmt --all`

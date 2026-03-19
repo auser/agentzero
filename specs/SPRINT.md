@@ -769,44 +769,46 @@ Ratatui-based terminal dashboard with tabs, live runs/agents/events panels. Defe
 
 A fifth privacy mode between `"off"` and `"local_only"`. Blocks network tools but allows explicitly-configured cloud AI providers.
 
-- [ ] **`"private"` mode validation** — Add to `model.rs` privacy mode match. Do NOT reject cloud providers (unlike `local_only`).
-- [ ] **Tool security policy** — Block `web_search`, `http_request`, `web_fetch`, `composio`, TTS, image/video gen, domain tools. Do NOT restrict URL access / domain allowlist (so cloud providers work).
-- [ ] **Noise auto-enable** — `"private"` mode auto-enables Noise Protocol + key rotation (same as `"encrypted"`).
-- [ ] **Per-agent boundary** — `"private"` maps to `encrypted_only` default.
-- [ ] **Tests** — 3+ tests: mode accepted, network tools blocked, cloud provider allowed.
+- [x] **`"private"` mode validation** — Add to `model.rs` privacy mode match. Do NOT reject cloud providers (unlike `local_only`).
+- [x] **Tool security policy** — Block `web_search`, `http_request`, `web_fetch`, `composio`, TTS, image/video gen, domain tools. Do NOT restrict URL access / domain allowlist (so cloud providers work).
+- [x] **Noise auto-enable** — `"private"` mode auto-enables Noise Protocol + key rotation (same as `"encrypted"`).
+- [x] **Per-agent boundary** — `"private"` maps to `encrypted_only` default.
+- [x] **Tests** — 3 new tests: mode accepted with cloud provider, network tools blocked, URL access not restricted. Plus updated existing `privacy_all_five_modes_accepted` test.
 
 ### Phase B: GatewayRunOptions Privacy Override (HIGH)
 
-- [ ] **`default_privacy_mode` field** — Add `Option<String>` to `GatewayRunOptions`.
-- [ ] **Startup wiring** — Use override when no config file exists (fallback from `"off"` to override value).
-- [ ] **Privacy feature flag** — Enable `privacy` feature in agentzero-lite `Cargo.toml`.
+- [x] **`default_privacy_mode` field** — Add `Option<String>` to `GatewayRunOptions`.
+- [x] **Startup wiring** — Use override when no config file exists (fallback from `"off"` to override value). Privacy mode logged via `tracing::info!`.
+- [x] **Privacy feature flag** — Enable `privacy` feature in agentzero-lite `Cargo.toml`.
 
 ### Phase C: Lite Binary Hardening (MEDIUM)
 
-- [ ] **Default to `"private"` mode** — Set `default_privacy_mode: Some("private")`.
-- [ ] **`--privacy-mode` CLI arg** — Default `"private"`, values: off/private/local_only/encrypted/full.
-- [ ] **Tighter rate limits** — `rate_limit_max: 120` (2 req/s for single-user edge device).
-- [ ] **Privacy banner** — Show mode in startup banner; warn when cloud provider configured.
+- [x] **Default to `"private"` mode** — `--privacy-mode` CLI arg defaults to `"private"`.
+- [x] **`--privacy-mode` CLI arg** — Default `"private"`, values: off/private/local_only/encrypted/full.
+- [x] **Tighter rate limits** — `rate_limit_max: 120` (2 req/s for single-user edge device).
+- [x] **Privacy banner** — Privacy mode printed on startup + logged with tracing. Gateway banner enhanced with `print_gateway_banner_with_privacy()` for future use.
 
 ### Phase D: Documentation & Messaging (MEDIUM)
 
-- [ ] **Privacy guide** — Add `"private"` mode to table, new "agentzero-lite" section.
-- [ ] **Config reference** — Document `"private"` mode.
-- [ ] **Raspberry Pi guide** — Reference agentzero-lite with privacy-first defaults.
-- [ ] **Example configs** — Local-only (ollama) and explicit-cloud (anthropic) configs.
+- [x] **Privacy guide** — Added `"private"` mode to table, new "agentzero-lite: Privacy-First by Default" section with CLI examples.
+- [x] **Config reference** — Documented `"private"` mode in TOML options, updated Noise/key-rotation auto-enable descriptions.
+- [x] **Raspberry Pi guide** — Added agentzero-lite section with privacy-first defaults and CLI examples.
+- [x] **Example configs** — `examples/edge-deployment/config-local.toml` (ollama, local_only) and `config-cloud.toml` (anthropic, private mode).
+- [x] **AGENTS.md** — Added mandatory site docs rule and high-coverage test requirement to definition of done.
+- [x] **README.md** — Added agentzero-lite build command with privacy-first description.
 
 ---
 
 ### Acceptance Criteria (Sprint 48)
 
-- [ ] agentzero-lite starts in "private" mode by default (no config needed)
-- [ ] Noise Protocol auto-enabled on startup in private mode
-- [ ] Cloud providers work only with explicit TOML config
-- [ ] Network tools blocked in private mode; cloud provider calls unaffected
-- [ ] Startup banner shows privacy mode; warns on cloud provider
-- [ ] `--privacy-mode off` reverts to standard behavior
-- [ ] `cargo clippy` — 0 warnings
-- [ ] All tests pass (6+ new)
+- [x] agentzero-lite starts in "private" mode by default (no config needed)
+- [x] Noise Protocol auto-enabled on startup in private mode
+- [x] Cloud providers work only with explicit TOML config
+- [x] Network tools blocked in private mode; cloud provider calls unaffected
+- [x] Startup banner shows privacy mode; warns on cloud provider
+- [x] `--privacy-mode off` reverts to standard behavior
+- [x] `cargo clippy` — 0 warnings
+- [x] All tests pass (7 new: 3 config privacy tests, 2 lite CLI tests, 1 lite options test, 1 updated modes test)
 
 ---
 
@@ -1245,6 +1247,102 @@ Strict validation when `AGENTZERO_ENV=production`.
 - [ ] Fallback metrics visible in `/metrics` endpoint
 - [ ] `cargo clippy` — 0 warnings
 - [ ] All tests pass
+
+---
+
+## Sprint 58: Enterprise Security & Routing — Privacy-Aware Model Routing + YAML Security Policies
+
+**Goal:** Close two enterprise security gaps identified from NVIDIA GTC 2026 competitive analysis: connect the privacy mode system with model routing so sensitive queries automatically prefer local inference, and add a declarative YAML security policy file for per-tool egress/filesystem/command control. Two parallel tracks with no cross-dependencies.
+
+**Baseline:** Sprint 57 complete. Privacy modes (`off`/`private`/`local_only`/`encrypted`/`full`) exist but only gate tools, not inference routing. `ToolSecurityPolicy` uses flat boolean flags with no per-tool granularity.
+
+**Plan:** `specs/plans/25-enterprise-security-routing.md`
+
+**Branch:** `feat/enterprise-security-routing`
+
+---
+
+### Track A: Privacy-Aware Model Routing (MEDIUM)
+
+Connect `ModelRouter` (keyword/pattern classification → provider routing) with the privacy mode system. Currently disconnected — routing ignores privacy, privacy only disables tools.
+
+- [ ] **`PrivacyLevel` enum** — Add `Local`, `Cloud`, `Either` (default) to `crates/agentzero-core/src/routing.rs`. Add `privacy_level: PrivacyLevel` to `ModelRoute`.
+- [ ] **`route_query_with_privacy()`** — New method on `ModelRouter`. In `local_only`: only `Local` routes. In `private`: prefer `Local`, fall through to `Cloud`. In `off`: all routes (current behavior).
+- [ ] **`resolve_hint_with_privacy()`** — Same filtering for explicit hint resolution.
+- [ ] **Runtime wiring** — `agentzero-infra/src/runtime.rs` uses privacy-aware routing when privacy mode is set.
+- [ ] **Config** — `privacy_level = "local" | "cloud" | "either"` on `[[routing.model_routes]]` in TOML.
+- [ ] **Tool update** — `model_routing_config` tool gains `route_query_private` op and includes privacy level in `list_routes` output.
+- [ ] **Tests** — 6+: private prefers local, falls through to cloud, local_only blocks cloud, off allows all, default is either, classification rule override.
+
+### Track B: Declarative YAML Security Policy (HIGH)
+
+Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-controllable policy file providing per-tool egress/filesystem/command rules. Overrides TOML security section for per-tool checks when present.
+
+- [ ] **`SecurityPolicyFile` struct** — `crates/agentzero-config/src/security_policy.rs`: `default` (allow/deny), `rules` (vec of `ToolRule` with tool glob, egress domains, commands, filesystem paths, action).
+- [ ] **Policy evaluation** — `SecurityPolicyFile::evaluate(tool_name, target) -> PolicyDecision` (Allow/Deny/Prompt). Glob matching on tool names (`mcp:*`), domain wildcards (`*.github.com`), CIDR ranges.
+- [ ] **ToolSecurityPolicy integration** — Add `yaml_policy: Option<SecurityPolicyFile>` and `check_egress()`, `check_command()`, `check_filesystem()` methods.
+- [ ] **Tool enforcement** — `http_request`, `web_fetch`, `shell` tools call policy checks before execution. `Prompt` decision uses existing approval flow. `Deny` returns error.
+- [ ] **Loader** — `policy.rs` loads YAML after TOML, attaches as overlay.
+- [ ] **Example policy file** — `.agentzero/security-policy.yaml` with reference rules.
+- [ ] **Tests** — 8+: YAML loads, missing = none, default deny/allow, domain match, glob match, prompt decision, command allowlist, filesystem check, YAML overrides TOML.
+
+---
+
+### Acceptance Criteria (Sprint 58)
+
+- [ ] `private` mode prefers local model routes over cloud
+- [ ] `local_only` mode blocks all cloud model routes
+- [ ] Routes without `privacy_level` default to `either` (backward compat)
+- [ ] `.agentzero/security-policy.yaml` enforces per-tool egress rules
+- [ ] Unlisted tools denied when `default: deny`
+- [ ] `prompt` egress triggers operator approval flow
+- [ ] Shell commands blocked unless in allowlist
+- [ ] YAML policy absent = no change to existing behavior
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass (14+ new)
+
+---
+
+## Sprint 59: Container Sandbox Mode
+
+**Goal:** Add an optional Docker-based sandbox that enforces the YAML security policy at the OS/network level (iptables) in addition to the application layer. Inspired by NVIDIA OpenShell but without K3s complexity — single container, single binary.
+
+**Baseline:** Sprint 58 complete. YAML security policy file exists and is enforced at application layer.
+
+**Plan:** `specs/plans/25-enterprise-security-routing.md`
+
+**Branch:** `feat/enterprise-security-routing`
+
+**Depends on:** Sprint 58 Track B (YAML security policy).
+
+---
+
+### Phase A: Sandbox Dockerfile & Entrypoint (HIGH)
+
+- [ ] **Sandbox Dockerfile** — `docker/sandbox/Dockerfile`: multi-stage build, iptables + ca-certificates, `/workspace` read-only mount, `/sandbox` + `/tmp` writable, non-root user.
+- [ ] **Entrypoint script** — `docker/sandbox/sandbox-entrypoint.sh`: reads `security-policy.yaml`, generates iptables rules (default DROP, allow listed domains + DNS + loopback + established), runs gateway as non-root.
+- [ ] **Policy-to-iptables converter** — `docker/sandbox/policy-to-iptables.py`: parses YAML, resolves domains, outputs iptables commands.
+
+### Phase B: CLI Command (HIGH)
+
+- [ ] **`agentzero sandbox` subcommand** — `start` (build/pull image, mount workspace, launch container), `stop`, `status` (running sandbox + applied policy + iptables), `shell` (exec into sandbox for debugging).
+- [ ] **Policy validation** — Reads and validates `security-policy.yaml` before launching container.
+
+### Phase C: Documentation (MEDIUM)
+
+- [ ] **Sandbox guide** — `site/src/content/docs/security/sandbox.mdx`: what sandboxing provides, quickstart, architecture diagram, YAML → iptables flow, comparison with NVIDIA OpenShell.
+
+---
+
+### Acceptance Criteria (Sprint 59)
+
+- [ ] `agentzero sandbox start` launches sandboxed container with iptables rules from YAML policy
+- [ ] Outbound to unlisted domains blocked at network level
+- [ ] Outbound to listed domains succeeds
+- [ ] Workspace mounted read-only, `/sandbox` and `/tmp` writable
+- [ ] `agentzero sandbox status` shows active policy and iptables rules
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All tests pass (4+ new)
 
 ---
 

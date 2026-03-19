@@ -229,10 +229,10 @@ impl AgentZeroConfig {
 
         // Privacy validation
         match self.privacy.mode.as_str() {
-            "off" | "local_only" | "encrypted" | "full" => {}
+            "off" | "private" | "local_only" | "encrypted" | "full" => {}
             other => {
                 return Err(anyhow!(
-                    "privacy.mode must be one of: off, local_only, encrypted, full; got `{other}`"
+                    "privacy.mode must be one of: off, private, local_only, encrypted, full; got `{other}`"
                 ));
             }
         }
@@ -265,12 +265,17 @@ impl AgentZeroConfig {
                 ));
             }
         }
-        // Encrypted mode requires Noise to be enabled — without an encrypted
-        // transport, there is no mechanism to enforce the "encrypted" promise.
-        if self.privacy.mode == "encrypted" && !self.privacy.noise.enabled {
+        // Encrypted and private modes require Noise to be enabled — without an
+        // encrypted transport, there is no mechanism to enforce the promise.
+        // Note: in gateway startup, "private" auto-enables Noise, so this only
+        // fires if someone explicitly sets noise.enabled = false with private mode.
+        if matches!(self.privacy.mode.as_str(), "encrypted" | "private")
+            && !self.privacy.noise.enabled
+        {
             return Err(anyhow!(
-                "privacy.mode 'encrypted' requires privacy.noise.enabled = true; \
-                 either enable Noise or change the privacy mode"
+                "privacy.mode '{}' requires privacy.noise.enabled = true; \
+                 either enable Noise or change the privacy mode",
+                self.privacy.mode
             ));
         }
 
@@ -290,7 +295,7 @@ impl AgentZeroConfig {
             // Map global mode → boundary string for comparison.
             let global_boundary = match self.privacy.mode.as_str() {
                 "local_only" => "local_only",
-                "encrypted" | "full" => "encrypted_only",
+                "private" | "encrypted" | "full" => "encrypted_only",
                 _ => "any",
             };
             if !agent.privacy_boundary.is_empty()
@@ -1766,12 +1771,15 @@ impl Default for SyscallAnomalyConfig {
 pub struct PrivacyConfig {
     /// Privacy mode:
     /// - `"off"` — no privacy features.
+    /// - `"private"` — blocks network tools (web_search, http_request, etc.) but
+    ///   allows explicitly-configured cloud AI providers. Auto-enables Noise +
+    ///   key rotation. Per-agent boundary defaults to `encrypted_only`.
     /// - `"local_only"` — all traffic stays on-device; cloud providers rejected.
     /// - `"encrypted"` — cloud providers allowed through Noise-encrypted transport.
     /// - `"full"` — all privacy features auto-enabled (noise, sealed envelopes,
     ///   key rotation); cloud providers allowed through encrypted transport.
     ///
-    /// Simple: just set `"encrypted"` or `"full"` and everything auto-configures.
+    /// Simple: just set `"private"`, `"encrypted"` or `"full"` and everything auto-configures.
     /// Advanced: set individual `noise`, `sealed_envelopes`, `key_rotation` options.
     pub mode: String,
     /// When true, reject cloud providers — only local providers allowed.

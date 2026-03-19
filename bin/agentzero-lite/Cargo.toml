@@ -16,7 +16,7 @@ agentzero-core = { workspace = true }
 agentzero-config = { workspace = true }
 agentzero-providers = { workspace = true }
 agentzero-storage = { workspace = true }
-agentzero-gateway = { workspace = true }
+agentzero-gateway = { workspace = true, features = ["privacy"] }
 agentzero-infra = { workspace = true }
 anyhow.workspace = true
 clap.workspace = true

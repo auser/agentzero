@@ -11,26 +11,41 @@ Add one line to your `agentzero.toml`:
 
 ```toml
 [privacy]
-mode = "local_only"  # All traffic stays on your machine
+mode = "private"  # Blocks network tools, encrypts transport, allows explicit cloud providers
 ```
 
 That's it. AgentZero will:
-- Only allow local providers (Ollama, llama.cpp, LM Studio, vLLM, SGLang)
-- Block all outbound network tools (web_search, http_request, web_fetch)
-- Reject non-localhost provider URLs
+- Block all outbound network tools (web_search, http_request, web_fetch, composio, TTS, image/video gen)
+- Auto-enable Noise Protocol encryption and key rotation
+- Allow cloud AI providers (Anthropic, OpenAI, etc.) that you explicitly configure
+- Set per-agent boundary default to `encrypted_only`
+
+For fully offline operation, use `mode = "local_only"` instead.
 
 ## Privacy Modes
 
-| Mode | Cloud Providers | Encryption | Sealed Envelopes | Key Rotation |
-|------|----------------|------------|-------------------|--------------|
-| `off` | Allowed | No | No | No |
-| `local_only` | Blocked | No | No | No |
-| `encrypted` | Allowed | Noise Protocol | No | Auto |
-| `full` | Allowed | Noise Protocol | Yes | Auto |
+| Mode | Cloud Providers | Network Tools | Encryption | Sealed Envelopes | Key Rotation |
+|------|----------------|---------------|------------|-------------------|--------------|
+| `off` | Allowed | Allowed | No | No | No |
+| `private` | Allowed (explicit) | Blocked | Noise Protocol | No | Auto |
+| `local_only` | Blocked | Blocked | No | No | No |
+| `encrypted` | Allowed | Allowed | Noise Protocol | No | Auto |
+| `full` | Allowed | Allowed | Noise Protocol | Yes | Auto |
 
 ### `off` (default)
 
 No privacy restrictions. All providers and tools work normally.
+
+### `private`
+
+Privacy-first mode designed for agentzero-lite and edge deployments. Blocks agent-initiated network tools while allowing explicitly-configured cloud AI providers:
+- Network tools are disabled (web_search, http_request, web_fetch, composio, TTS, image/video gen, domain tools)
+- Cloud providers work when explicitly configured in TOML (Anthropic, OpenAI, etc.)
+- Noise Protocol and key rotation are auto-enabled
+- Per-agent boundary defaults to `encrypted_only`
+- URL access is **not** restricted (so cloud provider API calls still work)
+
+This is the default mode for `agentzero-lite`. Use `--privacy-mode off` to revert.
 
 ### `local_only`
 
@@ -39,14 +54,36 @@ The strictest mode. Ensures no data leaves your machine:
 - Network tools are disabled (web_search, http_request, web_fetch, composio)
 - WASM plugins have network access revoked
 - Provider base URLs must be localhost
+- URL access restricted to localhost only
 
 ### `encrypted`
 
-All communication with the gateway is encrypted using the Noise Protocol (XX handshake, X25519_ChaChaPoly_BLAKE2s). Cloud providers are allowed because traffic is protected in transit. Key rotation runs automatically.
+All communication with the gateway is encrypted using the Noise Protocol (XX handshake, X25519_ChaChaPoly_BLAKE2s). Cloud providers are allowed because traffic is protected in transit. Key rotation runs automatically. Network tools remain available.
 
 ### `full`
 
 Everything in `encrypted` plus sealed envelope support for zero-knowledge routing. The gateway can relay encrypted messages without reading their content.
+
+## agentzero-lite: Privacy-First by Default
+
+The `agentzero-lite` binary defaults to `mode = "private"`. This means:
+
+- No config needed — just run `agentzero-lite` and it starts with privacy protections
+- Noise Protocol and key rotation are active from the first request
+- Tighter rate limits (120 req/min vs 600 default) for single-user edge devices
+- `--privacy-mode off` reverts to standard behavior
+- `--privacy-mode local_only` for fully offline operation
+
+```bash
+# Default: private mode (blocks network tools, encrypts transport)
+agentzero-lite
+
+# Fully offline (blocks cloud providers too)
+agentzero-lite --privacy-mode local_only
+
+# No restrictions
+agentzero-lite --privacy-mode off
+```
 
 ## Per-Component Privacy Boundaries
 

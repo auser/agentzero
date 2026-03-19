@@ -1,0 +1,23 @@
+# AgentZero edge deployment — private mode with explicit cloud provider
+# Use with: agentzero-lite --config examples/edge-deployment/config-cloud.toml
+#
+# Network tools are blocked, but cloud AI provider calls work because
+# "private" mode only blocks agent-invoked tools, not provider API calls.
+
+[provider]
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "claude-sonnet-4-6"
+
+[privacy]
+mode = "private"
+
+[privacy.noise]
+enabled = true
+
+[security]
+allowed_root = "."
+allowed_commands = ["echo"]
+
+[agent]
+system_prompt = "You are a helpful AI assistant running on an edge device with privacy protections."

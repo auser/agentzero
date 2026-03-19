@@ -106,7 +106,23 @@ pub fn load_tool_security_policy(
         wasm_dev_plugin_dir: config.security.plugin.dev_plugin_dir.map(PathBuf::from),
     };
 
-    // Privacy enforcement: local_only mode disables outbound network tools.
+    // Privacy enforcement: "private" and "local_only" modes disable outbound
+    // network tools. "private" leaves URL access open so explicitly-configured
+    // cloud AI providers still work. "local_only" restricts to localhost only.
+    if config.privacy.mode == "private" {
+        policy.enable_http_request = false;
+        policy.enable_web_fetch = false;
+        policy.enable_web_search = false;
+        policy.enable_html_extract = false;
+        policy.enable_composio = false;
+        policy.enable_tts = false;
+        policy.enable_image_gen = false;
+        policy.enable_video_gen = false;
+        policy.enable_domain_tools = false;
+        // NOTE: do NOT restrict url_access — cloud providers route through
+        // agentzero-providers, not through tool URL access, but we leave the
+        // policy open so any explicit provider base_url is reachable.
+    }
     if config.privacy.mode == "local_only" {
         policy.enable_http_request = false;
         policy.enable_web_fetch = false;

@@ -58,6 +58,9 @@ pub struct GatewayRunOptions {
     pub workspace_root: Option<PathBuf>,
     /// Data directory for persistent state (keyrings, tokens, etc.).
     pub data_dir: Option<PathBuf>,
+    /// Default privacy mode when no config file sets one.
+    /// Used by agentzero-lite to default to `"private"`.
+    pub default_privacy_mode: Option<String>,
 }
 
 pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::Result<()> {
@@ -243,16 +246,28 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
     };
 
     // --- Privacy initialization ---
-    // Mode acts as a preset: "encrypted" or "full" auto-enables noise, relay, and
-    // key rotation. Users can also individually configure components for advanced use.
-    // Simple mode: just set `mode = "encrypted"` and everything works.
+    // Mode acts as a preset: "private", "encrypted" or "full" auto-enables noise,
+    // relay, and key rotation. Users can also individually configure components.
+    // Simple mode: just set `mode = "private"` and everything works.
     // Complex mode: fine-tune noise, sealed_envelopes, key_rotation sections.
     #[cfg(feature = "privacy")]
     let _rotation_handle = {
-        let privacy_mode = full_config
-            .as_ref()
-            .map(|c| c.privacy.mode.as_str())
-            .unwrap_or("off");
+        let config_privacy_mode = full_config.as_ref().map(|c| c.privacy.mode.clone());
+        // Use the config's privacy mode if set (and not default "off"),
+        // otherwise fall back to the options override (e.g. agentzero-lite
+        // sets "private" here), otherwise "off".
+        let effective_privacy_mode = match config_privacy_mode.as_deref() {
+            Some(m) if m != "off" => m.to_string(),
+            _ => options
+                .default_privacy_mode
+                .clone()
+                .unwrap_or_else(|| "off".to_string()),
+        };
+        let privacy_mode = effective_privacy_mode.as_str();
+
+        if privacy_mode != "off" {
+            tracing::info!(mode = privacy_mode, "privacy mode active");
+        }
 
         let noise_explicitly_enabled = full_config
             .as_ref()
@@ -261,9 +276,10 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
             .as_ref()
             .is_some_and(|c| c.privacy.sealed_envelopes.enabled);
 
-        let noise_on = matches!(privacy_mode, "encrypted" | "full") || noise_explicitly_enabled;
+        let noise_on =
+            matches!(privacy_mode, "private" | "encrypted" | "full") || noise_explicitly_enabled;
         let relay_on = matches!(privacy_mode, "full") || relay_explicitly_enabled;
-        let rotation_on = matches!(privacy_mode, "encrypted" | "full")
+        let rotation_on = matches!(privacy_mode, "private" | "encrypted" | "full")
             || full_config
                 .as_ref()
                 .is_some_and(|c| c.privacy.key_rotation.enabled);

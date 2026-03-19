@@ -2613,7 +2613,7 @@ mod privacy_tests {
         let info: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(info["noise_enabled"], true);
         assert_eq!(info["handshake_pattern"], "XX");
-        assert!(info["public_key"].as_str().unwrap().len() > 0);
+        assert!(!info["public_key"].as_str().unwrap().is_empty());
     }
 
     #[tokio::test]

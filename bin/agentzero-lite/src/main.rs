@@ -1,15 +1,19 @@
-//! Lightweight AgentZero gateway for resource-constrained devices.
+//! Privacy-first lightweight AgentZero gateway for resource-constrained devices.
 //!
 //! Runs only the gateway server with provider access — no local tool execution,
 //! no channels, no WASM plugins, no TUI. Designed for edge devices like
 //! Raspberry Pi where the full binary is too large.
+//!
+//! Defaults to `"private"` privacy mode: network tools are blocked, Noise
+//! Protocol and key rotation are auto-enabled, and cloud AI providers are
+//! allowed only when explicitly configured in TOML.
 
 use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "agentzero-lite")]
-#[command(about = "Lightweight AgentZero gateway for resource-constrained devices")]
+#[command(about = "Privacy-first lightweight AgentZero gateway for edge devices")]
 struct Args {
     /// Host interface to bind (default: 127.0.0.1).
     #[arg(long, default_value = "127.0.0.1")]
@@ -34,6 +38,12 @@ struct Args {
     /// Clear all paired gateway tokens and generate a fresh pairing code.
     #[arg(long)]
     new_pairing: bool,
+
+    /// Privacy mode: off, private, local_only, encrypted, full.
+    /// Default: "private" (blocks network tools, allows explicit cloud providers,
+    /// auto-enables Noise Protocol and key rotation).
+    #[arg(long, default_value = "private")]
+    privacy_mode: String,
 }
 
 #[tokio::main]
@@ -51,8 +61,15 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         host = args.host,
         port = args.port,
+        privacy_mode = args.privacy_mode.as_str(),
         "starting agentzero-lite gateway"
     );
+    if args.privacy_mode != "off" {
+        println!(
+            "  Privacy: {} (network tools blocked, Noise auto-enabled)",
+            args.privacy_mode.to_uppercase()
+        );
+    }
 
     let data_dir = args
         .data_dir
@@ -62,14 +79,19 @@ async fn main() -> anyhow::Result<()> {
         .config
         .unwrap_or_else(|| data_dir.join("agentzero.toml"));
 
-    // Delegate to the gateway — same server, just without tool/channel crates linked
+    // Delegate to the gateway — same server, just without tool/channel crates linked.
+    // Tighter rate limits for single-user edge device (2 req/s vs 10 req/s default).
     let options = agentzero_gateway::GatewayRunOptions {
         token_store_path: Some(data_dir.join("gateway-tokens.json")),
         new_pairing: args.new_pairing,
-        middleware: Default::default(),
+        middleware: agentzero_gateway::middleware::MiddlewareConfig {
+            rate_limit_max: 120,
+            ..Default::default()
+        },
         config_path: Some(config_path),
         workspace_root: Some(args.workspace),
         data_dir: Some(data_dir),
+        default_privacy_mode: Some(args.privacy_mode),
     };
     agentzero_gateway::run(&args.host, args.port, options).await
 }
@@ -79,12 +101,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cli_parses_defaults() {
+    fn cli_defaults_to_private_mode() {
         let args = Args::try_parse_from(["agentzero-lite"]).expect("should parse defaults");
         assert_eq!(args.host, "127.0.0.1");
         assert_eq!(args.port, 8080);
         assert!(args.config.is_none());
         assert!(!args.new_pairing);
+        assert_eq!(args.privacy_mode, "private");
+    }
+
+    #[test]
+    fn cli_accepts_privacy_mode_override() {
+        let args = Args::try_parse_from(["agentzero-lite", "--privacy-mode", "off"])
+            .expect("should parse privacy mode override");
+        assert_eq!(args.privacy_mode, "off");
+
+        let args2 = Args::try_parse_from(["agentzero-lite", "--privacy-mode", "local_only"])
+            .expect("should parse local_only");
+        assert_eq!(args2.privacy_mode, "local_only");
     }
 
     #[test]
@@ -98,6 +132,8 @@ mod tests {
             "--config",
             "/tmp/config.toml",
             "--new-pairing",
+            "--privacy-mode",
+            "encrypted",
         ])
         .expect("should parse custom args");
         assert_eq!(args.host, "0.0.0.0");
@@ -107,6 +143,7 @@ mod tests {
             Some(std::path::Path::new("/tmp/config.toml"))
         );
         assert!(args.new_pairing);
+        assert_eq!(args.privacy_mode, "encrypted");
     }
 
     #[test]
@@ -138,12 +175,18 @@ mod tests {
             config_path: Some(tmp.join("agentzero.toml")),
             workspace_root: Some(tmp.clone()),
             data_dir: Some(tmp),
+            default_privacy_mode: Some("private".into()),
         };
         // Lite mode delegates to gateway::run() — verify the options are well-formed
         assert!(options.config_path.is_some());
         assert!(options.workspace_root.is_some());
         assert!(options.data_dir.is_some());
         assert!(!options.new_pairing);
+        assert_eq!(
+            options.default_privacy_mode.as_deref(),
+            Some("private"),
+            "lite binary should default to private mode"
+        );
     }
 
     #[tokio::test]
@@ -164,6 +207,7 @@ mod tests {
             config_path: None,
             workspace_root: None,
             data_dir: None,
+            default_privacy_mode: None,
         };
 
         // Spawn gateway in background

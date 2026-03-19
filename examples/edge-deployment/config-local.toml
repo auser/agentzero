@@ -1,0 +1,17 @@
+# AgentZero edge deployment — fully local (no cloud)
+# Use with: agentzero-lite --config examples/edge-deployment/config-local.toml
+
+[provider]
+kind = "ollama"
+base_url = "http://localhost:11434"
+model = "llama3.2"
+
+[privacy]
+mode = "local_only"
+
+[security]
+allowed_root = "."
+allowed_commands = ["echo"]
+
+[agent]
+system_prompt = "You are a helpful local AI assistant."

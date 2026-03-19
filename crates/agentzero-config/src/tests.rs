@@ -1835,9 +1835,9 @@ fn privacy_rejects_invalid_handshake_pattern() {
 }
 
 #[test]
-fn privacy_all_four_modes_accepted() {
+fn privacy_all_five_modes_accepted() {
     let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
-    for mode in &["off", "local_only", "encrypted", "full"] {
+    for mode in &["off", "private", "local_only", "encrypted", "full"] {
         let dir = temp_dir();
         let config_path = dir.join("agentzero.toml");
         let provider = if *mode == "local_only" || *mode == "full" {
@@ -1845,8 +1845,8 @@ fn privacy_all_four_modes_accepted() {
         } else {
             "kind=\"openrouter\"\nbase_url=\"https://openrouter.ai/api\"\nmodel=\"gpt-4o-mini\""
         };
-        // Encrypted mode requires noise.enabled = true.
-        let noise_section = if *mode == "encrypted" {
+        // Encrypted and private modes require noise.enabled = true.
+        let noise_section = if matches!(*mode, "encrypted" | "private") {
             "\n[privacy.noise]\nenabled=true\n"
         } else {
             ""
@@ -1930,6 +1930,106 @@ fn privacy_local_only_network_tools_disabled() {
     });
 
     fs::remove_dir_all(dir).expect("temp dir should be removed");
+}
+
+// --- Privacy "private" mode (Sprint 48 Phase A) ---
+
+#[test]
+fn privacy_private_mode_accepted_with_cloud_provider() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"anthropic\"\nbase_url=\"https://api.anthropic.com\"\nmodel=\"claude-sonnet-4-6\"\n\n[privacy]\nmode=\"private\"\n\n[privacy.noise]\nenabled=true\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let cfg = load(&config_path).expect("private mode with cloud provider should succeed");
+        assert_eq!(cfg.privacy.mode, "private");
+        assert_eq!(cfg.provider.kind, "anthropic");
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn privacy_private_mode_blocks_network_tools() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"anthropic\"\nbase_url=\"https://api.anthropic.com\"\nmodel=\"claude-sonnet-4-6\"\n\n[privacy]\nmode=\"private\"\n\n[privacy.noise]\nenabled=true\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n\n[web_search]\nenabled=true\n\n[http_request]\nenabled=true\n\n[web_fetch]\nenabled=true\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy =
+            crate::load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        // Private mode must disable network tools even if user enabled them.
+        assert!(
+            !policy.enable_http_request,
+            "http_request should be disabled in private mode"
+        );
+        assert!(
+            !policy.enable_web_fetch,
+            "web_fetch should be disabled in private mode"
+        );
+        assert!(
+            !policy.enable_web_search,
+            "web_search should be disabled in private mode"
+        );
+        assert!(
+            !policy.enable_html_extract,
+            "html_extract should be disabled in private mode"
+        );
+        assert!(
+            !policy.enable_composio,
+            "composio should be disabled in private mode"
+        );
+        assert!(!policy.enable_tts, "tts should be disabled in private mode");
+        assert!(
+            !policy.enable_image_gen,
+            "image_gen should be disabled in private mode"
+        );
+        assert!(
+            !policy.enable_video_gen,
+            "video_gen should be disabled in private mode"
+        );
+        assert!(
+            !policy.enable_domain_tools,
+            "domain_tools should be disabled in private mode"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn privacy_private_mode_does_not_restrict_url_access() {
+    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let dir = temp_dir();
+    let config_path = dir.join("agentzero.toml");
+    fs::write(
+        &config_path,
+        "[provider]\nkind=\"anthropic\"\nbase_url=\"https://api.anthropic.com\"\nmodel=\"claude-sonnet-4-6\"\n\n[privacy]\nmode=\"private\"\n\n[privacy.noise]\nenabled=true\n\n[security]\nallowed_root=\".\"\nallowed_commands=[\"echo\"]\n",
+    )
+    .expect("config should be written");
+
+    with_clean_agentzero_env(|| {
+        let policy =
+            crate::load_tool_security_policy(&dir, &config_path).expect("policy should load");
+        // Private mode must NOT restrict URL access (unlike local_only) so
+        // cloud AI providers configured in TOML can still be reached.
+        assert!(
+            !policy.url_access.enforce_domain_allowlist,
+            "domain allowlist should NOT be enforced in private mode"
+        );
+    });
+
+    fs::remove_dir_all(dir).ok();
 }
 
 // --- Config validation: routing and classification (Sprint 23 Phase 5) ---

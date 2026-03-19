@@ -163,6 +163,23 @@ Example with hardware peripherals enabled:
 cargo build -p agentzero --release --features hardware
 ```
 
+## agentzero-lite: Privacy-First for Edge Devices
+
+For Raspberry Pi deployments, consider using `agentzero-lite` instead of the full binary. It's a lightweight gateway that defaults to `"private"` privacy mode:
+
+```bash
+# Build the lite binary (smaller, privacy-first defaults)
+cargo build -p agentzero-lite --release
+
+# Run with defaults (private mode, Noise encryption auto-enabled)
+agentzero-lite --host 0.0.0.0 --port 8080
+
+# Fully offline (blocks cloud providers too)
+agentzero-lite --host 0.0.0.0 --port 8080 --privacy-mode local_only
+```
+
+See the [Privacy Guide](/guides/privacy/) for details on what each privacy mode does.
+
 ## Daemon and Service Setup
 
 ### Foreground Mode

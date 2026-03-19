@@ -343,6 +343,10 @@ cargo build -p agentzero --release --features hardware
 
 # With privacy features (Noise protocol, sealed envelopes)
 cargo build -p agentzero --release --features privacy
+
+# Lightweight privacy-first binary for edge devices (Raspberry Pi, etc.)
+# Defaults to "private" mode: network tools blocked, Noise auto-enabled
+cargo build -p agentzero-lite --release
 ```
 
 ### Quality gates
