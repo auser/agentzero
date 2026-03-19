@@ -995,7 +995,7 @@ CI-integrated end-to-end tests using Ollama for real LLM completions.
 
 ## Sprint 53: Database Connection Pooling & API Polish
 
-**Goal:** Replace `Mutex<Connection>` with r2d2 connection pooling for SQLite throughput, and add OpenAPI spec generation + constant-time auth + structured error responses. Foundational for future RBAC work.
+**Goal:** Replace `Mutex<Connection>` with r2d2 connection pooling for SQLite throughput, and add OpenAPI spec generation + constant-time auth + structured error responses.
 
 **Baseline:** Sprint 52 complete.
 
@@ -1328,27 +1328,6 @@ Full iOS support via UniFFI: XCFramework packaging, Swift Package Manager integr
 - [ ] **Phase 6:** SwiftUI reference app — Demo app exercising core agent functionality
 - [ ] **Phase 7:** CI/CD — GitHub Actions multi-arch iOS builds
 - [ ] **Phase 8:** Testing — Rust-level + Swift-level + integration tests
-
-### Multi-Tenancy & RBAC — Full User/Org Model (CRITICAL)
-
-Full user/organization identity model with role-based access control. Extends the org_id isolation and API key scopes shipped in Sprints 39-41 with proper User/Org entities, role hierarchy, and admin management API. 3-sprint effort.
-
-**Plan:** `specs/plans/08-multi-tenancy-rbac.md`
-
-**Sprint A — Identity & API Keys:**
-- [ ] User/Org models (`organizations`, `users`, `api_keys` tables)
-- [ ] Roles: Owner/Admin/Operator/Viewer with scope inheritance
-- [ ] Auth middleware: extract `RequestContext` (user_id, org_id, roles) from API key
-- [ ] Backward-compatible: single-tenant mode (default) behaves exactly as today
-
-**Sprint B — Tenant Isolation:**
-- [ ] Memory queries scoped by org_id (extends existing org_id column)
-- [ ] Agent configurations per-org
-- [ ] Per-tenant rate limiting with DashMap buckets
-
-**Sprint C — Management API:**
-- [ ] Admin endpoints: `POST/GET /v1/admin/organizations`, `/users`, `/api-keys`
-- [ ] CLI commands: `agentzero org create`, `agentzero user create`, `agentzero apikey create/revoke`
 
 ### Redis / NATS Event Bus Backend (MEDIUM)
 

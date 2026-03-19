@@ -1,7 +1,11 @@
+#[cfg(feature = "tools-full")]
 mod agent_manage;
+#[cfg(feature = "tools-full")]
 mod config_manage;
 mod mcp;
+#[cfg(feature = "tools-full")]
 mod plugin_scaffold;
+#[cfg(feature = "tools-full")]
 mod skill_manage;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
@@ -14,28 +18,46 @@ use agentzero_tools::ToolBuilder;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+// Re-export the tier system
+pub use agentzero_tools::{filter_tools_by_tier, max_compiled_tier, tool_tier, ToolTier};
+
+// ── Core tier re-exports (always available) ──────────────────────────
+pub use agentzero_tools::{
+    ApplyPatchTool, ContentSearchTool, DelegateCoordinationStatusTool, DelegateTool, FileEditTool,
+    GlobSearchTool, ImageInfoTool, MemoryForgetTool, MemoryRecallTool, MemoryStoreTool,
+    PdfReadTool, ProcessTool, ReadFilePolicy, ReadFileTool, ScreenshotTool, ShellPolicy, ShellTool,
+    SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool, ToolSecurityPolicy,
+    WriteFilePolicy, WriteFileTool,
+};
+
+// ── Extended tier re-exports ─────────────────────────────────────────
+#[cfg(feature = "tools-extended")]
+pub use agentzero_tools::{
+    AgentsIpcTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool, CronListTool, CronPauseTool,
+    CronRemoveTool, CronResumeTool, CronUpdateTool, GitOperationsTool, HttpRequestTool,
+    ModelRoutingConfigTool, ProxyConfigTool, ScheduleTool, SopAdvanceTool, SopApproveTool,
+    SopExecuteTool, SopListTool, SopStatusTool, UrlValidationTool, WebFetchTool, WebSearchTool,
+};
+#[cfg(all(feature = "tools-extended", feature = "document-tools"))]
+pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
+
+// ── Full tier re-exports ─────────────────────────────────────────────
+#[cfg(feature = "tools-full")]
 pub use agent_manage::AgentManageTool;
+#[cfg(feature = "tools-full")]
+pub use agentzero_tools::{
+    BrowserOpenTool, BrowserTool, ComposioTool, DomainCreateTool, DomainInfoTool, DomainLearnTool,
+    DomainLessonsTool, DomainListTool, DomainSearchTool, DomainUpdateTool, DomainVerifyTool,
+    DomainWorkflowTool, HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool,
+    ImageGenTool, PushoverTool, TtsTool, VideoGenTool, WasmModuleTool, WasmToolExecTool,
+};
+#[cfg(feature = "tools-full")]
 pub use config_manage::ConfigManageTool;
+#[cfg(feature = "tools-full")]
 pub use plugin_scaffold::PluginScaffoldTool;
+#[cfg(feature = "tools-full")]
 pub use skill_manage::SkillManageTool;
 
-pub use agentzero_tools::{
-    AgentsIpcTool, ApplyPatchTool, BrowserOpenTool, BrowserTool, CliDiscoveryTool,
-    CodeInterpreterTool, ComposioTool, ContentSearchTool, CronAddTool, CronListTool, CronPauseTool,
-    CronRemoveTool, CronResumeTool, CronUpdateTool, DelegateCoordinationStatusTool, DelegateTool,
-    DomainCreateTool, DomainInfoTool, DomainLearnTool, DomainLessonsTool, DomainListTool,
-    DomainSearchTool, DomainUpdateTool, DomainVerifyTool, DomainWorkflowTool, FileEditTool,
-    GitOperationsTool, GlobSearchTool, HardwareBoardInfoTool, HardwareMemoryMapTool,
-    HardwareMemoryReadTool, HttpRequestTool, ImageGenTool, ImageInfoTool, MemoryForgetTool,
-    MemoryRecallTool, MemoryStoreTool, ModelRoutingConfigTool, PdfReadTool, ProcessTool,
-    ProxyConfigTool, PushoverTool, ReadFilePolicy, ReadFileTool, ScheduleTool, ScreenshotTool,
-    ShellPolicy, ShellTool, SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool,
-    SopStatusTool, SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool, TaskPlanTool,
-    ToolSecurityPolicy, TtsTool, UrlValidationTool, VideoGenTool, WasmModuleTool, WasmToolExecTool,
-    WebFetchTool, WebSearchTool, WriteFilePolicy, WriteFileTool,
-};
-#[cfg(feature = "document-tools")]
-pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
 pub use mcp::create_mcp_tools;
 #[cfg(feature = "wasm-plugins")]
 pub use wasm_bridge::WasmTool;
@@ -65,6 +87,7 @@ fn default_tools_inner(
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
     agent_store: Option<Arc<dyn AgentStoreApi>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
+    // ── Core tier tools (always compiled) ────────────────────────────
     let mut tools: Vec<Box<dyn Tool>> = vec![
         Box::new(ReadFileTool::new(policy.read_file.clone())),
         Box::new(ShellTool::new(policy.shell.clone())),
@@ -74,8 +97,6 @@ fn default_tools_inner(
         Box::new(MemoryRecallTool),
         Box::new(MemoryForgetTool),
         Box::new(ImageInfoTool),
-        #[cfg(feature = "document-tools")]
-        Box::new(DocxReadTool),
         Box::new(PdfReadTool),
         Box::new(ScreenshotTool),
         Box::new(TaskPlanTool::default()),
@@ -83,19 +104,7 @@ fn default_tools_inner(
         Box::new(SubAgentSpawnTool::default()),
         Box::new(SubAgentListTool),
         Box::new(SubAgentManageTool),
-        Box::new(CliDiscoveryTool),
-        Box::new(ProxyConfigTool),
         Box::new(DelegateCoordinationStatusTool),
-        Box::new(SopListTool),
-        Box::new(SopStatusTool),
-        Box::new(SopAdvanceTool),
-        Box::new(SopApproveTool),
-        Box::new(SopExecuteTool),
-        Box::new(HardwareBoardInfoTool),
-        Box::new(HardwareMemoryMapTool),
-        Box::new(HardwareMemoryReadTool),
-        Box::new(WasmModuleTool),
-        Box::new(WasmToolExecTool),
     ];
 
     if policy.enable_write_file {
@@ -107,59 +116,74 @@ fn default_tools_inner(
         )));
     }
 
-    if policy.enable_git {
-        tools.push(Box::new(GitOperationsTool::new()));
-    }
+    // ── Extended tier tools (tools-extended feature) ─────────────────
+    #[cfg(feature = "tools-extended")]
+    {
+        tools.push(Box::new(CliDiscoveryTool));
+        tools.push(Box::new(ProxyConfigTool));
+        tools.push(Box::new(SopListTool));
+        tools.push(Box::new(SopStatusTool));
+        tools.push(Box::new(SopAdvanceTool));
+        tools.push(Box::new(SopApproveTool));
+        tools.push(Box::new(SopExecuteTool));
 
-    if policy.enable_cron {
-        tools.push(Box::new(CronAddTool));
-        tools.push(Box::new(CronListTool));
-        tools.push(Box::new(CronRemoveTool));
-        tools.push(Box::new(CronUpdateTool));
-        tools.push(Box::new(CronPauseTool));
-        tools.push(Box::new(CronResumeTool));
-        tools.push(Box::new(ScheduleTool));
-    }
+        #[cfg(feature = "document-tools")]
+        tools.push(Box::new(DocxReadTool));
 
-    if policy.enable_web_search {
-        tools.push(Box::new(WebSearchTool::new(
-            policy.web_search_config.clone(),
-        )));
-    }
+        if policy.enable_git {
+            tools.push(Box::new(GitOperationsTool::new()));
+        }
 
-    if policy.enable_browser {
-        tools.push(Box::new(BrowserTool::default()));
-    }
+        if policy.enable_cron {
+            tools.push(Box::new(CronAddTool));
+            tools.push(Box::new(CronListTool));
+            tools.push(Box::new(CronRemoveTool));
+            tools.push(Box::new(CronUpdateTool));
+            tools.push(Box::new(CronPauseTool));
+            tools.push(Box::new(CronResumeTool));
+            tools.push(Box::new(ScheduleTool));
+        }
 
-    if policy.enable_browser_open {
-        tools.push(Box::new(BrowserOpenTool::default()));
-    }
+        if policy.enable_web_search {
+            tools.push(Box::new(WebSearchTool::new(
+                policy.web_search_config.clone(),
+            )));
+        }
 
-    if policy.enable_http_request {
-        tools.push(Box::new(
-            HttpRequestTool::default().with_url_policy(policy.url_access.clone()),
-        ));
-    }
+        if policy.enable_http_request {
+            tools.push(Box::new(
+                HttpRequestTool::default().with_url_policy(policy.url_access.clone()),
+            ));
+        }
 
-    if policy.enable_web_fetch {
-        tools.push(Box::new(
-            WebFetchTool::default().with_url_policy(policy.url_access.clone()),
-        ));
-    }
+        if policy.enable_web_fetch {
+            tools.push(Box::new(
+                WebFetchTool::default().with_url_policy(policy.url_access.clone()),
+            ));
+        }
 
-    #[cfg(feature = "document-tools")]
-    if policy.enable_html_extract {
-        tools.push(Box::new(HtmlExtractTool));
-    }
+        #[cfg(feature = "document-tools")]
+        if policy.enable_html_extract {
+            tools.push(Box::new(HtmlExtractTool));
+        }
 
-    if policy.enable_url_validation {
-        tools.push(Box::new(
-            UrlValidationTool::default().with_url_policy(policy.url_access.clone()),
-        ));
-    }
+        if policy.enable_url_validation {
+            tools.push(Box::new(
+                UrlValidationTool::default().with_url_policy(policy.url_access.clone()),
+            ));
+        }
 
-    if policy.enable_agents_ipc {
-        tools.push(Box::new(AgentsIpcTool));
+        if policy.enable_agents_ipc {
+            tools.push(Box::new(AgentsIpcTool));
+        }
+
+        if policy.enable_code_interpreter {
+            tools.push(Box::new(CodeInterpreterTool::default()));
+        }
+
+        if let Some(ref r) = router {
+            tools.push(Box::new(ModelRoutingConfigTool::new(r.clone())));
+        }
     }
 
     if policy.enable_mcp && !policy.mcp_servers.is_empty() {
@@ -167,60 +191,74 @@ fn default_tools_inner(
         tools.extend(mcp_tools);
     }
 
-    if policy.enable_code_interpreter {
-        tools.push(Box::new(CodeInterpreterTool::default()));
-    }
+    // ── Full tier tools (tools-full feature) ─────────────────────────
+    #[cfg(feature = "tools-full")]
+    {
+        tools.push(Box::new(HardwareBoardInfoTool));
+        tools.push(Box::new(HardwareMemoryMapTool));
+        tools.push(Box::new(HardwareMemoryReadTool));
+        tools.push(Box::new(WasmModuleTool));
+        tools.push(Box::new(WasmToolExecTool));
 
-    if policy.enable_tts {
-        tools.push(Box::new(TtsTool::default()));
-    }
-
-    if policy.enable_image_gen {
-        tools.push(Box::new(ImageGenTool::default()));
-    }
-
-    if policy.enable_video_gen {
-        tools.push(Box::new(VideoGenTool::default()));
-    }
-
-    #[cfg(feature = "autopilot")]
-    if policy.enable_autopilot {
-        tools.push(Box::new(agentzero_autopilot::tools::ProposalCreateTool));
-        tools.push(Box::new(agentzero_autopilot::tools::ProposalVoteTool));
-        tools.push(Box::new(agentzero_autopilot::tools::MissionStatusTool));
-        tools.push(Box::new(agentzero_autopilot::tools::TriggerFireTool));
-    }
-
-    if policy.enable_domain_tools {
-        tools.push(Box::new(DomainCreateTool));
-        tools.push(Box::new(DomainUpdateTool));
-        tools.push(Box::new(DomainListTool));
-        tools.push(Box::new(DomainInfoTool));
-        tools.push(Box::new(DomainSearchTool::default()));
-        tools.push(Box::new(DomainVerifyTool::default()));
-        tools.push(Box::new(DomainWorkflowTool));
-        tools.push(Box::new(DomainLearnTool));
-        tools.push(Box::new(DomainLessonsTool));
-    }
-
-    if policy.enable_composio {
-        tools.push(Box::new(ComposioTool));
-    }
-
-    if policy.enable_pushover {
-        tools.push(Box::new(PushoverTool));
-    }
-
-    if policy.enable_agent_manage {
-        if let Some(ref store) = agent_store {
-            tools.push(Box::new(AgentManageTool::new(Arc::clone(store))));
+        if policy.enable_browser {
+            tools.push(Box::new(BrowserTool::default()));
         }
-    }
 
-    if policy.enable_self_config {
-        tools.push(Box::new(ConfigManageTool));
-        tools.push(Box::new(SkillManageTool));
-        tools.push(Box::new(PluginScaffoldTool));
+        if policy.enable_browser_open {
+            tools.push(Box::new(BrowserOpenTool::default()));
+        }
+
+        if policy.enable_tts {
+            tools.push(Box::new(TtsTool::default()));
+        }
+
+        if policy.enable_image_gen {
+            tools.push(Box::new(ImageGenTool::default()));
+        }
+
+        if policy.enable_video_gen {
+            tools.push(Box::new(VideoGenTool::default()));
+        }
+
+        #[cfg(feature = "autopilot")]
+        if policy.enable_autopilot {
+            tools.push(Box::new(agentzero_autopilot::tools::ProposalCreateTool));
+            tools.push(Box::new(agentzero_autopilot::tools::ProposalVoteTool));
+            tools.push(Box::new(agentzero_autopilot::tools::MissionStatusTool));
+            tools.push(Box::new(agentzero_autopilot::tools::TriggerFireTool));
+        }
+
+        if policy.enable_domain_tools {
+            tools.push(Box::new(DomainCreateTool));
+            tools.push(Box::new(DomainUpdateTool));
+            tools.push(Box::new(DomainListTool));
+            tools.push(Box::new(DomainInfoTool));
+            tools.push(Box::new(DomainSearchTool::default()));
+            tools.push(Box::new(DomainVerifyTool::default()));
+            tools.push(Box::new(DomainWorkflowTool));
+            tools.push(Box::new(DomainLearnTool));
+            tools.push(Box::new(DomainLessonsTool));
+        }
+
+        if policy.enable_composio {
+            tools.push(Box::new(ComposioTool));
+        }
+
+        if policy.enable_pushover {
+            tools.push(Box::new(PushoverTool));
+        }
+
+        if policy.enable_agent_manage {
+            if let Some(ref store) = agent_store {
+                tools.push(Box::new(AgentManageTool::new(Arc::clone(store))));
+            }
+        }
+
+        if policy.enable_self_config {
+            tools.push(Box::new(ConfigManageTool));
+            tools.push(Box::new(SkillManageTool));
+            tools.push(Box::new(PluginScaffoldTool));
+        }
     }
 
     #[cfg(feature = "wasm-plugins")]
@@ -262,9 +300,11 @@ fn default_tools_inner(
         }
     }
 
-    if let Some(r) = router {
-        tools.push(Box::new(ModelRoutingConfigTool::new(r)));
-    }
+    // Suppress unused-variable warnings when tier features are disabled.
+    #[cfg(not(feature = "tools-extended"))]
+    let _ = router;
+    #[cfg(not(feature = "tools-full"))]
+    let _ = agent_store;
 
     if let Some(agents) = delegate_agents {
         if !agents.is_empty() {
@@ -308,6 +348,7 @@ pub fn default_tools_with_depth(
 mod tests {
     use super::{default_tools, default_tools_with_depth, ToolSecurityPolicy};
     use agentzero_core::{DepthPolicy, DepthRule};
+    use agentzero_tools::{filter_tools_by_tier, tool_tier, ToolTier};
     use std::collections::HashSet;
 
     #[test]
@@ -478,5 +519,90 @@ mod tests {
         let tools_d5 = default_tools_with_depth(&policy, None, None, 5, &depth_policy)
             .expect("depth tools should build");
         assert_eq!(tools_d5.len(), all_count, "depth 5 should return all tools");
+    }
+
+    #[test]
+    fn default_tools_include_core_tier_tools() {
+        let policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        let tools = default_tools(&policy, None, None).expect("default tools should build");
+        let names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+
+        // Core tier tools should always be present
+        assert!(names.contains(&"read_file"), "read_file is core tier");
+        assert!(names.contains(&"shell"), "shell is core tier");
+        assert!(names.contains(&"glob_search"), "glob_search is core tier");
+        assert!(
+            names.contains(&"content_search"),
+            "content_search is core tier"
+        );
+        assert!(names.contains(&"memory_store"), "memory_store is core tier");
+        assert!(
+            names.contains(&"memory_recall"),
+            "memory_recall is core tier"
+        );
+        assert!(names.contains(&"task_plan"), "task_plan is core tier");
+        assert!(
+            names.contains(&"sub_agent_spawn"),
+            "sub_agent_spawn is core tier"
+        );
+    }
+
+    #[test]
+    fn default_tools_all_core_classified_correctly() {
+        let policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        let tools = default_tools(&policy, None, None).expect("default tools should build");
+
+        // All registered tools should have a valid tier
+        for tool in &tools {
+            let tier = tool_tier(tool.name());
+            assert!(
+                tier.is_within(ToolTier::Full),
+                "tool {} should have a valid tier, got {:?}",
+                tool.name(),
+                tier,
+            );
+        }
+    }
+
+    #[test]
+    fn filter_default_tools_by_core_tier() {
+        let policy = ToolSecurityPolicy::default_for_workspace(
+            std::env::current_dir().expect("cwd should be readable"),
+        );
+        let tools = default_tools(&policy, None, None).expect("default tools should build");
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+
+        let core_only = filter_tools_by_tier(&names, ToolTier::Core);
+        let extended = filter_tools_by_tier(&names, ToolTier::Extended);
+        let full = filter_tools_by_tier(&names, ToolTier::Full);
+
+        // Core should be a subset of extended, which is a subset of full
+        assert!(
+            core_only.len() <= extended.len(),
+            "core ({}) should be <= extended ({})",
+            core_only.len(),
+            extended.len(),
+        );
+        assert!(
+            extended.len() <= full.len(),
+            "extended ({}) should be <= full ({})",
+            extended.len(),
+            full.len(),
+        );
+        assert_eq!(
+            full.len(),
+            names.len(),
+            "full tier should include all tools"
+        );
+        // Core should have at least the basic tools
+        assert!(
+            core_only.len() >= 10,
+            "core should have at least 10 tools, got {}",
+            core_only.len(),
+        );
     }
 }

@@ -312,6 +312,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: BackupCommands,
     },
+    /// Run agentzero inside a sandboxed Docker container with network isolation.
+    Sandbox {
+        #[command(subcommand)]
+        command: SandboxCommands,
+    },
     /// Open the visual node graph configuration editor.
     #[cfg(feature = "config-ui")]
     ConfigUi {
@@ -1649,4 +1654,33 @@ pub enum BackupCommands {
         #[arg(long)]
         force: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SandboxCommands {
+    /// Start the sandbox container with network isolation from security-policy.yaml.
+    Start {
+        /// Docker image to use (default: agentzero-sandbox:latest).
+        #[arg(long)]
+        image: Option<String>,
+        /// Host port to expose the gateway on (default: 8080).
+        #[arg(long)]
+        port: Option<u16>,
+        /// Path to security-policy.yaml (default: .agentzero/security-policy.yaml).
+        #[arg(long)]
+        policy: Option<String>,
+        /// Run in background (detached mode).
+        #[arg(long, short)]
+        detach: bool,
+    },
+    /// Stop and remove the sandbox container.
+    Stop,
+    /// Show sandbox container status and applied policy.
+    Status {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Open a shell inside the running sandbox container for debugging.
+    Shell,
 }

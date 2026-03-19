@@ -9,7 +9,10 @@ repository.workspace = true
 publish = false
 
 [features]
-default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "document-tools"]
+default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "document-tools", "tools-full"]
+tools-core = ["agentzero-infra/tools-core", "agentzero-tools/tools-core"]
+tools-extended = ["tools-core", "agentzero-infra/tools-extended", "agentzero-tools/tools-extended"]
+tools-full = ["tools-extended", "agentzero-infra/tools-full", "agentzero-tools/tools-full"]
 memory-sqlite = ["agentzero-infra/memory-sqlite", "agentzero-storage/storage-encrypted"]
 memory-sqlite-plain = ["agentzero-infra/memory-sqlite", "agentzero-storage/storage-plain"]
 document-tools = ["agentzero-infra/document-tools"]
@@ -58,6 +61,7 @@ ratatui = { version = "0.28", optional = true }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml = "0.9"
 sha2 = "0.10"
 gag = "1.0"
 rusqlite.workspace = true

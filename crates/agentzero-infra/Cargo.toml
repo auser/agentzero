@@ -9,7 +9,10 @@ repository.workspace = true
 publish = false
 
 [features]
-default = ["memory-sqlite", "document-tools"]
+default = ["memory-sqlite", "document-tools", "tools-full"]
+tools-core = ["agentzero-tools/tools-core"]
+tools-extended = ["tools-core", "agentzero-tools/tools-extended"]
+tools-full = ["tools-extended", "agentzero-tools/tools-full"]
 memory-sqlite = []
 document-tools = ["agentzero-tools/document-tools"]
 memory-turso = ["agentzero-storage/memory-turso"]

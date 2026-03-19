@@ -33,6 +33,7 @@ pub mod plugin;
 pub mod privacy;
 pub mod providers;
 pub mod rag;
+pub mod sandbox;
 pub mod service;
 pub mod skill;
 pub mod status;

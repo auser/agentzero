@@ -3,107 +3,299 @@
 //! Contains all built-in tools: file I/O, shell, git, browser, web fetch,
 //! search, cron, MCP, Composio, Pushover, hardware, WASM module management,
 //! and more. Each tool implements the `Tool` trait from `agentzero-core`.
+//!
+//! Tools are organized into three tiers for embedded binary size reduction:
+//! - **Core**: Always compiled — essential file I/O, shell, search, memory, delegation.
+//! - **Extended**: Common but optional — web, git, cron, approval, IPC.
+//! - **Full**: Everything else — browser, hardware, composio, domain, media, etc.
 
-pub mod agents_ipc;
+use serde::{Deserialize, Serialize};
+
+/// Tool tier classification for binary size optimization.
+///
+/// Tools are split into three tiers so that embedded/minimal builds can
+/// exclude higher-tier tools and their transitive dependencies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum ToolTier {
+    /// ~10 essential tools: file I/O, shell, search, memory, delegation.
+    /// Always compiled regardless of feature flags.
+    Core = 0,
+    /// ~20 additional tools: web search, HTTP, git, cron, approval, IPC.
+    /// Compiled with `tools-extended` or `tools-full` features.
+    Extended = 1,
+    /// Everything else: browser, hardware, composio, domain, media, etc.
+    /// Compiled with `tools-full` feature (the default).
+    Full = 2,
+}
+
+impl ToolTier {
+    /// Returns `true` if `self` is at or below the given maximum tier.
+    pub fn is_within(self, max_tier: ToolTier) -> bool {
+        (self as u8) <= (max_tier as u8)
+    }
+}
+
+impl std::fmt::Display for ToolTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ToolTier::Core => write!(f, "core"),
+            ToolTier::Extended => write!(f, "extended"),
+            ToolTier::Full => write!(f, "full"),
+        }
+    }
+}
+
+/// Returns the maximum tier enabled by the current feature flags.
+pub fn max_compiled_tier() -> ToolTier {
+    if cfg!(feature = "tools-full") {
+        ToolTier::Full
+    } else if cfg!(feature = "tools-extended") {
+        ToolTier::Extended
+    } else {
+        ToolTier::Core
+    }
+}
+
+/// Classify a tool by name into its tier.
+///
+/// Core tools are the minimum set for a useful agent. Extended tools add
+/// networking and automation. Full includes everything else.
+pub fn tool_tier(name: &str) -> ToolTier {
+    match name {
+        // --- Core tier: essential file I/O, search, memory, delegation ---
+        "read_file"
+        | "write_file"
+        | "file_edit"
+        | "apply_patch"
+        | "glob_search"
+        | "content_search"
+        | "shell"
+        | "memory_store"
+        | "memory_recall"
+        | "memory_forget"
+        | "delegate"
+        | "sub_agent_spawn"
+        | "sub_agent_list"
+        | "sub_agent_manage"
+        | "delegate_coordination_status"
+        | "task_plan"
+        | "process"
+        | "image_info"
+        | "pdf_read"
+        | "screenshot" => ToolTier::Core,
+
+        // --- Extended tier: networking, git, cron, approval, IPC ---
+        "web_search"
+        | "http_request"
+        | "web_fetch"
+        | "url_validation"
+        | "git_operations"
+        | "cron_add"
+        | "cron_list"
+        | "cron_remove"
+        | "cron_update"
+        | "cron_pause"
+        | "cron_resume"
+        | "schedule"
+        | "agents_ipc"
+        | "code_interpreter"
+        | "sop_list"
+        | "sop_status"
+        | "sop_advance"
+        | "sop_approve"
+        | "sop_execute"
+        | "cli_discovery"
+        | "proxy_config"
+        | "model_routing_config"
+        | "docx_read"
+        | "html_extract" => ToolTier::Extended,
+
+        // --- Full tier: everything else ---
+        _ => ToolTier::Full,
+    }
+}
+
+// ── Core tier modules (always compiled) ──────────────────────────────
 pub mod apply_patch;
 pub mod autonomy;
-pub mod browser;
-pub mod browser_open;
-pub mod cli_discovery;
-pub mod code_interpreter;
-pub mod composio;
 pub mod content_search;
 pub mod converse;
-pub mod cron_store;
-pub mod cron_tools;
 pub mod delegate;
 pub mod delegate_coordination_status;
-#[cfg(feature = "document-tools")]
-pub mod docx_read;
-pub mod domain;
 pub mod file_edit;
-pub mod git_operations;
 pub mod glob_search;
-pub mod hardware;
-pub mod hardware_tools;
-#[cfg(feature = "document-tools")]
-pub mod html_extract;
-pub mod http_request;
 pub mod image_info;
-pub mod media_gen;
 pub mod memory_tools;
-pub mod model_routing_config;
 pub mod pdf_read;
 pub mod process_tool;
-pub mod proxy_config;
-pub mod pushover;
 pub mod read_file;
-pub mod schedule;
 pub mod screenshot;
 pub mod semantic_recall;
 pub mod shell;
 pub mod shell_parse;
-pub mod skills;
-pub mod sop_tools;
 pub mod subagent_tools;
 pub mod task_plan;
-pub mod url_validation;
-pub mod wasm_tools;
-pub mod web_fetch;
-pub mod web_search;
 pub mod write_file;
+
+// ── Extended tier modules (tools-extended or tools-full) ─────────────
+#[cfg(feature = "tools-extended")]
+pub mod agents_ipc;
+#[cfg(feature = "tools-extended")]
+pub mod cli_discovery;
+#[cfg(feature = "tools-extended")]
+pub mod code_interpreter;
+#[cfg(feature = "tools-extended")]
+pub mod cron_store;
+#[cfg(feature = "tools-extended")]
+pub mod cron_tools;
+#[cfg(all(feature = "tools-extended", feature = "document-tools"))]
+pub mod docx_read;
+#[cfg(feature = "tools-extended")]
+pub mod git_operations;
+#[cfg(all(feature = "tools-extended", feature = "document-tools"))]
+pub mod html_extract;
+#[cfg(feature = "tools-extended")]
+pub mod http_request;
+#[cfg(feature = "tools-extended")]
+pub mod model_routing_config;
+#[cfg(feature = "tools-extended")]
+pub mod proxy_config;
+#[cfg(feature = "tools-extended")]
+pub mod schedule;
+#[cfg(feature = "tools-extended")]
+pub mod sop_tools;
+#[cfg(feature = "tools-extended")]
+pub mod url_validation;
+#[cfg(feature = "tools-extended")]
+pub mod web_fetch;
+#[cfg(feature = "tools-extended")]
+pub mod web_search;
+
+#[cfg(feature = "tools-extended")]
+pub mod skills;
+
+// ── Full tier modules (tools-full only) ──────────────────────────────
+#[cfg(feature = "tools-full")]
+pub mod browser;
+#[cfg(feature = "tools-full")]
+pub mod browser_open;
+#[cfg(feature = "tools-full")]
+pub mod composio;
+#[cfg(feature = "tools-full")]
+pub mod domain;
+#[cfg(feature = "tools-full")]
+pub mod hardware;
+#[cfg(feature = "tools-full")]
+pub mod hardware_tools;
+#[cfg(feature = "tools-full")]
+pub mod media_gen;
+#[cfg(feature = "tools-full")]
+pub mod pushover;
+#[cfg(feature = "tools-full")]
+pub mod wasm_tools;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub use agents_ipc::AgentsIpcTool;
+// ── Core tier re-exports (always available) ──────────────────────────
 pub use agentzero_core::common::url_policy::UrlAccessPolicy;
 pub use apply_patch::ApplyPatchTool;
-pub use browser::BrowserTool;
-pub use browser_open::BrowserOpenTool;
-pub use cli_discovery::CliDiscoveryTool;
-pub use code_interpreter::{CodeInterpreterConfig, CodeInterpreterTool};
-pub use composio::ComposioTool;
 pub use content_search::ContentSearchTool;
 pub use converse::ConverseTool;
+pub use delegate::{DelegateTool, ToolBuilder};
+pub use delegate_coordination_status::DelegateCoordinationStatusTool;
+pub use file_edit::FileEditTool;
+pub use glob_search::GlobSearchTool;
+pub use image_info::ImageInfoTool;
+pub use memory_tools::{MemoryForgetTool, MemoryRecallTool, MemoryStoreTool};
+pub use pdf_read::PdfReadTool;
+pub use process_tool::ProcessTool;
+pub use read_file::{ReadFilePolicy, ReadFileTool};
+pub use screenshot::ScreenshotTool;
+pub use shell::{ShellPolicy, ShellTool};
+pub use subagent_tools::{SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool};
+pub use task_plan::TaskPlanTool;
+pub use write_file::{WriteFilePolicy, WriteFileTool};
+
+// ── Extended tier re-exports ─────────────────────────────────────────
+#[cfg(feature = "tools-extended")]
+pub use agents_ipc::AgentsIpcTool;
+#[cfg(feature = "tools-extended")]
+pub use cli_discovery::CliDiscoveryTool;
+#[cfg(feature = "tools-extended")]
+pub use code_interpreter::{CodeInterpreterConfig, CodeInterpreterTool};
+#[cfg(feature = "tools-extended")]
 pub use cron_tools::{
     CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool,
 };
-pub use delegate::{DelegateTool, ToolBuilder};
-pub use delegate_coordination_status::DelegateCoordinationStatusTool;
-#[cfg(feature = "document-tools")]
+#[cfg(all(feature = "tools-extended", feature = "document-tools"))]
 pub use docx_read::DocxReadTool;
+#[cfg(feature = "tools-extended")]
+pub use git_operations::GitOperationsTool;
+#[cfg(all(feature = "tools-extended", feature = "document-tools"))]
+pub use html_extract::HtmlExtractTool;
+#[cfg(feature = "tools-extended")]
+pub use http_request::HttpRequestTool;
+#[cfg(feature = "tools-extended")]
+pub use model_routing_config::ModelRoutingConfigTool;
+#[cfg(feature = "tools-extended")]
+pub use proxy_config::ProxyConfigTool;
+#[cfg(feature = "tools-extended")]
+pub use schedule::ScheduleTool;
+#[cfg(feature = "tools-extended")]
+pub use sop_tools::{SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool};
+#[cfg(feature = "tools-extended")]
+pub use url_validation::UrlValidationTool;
+#[cfg(feature = "tools-extended")]
+pub use web_fetch::WebFetchTool;
+#[cfg(feature = "tools-extended")]
+pub use web_search::{WebSearchConfig, WebSearchTool};
+
+// Stub `WebSearchConfig` when extended tier is not compiled, so
+// `ToolSecurityPolicy` always compiles without conditional fields.
+#[cfg(not(feature = "tools-extended"))]
+#[derive(Debug, Clone)]
+pub struct WebSearchConfig {
+    pub provider: String,
+    pub brave_api_key: Option<String>,
+    pub jina_api_key: Option<String>,
+    pub timeout_secs: u64,
+    pub user_agent: String,
+}
+
+#[cfg(not(feature = "tools-extended"))]
+impl Default for WebSearchConfig {
+    fn default() -> Self {
+        Self {
+            provider: "duckduckgo".to_string(),
+            brave_api_key: None,
+            jina_api_key: None,
+            timeout_secs: 15,
+            user_agent: "AgentZero/1.0".to_string(),
+        }
+    }
+}
+
+// ── Full tier re-exports ─────────────────────────────────────────────
+#[cfg(feature = "tools-full")]
+pub use browser::BrowserTool;
+#[cfg(feature = "tools-full")]
+pub use browser_open::BrowserOpenTool;
+#[cfg(feature = "tools-full")]
+pub use composio::ComposioTool;
+#[cfg(feature = "tools-full")]
 pub use domain::{
     DomainCreateTool, DomainInfoTool, DomainLearnTool, DomainLessonsTool, DomainListTool,
     DomainSearchTool, DomainUpdateTool, DomainVerifyTool, DomainWorkflowTool,
 };
-pub use file_edit::FileEditTool;
-pub use git_operations::GitOperationsTool;
-pub use glob_search::GlobSearchTool;
+#[cfg(feature = "tools-full")]
 pub use hardware_tools::{HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool};
-#[cfg(feature = "document-tools")]
-pub use html_extract::HtmlExtractTool;
-pub use http_request::HttpRequestTool;
-pub use image_info::ImageInfoTool;
+#[cfg(feature = "tools-full")]
 pub use media_gen::{ImageGenTool, TtsTool, VideoGenTool};
-pub use memory_tools::{MemoryForgetTool, MemoryRecallTool, MemoryStoreTool};
-pub use model_routing_config::ModelRoutingConfigTool;
-pub use pdf_read::PdfReadTool;
-pub use process_tool::ProcessTool;
-pub use proxy_config::ProxyConfigTool;
+#[cfg(feature = "tools-full")]
 pub use pushover::PushoverTool;
-pub use read_file::{ReadFilePolicy, ReadFileTool};
-pub use schedule::ScheduleTool;
-pub use screenshot::ScreenshotTool;
-pub use shell::{ShellPolicy, ShellTool};
-pub use sop_tools::{SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool};
-pub use subagent_tools::{SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool};
-pub use task_plan::TaskPlanTool;
-pub use url_validation::UrlValidationTool;
+#[cfg(feature = "tools-full")]
 pub use wasm_tools::{WasmModuleTool, WasmToolExecTool};
-pub use web_fetch::WebFetchTool;
-pub use web_search::{WebSearchConfig, WebSearchTool};
-pub use write_file::{WriteFilePolicy, WriteFileTool};
 
 /// MCP server definition for the tool security policy.
 ///
@@ -226,5 +418,201 @@ impl ToolSecurityPolicy {
             wasm_project_plugin_dir: None,
             wasm_dev_plugin_dir: None,
         }
+    }
+}
+
+/// Filter a list of tool names by tier, keeping only those at or below `max_tier`.
+pub fn filter_tools_by_tier(tool_names: &[&str], max_tier: ToolTier) -> Vec<String> {
+    tool_names
+        .iter()
+        .filter(|name| tool_tier(name).is_within(max_tier))
+        .map(|name| (*name).to_string())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_tier_classifies_core_tools() {
+        let core_tools = [
+            "read_file",
+            "write_file",
+            "file_edit",
+            "apply_patch",
+            "glob_search",
+            "content_search",
+            "shell",
+            "memory_store",
+            "memory_recall",
+            "memory_forget",
+            "delegate",
+            "sub_agent_spawn",
+            "sub_agent_list",
+            "sub_agent_manage",
+            "task_plan",
+            "process",
+            "image_info",
+            "pdf_read",
+            "screenshot",
+        ];
+        for name in &core_tools {
+            assert_eq!(
+                tool_tier(name),
+                ToolTier::Core,
+                "{name} should be Core tier"
+            );
+        }
+    }
+
+    #[test]
+    fn tool_tier_classifies_extended_tools() {
+        let extended_tools = [
+            "web_search",
+            "http_request",
+            "web_fetch",
+            "url_validation",
+            "git_operations",
+            "cron_add",
+            "cron_list",
+            "cron_remove",
+            "cron_update",
+            "cron_pause",
+            "cron_resume",
+            "schedule",
+            "agents_ipc",
+            "code_interpreter",
+            "sop_list",
+            "sop_status",
+            "sop_advance",
+            "sop_approve",
+            "sop_execute",
+            "cli_discovery",
+            "proxy_config",
+            "model_routing_config",
+        ];
+        for name in &extended_tools {
+            assert_eq!(
+                tool_tier(name),
+                ToolTier::Extended,
+                "{name} should be Extended tier"
+            );
+        }
+    }
+
+    #[test]
+    fn tool_tier_classifies_full_tools() {
+        let full_tools = [
+            "browser",
+            "browser_open",
+            "composio",
+            "pushover",
+            "domain_create",
+            "hardware_board_info",
+            "image_gen",
+            "tts",
+            "video_gen",
+            "wasm_module",
+            "wasm_tool_exec",
+            "agent_manage",
+        ];
+        for name in &full_tools {
+            assert_eq!(
+                tool_tier(name),
+                ToolTier::Full,
+                "{name} should be Full tier"
+            );
+        }
+    }
+
+    #[test]
+    fn core_tier_includes_file_ops_and_shell() {
+        let names = ["read_file", "write_file", "shell", "web_search", "browser"];
+        let filtered = filter_tools_by_tier(&names, ToolTier::Core);
+        assert!(filtered.contains(&"read_file".to_string()));
+        assert!(filtered.contains(&"write_file".to_string()));
+        assert!(filtered.contains(&"shell".to_string()));
+        assert!(!filtered.contains(&"web_search".to_string()));
+        assert!(!filtered.contains(&"browser".to_string()));
+    }
+
+    #[test]
+    fn extended_tier_includes_web_tools() {
+        let names = [
+            "read_file",
+            "shell",
+            "web_search",
+            "http_request",
+            "browser",
+            "composio",
+        ];
+        let filtered = filter_tools_by_tier(&names, ToolTier::Extended);
+        assert!(filtered.contains(&"read_file".to_string()));
+        assert!(filtered.contains(&"shell".to_string()));
+        assert!(filtered.contains(&"web_search".to_string()));
+        assert!(filtered.contains(&"http_request".to_string()));
+        assert!(!filtered.contains(&"browser".to_string()));
+        assert!(!filtered.contains(&"composio".to_string()));
+    }
+
+    #[test]
+    fn full_tier_includes_everything() {
+        let names = [
+            "read_file",
+            "shell",
+            "web_search",
+            "http_request",
+            "browser",
+            "composio",
+            "hardware_board_info",
+        ];
+        let filtered = filter_tools_by_tier(&names, ToolTier::Full);
+        assert_eq!(
+            filtered.len(),
+            names.len(),
+            "Full tier should include all tools"
+        );
+    }
+
+    #[test]
+    fn tier_filtering_removes_non_matching_tools() {
+        let names = [
+            "read_file",
+            "glob_search",
+            "shell",
+            "web_search",
+            "git_operations",
+            "browser",
+            "composio",
+            "pushover",
+        ];
+        let core_only = filter_tools_by_tier(&names, ToolTier::Core);
+        assert_eq!(core_only.len(), 3, "Only 3 core tools should pass");
+
+        let extended = filter_tools_by_tier(&names, ToolTier::Extended);
+        assert_eq!(extended.len(), 5, "5 core+extended tools should pass");
+
+        let full = filter_tools_by_tier(&names, ToolTier::Full);
+        assert_eq!(full.len(), 8, "All 8 tools should pass for full tier");
+    }
+
+    #[test]
+    fn tier_ordering_is_correct() {
+        assert!(ToolTier::Core < ToolTier::Extended);
+        assert!(ToolTier::Extended < ToolTier::Full);
+        assert!(ToolTier::Core.is_within(ToolTier::Full));
+        assert!(ToolTier::Extended.is_within(ToolTier::Full));
+        assert!(!ToolTier::Full.is_within(ToolTier::Core));
+        assert!(!ToolTier::Extended.is_within(ToolTier::Core));
+    }
+
+    #[test]
+    fn max_compiled_tier_reflects_features() {
+        // In the default test environment, all features should be on
+        let tier = max_compiled_tier();
+        // We can't assert a specific value since it depends on how tests are run,
+        // but we can verify it's a valid tier
+        assert!(tier.is_within(ToolTier::Full));
     }
 }

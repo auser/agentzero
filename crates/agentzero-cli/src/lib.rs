@@ -159,6 +159,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::McpServe => "mcp-serve",
         Commands::Privacy { .. } => "privacy",
         Commands::Backup { .. } => "backup",
+        Commands::Sandbox { .. } => "sandbox",
         #[cfg(feature = "config-ui")]
         Commands::ConfigUi { .. } => "config-ui",
     }

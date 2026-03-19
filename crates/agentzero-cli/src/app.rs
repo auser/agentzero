@@ -184,6 +184,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             commands::privacy::PrivacyCommand::run(&ctx, command).await
         }
         Commands::Backup { command } => commands::backup::BackupCommand::run(&ctx, command).await,
+        Commands::Sandbox { command } => {
+            commands::sandbox::SandboxCommand::run(&ctx, command).await
+        }
         #[cfg(feature = "config-ui")]
         Commands::ConfigUi {
             port,

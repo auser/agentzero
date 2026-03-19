@@ -9,7 +9,10 @@ repository.workspace = true
 publish = false
 
 [features]
-default = ["document-tools"]
+default = ["tools-full", "document-tools"]
+tools-core = []
+tools-extended = ["tools-core"]
+tools-full = ["tools-extended"]
 document-tools = ["dep:scraper", "dep:zip"]
 
 [dependencies]
