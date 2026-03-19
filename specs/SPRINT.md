@@ -1271,30 +1271,30 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 
 ### Phase A: Sandbox Dockerfile & Entrypoint (HIGH)
 
-- [ ] **Sandbox Dockerfile** — `docker/sandbox/Dockerfile`: multi-stage build, iptables + ca-certificates, `/workspace` read-only mount, `/sandbox` + `/tmp` writable, non-root user.
-- [ ] **Entrypoint script** — `docker/sandbox/sandbox-entrypoint.sh`: reads `security-policy.yaml`, generates iptables rules (default DROP, allow listed domains + DNS + loopback + established), runs gateway as non-root.
-- [ ] **Policy-to-iptables converter** — `docker/sandbox/policy-to-iptables.py`: parses YAML, resolves domains, outputs iptables commands.
+- [x] **Sandbox Dockerfile** — `docker/sandbox/Dockerfile`: multi-stage build, iptables + ca-certificates + python3, non-root user (uid 1000), read-only workspace mount, tmpfs for `/sandbox` + `/tmp`.
+- [x] **Entrypoint script** — `docker/sandbox/sandbox-entrypoint.sh`: reads `security-policy.yaml`, runs `policy-to-iptables.py`, applies rules, drops to non-root, execs gateway.
+- [x] **Policy-to-iptables converter** — `docker/sandbox/policy-to-iptables.py`: parses YAML, resolves domains to IPs, outputs iptables rules (default DROP, allow DNS/loopback/established + listed domains).
 
 ### Phase B: CLI Command (HIGH)
 
-- [ ] **`agentzero sandbox` subcommand** — `start` (build/pull image, mount workspace, launch container), `stop`, `status` (running sandbox + applied policy + iptables), `shell` (exec into sandbox for debugging).
-- [ ] **Policy validation** — Reads and validates `security-policy.yaml` before launching container.
+- [x] **`agentzero sandbox` subcommand** — `start` (validate policy, build docker run args, launch), `stop` (docker stop + rm), `status` (docker inspect, JSON option), `shell` (docker exec -it). 8 tests.
+- [x] **Policy validation** — Validates `security-policy.yaml` exists and has valid YAML with `default` key.
 
 ### Phase C: Documentation (MEDIUM)
 
-- [ ] **Sandbox guide** — `site/src/content/docs/security/sandbox.mdx`: what sandboxing provides, quickstart, architecture diagram, YAML → iptables flow, comparison with NVIDIA OpenShell.
+- [x] **Sandbox guide** — `site/src/content/docs/security/sandbox.md`: what sandboxing provides, quickstart, architecture, YAML→iptables flow, comparison with NVIDIA OpenShell.
 
 ---
 
 ### Acceptance Criteria (Sprint 59)
 
-- [ ] `agentzero sandbox start` launches sandboxed container with iptables rules from YAML policy
-- [ ] Outbound to unlisted domains blocked at network level
-- [ ] Outbound to listed domains succeeds
-- [ ] Workspace mounted read-only, `/sandbox` and `/tmp` writable
-- [ ] `agentzero sandbox status` shows active policy and iptables rules
-- [ ] `cargo clippy` — 0 warnings
-- [ ] All tests pass (4+ new)
+- [x] `agentzero sandbox start` launches sandboxed container with iptables rules from YAML policy
+- [x] Outbound to unlisted domains blocked at network level (iptables default DROP)
+- [x] Outbound to listed domains succeeds (resolved IPs get ACCEPT rules)
+- [x] Workspace mounted read-only, `/sandbox` and `/tmp` writable (tmpfs)
+- [x] `agentzero sandbox status` shows active policy and iptables rules
+- [x] `cargo clippy` — 0 warnings
+- [x] All tests pass (8 new)
 
 ---
 
@@ -1306,7 +1306,7 @@ Reduce the `embedded` profile binary for resource-constrained devices. Currently
 
 **Plan:** `specs/plans/21-embedded-binary-size-reduction.md`
 
-- [ ] **Phase 1: Tool tiering** — Split tool registration into `core`/`extended`/`full` tiers. Embedded compiles only `core` (file ops, shell, memory, sub-agents). Target: -500KB to -1MB.
+- [x] **Phase 1: Tool tiering** — Split into `core` (~20 tools), `extended` (~17 tools), `full` (~9 tools). Feature flags: `tools-core`/`tools-extended`/`tools-full`. ToolTier enum with classifier. agentzero-lite uses `tools-extended`. 3 tests.
 - [ ] **Phase 2: Plain SQLite** — Add `memory-sqlite-plain` feature without bundled-sqlcipher encryption. Target: -2MB.
 - [ ] **Phase 3: Optional WASM** — Create `embedded-minimal` (no WASM) and keep `embedded` with WASM. Target: -300KB.
 - [ ] **Phase 4: HTTP client minimization** — Audit and trim reqwest features; evaluate `ureq` for embedded. Target: -200KB.
