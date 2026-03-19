@@ -1,4 +1,6 @@
 [profile.default]
+# Kill test list operations that take longer than 10s — prevents WASM plugin SDK hangs
+list-timeout = "10s"
 # Kill tests that take longer than 30s — prevents hanging
 slow-timeout = { period = "30s", terminate-after = 2 }
 # Fail on first test timeout rather than waiting for all

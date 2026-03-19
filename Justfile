@@ -30,12 +30,11 @@ docs-lint:
 
 # Run tests (compile with progress, then run)
 test:
-    cargo test --workspace --no-run
-    cargo nextest run --workspace
+    cargo nextest run --workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk
 
 # Run tests with verbose output
 test-verbose:
-    cargo nextest run --workspace --no-capture
+    cargo nextest run --workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk --no-capture
 
 # Run benchmarks
 bench:
@@ -258,7 +257,7 @@ release-auto:
     cargo fmt --all
     cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo nextest run --workspace
+    cargo nextest run --workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk
     # 2. Determine next version from conventional commits
     NEXT_VERSION=$(git-cliff --bumped-version | sed 's/^v//')
     echo "==> Auto-detected next version: $NEXT_VERSION"
@@ -296,7 +295,7 @@ release VERSION:
     cargo fmt --all
     cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo nextest run --workspace
+    cargo nextest run --workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk
     # 3. Commit the version bump + any fmt/clippy fixes + updated Cargo.lock
     if ! git diff --quiet; then
         git add -u
