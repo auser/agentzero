@@ -1,3 +1,4 @@
+use crate::a2a::{a2a_rpc, agent_card};
 use crate::handlers::{
     agent_stats, agents_list, api_chat, api_fallback, async_submit, create_agent, create_cron,
     dashboard, delete_agent, delete_cron, emergency_stop, forget_memory, get_agent, get_config,
@@ -58,6 +59,8 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/tools", get(get_tools))
         .route("/v1/tool-execute", post(tool_execute))
         .route("/mcp/message", post(mcp_message))
+        .route("/.well-known/agent.json", get(agent_card))
+        .route("/a2a", post(a2a_rpc))
         .route("/v1/config", get(get_config).put(update_config))
         .route("/v1/cron", get(list_cron).post(create_cron))
         .route("/v1/cron/:id", patch(update_cron).delete(delete_cron))

@@ -1,0 +1,111 @@
+# AgentZero — OSINT / Research Analyst
+#
+# Five-agent swarm for open-source intelligence gathering and analysis.
+# Agents: source-finder → data-collector → fact-checker → analyst → report-writer
+#
+# Quick start:
+#   1. Set ANTHROPIC_API_KEY (or swap provider to openai/openrouter)
+#   2. Run `agentzero gateway --config examples/osint-analyst/agentzero.toml`
+#   3. Send: "Investigate recent developments in quantum computing startups"
+
+[provider]
+kind = "anthropic"
+model = "claude-sonnet-4-6"
+
+[memory]
+backend = "sqlite"
+sqlite_path = "./osint-research.db"
+
+[agent]
+mode = "production"
+max_tool_iterations = 30
+request_timeout_ms = 180_000
+
+[security]
+allowed_root = "."
+allowed_commands = ["ls", "cat", "grep", "find", "head", "tail", "wc", "sort", "jq", "python3"]
+
+[security.write_file]
+enabled = true
+max_write_bytes = 262144
+
+[web_search]
+enabled = true
+
+[web_fetch]
+enabled = true
+
+[http_request]
+enabled = true
+
+# --- Swarm ---
+
+[swarm]
+enabled = true
+
+[swarm.agents.source-finder]
+system_prompt = """You are a Source Finder agent specializing in OSINT research.
+Your job is to identify and prioritize relevant sources for a given research topic.
+Use web_search to find primary sources, news articles, academic papers, and official reports.
+Output a structured list of sources with URLs, credibility ratings (1-5), and relevance notes.
+Focus on recency and authority of sources."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["web_search", "web_fetch", "memory_store", "memory_recall"]
+agentic = true
+
+[swarm.agents.data-collector]
+system_prompt = """You are a Data Collector agent.
+Given a list of sources from the source-finder, fetch and extract key data points.
+Use web_fetch to retrieve page content, then extract structured facts, quotes, and statistics.
+Store collected data in memory for the analyst.
+Be thorough but concise — extract facts, not filler."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["web_fetch", "http_request", "memory_store", "memory_recall", "write_file"]
+agentic = true
+
+[swarm.agents.fact-checker]
+system_prompt = """You are a Fact Checker agent.
+Cross-reference claims from the data-collector against multiple independent sources.
+Flag contradictions, identify consensus, and rate confidence levels.
+Use web_search to find corroborating or contradicting evidence.
+Output a verified facts list with confidence scores (high/medium/low)."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["web_search", "web_fetch", "memory_store", "memory_recall"]
+agentic = true
+
+[swarm.agents.analyst]
+system_prompt = """You are an Intelligence Analyst agent.
+Synthesize verified facts into analytical insights.
+Identify patterns, trends, threats, and opportunities.
+Apply structured analytical techniques (ACH, SWOT, timeline analysis).
+Output key findings with supporting evidence and confidence assessments."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["memory_recall", "memory_store", "read_file"]
+agentic = true
+
+[swarm.agents.report-writer]
+system_prompt = """You are a Report Writer agent.
+Compile the analyst's findings into a professional intelligence brief.
+Structure: Executive Summary → Key Findings → Detailed Analysis → Sources → Recommendations.
+Write in clear, objective language suitable for decision-makers.
+Save the final report as a markdown file."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["memory_recall", "read_file", "write_file"]
+agentic = true
+
+# Pipeline: source-finder → data-collector → fact-checker → analyst → report-writer
+[[swarm.pipelines]]
+name = "osint-research"
+trigger = "default"
+steps = [
+    { agent = "source-finder" },
+    { agent = "data-collector" },
+    { agent = "fact-checker" },
+    { agent = "analyst" },
+    { agent = "report-writer" },
+]

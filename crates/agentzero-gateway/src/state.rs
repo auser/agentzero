@@ -77,6 +77,8 @@ pub(crate) struct GatewayState {
     pub(crate) agent_store: Option<Arc<AgentStore>>,
     /// MCP Server for tool execution (used by /v1/tool-execute and /mcp/*).
     pub(crate) mcp_server: Option<Arc<agentzero_infra::mcp_server::McpServer>>,
+    /// A2A task store for Agent-to-Agent protocol.
+    pub(crate) a2a_tasks: crate::a2a::A2aTaskStore,
 }
 
 impl GatewayState {
@@ -127,6 +129,7 @@ impl GatewayState {
             event_bus: None,
             agent_store: None,
             mcp_server: None,
+            a2a_tasks: crate::a2a::A2aTaskStore::new(),
         }
     }
 
@@ -342,6 +345,7 @@ impl GatewayState {
             event_bus: None,
             agent_store: None,
             mcp_server: None,
+            a2a_tasks: crate::a2a::A2aTaskStore::new(),
         }
     }
 
@@ -386,6 +390,7 @@ impl GatewayState {
             event_bus: None,
             agent_store: None,
             mcp_server: None,
+            a2a_tasks: crate::a2a::A2aTaskStore::new(),
         }
     }
 }

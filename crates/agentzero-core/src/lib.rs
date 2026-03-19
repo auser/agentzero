@@ -4,6 +4,7 @@
 //! `MemoryStore`, and all message/result types. Also contains shared
 //! utilities for URL policy enforcement, security, delegation, and routing.
 
+pub mod a2a_types;
 pub mod agent;
 pub mod agent_store;
 pub mod common;

@@ -3,6 +3,7 @@
 //! Handles agent routing (AI + keyword), multi-agent coordination via an
 //! event bus, pipeline execution, and swarm construction from config.
 
+pub mod a2a_client;
 pub mod agent_router;
 pub mod agent_store;
 pub mod block_stream;

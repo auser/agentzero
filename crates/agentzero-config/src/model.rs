@@ -42,6 +42,8 @@ pub struct AgentZeroConfig {
     pub code_interpreter: CodeInterpreterConfig,
     pub media_gen: MediaGenConfig,
     pub autopilot: AutopilotConfig,
+    #[serde(default)]
+    pub a2a: A2aConfig,
 }
 
 impl AgentZeroConfig {
@@ -2477,6 +2479,40 @@ fn default_autopilot_max_missions_agent() -> usize {
 
 fn default_autopilot_stale_threshold() -> u32 {
     30
+}
+
+// --- A2A (Agent-to-Agent) protocol configuration ---
+
+/// Configuration for external A2A agents that this instance can call.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct A2aConfig {
+    /// Enable A2A protocol endpoints (/.well-known/agent.json and /a2a).
+    pub enabled: bool,
+    /// External A2A agents to register as swarm participants.
+    pub agents: HashMap<String, A2aAgentConfig>,
+}
+
+/// Configuration for a single external A2A agent.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct A2aAgentConfig {
+    /// Base URL of the external agent (e.g., "https://agent.example.com").
+    pub url: String,
+    /// Optional bearer token for authentication.
+    pub auth_token: Option<String>,
+    /// Timeout in seconds for A2A calls (default: 120).
+    pub timeout_secs: u64,
+}
+
+impl Default for A2aAgentConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            auth_token: None,
+            timeout_secs: 120,
+        }
+    }
 }
 
 #[cfg(test)]

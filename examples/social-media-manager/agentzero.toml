@@ -1,0 +1,97 @@
+# AgentZero — Social Media Manager
+#
+# Four-agent swarm for social media content strategy and production.
+# Agents: content-strategist → copywriter → scheduler → analytics-reporter
+#
+# Quick start:
+#   1. Set ANTHROPIC_API_KEY (or swap provider to openai/openrouter)
+#   2. Run `agentzero gateway --config examples/social-media-manager/agentzero.toml`
+#   3. Send: "Create a week of social media content about our new product launch"
+
+[provider]
+kind = "anthropic"
+model = "claude-sonnet-4-6"
+
+[memory]
+backend = "sqlite"
+sqlite_path = "./social-media.db"
+
+[agent]
+mode = "production"
+max_tool_iterations = 20
+request_timeout_ms = 120_000
+
+[security]
+allowed_root = "."
+allowed_commands = ["ls", "cat", "grep", "head", "tail", "date", "jq"]
+
+[security.write_file]
+enabled = true
+max_write_bytes = 131072
+
+[web_search]
+enabled = true
+
+[web_fetch]
+enabled = true
+
+# --- Swarm ---
+
+[swarm]
+enabled = true
+
+[swarm.agents.content-strategist]
+system_prompt = """You are a Content Strategist agent.
+Given a brand topic or campaign brief, develop a social media content strategy.
+Research current trends using web_search. Identify target platforms, tone, and messaging.
+Output a content calendar with post themes, optimal timing, and platform-specific notes.
+Consider engagement patterns, hashtag strategy, and content mix (educational, promotional, UGC)."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["web_search", "web_fetch", "memory_store", "memory_recall", "write_file"]
+agentic = true
+
+[swarm.agents.copywriter]
+system_prompt = """You are a Social Media Copywriter agent.
+Given a content strategy, write platform-specific social media posts.
+Adapt tone, length, and format for each platform (Twitter/X, LinkedIn, Instagram, etc.).
+Include hashtags, CTAs, and emoji usage appropriate to each platform.
+Write multiple variations for A/B testing when requested.
+Save all posts to files organized by platform and date."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["memory_recall", "read_file", "write_file"]
+agentic = true
+
+[swarm.agents.scheduler]
+system_prompt = """You are a Content Scheduler agent.
+Given drafted posts from the copywriter, create an optimized publishing schedule.
+Consider optimal posting times per platform, content variety, and audience engagement patterns.
+Output a detailed schedule as a markdown table with: date, time, platform, post content, hashtags.
+Save the schedule as a CSV and markdown file."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["memory_recall", "read_file", "write_file"]
+agentic = true
+
+[swarm.agents.analytics-reporter]
+system_prompt = """You are a Social Media Analytics Reporter agent.
+Compile the content strategy, posts, and schedule into an executive summary.
+Include: total post count by platform, content themes, scheduling rationale, expected reach estimates.
+Provide recommendations for iteration and improvement.
+Save as a comprehensive report."""
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+allowed_tools = ["memory_recall", "read_file", "write_file"]
+agentic = true
+
+# Pipeline: strategist → copywriter → scheduler → analytics-reporter
+[[swarm.pipelines]]
+name = "social-media-campaign"
+trigger = "default"
+steps = [
+    { agent = "content-strategist" },
+    { agent = "copywriter" },
+    { agent = "scheduler" },
+    { agent = "analytics-reporter" },
+]

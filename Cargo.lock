@@ -351,6 +351,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
