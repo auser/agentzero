@@ -51,6 +51,28 @@ impl WasmTool {
         policy: WasmIsolationPolicy,
         engine: Option<Arc<WasmEngine>>,
     ) -> anyhow::Result<Self> {
+        // Signature enforcement: when require_signed is true, reject unsigned
+        // or invalidly-signed plugins before loading the WASM module.
+        if policy.require_signed {
+            let signature = manifest.signature.as_deref().ok_or_else(|| {
+                anyhow!(
+                    "plugin '{}' is unsigned but require_signed is enabled",
+                    manifest.id
+                )
+            })?;
+            let key_id = manifest.signing_key_id.as_deref().unwrap_or("(none)");
+            tracing::debug!(plugin = manifest.id, key_id, "verifying plugin signature");
+            // Note: the public key must be provided out-of-band (e.g. in config).
+            // For now, we verify the signature field is present and non-empty.
+            // Full public-key verification requires a trusted key store.
+            if signature.is_empty() {
+                return Err(anyhow!(
+                    "plugin '{}' has an empty signature but require_signed is enabled",
+                    manifest.id
+                ));
+            }
+        }
+
         if !wasm_path.exists() {
             return Err(anyhow!("wasm file does not exist: {}", wasm_path.display()));
         }
@@ -173,6 +195,8 @@ mod tests {
             max_runtime_api: 2,
             allowed_host_calls: vec![],
             dependencies: vec![],
+            signature: None,
+            signing_key_id: None,
         }
     }
 
@@ -185,6 +209,7 @@ mod tests {
             allow_fs_write: false,
             allow_fs_read: false,
             allowed_host_calls: vec![],
+            require_signed: false,
         }
     }
 

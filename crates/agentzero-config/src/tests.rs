@@ -55,7 +55,7 @@ fn with_clean_agentzero_env(test: impl FnOnce()) {
 
 #[test]
 fn loads_typed_config_from_toml_file() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -81,7 +81,7 @@ fn loads_typed_config_from_toml_file() {
 
 #[test]
 fn loads_user_configured_hook_settings() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -104,7 +104,7 @@ fn loads_user_configured_hook_settings() {
 
 #[test]
 fn loads_legacy_onboard_field_names() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -124,7 +124,7 @@ fn loads_legacy_onboard_field_names() {
 
 #[test]
 fn env_overrides_file_values() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -145,7 +145,7 @@ fn env_overrides_file_values() {
 
 #[test]
 fn dotenv_chain_overrides_in_order() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -178,7 +178,7 @@ fn dotenv_chain_overrides_in_order() {
 
 #[test]
 fn process_env_overrides_dotenv_files() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -213,7 +213,7 @@ fn process_env_overrides_dotenv_files() {
 
 #[test]
 fn load_env_var_reads_from_dotenv_when_process_env_missing() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(&config_path, "").expect("empty config should be written");
@@ -232,7 +232,7 @@ fn load_env_var_reads_from_dotenv_when_process_env_missing() {
 
 #[test]
 fn load_env_var_prefers_process_env_over_dotenv() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(&config_path, "").expect("empty config should be written");
@@ -251,7 +251,7 @@ fn load_env_var_prefers_process_env_over_dotenv() {
 
 #[test]
 fn cwd_dotenv_overrides_config_dir_dotenv() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let config_dir = temp_dir();
     let cwd_dir = temp_dir();
     let config_path = config_dir.join("agentzero.toml");
@@ -288,7 +288,7 @@ fn cwd_dotenv_overrides_config_dir_dotenv() {
 #[test]
 fn allows_enabled_mcp_without_allowed_servers() {
     // allowed_servers is now optional — servers come from mcp.json files.
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -310,7 +310,7 @@ fn allows_enabled_mcp_without_allowed_servers() {
 
 #[test]
 fn rejects_invalid_hook_error_mode_negative_path() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -333,7 +333,7 @@ fn rejects_invalid_hook_error_mode_negative_path() {
 
 #[test]
 fn rejects_empty_allowlist_in_non_dev_mode() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -356,7 +356,7 @@ fn rejects_empty_allowlist_in_non_dev_mode() {
 
 #[test]
 fn allows_empty_allowlist_in_dev_mode() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -375,7 +375,7 @@ fn allows_empty_allowlist_in_dev_mode() {
 
 #[test]
 fn rejects_relative_allowed_root_traversal_escape() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -398,7 +398,7 @@ fn rejects_relative_allowed_root_traversal_escape() {
 
 #[test]
 fn rejects_unsupported_provider_url_scheme() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -421,7 +421,7 @@ fn rejects_unsupported_provider_url_scheme() {
 
 #[test]
 fn rejects_zero_request_timeout() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -444,7 +444,7 @@ fn rejects_zero_request_timeout() {
 
 #[test]
 fn rejects_zero_memory_window_size() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -467,7 +467,7 @@ fn rejects_zero_memory_window_size() {
 
 #[test]
 fn rejects_zero_max_prompt_chars() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -490,7 +490,7 @@ fn rejects_zero_max_prompt_chars() {
 
 #[test]
 fn rejects_zero_shell_max_output_bytes() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -513,7 +513,7 @@ fn rejects_zero_shell_max_output_bytes() {
 
 #[test]
 fn rejects_zero_write_file_max_write_bytes() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -536,7 +536,7 @@ fn rejects_zero_write_file_max_write_bytes() {
 
 #[test]
 fn loads_config_backed_tool_policy() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -562,7 +562,7 @@ fn loads_config_backed_tool_policy() {
 
 #[test]
 fn loads_enabled_audit_policy() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -582,7 +582,7 @@ fn loads_enabled_audit_policy() {
 
 #[test]
 fn rejects_enabled_audit_policy_with_empty_path() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -607,7 +607,7 @@ fn rejects_enabled_audit_policy_with_empty_path() {
 
 #[test]
 fn parses_observability_config() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -628,7 +628,7 @@ fn parses_observability_config() {
 
 #[test]
 fn parses_research_config() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -650,7 +650,7 @@ fn parses_research_config() {
 
 #[test]
 fn parses_runtime_config_with_wasm() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -671,7 +671,7 @@ fn parses_runtime_config_with_wasm() {
 
 #[test]
 fn parses_browser_config() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -692,7 +692,7 @@ fn parses_browser_config() {
 
 #[test]
 fn parses_web_search_config() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -714,7 +714,7 @@ fn parses_web_search_config() {
 
 #[test]
 fn parses_cost_config() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -736,7 +736,7 @@ fn parses_cost_config() {
 
 #[test]
 fn parses_identity_config() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -756,7 +756,7 @@ fn parses_identity_config() {
 
 #[test]
 fn parses_model_provider_profiles() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -781,7 +781,7 @@ fn parses_model_provider_profiles() {
 
 #[test]
 fn parses_model_routes() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -804,7 +804,7 @@ fn parses_model_routes() {
 
 #[test]
 fn parses_embedding_routes() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -826,7 +826,7 @@ fn parses_embedding_routes() {
 
 #[test]
 fn parses_query_classification() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -852,7 +852,7 @@ fn parses_query_classification() {
 
 #[test]
 fn parses_delegate_agent_config() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -879,7 +879,7 @@ fn parses_delegate_agent_config() {
 
 #[test]
 fn rejects_invalid_provider_temperature() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -902,7 +902,7 @@ fn rejects_invalid_provider_temperature() {
 
 #[test]
 fn rejects_invalid_provider_api() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -927,7 +927,7 @@ fn rejects_invalid_provider_api() {
 
 #[test]
 fn masked_config_redacts_api_keys() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -954,7 +954,7 @@ fn masked_config_redacts_api_keys() {
 
 #[test]
 fn channels_config_group_reply_parses() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1014,7 +1014,7 @@ sample_rate = 0.8
 
 #[test]
 fn channels_config_defaults_are_reasonable() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1038,7 +1038,7 @@ fn channels_config_defaults_are_reasonable() {
 
 #[test]
 fn channels_config_ack_reaction_rules_parse() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1087,7 +1087,7 @@ contains_none = ["test"]
 
 #[test]
 fn shell_context_aware_parsing_defaults_to_true() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1106,7 +1106,7 @@ fn shell_context_aware_parsing_defaults_to_true() {
 
 #[test]
 fn shell_context_aware_parsing_can_be_disabled() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1197,7 +1197,7 @@ fn update_auto_approve_empty_list_clears() {
 
 #[test]
 fn resolve_local_provider_defaults_overrides_cloud_base_url_for_ollama() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1220,7 +1220,7 @@ fn resolve_local_provider_defaults_overrides_cloud_base_url_for_ollama() {
 
 #[test]
 fn resolve_local_provider_defaults_overrides_cloud_base_url_for_lmstudio() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1242,7 +1242,7 @@ fn resolve_local_provider_defaults_overrides_cloud_base_url_for_lmstudio() {
 
 #[test]
 fn resolve_local_provider_defaults_preserves_explicit_base_url() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1264,7 +1264,7 @@ fn resolve_local_provider_defaults_preserves_explicit_base_url() {
 
 #[test]
 fn resolve_local_provider_defaults_does_not_affect_cloud_providers() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1286,7 +1286,7 @@ fn resolve_local_provider_defaults_does_not_affect_cloud_providers() {
 
 #[test]
 fn resolve_local_provider_defaults_all_local_providers_resolve() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
 
     let providers = [
@@ -1322,7 +1322,7 @@ fn resolve_local_provider_defaults_all_local_providers_resolve() {
 
 #[test]
 fn normalize_base_url_strips_trailing_v1() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1344,7 +1344,7 @@ fn normalize_base_url_strips_trailing_v1() {
 
 #[test]
 fn normalize_base_url_strips_trailing_v1_with_slash() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1366,7 +1366,7 @@ fn normalize_base_url_strips_trailing_v1_with_slash() {
 
 #[test]
 fn normalize_base_url_preserves_url_without_v1() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1390,7 +1390,7 @@ fn normalize_base_url_preserves_url_without_v1() {
 
 #[test]
 fn enable_git_derived_from_allowed_commands() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
 
@@ -1429,7 +1429,7 @@ fn enable_git_derived_from_allowed_commands() {
 
 #[test]
 fn enable_web_search_from_config() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1448,7 +1448,7 @@ fn enable_web_search_from_config() {
 
 #[test]
 fn enable_browser_from_config() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1468,7 +1468,7 @@ fn enable_browser_from_config() {
 
 #[test]
 fn cidr_parse_error_returns_err() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1491,7 +1491,7 @@ fn cidr_parse_error_returns_err() {
 
 #[test]
 fn absolute_allowed_root_is_accepted() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     // Use the temp dir as the absolute allowed_root (it exists and is canonical).
@@ -1515,7 +1515,7 @@ fn absolute_allowed_root_is_accepted() {
 
 #[test]
 fn rejects_gateway_port_zero() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1538,7 +1538,7 @@ fn rejects_gateway_port_zero() {
 
 #[test]
 fn rejects_empty_gateway_host() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1561,7 +1561,7 @@ fn rejects_empty_gateway_host() {
 
 #[test]
 fn rejects_public_host_without_allow_public_bind() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1584,7 +1584,7 @@ fn rejects_public_host_without_allow_public_bind() {
 
 #[test]
 fn rejects_invalid_autonomy_level() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1607,7 +1607,7 @@ fn rejects_invalid_autonomy_level() {
 
 #[test]
 fn rejects_zero_max_cost_per_day() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1632,7 +1632,7 @@ fn rejects_zero_max_cost_per_day() {
 
 #[test]
 fn privacy_defaults_to_off_when_section_absent() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1661,7 +1661,7 @@ fn privacy_defaults_to_off_when_section_absent() {
 
 #[test]
 fn privacy_parses_full_toml_section() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1716,7 +1716,7 @@ key_store_path = "/tmp/keys"
 
 #[test]
 fn privacy_rejects_invalid_mode() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1740,7 +1740,7 @@ fn privacy_rejects_invalid_mode() {
 
 #[test]
 fn privacy_rejects_cloud_provider_in_local_only_mode() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1766,7 +1766,7 @@ fn privacy_rejects_cloud_provider_in_local_only_mode() {
 
 #[test]
 fn privacy_allows_local_provider_in_local_only_mode() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1786,7 +1786,7 @@ fn privacy_allows_local_provider_in_local_only_mode() {
 
 #[test]
 fn privacy_enforce_local_provider_blocks_cloud() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1812,7 +1812,7 @@ fn privacy_enforce_local_provider_blocks_cloud() {
 
 #[test]
 fn privacy_rejects_invalid_handshake_pattern() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1836,7 +1836,7 @@ fn privacy_rejects_invalid_handshake_pattern() {
 
 #[test]
 fn privacy_all_five_modes_accepted() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for mode in &["off", "private", "local_only", "encrypted", "full"] {
         let dir = temp_dir();
         let config_path = dir.join("agentzero.toml");
@@ -1871,7 +1871,7 @@ fn privacy_all_five_modes_accepted() {
 
 #[test]
 fn privacy_local_only_rejects_non_localhost_base_url() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1897,7 +1897,7 @@ fn privacy_local_only_rejects_non_localhost_base_url() {
 
 #[test]
 fn privacy_local_only_network_tools_disabled() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1936,7 +1936,7 @@ fn privacy_local_only_network_tools_disabled() {
 
 #[test]
 fn privacy_private_mode_accepted_with_cloud_provider() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -1956,7 +1956,7 @@ fn privacy_private_mode_accepted_with_cloud_provider() {
 
 #[test]
 fn privacy_private_mode_blocks_network_tools() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2009,7 +2009,7 @@ fn privacy_private_mode_blocks_network_tools() {
 
 #[test]
 fn privacy_private_mode_does_not_restrict_url_access() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2036,7 +2036,7 @@ fn privacy_private_mode_does_not_restrict_url_access() {
 
 #[test]
 fn query_classification_deserializes_with_rules() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2063,7 +2063,7 @@ fn query_classification_deserializes_with_rules() {
 
 #[test]
 fn query_classification_default_has_enabled_false() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2083,7 +2083,7 @@ fn query_classification_default_has_enabled_false() {
 
 #[test]
 fn embedding_route_deserializes_with_optional_fields() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2111,7 +2111,7 @@ fn validation_warns_on_empty_classification_rules() {
     // This test validates that the config is accepted (no error) even when
     // classification is enabled with no rules. The warning is emitted at
     // runtime via tracing, which is a no-op in tests.
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2131,7 +2131,7 @@ fn validation_warns_on_empty_classification_rules() {
 
 #[test]
 fn validate_rejects_invalid_agent_privacy_boundary() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2163,7 +2163,7 @@ privacy_boundary = "bogus_value"
 
 #[test]
 fn validate_rejects_agent_boundary_more_permissive_than_global() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2198,7 +2198,7 @@ privacy_boundary = "any"
 
 #[test]
 fn validate_rejects_invalid_tool_boundary() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2228,7 +2228,7 @@ shell = "invalid_boundary"
 
 #[test]
 fn validate_accepts_valid_privacy_boundaries() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2314,7 +2314,7 @@ default_privacy_boundary = "encrypted_only"
 
 #[test]
 fn validate_rejects_encrypted_mode_without_noise() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2348,7 +2348,7 @@ enabled = false
 
 #[test]
 fn validate_accepts_encrypted_mode_with_noise_enabled() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(
@@ -2387,7 +2387,7 @@ fn base_mcp_config_toml() -> &'static str {
 
 #[test]
 fn mcp_loads_global_mcp_json() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(&config_path, base_mcp_config_toml()).expect("config should be written");
@@ -2413,7 +2413,7 @@ fn mcp_loads_global_mcp_json() {
 
 #[test]
 fn mcp_loads_project_mcp_json() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(&config_path, base_mcp_config_toml()).expect("config should be written");
@@ -2438,7 +2438,7 @@ fn mcp_loads_project_mcp_json() {
 
 #[test]
 fn mcp_project_overrides_global_by_name() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(&config_path, base_mcp_config_toml()).expect("config should be written");
@@ -2474,7 +2474,7 @@ fn mcp_project_overrides_global_by_name() {
 
 #[test]
 fn mcp_allowed_servers_filters_results() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     // Config with allowed_servers = ["fs"] — only "fs" should pass.
@@ -2502,7 +2502,7 @@ fn mcp_allowed_servers_filters_results() {
 
 #[test]
 fn mcp_no_files_returns_empty_servers() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(&config_path, base_mcp_config_toml()).expect("config should be written");
@@ -2518,7 +2518,7 @@ fn mcp_no_files_returns_empty_servers() {
 
 #[test]
 fn mcp_env_field_in_server_entry() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     fs::write(&config_path, base_mcp_config_toml()).expect("config should be written");
@@ -2554,7 +2554,7 @@ fn examples_dir() -> PathBuf {
 }
 
 fn smoke_test_example(config_path_in_examples: &str) {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let source = examples_dir().join(config_path_in_examples);
     let content = fs::read_to_string(&source)
@@ -2604,7 +2604,7 @@ fn example_research_pipeline_loads_and_validates() {
 
 #[test]
 fn example_config_basic_has_expected_provider() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let source = examples_dir().join("config-basic.toml");
     let dest = dir.join("agentzero.toml");
@@ -2622,7 +2622,7 @@ fn example_config_basic_has_expected_provider() {
 
 #[test]
 fn example_business_office_has_swarm_agents() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let source = examples_dir().join("business-office/agentzero.toml");
     let dest = dir.join("agentzero.toml");
@@ -2652,7 +2652,7 @@ fn example_business_office_has_swarm_agents() {
 
 #[test]
 fn example_research_pipeline_has_pipeline_steps() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let source = examples_dir().join("research-pipeline/agentzero.toml");
     let dest = dir.join("agentzero.toml");
@@ -2690,7 +2690,7 @@ fn example_research_pipeline_has_pipeline_steps() {
 
 #[test]
 fn example_config_full_exercises_all_sections() {
-    let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = temp_dir();
     let source = examples_dir().join("config-full.toml");
     let dest = dir.join("agentzero.toml");

@@ -6,6 +6,7 @@
 
 pub mod package;
 mod package_ref;
+pub mod signing;
 pub mod wasm;
 #[cfg(feature = "plugin-dev")]
 pub mod watcher;

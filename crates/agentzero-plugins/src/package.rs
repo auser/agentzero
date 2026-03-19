@@ -57,6 +57,12 @@ pub struct PluginManifest {
     pub allowed_host_calls: Vec<String>,
     #[serde(default)]
     pub dependencies: Vec<PluginDependency>,
+    /// Ed25519 signature of the canonical manifest JSON (hex-encoded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Identifier of the signing key (for key rotation / multi-key setups).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signing_key_id: Option<String>,
 }
 
 impl PluginManifest {
@@ -1097,6 +1103,8 @@ mod tests {
             max_runtime_api: 2,
             allowed_host_calls: vec![],
             dependencies: vec![],
+            signature: None,
+            signing_key_id: None,
         }
     }
 
@@ -1259,6 +1267,8 @@ mod tests {
             max_runtime_api: 2,
             allowed_host_calls: vec![],
             dependencies: vec![],
+            signature: None,
+            signing_key_id: None,
         };
         fs::write(
             dir.join("manifest.json"),
@@ -1361,6 +1371,8 @@ mod tests {
             max_runtime_api: 2,
             allowed_host_calls: vec![],
             dependencies: vec![],
+            signature: None,
+            signing_key_id: None,
         };
         fs::write(
             dir.join("manifest.json"),
@@ -1471,6 +1483,8 @@ mod tests {
                     max_runtime_api: 2,
                     allowed_host_calls: vec![],
                     dependencies: vec![],
+                    signature: None,
+                    signing_key_id: None,
                 },
                 wasm_path: PathBuf::from("/tmp/a.wasm"),
                 dev_mode: false,
@@ -1489,6 +1503,8 @@ mod tests {
                     max_runtime_api: 2,
                     allowed_host_calls: vec![],
                     dependencies: vec![],
+                    signature: None,
+                    signing_key_id: None,
                 },
                 wasm_path: PathBuf::from("/tmp/b.wasm"),
                 dev_mode: false,
@@ -2013,6 +2029,8 @@ mod tests {
             max_runtime_api: 2,
             allowed_host_calls: vec![],
             dependencies: deps,
+            signature: None,
+            signing_key_id: None,
         };
         let pkg_path = dir.join(format!("{id}-{version}.tar"));
         package_plugin(&wasm_path, manifest, &pkg_path).expect("package");

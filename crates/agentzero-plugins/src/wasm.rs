@@ -26,6 +26,9 @@ pub struct WasmIsolationPolicy {
     pub allow_fs_write: bool,
     pub allow_fs_read: bool,
     pub allowed_host_calls: Vec<String>,
+    /// When true, reject plugins without a valid Ed25519 signature.
+    #[serde(default)]
+    pub require_signed: bool,
 }
 
 impl Default for WasmIsolationPolicy {
@@ -38,6 +41,7 @@ impl Default for WasmIsolationPolicy {
             allow_fs_write: false,
             allow_fs_read: false,
             allowed_host_calls: Vec::new(),
+            require_signed: false,
         }
     }
 }

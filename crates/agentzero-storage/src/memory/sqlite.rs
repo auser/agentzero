@@ -137,6 +137,11 @@ const MIGRATIONS: &[Migration] = &[
         description: "add agent_id column for per-agent memory isolation",
         statements: &["ALTER TABLE memory ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''"],
     },
+    Migration {
+        version: 6,
+        description: "add embedding column for semantic recall",
+        statements: &["ALTER TABLE memory ADD COLUMN embedding BLOB DEFAULT NULL"],
+    },
 ];
 
 /// Run all pending migrations against the connection. Creates the version table
@@ -292,8 +297,14 @@ fn migrate_plaintext_to_encrypted(path: &Path, key: &StorageKey) -> anyhow::Resu
     Ok(())
 }
 
-/// Map a query row (columns 0–8) to a [`MemoryEntry`].
+/// Map a query row (columns 0–9) to a [`MemoryEntry`].
 fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
+    // Read the embedding BLOB (column 9) if present.
+    let embedding: Option<Vec<f32>> = row
+        .get::<_, Option<Vec<u8>>>(9)
+        .unwrap_or_default()
+        .map(|bytes| agentzero_core::embedding::bytes_to_embedding(&bytes));
+
     Ok(MemoryEntry {
         role: row.get(0)?,
         content: row.get(1)?,
@@ -304,6 +315,7 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
         expires_at: row.get::<_, Option<i64>>(6).unwrap_or_default(),
         org_id: row.get::<_, String>(7).unwrap_or_default(),
         agent_id: row.get::<_, String>(8).unwrap_or_default(),
+        embedding,
     })
 }
 
@@ -322,7 +334,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, agent_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding, embedding
              FROM memory
              WHERE expires_at IS NULL OR expires_at > unixepoch()
              ORDER BY id DESC
@@ -347,7 +359,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE (expires_at IS NULL OR expires_at > unixepoch())
                AND (privacy_boundary = '' OR privacy_boundary = ?1
@@ -380,7 +392,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE conversation_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -400,8 +412,8 @@ impl MemoryStore for SqliteMemoryStore {
     async fn fork_conversation(&self, from_id: &str, new_id: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id)
-             SELECT role, content, privacy_boundary, source_channel, ?2, expires_at, org_id, agent_id
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id, embedding)
+             SELECT role, content, privacy_boundary, source_channel, ?2, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE conversation_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -424,7 +436,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE org_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -449,7 +461,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE org_id = ?1 AND conversation_id = ?2
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -503,7 +515,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE agent_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -528,7 +540,7 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE agent_id = ?1 AND conversation_id = ?2
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -559,6 +571,49 @@ impl MemoryStore for SqliteMemoryStore {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    async fn append_with_embedding(
+        &self,
+        entry: MemoryEntry,
+        embedding: Vec<f32>,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let embedding_bytes = agentzero_core::embedding::embedding_to_bytes(&embedding);
+        conn.execute(
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id, embedding) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id, entry.expires_at, entry.org_id, entry.agent_id, embedding_bytes],
+        )?;
+        Ok(())
+    }
+
+    async fn semantic_recall(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        use agentzero_core::embedding::cosine_similarity;
+
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
+             FROM memory
+             WHERE embedding IS NOT NULL
+               AND (expires_at IS NULL OR expires_at > unixepoch())
+             ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map([], row_to_entry)?;
+        let mut scored: Vec<(f32, MemoryEntry)> = Vec::new();
+        for row in rows {
+            let entry = row?;
+            if let Some(ref emb) = entry.embedding {
+                let sim = cosine_similarity(query_embedding, emb);
+                scored.push((sim, entry));
+            }
+        }
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(scored.into_iter().take(limit).map(|(_, e)| e).collect())
     }
 }
 
@@ -1151,7 +1206,7 @@ mod tests {
 
     #[test]
     fn current_schema_version_equals_migration_count() {
-        assert_eq!(current_schema_version(), 5);
+        assert_eq!(current_schema_version(), 6);
     }
 
     #[tokio::test]

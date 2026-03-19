@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn turso_settings_reject_invalid_url_scheme() {
-        let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let previous_url = std::env::var("TURSO_DATABASE_URL").ok();
         let previous_token = std::env::var("TURSO_AUTH_TOKEN").ok();
 
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn turso_settings_reject_whitespace_token() {
-        let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let previous_url = std::env::var("TURSO_DATABASE_URL").ok();
         let previous_token = std::env::var("TURSO_AUTH_TOKEN").ok();
 
@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn turso_settings_reject_tls_disable_marker() {
-        let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let previous_url = std::env::var("TURSO_DATABASE_URL").ok();
         let previous_token = std::env::var("TURSO_AUTH_TOKEN").ok();
 
@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn turso_settings_reject_missing_auth_token() {
-        let _guard = ENV_LOCK.lock().expect("env lock should be acquirable");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let previous_url = std::env::var("TURSO_DATABASE_URL").ok();
         let previous_token = std::env::var("TURSO_AUTH_TOKEN").ok();
 

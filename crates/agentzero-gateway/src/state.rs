@@ -75,6 +75,8 @@ pub(crate) struct GatewayState {
     pub(crate) event_bus: Option<Arc<dyn EventBus>>,
     /// Dynamic agent store for runtime agent CRUD.
     pub(crate) agent_store: Option<Arc<AgentStore>>,
+    /// MCP Server for tool execution (used by /v1/tool-execute and /mcp/*).
+    pub(crate) mcp_server: Option<Arc<agentzero_infra::mcp_server::McpServer>>,
 }
 
 impl GatewayState {
@@ -124,6 +126,7 @@ impl GatewayState {
             api_key_store: None,
             event_bus: None,
             agent_store: None,
+            mcp_server: None,
         }
     }
 
@@ -338,6 +341,7 @@ impl GatewayState {
             api_key_store: None,
             event_bus: None,
             agent_store: None,
+            mcp_server: None,
         }
     }
 
@@ -381,6 +385,7 @@ impl GatewayState {
             api_key_store: None,
             event_bus: None,
             agent_store: None,
+            mcp_server: None,
         }
     }
 }

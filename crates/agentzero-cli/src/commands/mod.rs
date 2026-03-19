@@ -23,6 +23,7 @@ pub mod hooks;
 pub mod identity;
 pub mod integrations;
 pub mod local;
+pub mod mcp_serve;
 pub mod memory;
 pub mod models;
 pub mod onboard;

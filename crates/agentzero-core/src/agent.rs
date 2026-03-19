@@ -913,6 +913,7 @@ impl Agent {
                 expires_at: None,
                 org_id: String::new(),
                 agent_id: agent_id.unwrap_or("").to_string(),
+                embedding: None,
             })
             .await
             .map_err(|source| AgentError::Memory { source })?;

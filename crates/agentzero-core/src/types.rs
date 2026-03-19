@@ -835,6 +835,10 @@ pub struct MemoryEntry {
     /// Empty string means shared across all agents (legacy behavior).
     #[serde(default)]
     pub agent_id: String,
+    /// Optional embedding vector for semantic recall.
+    /// Stored as little-endian f32 BLOB in SQLite, excluded from JSON serialization.
+    #[serde(skip)]
+    pub embedding: Option<Vec<f32>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1061,6 +1065,45 @@ pub trait MemoryStore: Send + Sync {
     /// List conversations belonging to a specific agent.
     async fn list_conversations_for_agent(&self, _agent_id: &str) -> anyhow::Result<Vec<String>> {
         Ok(Vec::new())
+    }
+
+    /// Append a memory entry with an associated embedding vector.
+    ///
+    /// Default implementation ignores the embedding and delegates to `append()`.
+    /// Backends with embedding support should override to store the vector.
+    async fn append_with_embedding(
+        &self,
+        entry: MemoryEntry,
+        _embedding: Vec<f32>,
+    ) -> anyhow::Result<()> {
+        self.append(entry).await
+    }
+
+    /// Retrieve entries ranked by cosine similarity to a query embedding.
+    ///
+    /// Default implementation loads all entries with embeddings and ranks
+    /// in-process. Backends can override with optimized queries.
+    async fn semantic_recall(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        use crate::embedding::cosine_similarity;
+
+        // Load a larger window and rank by similarity.
+        let candidates = self.recent(limit * 10).await?;
+        let mut scored: Vec<(f32, MemoryEntry)> = candidates
+            .into_iter()
+            .filter_map(|entry| {
+                let embedding = entry.embedding.as_ref()?;
+                let sim = cosine_similarity(query_embedding, embedding);
+                Some((sim, entry))
+            })
+            .collect();
+
+        // Sort descending by similarity.
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(scored.into_iter().take(limit).map(|(_, e)| e).collect())
     }
 }
 

@@ -2,10 +2,10 @@ use crate::handlers::{
     agent_stats, agents_list, api_chat, api_fallback, async_submit, create_agent, create_cron,
     dashboard, delete_agent, delete_cron, emergency_stop, forget_memory, get_agent, get_config,
     get_tools, health, health_live, health_ready, job_cancel, job_events, job_list, job_result,
-    job_status, job_transcript, legacy_webhook, list_approvals, list_cron, list_memory, metrics,
-    openapi_spec, pair, ping, recall_memory, sse_events, sse_run_stream, tool_execute, topology,
-    update_agent, update_config, update_cron, v1_chat_completions, v1_models, webhook,
-    webhook_with_agent, ws_chat, ws_run_subscribe,
+    job_status, job_transcript, legacy_webhook, list_approvals, list_cron, list_memory,
+    mcp_message, metrics, openapi_spec, pair, ping, recall_memory, sse_events, sse_run_stream,
+    tool_execute, topology, update_agent, update_config, update_cron, v1_chat_completions,
+    v1_models, webhook, webhook_with_agent, ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -57,6 +57,7 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/estop", post(emergency_stop))
         .route("/v1/tools", get(get_tools))
         .route("/v1/tool-execute", post(tool_execute))
+        .route("/mcp/message", post(mcp_message))
         .route("/v1/config", get(get_config).put(update_config))
         .route("/v1/cron", get(list_cron).post(create_cron))
         .route("/v1/cron/:id", patch(update_cron).delete(delete_cron))

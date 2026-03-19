@@ -155,6 +155,8 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::ProvidersQuota { .. } => "providers-quota",
         Commands::Template { .. } => "template",
         Commands::Tools { .. } => "tools",
+        #[cfg(feature = "gateway")]
+        Commands::McpServe => "mcp-serve",
         Commands::Privacy { .. } => "privacy",
         Commands::Backup { .. } => "backup",
         #[cfg(feature = "config-ui")]

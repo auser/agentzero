@@ -16,7 +16,10 @@ plugin-dev = ["dep:notify", "dep:tracing"]
 
 [dependencies]
 anyhow.workspace = true
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 fd-lock = "4"
+hex = "0.4"
+rand = "0.8"
 semver = "1"
 serde.workspace = true
 serde_json.workspace = true

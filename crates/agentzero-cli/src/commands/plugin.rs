@@ -63,6 +63,8 @@ impl AgentZeroCommand for PluginCommand {
                         max_runtime_api: 2,
                         allowed_host_calls: vec![],
                         dependencies: vec![],
+                        signature: None,
+                        signing_key_id: None,
                     };
                     manifest.validate()?;
                     fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
@@ -103,6 +105,7 @@ impl AgentZeroCommand for PluginCommand {
                     allow_fs_write: false,
                     allow_fs_read: false,
                     allowed_host_calls: manifest.allowed_host_calls.clone(),
+                    require_signed: false,
                 };
                 runtime.preflight_with_policy(&container, &policy)?;
                 if execute {
@@ -150,6 +153,7 @@ impl AgentZeroCommand for PluginCommand {
                     allow_fs_write: false,
                     allow_fs_read: false,
                     allowed_host_calls: manifest.allowed_host_calls.clone(),
+                    require_signed: false,
                 };
                 let runtime = WasmPluginRuntime::new();
                 let container = WasmPluginContainer {
@@ -486,9 +490,62 @@ impl AgentZeroCommand for PluginCommand {
                 }
                 println!("\nTo publish, add this entry to the registry index and open a PR.");
             }
+            PluginCommands::Keygen { out } => {
+                let (private_key, public_key) = agentzero_plugins::signing::generate_keypair();
+                if let Some(out_path) = out {
+                    fs::write(&out_path, &private_key)?;
+                    println!("Private key written to {out_path}");
+                    println!("Public key: {public_key}");
+                    println!(
+                        "\nKeep the private key secret. Share the public key for verification."
+                    );
+                } else {
+                    println!("Private key: {private_key}");
+                    println!("Public key:  {public_key}");
+                }
+            }
+            PluginCommands::Sign {
+                manifest,
+                key,
+                key_id,
+            } => {
+                let key_hex = read_key_or_hex(&key)?;
+                let mut m = load_manifest(&manifest)?;
+                let signature = agentzero_plugins::signing::sign_manifest(&m, &key_hex)?;
+                m.signature = Some(signature);
+                m.signing_key_id = key_id;
+                let json = serde_json::to_string_pretty(&m)?;
+                fs::write(&manifest, &json)?;
+                println!("Manifest signed and written to {manifest}");
+            }
+            PluginCommands::Verify { manifest, key } => {
+                let key_hex = read_key_or_hex(&key)?;
+                let m = load_manifest(&manifest)?;
+                let signature = m
+                    .signature
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("manifest has no signature field"))?;
+                let valid = agentzero_plugins::signing::verify_manifest(&m, signature, &key_hex)?;
+                if valid {
+                    println!("Signature is VALID");
+                } else {
+                    println!("Signature is INVALID");
+                    std::process::exit(1);
+                }
+            }
         }
 
         Ok(())
+    }
+}
+
+/// Read a hex key from a file path or use the string directly as hex.
+fn read_key_or_hex(key_or_path: &str) -> anyhow::Result<String> {
+    let path = Path::new(key_or_path);
+    if path.exists() {
+        Ok(fs::read_to_string(path)?.trim().to_string())
+    } else {
+        Ok(key_or_path.to_string())
     }
 }
 
@@ -583,6 +640,8 @@ fn execute(input: ToolInput) -> ToolOutput {{
         max_runtime_api: 2,
         allowed_host_calls: vec![],
         dependencies: vec![],
+        signature: None,
+        signing_key_id: None,
     };
     fs::write(
         project_dir.join("manifest.json"),

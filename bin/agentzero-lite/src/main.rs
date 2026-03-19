@@ -230,11 +230,18 @@ mod tests {
             .await
             .expect("request should succeed");
 
-        assert_eq!(resp.status(), 200);
+        // Without a config, no MCP server is initialized, so tool_execute
+        // returns 400 ("no tools loaded"). This is expected for a configless gateway.
+        assert_eq!(resp.status(), 400);
         let body: serde_json::Value = resp.json().await.expect("json body");
-        assert_eq!(body["tool"], "read_file");
-        assert!(body["output"].as_str().expect("output").contains("stub"));
-        assert!(body["error"].is_null());
+        let err_msg = body["error"]["message"]
+            .as_str()
+            .or_else(|| body["message"].as_str())
+            .unwrap_or("");
+        assert!(
+            err_msg.contains("not available"),
+            "should indicate tools not loaded: {body}"
+        );
 
         // Unknown tool returns 400
         let resp = client

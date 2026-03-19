@@ -30,6 +30,7 @@ mod sdk_integration {
             allow_fs_write: false,
             allow_fs_read: false,
             allowed_host_calls: vec!["az_log".to_string()],
+            require_signed: false,
         }
     }
 

@@ -113,8 +113,13 @@ impl r2d2::CustomizeConnection<rusqlite::Connection, rusqlite::Error> for Connec
     }
 }
 
-/// Map a query row (columns 0–8) to a [`MemoryEntry`].
+/// Map a query row (columns 0–9) to a [`MemoryEntry`].
 fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
+    let embedding: Option<Vec<f32>> = row
+        .get::<_, Option<Vec<u8>>>(9)
+        .unwrap_or_default()
+        .map(|bytes| agentzero_core::embedding::bytes_to_embedding(&bytes));
+
     Ok(MemoryEntry {
         role: row.get(0)?,
         content: row.get(1)?,
@@ -125,6 +130,7 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
         expires_at: row.get::<_, Option<i64>>(6).unwrap_or_default(),
         org_id: row.get::<_, String>(7).unwrap_or_default(),
         agent_id: row.get::<_, String>(8).unwrap_or_default(),
+        embedding,
     })
 }
 
@@ -143,7 +149,7 @@ impl MemoryStore for PooledMemoryStore {
         let conn = self.pool.get().context("pool: failed to get connection")?;
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE expires_at IS NULL OR expires_at > unixepoch()
              ORDER BY id DESC
@@ -168,7 +174,7 @@ impl MemoryStore for PooledMemoryStore {
         let conn = self.pool.get().context("pool: failed to get connection")?;
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE (expires_at IS NULL OR expires_at > unixepoch())
                AND (privacy_boundary = '' OR privacy_boundary = ?1
@@ -201,7 +207,7 @@ impl MemoryStore for PooledMemoryStore {
         let conn = self.pool.get().context("pool: failed to get connection")?;
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
-                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE conversation_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())
@@ -221,8 +227,8 @@ impl MemoryStore for PooledMemoryStore {
     async fn fork_conversation(&self, from_id: &str, new_id: &str) -> anyhow::Result<()> {
         let conn = self.pool.get().context("pool: failed to get connection")?;
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id)
-             SELECT role, content, privacy_boundary, source_channel, ?2, expires_at, org_id, agent_id
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id, embedding)
+             SELECT role, content, privacy_boundary, source_channel, ?2, expires_at, org_id, agent_id, embedding
              FROM memory
              WHERE conversation_id = ?1
                AND (expires_at IS NULL OR expires_at > unixepoch())

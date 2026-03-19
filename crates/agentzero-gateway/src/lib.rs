@@ -184,6 +184,34 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         }
     }
 
+    // Build MCP server for tool execution (/v1/tool-execute and /mcp/message).
+    if let Some(cfg_path) = state.config_path.as_ref() {
+        let ws_root = state
+            .workspace_root
+            .as_ref()
+            .map(|p| p.as_ref().clone())
+            .unwrap_or_default();
+        match agentzero_config::load_tool_security_policy(&ws_root, cfg_path) {
+            Ok(policy) => match agentzero_infra::tools::default_tools(&policy, None, None) {
+                Ok(tools) => {
+                    let tool_count = tools.len();
+                    let server = agentzero_infra::mcp_server::McpServer::new(
+                        tools,
+                        ws_root.to_string_lossy().to_string(),
+                    );
+                    state.mcp_server = Some(Arc::new(server));
+                    tracing::info!(tools = tool_count, "MCP server initialized");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to build tools for MCP server");
+                }
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to load tool security policy for MCP server");
+            }
+        }
+    }
+
     // Build the event bus so the same instance is shared by the job store,
     // presence store, swarm coordinator, and gateway SSE/WebSocket endpoints.
     let event_bus: Arc<dyn agentzero_core::EventBus> = match full_config.as_ref() {

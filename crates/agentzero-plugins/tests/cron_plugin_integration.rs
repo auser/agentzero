@@ -37,6 +37,7 @@ mod cron_plugins {
             allow_fs_write: true,
             allow_fs_read: true,
             allowed_host_calls: vec!["az_log".to_string()],
+            require_signed: false,
         }
     }
 

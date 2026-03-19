@@ -2535,7 +2535,7 @@ mod tests {
     /// Run `body` while `AGENTZERO_ENV` is set to `value` (or removed if `None`).
     /// The env var is always cleaned up afterwards, even on panic.
     fn with_env(value: Option<&str>, body: impl FnOnce()) {
-        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         struct Cleanup;
         impl Drop for Cleanup {
             fn drop(&mut self) {

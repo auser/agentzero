@@ -8,6 +8,7 @@ pub mod agent;
 pub mod agent_store;
 pub mod common;
 pub mod delegation;
+pub mod embedding;
 pub mod event_bus;
 pub mod loop_detection;
 pub mod metrics;

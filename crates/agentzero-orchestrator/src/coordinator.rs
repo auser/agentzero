@@ -791,36 +791,40 @@ impl Coordinator {
             }
 
             // 1. Check if any agent subscribes to this topic → CHAIN
+            // Collect matching senders under the read lock, then drop it
+            // before awaiting sends to avoid holding the RwLock across awaits.
+            let targets: Vec<_> = {
+                let agents = self.agents.read().await;
+                agents
+                    .values()
+                    .filter(|worker| {
+                        let matches = worker
+                            .descriptor
+                            .subscribes_to
+                            .iter()
+                            .any(|pattern| topic_matches(pattern, &event.topic));
+                        matches
+                            && is_boundary_compatible(
+                                &event.privacy_boundary,
+                                &worker.descriptor.privacy_boundary,
+                            )
+                    })
+                    .map(|worker| worker.task_tx.clone())
+                    .collect()
+            }; // RwLock dropped here
+
             let mut routed = false;
-            let agents = self.agents.read().await;
-            for worker in agents.values() {
-                let matches = worker
-                    .descriptor
-                    .subscribes_to
-                    .iter()
-                    .any(|pattern| topic_matches(pattern, &event.topic));
-                if matches {
-                    // Privacy check
-                    if !is_boundary_compatible(
-                        &event.privacy_boundary,
-                        &worker.descriptor.privacy_boundary,
-                    ) {
-                        continue;
-                    }
-
-                    let correlation_id = event.correlation_id.clone().unwrap_or_default();
-
-                    let _ = worker
-                        .task_tx
-                        .send(TaskMessage {
-                            event: event.clone(),
-                            correlation_id,
-                            result_tx: None,
-                            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                        })
-                        .await;
-                    routed = true;
-                }
+            for task_tx in &targets {
+                let correlation_id = event.correlation_id.clone().unwrap_or_default();
+                let _ = task_tx
+                    .send(TaskMessage {
+                        event: event.clone(),
+                        correlation_id,
+                        result_tx: None,
+                        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    })
+                    .await;
+                routed = true;
             }
 
             // 2. If nobody subscribed AND this has a correlation_id → terminal?

@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod audit;
 pub mod cost_tracker;
+pub mod mcp_server;
 pub mod runtime;
 #[cfg(feature = "telemetry")]
 pub mod telemetry;

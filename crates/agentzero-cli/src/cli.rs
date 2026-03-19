@@ -299,6 +299,9 @@ pub enum Commands {
         #[command(subcommand)]
         command: ToolsCommands,
     },
+    /// Run as an MCP server over stdio (for Claude Desktop, Cursor, Windsurf).
+    #[cfg(feature = "gateway")]
+    McpServe,
     /// Privacy mode status and key management.
     Privacy {
         #[command(subcommand)]
@@ -922,6 +925,33 @@ pub enum PluginCommands {
         /// Output file for the index entry JSON.
         #[arg(long)]
         out: Option<String>,
+    },
+    /// Generate a new Ed25519 signing keypair.
+    Keygen {
+        /// Output file for the private key (hex-encoded).
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Sign a plugin manifest with an Ed25519 private key.
+    Sign {
+        /// Path to the plugin manifest (manifest.json).
+        #[arg(long)]
+        manifest: String,
+        /// Hex-encoded Ed25519 private key (or path to key file).
+        #[arg(long)]
+        key: String,
+        /// Optional key identifier (for multi-key setups).
+        #[arg(long)]
+        key_id: Option<String>,
+    },
+    /// Verify a plugin manifest signature against an Ed25519 public key.
+    Verify {
+        /// Path to the plugin manifest (manifest.json).
+        #[arg(long)]
+        manifest: String,
+        /// Hex-encoded Ed25519 public key (or path to key file).
+        #[arg(long)]
+        key: String,
     },
 }
 
