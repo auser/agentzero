@@ -493,7 +493,14 @@ cargo clippy -p agentzero-infra
 ```bash
 # Interactive terminal dashboard
 agentzero dashboard
+agentzero dashboard --host 127.0.0.1 --port 8080   # connect to a specific gateway
+```
 
+:::tip[Live monitoring with the TUI dashboard]
+The `dashboard` command launches an interactive terminal UI that shows live agent activity, active runs, tool call timelines, and token/cost metrics. Point it at a running gateway with `--host` and `--port` for real-time observability across all connected agents.
+:::
+
+```bash
 # Manage scheduled tasks
 agentzero cron list
 agentzero cron add --id daily-check --schedule "0 9 * * *" --command "agentzero agent -m 'morning report'"

@@ -316,11 +316,74 @@ agentzero service --service-init systemd install # Force systemd
 
 ### `dashboard`
 
-Launch an interactive terminal dashboard for real-time monitoring.
+Launch an interactive terminal dashboard for real-time monitoring. Connects to the gateway for live agent, run, and tool-call visibility.
 
 ```bash
 agentzero dashboard
+agentzero dashboard --host 127.0.0.1 --port 8080
 ```
+
+| Flag | Description |
+|---|---|
+| `--host <HOST>` | Gateway host to connect to (default: `127.0.0.1`) |
+| `-p, --port <PORT>` | Gateway port to connect to (default: `42617`) |
+
+### `sandbox`
+
+Manage isolated sandbox environments for agent execution. Sandboxes provide filesystem and process isolation for untrusted workloads.
+
+#### `sandbox start`
+
+Start a new sandbox environment.
+
+```bash
+agentzero sandbox start
+agentzero sandbox start --name my-sandbox
+```
+
+| Flag | Description |
+|---|---|
+| `--name <NAME>` | Sandbox name (default: auto-generated) |
+
+#### `sandbox stop`
+
+Stop a running sandbox.
+
+```bash
+agentzero sandbox stop
+agentzero sandbox stop --name my-sandbox
+```
+
+| Flag | Description |
+|---|---|
+| `--name <NAME>` | Sandbox name to stop (default: active sandbox) |
+
+#### `sandbox status`
+
+Show sandbox state, resource usage, and isolation details.
+
+```bash
+agentzero sandbox status
+agentzero sandbox status --json
+```
+
+| Flag | Description |
+|---|---|
+| `--name <NAME>` | Sandbox name (default: active sandbox) |
+| `--json` | Emit machine-readable JSON output |
+
+#### `sandbox shell`
+
+Open an interactive shell inside a running sandbox.
+
+```bash
+agentzero sandbox shell
+agentzero sandbox shell --name my-sandbox
+```
+
+| Flag | Description |
+|---|---|
+| `--name <NAME>` | Sandbox name (default: active sandbox) |
 
 ---
 

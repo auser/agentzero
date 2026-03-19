@@ -360,6 +360,59 @@ Each run's detail panel includes a **Timeline** tab showing a color-coded sequen
 
 ---
 
+## A2A Swarm Integration
+
+AgentZero supports the [Agent-to-Agent (A2A) protocol](https://google.github.io/A2A/) for integrating remote agents into your swarm. Remote A2A agents are treated as first-class swarm participants — the router can dispatch messages to them, and they appear in the topology graph alongside local agents.
+
+### Configuration
+
+Define remote agents in the `[a2a]` config section. Each entry points to an A2A-compatible agent endpoint:
+
+```toml
+[a2a]
+enabled = true
+
+[a2a.agents.remote-researcher]
+url = "https://research-agent.example.com/.well-known/agent.json"
+name = "Remote Researcher"
+description = "External research agent hosted on a remote server"
+keywords = ["research", "academic", "papers"]
+timeout_secs = 60
+
+[a2a.agents.remote-coder]
+url = "https://coder.internal:8443/.well-known/agent.json"
+name = "Remote Coder"
+description = "Code generation agent running on a GPU server"
+keywords = ["code", "implement", "refactor"]
+auth_header = "Bearer ${A2A_CODER_TOKEN}"
+timeout_secs = 120
+```
+
+### How It Works
+
+1. At startup, AgentZero fetches each remote agent's A2A Agent Card from the configured URL
+2. The agent's declared skills and capabilities are registered with the swarm router
+3. When a message matches a remote agent's keywords or description, the router dispatches it over HTTPS
+4. The response is returned to the calling agent or pipeline as if it came from a local agent
+
+### Authentication
+
+Remote A2A agents can require authentication. Use `auth_header` to set a bearer token or other auth header. Environment variable interpolation (`${VAR}`) is supported in the header value.
+
+### Mixing Local and Remote Agents
+
+Local and remote agents can coexist in the same swarm and pipelines. A pipeline step can reference a remote A2A agent by its config key:
+
+```toml
+[[swarm.pipelines]]
+name = "research-and-code"
+steps = ["remote-researcher", "developer"]    # remote + local
+channel_reply = true
+on_step_error = "abort"
+```
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |

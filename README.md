@@ -71,8 +71,10 @@ agentzero -vvv agent -m "your task"
 | **Plugins** | WASM sandbox with integrity verification |
 | **MCP** | First-class Model Context Protocol — each MCP tool registered individually |
 | **Security** | Fail-closed defaults, allowlists, OTP gating, audit trail, secret redaction, estop |
+| **Sandbox** | Isolated execution environments for untrusted workloads (start/stop/status/shell) |
 | **Gateway** | HTTP/WebSocket server with OpenAI-compatible API |
-| **Multi-agent** | Delegation, swarm coordination, pipelines, event bus, persistent named agents |
+| **Dashboard** | Interactive TUI for live agent monitoring, run tracking, and tool call timelines |
+| **Multi-agent** | Delegation, swarm coordination, pipelines, event bus, persistent named agents, A2A remote agents |
 
 ## Configuration
 
@@ -269,6 +271,7 @@ agentzero cron list        # Manage scheduled tasks
 agentzero memory list      # Inspect memory store
 agentzero tools list       # List available tools
 agentzero dashboard        # Interactive terminal dashboard
+agentzero sandbox start    # Isolated sandbox environment
 agentzero daemon start     # Background daemon
 agentzero service install  # OS service (systemd/OpenRC)
 agentzero plugin list      # Manage WASM plugins

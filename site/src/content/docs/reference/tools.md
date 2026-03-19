@@ -5,6 +5,24 @@ description: Built-in tools, security policy, WASM plugin system, and skills.
 
 AgentZero ships with 50+ built-in tools and supports extension via WASM plugins, process plugins, MCP servers, and skills. Every tool enforces **fail-closed security** — capabilities are denied unless explicitly enabled. All tools implement `input_schema()` for structured tool-use APIs (Anthropic `tool_use`, OpenAI function calling).
 
+## Tool Tiers
+
+Tools are organized into three tiers that control which tools are compiled into the binary. This is especially relevant for resource-constrained deployments (e.g., Raspberry Pi, embedded devices).
+
+| Tier | Description | Included Tools |
+|---|---|---|
+| **Core** | Essential agent tools — always included | `read_file`, `shell`, `glob_search`, `content_search`, `memory_store`, `memory_recall`, `memory_forget`, `task_plan` |
+| **Extended** | Standard tools for most deployments (default) | Core + `write_file`, `file_edit`, `apply_patch`, `git_operations`, `web_search`, `web_fetch`, `http_request`, `browser`, `delegate`, `converse`, `cron_*`, `subagent_*` |
+| **Full** | All 50+ tools including hardware, SOP, WASM, and integration tools | Extended + `hardware_*`, `sop_*`, `wasm_*`, `composio`, `pushover`, `schedule` |
+
+Use the `embedded-minimal` feature flag to build with only the **Core** tier, producing a significantly smaller binary suitable for edge devices:
+
+```bash
+cargo build -p agentzero --release --no-default-features --features embedded-minimal
+```
+
+The default build includes the **Extended** tier. To include all tools, enable the `full-tools` feature.
+
 ## Built-in Tools
 
 ### Always Enabled
