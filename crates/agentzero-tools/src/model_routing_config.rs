@@ -121,7 +121,9 @@ impl Tool for ModelRoutingConfigTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentzero_core::routing::{ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter};
+    use agentzero_core::routing::{
+        ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter, PrivacyLevel,
+    };
 
     fn test_router() -> ModelRouter {
         ModelRouter {
@@ -133,6 +135,7 @@ mod tests {
                     max_tokens: Some(4096),
                     api_key: None,
                     transport: None,
+                    privacy_level: PrivacyLevel::Either,
                 },
                 ModelRoute {
                     hint: "reasoning".into(),
@@ -141,6 +144,7 @@ mod tests {
                     max_tokens: Some(8192),
                     api_key: None,
                     transport: None,
+                    privacy_level: PrivacyLevel::Either,
                 },
             ],
             embedding_routes: vec![EmbeddingRoute {

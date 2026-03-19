@@ -7,6 +7,7 @@
 mod loader;
 mod model;
 mod policy;
+pub mod security_policy;
 mod templates;
 pub mod watcher;
 pub mod writer;

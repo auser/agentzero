@@ -551,6 +551,10 @@ fn apply_model_route_node(config: &mut AgentZeroConfig, data: &Value) {
             .and_then(|v| v.as_u64().map(|n| n as usize)),
         api_key: None,
         transport: None,
+        privacy_level: data
+            .get("privacy_level")
+            .and_then(|v| v.as_str())
+            .map(String::from),
     });
 }
 

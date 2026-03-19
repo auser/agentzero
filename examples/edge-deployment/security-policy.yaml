@@ -1,0 +1,45 @@
+# AgentZero Security Policy
+# Place at .agentzero/security-policy.yaml in your workspace.
+# When present, provides per-tool egress and access rules.
+# Global flags (enable_mcp, enable_git, etc.) remain in agentzero.toml.
+
+default: deny
+
+rules:
+  # Allow HTTP requests only to specific API endpoints
+  - tool: http_request
+    egress:
+      - api.openai.com
+      - api.anthropic.com
+      - "*.ollama.local"
+    action: allow
+
+  # Allow web fetch for documentation sites
+  - tool: web_fetch
+    egress:
+      - "*.github.com"
+      - docs.rs
+      - "*.readthedocs.io"
+    action: allow
+
+  # Shell: only safe commands
+  - tool: shell
+    commands: [git, cargo, rustc, npm, ls, cat, grep, head, tail]
+    filesystem: [/workspace, /tmp]
+    action: allow
+
+  # MCP tools: prompt operator on first use
+  - tool: "mcp:*"
+    egress: [prompt]
+    action: prompt
+
+  # File tools: workspace only
+  - tool: read_file
+    filesystem: [/workspace]
+    action: allow
+
+  - tool: write_file
+    filesystem: [/workspace]
+    action: allow
+
+  # Block everything else by default (from `default: deny`)

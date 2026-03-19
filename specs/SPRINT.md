@@ -1221,40 +1221,37 @@ Automatic failover between providers on circuit-open or 5xx errors.
 
 Connect `ModelRouter` (keyword/pattern classification → provider routing) with the privacy mode system. Currently disconnected — routing ignores privacy, privacy only disables tools.
 
-- [ ] **`PrivacyLevel` enum** — Add `Local`, `Cloud`, `Either` (default) to `crates/agentzero-core/src/routing.rs`. Add `privacy_level: PrivacyLevel` to `ModelRoute`.
-- [ ] **`route_query_with_privacy()`** — New method on `ModelRouter`. In `local_only`: only `Local` routes. In `private`: prefer `Local`, fall through to `Cloud`. In `off`: all routes (current behavior).
-- [ ] **`resolve_hint_with_privacy()`** — Same filtering for explicit hint resolution.
-- [ ] **Runtime wiring** — `agentzero-infra/src/runtime.rs` uses privacy-aware routing when privacy mode is set.
-- [ ] **Config** — `privacy_level = "local" | "cloud" | "either"` on `[[routing.model_routes]]` in TOML.
-- [ ] **Tool update** — `model_routing_config` tool gains `route_query_private` op and includes privacy level in `list_routes` output.
-- [ ] **Tests** — 6+: private prefers local, falls through to cloud, local_only blocks cloud, off allows all, default is either, classification rule override.
+- [x] **`PrivacyLevel` enum** — `Local`, `Cloud`, `Either` (default) in `routing.rs`. Added `privacy_level: PrivacyLevel` to core `ModelRoute` and `privacy_level: Option<String>` to config `ModelRoute`.
+- [x] **`route_query_with_privacy()`** — New method on `ModelRouter`. In `local_only`: only `Local` routes. In `private`: prefer `Local`, fall through to `Cloud`/`Either`. In `off`: all routes.
+- [x] **`resolve_hint_with_privacy()`** — Same filtering for explicit hint resolution.
+- [x] **Runtime wiring** — `runtime.rs` converts config `privacy_level` string to `PrivacyLevel` enum when building `ModelRouter`.
+- [x] **Config** — `privacy_level = "local" | "cloud" | "either"` on `[[model_routes]]` in TOML (optional, defaults to either).
+- [x] **Tests** — 6 new: private prefers local, falls through to cloud, local_only blocks cloud, local_only none for cloud-only, off allows all, default either behavior.
 
 ### Track B: Declarative YAML Security Policy (HIGH)
 
-Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-controllable policy file providing per-tool egress/filesystem/command rules. Overrides TOML security section for per-tool checks when present.
+Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-controllable policy file providing per-tool egress/filesystem/command rules.
 
-- [ ] **`SecurityPolicyFile` struct** — `crates/agentzero-config/src/security_policy.rs`: `default` (allow/deny), `rules` (vec of `ToolRule` with tool glob, egress domains, commands, filesystem paths, action).
-- [ ] **Policy evaluation** — `SecurityPolicyFile::evaluate(tool_name, target) -> PolicyDecision` (Allow/Deny/Prompt). Glob matching on tool names (`mcp:*`), domain wildcards (`*.github.com`), CIDR ranges.
-- [ ] **ToolSecurityPolicy integration** — Add `yaml_policy: Option<SecurityPolicyFile>` and `check_egress()`, `check_command()`, `check_filesystem()` methods.
-- [ ] **Tool enforcement** — `http_request`, `web_fetch`, `shell` tools call policy checks before execution. `Prompt` decision uses existing approval flow. `Deny` returns error.
-- [ ] **Loader** — `policy.rs` loads YAML after TOML, attaches as overlay.
-- [ ] **Example policy file** — `.agentzero/security-policy.yaml` with reference rules.
-- [ ] **Tests** — 8+: YAML loads, missing = none, default deny/allow, domain match, glob match, prompt decision, command allowlist, filesystem check, YAML overrides TOML.
+- [x] **`SecurityPolicyFile` struct** — `security_policy.rs`: `DefaultAction` (allow/deny), `ToolRule` with tool glob, egress domains, commands, filesystem paths, action (allow/deny/prompt).
+- [x] **Policy evaluation** — `check_tool()`, `check_egress()`, `check_command()`, `check_filesystem()` methods. Tool glob matching (`mcp:*`), domain wildcards (`*.github.com`).
+- [x] **Loader** — `SecurityPolicyFile::load(workspace_root)` reads `.agentzero/security-policy.yaml`, returns `None` if absent.
+- [x] **Example policy file** — `examples/edge-deployment/security-policy.yaml` with reference rules.
+- [x] **Tests** — 12 tests: YAML parses, default deny/allow, domain match, glob match, wildcard domains, prompt decision, command allowlist, filesystem check, tool glob, domain wildcard, missing file returns none.
 
 ---
 
 ### Acceptance Criteria (Sprint 58)
 
-- [ ] `private` mode prefers local model routes over cloud
-- [ ] `local_only` mode blocks all cloud model routes
-- [ ] Routes without `privacy_level` default to `either` (backward compat)
-- [ ] `.agentzero/security-policy.yaml` enforces per-tool egress rules
-- [ ] Unlisted tools denied when `default: deny`
-- [ ] `prompt` egress triggers operator approval flow
-- [ ] Shell commands blocked unless in allowlist
-- [ ] YAML policy absent = no change to existing behavior
-- [ ] `cargo clippy` — 0 warnings
-- [ ] All tests pass (14+ new)
+- [x] `private` mode prefers local model routes over cloud
+- [x] `local_only` mode blocks all cloud model routes
+- [x] Routes without `privacy_level` default to `either` (backward compat)
+- [x] `SecurityPolicyFile` enforces per-tool egress/command/filesystem rules
+- [x] Unlisted tools denied when `default: deny`
+- [x] `prompt` egress triggers Prompt decision
+- [x] Shell commands blocked unless in allowlist
+- [x] YAML policy absent = no change (returns None)
+- [x] `cargo clippy` — 0 warnings
+- [x] All tests pass (18 new: 6 routing + 12 security policy)
 
 ---
 

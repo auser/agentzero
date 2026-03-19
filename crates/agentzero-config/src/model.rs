@@ -1522,6 +1522,9 @@ pub struct ModelRoute {
     pub max_tokens: Option<usize>,
     pub api_key: Option<String>,
     pub transport: Option<String>,
+    /// Privacy level: "local", "cloud", or "either" (default).
+    #[serde(default)]
+    pub privacy_level: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

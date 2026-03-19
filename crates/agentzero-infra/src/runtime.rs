@@ -7,7 +7,9 @@ use agentzero_config::{
 };
 use agentzero_core::common::local_providers::{is_local_provider, local_provider_meta};
 use agentzero_core::delegation::DelegateConfig;
-use agentzero_core::routing::{ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter};
+use agentzero_core::routing::{
+    ClassificationRule, EmbeddingRoute, ModelRoute, ModelRouter, PrivacyLevel,
+};
 use agentzero_core::{
     Agent, AgentConfig, AuditEvent, AuditSink, HookEvent, HookFailureMode, HookSink, MemoryStore,
     Provider, RuntimeMetrics, Tool, ToolContext, UserMessage,
@@ -728,6 +730,11 @@ fn build_model_router(config: &agentzero_config::AgentZeroConfig) -> Option<Mode
                 max_tokens: r.max_tokens,
                 api_key: r.api_key.clone(),
                 transport: r.transport.clone(),
+                privacy_level: match r.privacy_level.as_deref() {
+                    Some("local") => PrivacyLevel::Local,
+                    Some("cloud") => PrivacyLevel::Cloud,
+                    _ => PrivacyLevel::Either,
+                },
             })
             .collect(),
         embedding_routes: config

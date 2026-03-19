@@ -2,6 +2,20 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+/// Privacy level for model routes — controls which routes are eligible
+/// based on the active privacy mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PrivacyLevel {
+    /// Only eligible when running locally (local_only mode).
+    Local,
+    /// Only eligible when cloud access is allowed.
+    Cloud,
+    /// Eligible in any privacy mode (default).
+    #[default]
+    Either,
+}
+
 /// A model route entry mapping a hint to a specific provider+model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRoute {
@@ -11,6 +25,9 @@ pub struct ModelRoute {
     pub max_tokens: Option<usize>,
     pub api_key: Option<String>,
     pub transport: Option<String>,
+    /// Privacy level controlling route eligibility by privacy mode.
+    #[serde(default)]
+    pub privacy_level: PrivacyLevel,
 }
 
 /// An embedding route entry mapping a hint to an embedding provider+model.
@@ -154,6 +171,64 @@ impl ModelRouter {
         self.classify_query(query)
             .and_then(|hint| self.resolve_hint(&hint))
     }
+
+    /// Resolve a hint with privacy filtering.
+    ///
+    /// - `"local_only"`: only `Local` routes
+    /// - `"private"`: prefer `Local`, fall through to `Cloud`
+    /// - `"off"` / other: all routes (current behavior)
+    pub fn resolve_hint_with_privacy(
+        &self,
+        hint: &str,
+        privacy_mode: &str,
+    ) -> Option<ResolvedRoute> {
+        let candidates: Vec<&ModelRoute> = self
+            .model_routes
+            .iter()
+            .filter(|r| r.hint.eq_ignore_ascii_case(hint))
+            .collect();
+
+        match privacy_mode {
+            "local_only" => candidates
+                .iter()
+                .find(|r| r.privacy_level == PrivacyLevel::Local)
+                .map(|r| self.route_to_resolved(r)),
+            "private" => {
+                // Prefer local, fall through to cloud/either.
+                candidates
+                    .iter()
+                    .find(|r| r.privacy_level == PrivacyLevel::Local)
+                    .or_else(|| {
+                        candidates
+                            .iter()
+                            .find(|r| r.privacy_level != PrivacyLevel::Local)
+                    })
+                    .map(|r| self.route_to_resolved(r))
+            }
+            _ => candidates.first().map(|r| self.route_to_resolved(r)),
+        }
+    }
+
+    /// Classify a query and resolve with privacy filtering.
+    pub fn route_query_with_privacy(
+        &self,
+        query: &str,
+        privacy_mode: &str,
+    ) -> Option<ResolvedRoute> {
+        self.classify_query(query)
+            .and_then(|hint| self.resolve_hint_with_privacy(&hint, privacy_mode))
+    }
+
+    fn route_to_resolved(&self, r: &ModelRoute) -> ResolvedRoute {
+        ResolvedRoute {
+            provider: r.provider.clone(),
+            model: r.model.clone(),
+            max_tokens: r.max_tokens,
+            api_key: r.api_key.clone(),
+            transport: r.transport.clone(),
+            matched_hint: r.hint.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -170,6 +245,7 @@ mod tests {
                     max_tokens: Some(8192),
                     api_key: None,
                     transport: None,
+                    privacy_level: PrivacyLevel::Either,
                 },
                 ModelRoute {
                     hint: "fast".into(),
@@ -178,6 +254,7 @@ mod tests {
                     max_tokens: None,
                     api_key: None,
                     transport: None,
+                    privacy_level: PrivacyLevel::Either,
                 },
                 ModelRoute {
                     hint: "code".into(),
@@ -186,6 +263,7 @@ mod tests {
                     max_tokens: Some(16384),
                     api_key: None,
                     transport: None,
+                    privacy_level: PrivacyLevel::Either,
                 },
             ],
             embedding_routes: vec![EmbeddingRoute {
@@ -294,5 +372,120 @@ mod tests {
             .unwrap();
         assert_eq!(route.model, "anthropic/claude-sonnet-4-6");
         assert_eq!(route.matched_hint, "code");
+    }
+
+    // --- Privacy-aware routing tests ---
+
+    fn privacy_router() -> ModelRouter {
+        ModelRouter {
+            model_routes: vec![
+                ModelRoute {
+                    hint: "fast".into(),
+                    provider: "ollama".into(),
+                    model: "llama3.2".into(),
+                    max_tokens: None,
+                    api_key: None,
+                    transport: None,
+                    privacy_level: PrivacyLevel::Local,
+                },
+                ModelRoute {
+                    hint: "fast".into(),
+                    provider: "anthropic".into(),
+                    model: "claude-haiku-4-5".into(),
+                    max_tokens: None,
+                    api_key: None,
+                    transport: None,
+                    privacy_level: PrivacyLevel::Cloud,
+                },
+                ModelRoute {
+                    hint: "reasoning".into(),
+                    provider: "openai".into(),
+                    model: "o1".into(),
+                    max_tokens: Some(8192),
+                    api_key: None,
+                    transport: None,
+                    privacy_level: PrivacyLevel::Either,
+                },
+            ],
+            embedding_routes: vec![],
+            classification_rules: vec![],
+            classification_enabled: false,
+        }
+    }
+
+    #[test]
+    fn private_mode_prefers_local_route() {
+        let r = privacy_router();
+        let route = r
+            .resolve_hint_with_privacy("fast", "private")
+            .expect("should resolve");
+        assert_eq!(route.provider, "ollama", "private should prefer local");
+    }
+
+    #[test]
+    fn private_mode_falls_through_to_cloud() {
+        let r = privacy_router();
+        // "reasoning" has no Local route, only Either — should still resolve.
+        let route = r
+            .resolve_hint_with_privacy("reasoning", "private")
+            .expect("should fall through");
+        assert_eq!(route.provider, "openai");
+    }
+
+    #[test]
+    fn local_only_blocks_cloud_routes() {
+        let r = privacy_router();
+        let route = r.resolve_hint_with_privacy("fast", "local_only");
+        assert_eq!(
+            route.as_ref().map(|r| r.provider.as_str()),
+            Some("ollama"),
+            "local_only should only return local routes"
+        );
+    }
+
+    #[test]
+    fn local_only_returns_none_for_cloud_only() {
+        let r = ModelRouter {
+            model_routes: vec![ModelRoute {
+                hint: "cloud-only".into(),
+                provider: "anthropic".into(),
+                model: "claude-sonnet-4-6".into(),
+                max_tokens: None,
+                api_key: None,
+                transport: None,
+                privacy_level: PrivacyLevel::Cloud,
+            }],
+            ..Default::default()
+        };
+        assert!(
+            r.resolve_hint_with_privacy("cloud-only", "local_only")
+                .is_none(),
+            "local_only should not resolve cloud-only routes"
+        );
+    }
+
+    #[test]
+    fn off_mode_allows_all_routes() {
+        let r = privacy_router();
+        let route = r
+            .resolve_hint_with_privacy("fast", "off")
+            .expect("should resolve");
+        // "off" mode returns the first matching route (local in this case).
+        assert!(!route.provider.is_empty());
+    }
+
+    #[test]
+    fn privacy_level_defaults_to_either() {
+        let r = router(); // Uses the existing test router (privacy_level = Either)
+                          // "off" mode accepts all privacy levels including Either.
+        let route = r
+            .resolve_hint_with_privacy("fast", "off")
+            .expect("Either routes should be available in off mode");
+        assert_eq!(route.provider, "openrouter");
+        // "private" also accepts Either (falls through from Local).
+        let route2 = r
+            .resolve_hint_with_privacy("fast", "private")
+            .expect("Either routes should be available in private mode");
+        assert_eq!(route2.provider, "openrouter");
     }
 }
