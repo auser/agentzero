@@ -38,6 +38,7 @@ RUN printf '[gateway]\nhost = "0.0.0.0"\nport = 8080\nallow_public_bind = true\n
 
 ENV AGENTZERO_DATA_DIR=/data
 ENV AGENTZERO_CONFIG=/data/agentzero-default.toml
+ENV AGENTZERO__LOGGING__FORMAT=json
 
 USER agentzero
 WORKDIR /data

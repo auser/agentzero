@@ -317,3 +317,31 @@ release VERSION:
     fi
     git push origin "v{{VERSION}}"
     echo "==> Tag v{{VERSION}} pushed. Release workflow will build and publish."
+
+# ── Docker ───────────────────────────────────────────────────────────
+
+# Build the Docker image
+docker-build:
+    docker build -t agentzero:latest .
+
+# Build a minimal Docker image (no TUI, no plugins)
+docker-build-minimal:
+    docker build -t agentzero:minimal --build-arg FEATURES="" .
+
+# Start the Docker Compose stack
+docker-up:
+    docker compose up -d
+
+# Stop the Docker Compose stack
+docker-down:
+    docker compose down
+
+# Show Docker Compose logs
+docker-logs:
+    docker compose logs -f
+
+# ── E2E Ollama Testing ──────────────────────────────────────────────
+
+# Run E2E tests against a local Ollama instance
+test-ollama:
+    cargo nextest run --run-ignored only -E 'test(ollama)' --test-threads 1
