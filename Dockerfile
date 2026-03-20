@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
     cargo build -p agentzero --profile release-min \
       --no-default-features \
-      --features memory-sqlite,plugins,gateway,tls-rustls && \
+      --features memory-sqlite-plain,plugins,gateway,tls-rustls && \
     cp target/release-min/agentzero /usr/local/bin/agentzero
 
 # ── Runtime ──────────────────────────────────────────────────────────
