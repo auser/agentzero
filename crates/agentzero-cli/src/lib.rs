@@ -121,8 +121,10 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Agent { .. } => "agent",
         Commands::Agents { .. } => "agents",
         Commands::Auth { .. } => "auth",
+        #[cfg(feature = "tools-extended")]
         Commands::Cron { .. } => "cron",
         Commands::Hooks { .. } => "hooks",
+        #[cfg(feature = "tools-extended")]
         Commands::Skill { .. } => "skill",
         Commands::Tunnel { .. } => "tunnel",
         #[cfg(feature = "plugins")]
@@ -528,6 +530,7 @@ mod tests {
         assert!(parse_cli_from(["agentzero", "daemon"]).is_err());
     }
 
+    #[cfg(feature = "tools-extended")]
     #[test]
     fn parse_cli_from_parses_cron_add_command() {
         let parsed = parse_cli_from([
@@ -550,6 +553,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "tools-extended")]
     #[test]
     fn parse_cli_from_parses_cron_add_at_command() {
         let parsed = parse_cli_from([
@@ -572,6 +576,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "tools-extended")]
     #[test]
     fn parse_cli_from_parses_cron_add_every_command() {
         let parsed = parse_cli_from([
@@ -594,6 +599,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "tools-extended")]
     #[test]
     fn parse_cli_from_parses_cron_once_command() {
         let parsed = parse_cli_from([
@@ -616,6 +622,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "tools-extended")]
     #[test]
     fn parse_cli_from_rejects_cron_without_subcommand() {
         let err =
@@ -773,6 +780,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "tools-extended")]
     #[test]
     fn parse_cli_from_parses_skill_install_command() {
         let parsed = parse_cli_from([
@@ -793,6 +801,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "tools-extended")]
     #[test]
     fn parse_cli_from_rejects_skill_without_subcommand() {
         let err = parse_cli_from(["agentzero", "skill"])
@@ -1629,6 +1638,7 @@ mod tests {
 
     // --- skill new/audit/templates command tests ---
 
+    #[cfg(feature = "tools-extended")]
     #[test]
     fn parse_cli_from_parses_skill_new_command() {
         let parsed = parse_cli_from([
@@ -1648,6 +1658,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "tools-extended")]
     #[test]
     fn parse_cli_from_parses_skill_audit_command() {
         let parsed = parse_cli_from([
@@ -1667,6 +1678,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "tools-extended")]
     #[test]
     fn parse_cli_from_parses_skill_templates_command() {
         let parsed = parse_cli_from(["agentzero", "skill", "templates"]).expect("skill templates");

@@ -80,8 +80,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Agents { command } => commands::agents::AgentsCommand::run(&ctx, command).await,
         Commands::Auth { command } => commands::auth::AuthCommand::run(&ctx, command).await,
+        #[cfg(feature = "tools-extended")]
         Commands::Cron { command } => commands::cron::CronCommand::run(&ctx, command).await,
         Commands::Hooks { command } => commands::hooks::HooksCommand::run(&ctx, command).await,
+        #[cfg(feature = "tools-extended")]
         Commands::Skill { command } => commands::skill::SkillCommand::run(&ctx, command).await,
         Commands::Tunnel { command } => commands::tunnel::TunnelCommand::run(&ctx, command).await,
         #[cfg(feature = "plugins")]

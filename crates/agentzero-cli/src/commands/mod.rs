@@ -9,6 +9,7 @@ pub mod config;
 pub mod conversation;
 pub mod coordination;
 pub mod cost;
+#[cfg(feature = "tools-extended")]
 pub mod cron;
 pub mod daemon;
 #[cfg(feature = "tui")]
@@ -37,6 +38,7 @@ pub mod providers;
 pub mod rag;
 pub mod sandbox;
 pub mod service;
+#[cfg(feature = "tools-extended")]
 pub mod skill;
 pub mod status;
 pub mod template;

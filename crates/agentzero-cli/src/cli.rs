@@ -117,6 +117,7 @@ pub enum Commands {
         command: AuthCommands,
     },
     /// Configure and manage scheduled tasks.
+    #[cfg(feature = "tools-extended")]
     Cron {
         #[command(subcommand)]
         command: CronCommands,
@@ -127,6 +128,7 @@ pub enum Commands {
         command: HookCommands,
     },
     /// Manage skills (list/install/test/remove).
+    #[cfg(feature = "tools-extended")]
     Skill {
         #[command(subcommand)]
         command: SkillCommands,
@@ -594,6 +596,7 @@ pub enum DaemonCommands {
     },
 }
 
+#[cfg(feature = "tools-extended")]
 #[derive(Debug, Subcommand)]
 pub enum CronCommands {
     /// List scheduled tasks.
@@ -689,6 +692,7 @@ pub enum HookCommands {
     },
 }
 
+#[cfg(feature = "tools-extended")]
 #[derive(Debug, Subcommand)]
 pub enum SkillCommands {
     /// List installed skills.
