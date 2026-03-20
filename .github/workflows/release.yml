@@ -321,7 +321,7 @@ jobs:
       - name: Generate CycloneDX SBOM (JSON)
         run: |
           mkdir -p sbom
-          cargo cyclonedx --format json --output-cdx
+          cargo cyclonedx --format json
           find . -maxdepth 2 \( -name '*.cdx.json' -o -name 'bom.json' \) | head -1 | xargs -I{} cp {} sbom/agentzero-sbom.json
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v7
