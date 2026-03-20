@@ -29,12 +29,18 @@ export function WorkflowTopology() {
   const edges = topology?.edges ?? []
   const workflow = topologyToWorkflow(nodes, edges)
 
+  // Single click selects the node (handled by workflow-graph internally).
+  // We don't navigate on single click — the user asked for double-click only.
   const handleNodeClick = useCallback(
     (_jobId: string) => {
-      void navigate({ to: '/agents' })
+      // no-op: selection is handled internally by the graph
     },
-    [navigate],
+    [],
   )
+
+  // TODO: workflow-graph doesn't expose onNodeDoubleClick yet.
+  // For now, users navigate via the "Manage" link in AgentStatusPanel.
+  void navigate
 
   if (nodes.length === 0) {
     return (
@@ -87,31 +93,31 @@ export function WorkflowTopology() {
           </Button>
         </div>
       </div>
-      <div style={{ height: 320 }} className="bg-[#0d1117]">
-        <WorkflowGraphComponent
-          ref={graphRef}
-          workflow={workflow}
-          theme={{
-            ...darkTheme,
-            layout: {
-              node_width: 180,
-              node_height: 52,
-              node_radius: 6,
-              h_gap: 60,
-              v_gap: 30,
-              header_height: 0,
-              padding: 24,
-              junction_dot_radius: 3.5,
-              status_icon_radius: 6,
-              status_icon_margin: 8,
-            },
-          }}
-          autoResize
-          onNodeClick={handleNodeClick}
-          onRenderNode={renderNode}
-          onError={(err) => console.error('Workflow graph error:', err)}
-        />
-      </div>
+      <WorkflowGraphComponent
+        ref={graphRef}
+        workflow={workflow}
+        className="w-full bg-[#0d1117] [&>div]:h-full"
+        style={{ height: 320 }}
+        theme={{
+          ...darkTheme,
+          layout: {
+            node_width: 180,
+            node_height: 52,
+            node_radius: 6,
+            h_gap: 60,
+            v_gap: 30,
+            header_height: 0,
+            padding: 24,
+            junction_dot_radius: 3.5,
+            status_icon_radius: 6,
+            status_icon_margin: 8,
+          },
+        }}
+        autoResize
+        onNodeClick={handleNodeClick}
+        onRenderNode={renderNode}
+        onError={(err) => console.error('Workflow graph error:', err)}
+      />
     </div>
   )
 }

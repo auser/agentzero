@@ -13,6 +13,7 @@ import { AgentStatusPanel } from '@/components/dashboard/AgentStatusPanel'
 import { ActiveRunsTimeline } from '@/components/dashboard/ActiveRunsTimeline'
 import { ScheduleOverview } from '@/components/dashboard/ScheduleOverview'
 import { ChannelStatus } from '@/components/dashboard/ChannelStatus'
+import { WorkflowDetails } from '@/components/dashboard/WorkflowDetails'
 
 export const Route = createFileRoute('/dashboard/')({
   component: DashboardPage,
@@ -71,15 +72,18 @@ function DashboardPage() {
       {/* Metrics row */}
       <SystemHealthBar />
 
-      {/* Bento grid: topology (wide) + agents (narrow) */}
+      {/* Bento grid: topology (wide) + workflow details (narrow) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
           <WorkflowTopology />
         </div>
-        <div>
-          <AgentStatusPanel />
+        <div className="space-y-4">
+          <WorkflowDetails />
         </div>
       </div>
+
+      {/* Middle row: agents */}
+      <AgentStatusPanel />
 
       {/* Bottom row: runs (wide) + schedules & channels (narrow) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
