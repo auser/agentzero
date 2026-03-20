@@ -577,23 +577,27 @@ When running in Docker, set `allow_public_bind = true` in your gateway config si
 ## Production Readiness Checklist
 
 ### Encryption
+
 - [ ] Data key generated and backed up securely
 - [ ] Key file has mode `0600`
 - [ ] Conversation database is SQLCipher-encrypted (check with `file ~/.agentzero/agentzero.db`)
 
 ### Network
+
 - [ ] Gateway bound to `127.0.0.1` (not `0.0.0.0`)
 - [ ] TLS termination configured (nginx or Caddy)
 - [ ] HSTS header present (`curl -I https://...`)
 - [ ] HTTP → HTTPS redirect active
 
 ### Authentication
+
 - [ ] `require_pairing = true`
 - [ ] Pairing code securely distributed to clients
 - [ ] OTP enabled for sensitive operations
 - [ ] No open/unauthenticated access
 
 ### Security
+
 - [ ] `allowed_root` points to a dedicated workspace directory
 - [ ] `workspace_only = true`
 - [ ] `forbidden_paths` covers sensitive system directories
@@ -603,27 +607,32 @@ When running in Docker, set `allow_public_bind = true` in your gateway config si
 - [ ] `block_private_ip = true`
 
 ### Autonomy
+
 - [ ] `level = "supervised"`
 - [ ] `max_actions_per_hour` configured
 - [ ] `block_high_risk_commands = true`
 
 ### Observability
+
 - [ ] OpenTelemetry exporting to collector
 - [ ] `/metrics` endpoint scraped by Prometheus
 - [ ] `/health` endpoint monitored
 - [ ] Daemon log rotation active
 
 ### Cost
+
 - [ ] Daily and monthly limits set
 - [ ] Warning threshold configured
 
 ### Backup & Recovery
+
 - [ ] Encryption key backed up to secrets manager
 - [ ] Regular encrypted backups via `agentzero backup export`
 - [ ] Backup restore tested via `agentzero backup restore --force`
 - [ ] OpenAPI spec available at `/v1/openapi.json`
 
 ### Environment
+
 - [ ] `AGENTZERO_ENV=production` set in deployment environment
 - [ ] Production validation passing (TLS + auth enforced)
 

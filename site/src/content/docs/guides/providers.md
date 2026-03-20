@@ -117,7 +117,7 @@ AgentZero includes a built-in local LLM provider powered by llama.cpp. No extern
 cargo build --release --features local-model
 ```
 
-2. Configure:
+1. Configure:
 
 ```toml
 [provider]
@@ -170,13 +170,13 @@ Ollama runs models locally. No API key needed.
 ollama pull llama3.1:8b
 ```
 
-3. Start Ollama (it runs on `http://localhost:11434` by default):
+1. Start Ollama (it runs on `http://localhost:11434` by default):
 
 ```bash
 ollama serve
 ```
 
-4. Configure AgentZero:
+1. Configure AgentZero:
 
 ```bash
 agentzero onboard --provider ollama --model llama3.1:8b --yes
