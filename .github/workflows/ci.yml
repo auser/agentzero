@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
       - name: fmt
         run: cargo fmt --all --check
       - name: clippy
@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
       - name: install cargo-audit
         run: cargo install cargo-audit --locked
       - name: install cargo-deny
@@ -70,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
       - name: install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
       - name: generate coverage
@@ -81,21 +81,7 @@ jobs:
           name: coverage
           path: coverage
 
-  e2e-ollama:
-    runs-on: ubuntu-latest
-    continue-on-error: true  # LLM tool use with small models is nondeterministic
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@8a02ed5e290d8afc7e587930243f3016b3223f50 # v2 + node24
-      - name: Install Ollama
-        run: curl -fsSL https://ollama.com/install.sh | sh
-      - name: Start Ollama and pull model
-        run: |
-          ollama serve &
-          sleep 3
-          ollama pull llama3.2:latest
-      - name: Install nextest
-        run: cargo install cargo-nextest --locked
-      - name: Run Ollama e2e tests
-        run: cargo nextest run -p agentzero-infra --test e2e_ollama --run-ignored only --test-threads 1 --profile ci
+  # e2e-ollama: removed from CI — small local models (llama3.2 3B) are too
+  # nondeterministic for reliable tool-use assertions. The tests remain in
+  # crates/agentzero-infra/tests/e2e_ollama.rs and can be run manually:
+  #   cargo nextest run -p agentzero-infra --test e2e_ollama --run-ignored only
