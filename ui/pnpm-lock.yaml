@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@auser/workflow-graph-react':
+        specifier: link:../../workflow-graph/packages/react
+        version: link:../../workflow-graph/packages/react
+      '@auser/workflow-graph-web':
+        specifier: link:../../workflow-graph/packages/web
+        version: link:../../workflow-graph/packages/web
       '@radix-ui/react-accordion':
         specifier: ^1.2.12
         version: 1.2.12(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)

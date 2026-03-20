@@ -1298,6 +1298,65 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 
 ---
 
+## Sprint 60: Visual Workflow Builder (LangChain Fleet-style)
+
+**Goal:** Add a drag-and-drop visual workflow builder UI for composing agent workflows with tools, sub-agents, channels, schedules, and approval gates. Extends the [workflow-graph](https://github.com/auser/workflow-graph) WASM library with node CRUD APIs and integrates into the AgentZero React UI.
+
+**Baseline:** Sprint 59 complete. React UI has CRUD agents, topology graph, run monitoring. No visual workflow builder exists.
+
+**Plan:** `specs/plans/26-visual-workflow-builder.md`
+
+**Branch:** `feat/visual-workflow-builder`
+
+**Tauri compatible:** WASM + Canvas2D works natively in Tauri's WebView.
+
+---
+
+### Phase 1: workflow-graph Extension (upstream) (HIGH)
+
+- [x] **Add `metadata` to `Job` struct** — `HashMap<String, Value>` in `shared/src/lib.rs`. Backward-compatible. Carries `node_type`, `description`, `icon`, `approval_required`.
+- [x] **WASM-level node CRUD API** — `add_node()`, `remove_node()`, `update_node()`, `add_edge()`, `remove_edge()`, `get_nodes()`, `get_edges()` on `WorkflowGraphController`. Each mutation triggers re-layout + re-render. 7 new WASM functions.
+- [x] **Edge metadata** — `Edge` struct gets `metadata: HashMap<String, Value>` for conditional labels.
+- [x] **React wrapper** — Imperative handle: `ref.current.addNode()`, `removeNode()`, `addEdge()`, `removeEdge()`, `updateNode()`, `getNodes()`, `getEdges()`. TS types: `EdgeInfo` interface added.
+- [ ] **Publish** — workflow-graph v0.5.0.
+
+### Phase 2: Read-Only Visualization (MEDIUM)
+
+- [x] **WorkflowCanvas** — `topologyToWorkflow()` converter maps AgentZero topology API to workflow-graph `Workflow` format.
+- [x] **NodeRenderer** — `onRenderNode` callback renders 6 node types (agent/tool/subagent/channel/schedule/gate) with type-specific colors, icons, labels, and metadata display.
+- [x] **WorkflowTopology** — Dashboard component wraps `WorkflowGraphComponent` with dark theme, auto-resize, zoom/reset controls.
+- [x] **Dashboard redesign** — New layout: SystemHealthBar (compact metrics) → WorkflowTopology (hero graph) → two-column grid (AgentStatusPanel + ActiveRunsTimeline | ScheduleOverview + ChannelStatus). "Create Workflow" button placeholder.
+- [ ] **Embedded UI** — Add `*.wasm` to `rust_embed` include list in gateway router.
+
+### Phase 3: Visual Builder MVP (HIGH)
+
+- [ ] **Zustand store** — `workflowBuilderStore.ts`: nodes, edges, selection, dirty flag, `toSwarmConfig()`, `loadFromSwarmConfig()`.
+- [ ] **Builder page** — `/workflows/builder` composing canvas + palette + inspector + popover.
+- [ ] **NodePalette** — Left sidebar with draggable node types (Agent, Tool, SubAgent, Channel, Schedule, Gate).
+- [ ] **NodePopover** — Click node → inline Radix Popover with name, type badge, key fields, "Open full editor →".
+- [ ] **NodeInspector** — Double-click → right-side Radix Sheet with full property form per node type.
+- [ ] **Node forms** — AgentNodeForm, ToolNodeForm, ChannelNodeForm, ScheduleNodeForm, GateNodeForm, SubAgentNodeForm.
+- [ ] **WorkflowToolbar** — Save, Deploy, Export TOML, Import, Auto-layout, Zoom.
+- [ ] **QuickCreateWizard** — 6-step Radix Dialog: name → agent → tools → channel → schedule → review & create.
+- [ ] **Serialization** — Builder ↔ SwarmConfig round-trip (toSwarmConfig + loadFromSwarmConfig).
+- [ ] **Config model** — Add `approval_required_tools: Vec<String>` to `SwarmAgentConfig`.
+- [ ] **API client** — `workflows.ts`: deploy via `PUT /v1/config`, fetch via `GET /v1/config`.
+
+---
+
+### Acceptance Criteria (Sprint 60)
+
+- [ ] workflow-graph v0.5.0 published with metadata + WASM node CRUD API
+- [ ] `/workflows` page renders live topology with type-specific node visuals
+- [ ] Visual builder: drag Agent + Tool nodes, connect edges, deploy to swarm
+- [ ] Quick-Create Wizard: 6 steps → populated builder canvas
+- [ ] NodePopover (click) + NodeInspector (double-click) property editing works
+- [ ] Round-trip: load SwarmConfig → edit → deploy → reload → no data loss
+- [ ] `cargo clippy` — 0 warnings
+- [ ] All existing tests pass
+
+---
+
 ## Backlog
 
 ### Embedded Binary Size Reduction (HIGH)
