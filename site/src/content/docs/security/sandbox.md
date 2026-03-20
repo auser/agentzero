@@ -37,31 +37,31 @@ rules:
     action: allow
 ```
 
-2. Build the sandbox image (one-time):
+1. Build the sandbox image (one-time):
 
 ```bash
 docker build -f docker/sandbox/Dockerfile -t agentzero-sandbox:latest .
 ```
 
-3. Start the sandbox:
+1. Start the sandbox:
 
 ```bash
 agentzero sandbox start --detach
 ```
 
-4. Check status:
+1. Check status:
 
 ```bash
 agentzero sandbox status
 ```
 
-5. Debug with a shell:
+1. Debug with a shell:
 
 ```bash
 agentzero sandbox shell
 ```
 
-6. Stop:
+1. Stop:
 
 ```bash
 agentzero sandbox stop
@@ -98,7 +98,7 @@ Domain names are resolved to IP addresses at container startup. If a domain has 
 ## CLI Commands
 
 | Command | Description |
-|---------|-------------|
+| ------- | ----------- |
 | `agentzero sandbox start` | Build/pull image, validate policy, start container |
 | `agentzero sandbox stop` | Stop and remove the sandbox container |
 | `agentzero sandbox status` | Show container state and applied policy |
@@ -113,7 +113,7 @@ Options for `start`:
 ## Comparison with NVIDIA NeMo Guardrails / OpenShell
 
 | Feature | AgentZero Sandbox | NVIDIA OpenShell |
-|---------|-------------------|------------------|
+| ------- | ----------------- | ---------------- |
 | Network isolation | iptables DROP + allowlist | gVisor / network namespace |
 | Policy format | YAML (`security-policy.yaml`) | Python config |
 | Filesystem | Read-only root + tmpfs | gVisor VFS layer |
