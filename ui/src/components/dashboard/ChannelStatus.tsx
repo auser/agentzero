@@ -3,15 +3,8 @@
  */
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api/client'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Link } from '@tanstack/react-router'
-import { Radio } from 'lucide-react'
-
-interface ChannelInfo {
-  name: string
-  type: string
-  connected: boolean
-}
+import { Radio, ChevronRight } from 'lucide-react'
 
 interface ConfigResponse {
   channels?: {
@@ -26,15 +19,10 @@ export function ChannelStatus() {
     retry: false,
   })
 
-  // Derive channel list from config
-  const channels: ChannelInfo[] = []
+  const channels: { name: string; connected: boolean }[] = []
   if (data?.channels) {
     for (const [name, config] of Object.entries(data.channels)) {
-      channels.push({
-        name,
-        type: name,
-        connected: config.enabled !== false,
-      })
+      channels.push({ name, connected: config.enabled !== false })
     }
   }
 
@@ -43,33 +31,38 @@ export function ChannelStatus() {
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm flex items-center gap-1.5">
-            <Radio className="h-3.5 w-3.5" />
-            Channels
-          </CardTitle>
-          <Link to="/channels" className="text-xs text-primary hover:underline">
-            Configure
-          </Link>
-        </div>
-      </CardHeader>
-      <CardContent>
+    <div className="rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+          <Radio className="h-3.5 w-3.5" />
+          Channels
+        </h3>
+        <Link
+          to="/channels"
+          className="text-xs text-primary hover:text-primary/80 flex items-center gap-0.5 transition-colors"
+        >
+          Configure <ChevronRight className="h-3 w-3" />
+        </Link>
+      </div>
+      <div className="p-3">
         <div className="flex flex-wrap gap-2">
           {channels.map((ch) => (
             <div
               key={ch.name}
-              className="flex items-center gap-1.5 text-xs px-2 py-1 rounded bg-muted/50"
+              className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md bg-muted/30 border border-border/30 hover:bg-muted/50 transition-colors"
             >
               <span
-                className={`h-1.5 w-1.5 rounded-full ${ch.connected ? 'bg-green-500' : 'bg-gray-500'}`}
+                className={`h-1.5 w-1.5 rounded-full ${
+                  ch.connected
+                    ? 'bg-emerald-500 shadow-[0_0_4px_rgba(34,197,94,0.5)]'
+                    : 'bg-zinc-600'
+                }`}
               />
               <span className="capitalize">{ch.name}</span>
             </div>
           ))}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }

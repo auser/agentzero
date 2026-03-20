@@ -28,34 +28,39 @@ function DashboardPage() {
   })
 
   return (
-    <div className="space-y-4 max-w-6xl">
+    <div className="space-y-5 max-w-7xl">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Dashboard</h1>
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">Dashboard</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Monitor your agent workflows and system health
+          </p>
+        </div>
         <div className="flex gap-2">
           <Link to="/chat">
-            <Button variant="outline" size="sm">
-              <MessageSquare className="h-4 w-4 mr-2" />
-              New Chat
+            <Button variant="outline" size="sm" className="h-8 text-xs">
+              <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
+              Chat
             </Button>
           </Link>
           <Link to="/runs">
-            <Button variant="outline" size="sm">
-              <PlayCircle className="h-4 w-4 mr-2" />
-              Submit Run
+            <Button variant="outline" size="sm" className="h-8 text-xs">
+              <PlayCircle className="h-3.5 w-3.5 mr-1.5" />
+              Run
             </Button>
           </Link>
-          <Button variant="outline" size="sm" disabled>
-            <GitBranch className="h-4 w-4 mr-2" />
-            Create Workflow
+          <Button variant="outline" size="sm" className="h-8 text-xs" disabled>
+            <GitBranch className="h-3.5 w-3.5 mr-1.5" />
+            Workflow
           </Button>
           <Button
             variant="outline"
             size="sm"
-            className="border-red-800/50 text-red-400 hover:bg-red-950/50"
+            className="h-8 text-xs border-red-800/40 text-red-400 hover:bg-red-950/30 hover:border-red-700/50"
             onClick={() => setEstopOpen(true)}
           >
-            <AlertTriangle className="h-4 w-4 mr-2" />
+            <AlertTriangle className="h-3.5 w-3.5 mr-1.5" />
             E-Stop
           </Button>
         </div>
@@ -63,16 +68,22 @@ function DashboardPage() {
 
       <RegressionBanner />
 
-      {/* System health bar */}
+      {/* Metrics row */}
       <SystemHealthBar />
 
-      {/* Workflow topology (hero) */}
-      <WorkflowTopology />
-
-      {/* Two-column layout: left = agents + runs, right = schedules + channels */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="space-y-4">
+      {/* Bento grid: topology (wide) + agents (narrow) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <WorkflowTopology />
+        </div>
+        <div>
           <AgentStatusPanel />
+        </div>
+      </div>
+
+      {/* Bottom row: runs (wide) + schedules & channels (narrow) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
           <ActiveRunsTimeline />
         </div>
         <div className="space-y-4">

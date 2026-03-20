@@ -3,17 +3,14 @@
  */
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api/client'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Link } from '@tanstack/react-router'
-import { CalendarClock } from 'lucide-react'
+import { CalendarClock, ChevronRight } from 'lucide-react'
 
 interface CronJob {
   id: string
   name: string
   schedule: string
   enabled: boolean
-  last_run?: string
-  next_run?: string
 }
 
 interface CronListResponse {
@@ -35,33 +32,34 @@ export function ScheduleOverview() {
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm flex items-center gap-1.5">
-            <CalendarClock className="h-3.5 w-3.5" />
-            Schedules
-          </CardTitle>
-          <Link to="/schedule" className="text-xs text-primary hover:underline">
-            Manage
-          </Link>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
+    <div className="rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+          <CalendarClock className="h-3.5 w-3.5" />
+          Schedules
+        </h3>
+        <Link
+          to="/schedule"
+          className="text-xs text-primary hover:text-primary/80 flex items-center gap-0.5 transition-colors"
+        >
+          Manage <ChevronRight className="h-3 w-3" />
+        </Link>
+      </div>
+      <div className="p-2">
+        <div className="space-y-0.5">
           {enabledJobs.slice(0, 4).map((job) => (
             <div
               key={job.id}
-              className="flex items-center justify-between py-1 border-b border-border last:border-0"
+              className="flex items-center justify-between px-3 py-2 rounded-md hover:bg-muted/30 transition-colors"
             >
               <span className="text-sm truncate">{job.name}</span>
-              <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
+              <span className="text-[10px] font-mono text-muted-foreground/70 bg-muted/50 px-1.5 py-0.5 rounded shrink-0">
                 {job.schedule}
               </span>
             </div>
           ))}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
