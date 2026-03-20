@@ -96,9 +96,14 @@ export function WorkflowTopology() {
             layout: {
               node_width: 180,
               node_height: 52,
+              node_radius: 6,
               h_gap: 60,
               v_gap: 30,
+              header_height: 0,
               padding: 24,
+              junction_dot_radius: 3.5,
+              status_icon_radius: 6,
+              status_icon_margin: 8,
             },
           }}
           autoResize
