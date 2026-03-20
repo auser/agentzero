@@ -4,9 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description.workspace = true
+description = "LLM provider abstraction layer for AgentZero (Anthropic, OpenAI-compatible)"
 repository.workspace = true
-publish = false
 
 [features]
 default = []

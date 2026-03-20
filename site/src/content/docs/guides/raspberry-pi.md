@@ -17,13 +17,25 @@ AgentZero provides pre-built ARM binaries and compiles natively on Raspberry Pi.
 
 ## Option 1: Install Script (Recommended)
 
-The install script auto-detects your architecture:
+The install script auto-detects your architecture and prompts you to choose a variant:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash
 ```
 
 This detects `aarch64` (Pi 4/5 with 64-bit OS) or `armv7l` (Pi 3 or 32-bit OS) and downloads the correct binary.
+
+For Raspberry Pi, the **lite** variant is recommended — it's a gateway-only binary (~3 MB) with privacy-first defaults:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash -s -- --variant lite
+```
+
+| Variant | Use Case | Size |
+|---------|----------|------|
+| `lite` | Gateway-only, privacy-first (recommended for Pi) | ~3 MB |
+| `minimal` | Full CLI with core tools | ~5 MB |
+| `default` | Everything (TUI, plugins, gateway) | ~19 MB |
 
 ## Option 2: Download Pre-built Binary
 
@@ -165,10 +177,13 @@ cargo build -p agentzero --release --features hardware
 
 ## agentzero-lite: Privacy-First for Edge Devices
 
-For Raspberry Pi deployments, consider using `agentzero-lite` instead of the full binary. It's a lightweight gateway that defaults to `"private"` privacy mode:
+For Raspberry Pi deployments, `agentzero-lite` is the recommended binary. It's a lightweight gateway that defaults to `"private"` privacy mode — no CLI, no TUI, no plugins, just the gateway server.
 
 ```bash
-# Build the lite binary (smaller, privacy-first defaults)
+# Install via the installer
+curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash -s -- --variant lite
+
+# Or build from source (smaller, privacy-first defaults)
 cargo build -p agentzero-lite --release
 
 # Run with defaults (private mode, Noise encryption auto-enabled)

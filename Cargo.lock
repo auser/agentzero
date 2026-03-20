@@ -56,8 +56,18 @@ dependencies = [
 name = "agentzero"
 version = "0.9.0"
 dependencies = [
+ "agentzero-auth",
+ "agentzero-channels",
  "agentzero-cli",
+ "agentzero-config",
  "agentzero-core",
+ "agentzero-gateway",
+ "agentzero-infra",
+ "agentzero-orchestrator",
+ "agentzero-plugins",
+ "agentzero-providers",
+ "agentzero-storage",
+ "agentzero-tools",
  "anyhow",
  "tokio",
 ]
