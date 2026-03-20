@@ -39,7 +39,10 @@ if ! command -v cargo-deny >/dev/null 2>&1; then
   exit 1
 fi
 
-cargo audit
+# Ignore advisories for transitive deps we cannot update yet.
+# Keep this list in sync with deny.toml [advisories].ignore.
+cargo audit \
+  --ignore RUSTSEC-2026-0049
 cargo deny check advisories
 
 echo "PASS: security audits completed"

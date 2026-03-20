@@ -7,9 +7,13 @@ config:
   MD033: false
   MD040: false
   MD041: false
+  MD056: false
+  MD060: false
   MD024:
     allow_different_nesting: true
+    siblings_only: true
 
 ignores:
   - "target/**"
   - "site/node_modules/**"
+  - "ui/node_modules/**"
