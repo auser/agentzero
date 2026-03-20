@@ -233,6 +233,27 @@ jobs:
         env:
           EMBEDDED_BIN: target/${{ matrix.rust_target }}/release-min/agentzero${{ matrix.ext }}
         run: scripts/check-binary-size.sh --binary "$EMBEDDED_BIN" --max-bytes 10000000
+      - name: Build lite gateway binary
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+          USE_ZIGBUILD: ${{ matrix.use_zigbuild || 'false' }}
+          EXTRA_FEATURES: ${{ matrix.extra_features || '' }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: >-
+            ${{ matrix.target_name == 'linux-aarch64' && 'aarch64-linux-gnu-gcc' || '' }}
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: >-
+            ${{ matrix.target_name == 'linux-armv7' && 'arm-linux-gnueabihf-gcc' || '' }}
+        run: |
+          FEATURES=""
+          if [[ -n "$EXTRA_FEATURES" ]]; then
+            FEATURES="--features $EXTRA_FEATURES"
+          fi
+          if [[ "$USE_ZIGBUILD" == "true" ]]; then
+            cargo zigbuild -p agentzero-lite --profile release-min --target "$RUST_TARGET" $FEATURES
+          else
+            cargo build -p agentzero-lite --profile release-min --target "$RUST_TARGET" $FEATURES
+          fi
       - name: Package artifact (unix)
         if: matrix.os != 'windows-latest'
         env:
@@ -246,6 +267,7 @@ jobs:
           cp "$BIN_PATH" "dist/agentzero-v${VERSION}-${TARGET_NAME}${EXT}"
           cp "target/${RUST_TARGET}/release-min/agentzero-minimal${EXT}" "dist/agentzero-v${VERSION}-${TARGET_NAME}-minimal${EXT}"
           cp "target/${RUST_TARGET}/release-min/agentzero${EXT}" "dist/agentzero-v${VERSION}-${TARGET_NAME}-embedded${EXT}"
+          cp "target/${RUST_TARGET}/release-min/agentzero-lite${EXT}" "dist/agentzero-lite-v${VERSION}-${TARGET_NAME}${EXT}"
       - name: Package artifact (windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh

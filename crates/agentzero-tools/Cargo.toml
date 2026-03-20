@@ -4,9 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description.workspace = true
+description = "Tool implementations for AgentZero agents"
 repository.workspace = true
-publish = false
 
 [features]
 default = ["tools-full", "document-tools"]

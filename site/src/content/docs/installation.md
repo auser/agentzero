@@ -84,6 +84,27 @@ For detailed instructions on specific platforms:
 - **[Android](/agentzero/guides/android/)** — Running in Termux, cross-compilation with Android NDK
 - **[Raspberry Pi](/agentzero/guides/raspberry-pi/)** — Pre-built ARM binaries, building on-device, systemd service setup
 
+## Install Variants
+
+The installer supports four build variants. When run interactively, it prompts you to choose:
+
+| Variant | Binary | Description |
+|---------|--------|-------------|
+| `default` | `agentzero` | Full CLI with TUI, plugins, gateway (~19 MB) |
+| `server` | `agentzero` | Headless gateway with plugins, no TUI (~7 MB) |
+| `minimal` | `agentzero` | Lean runtime for CI and embedded (~5 MB) |
+| `lite` | `agentzero-lite` | Gateway-only for Raspberry Pi and edge devices (~3 MB) |
+
+```bash
+# Install the lite gateway for Raspberry Pi
+curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash -s -- --variant lite
+
+# Install the server variant to a specific directory
+curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash -s -- --variant server --dir /usr/local/bin
+```
+
+You can also set the variant via the `AGENTZERO_VARIANT` environment variable.
+
 ## Install via Cargo
 
 If you have Rust installed, you can install directly from crates.io:
@@ -93,6 +114,26 @@ cargo install agentzero
 ```
 
 This builds and installs the `agentzero` binary to `~/.cargo/bin/`.
+
+## Use as a Rust Library
+
+AgentZero is also available as a library crate:
+
+```bash
+cargo add agentzero
+```
+
+```rust
+use agentzero::prelude::*;
+```
+
+The library re-exports all sub-crates behind a clean facade. Feature flags mirror the CLI variants (`minimal`, `gateway`, `plugins`, etc.). See the [crate docs](https://docs.rs/agentzero) for the full API.
+
+For WASM plugin authors:
+
+```bash
+cargo add agentzero-plugin-sdk
+```
 
 ## Build from Source
 

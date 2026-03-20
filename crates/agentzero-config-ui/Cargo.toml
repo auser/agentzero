@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Visual node graph configuration editor for AgentZero"
 repository.workspace = true
-publish = false
 
 [features]
 default = []

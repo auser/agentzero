@@ -5,7 +5,7 @@ A lightweight, security-first agent runtime and CLI built entirely in Rust. Sing
 ## Quick start
 
 ```bash
-# Install
+# Install (interactive — choose default, server, minimal, or lite)
 curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash
 
 # Configure (interactive wizard)
@@ -283,11 +283,56 @@ agentzero completions zsh  # Shell completions
 
 All commands support `--json` for structured output and `-v`/`-vv`/`-vvv`/`-vvvv` for increasing verbosity.
 
+## Install Variants
+
+The installer offers four variants:
+
+| Variant | Binary | Description |
+|---------|--------|-------------|
+| `default` | `agentzero` | Full CLI with TUI, plugins, gateway (~19 MB) |
+| `server` | `agentzero` | Headless gateway with plugins, no TUI (~7 MB) |
+| `minimal` | `agentzero` | Lean runtime for CI and embedded (~5 MB) |
+| `lite` | `agentzero-lite` | Gateway-only for Raspberry Pi and edge devices (~3 MB) |
+
+```bash
+# Pick a variant explicitly
+curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash -s -- --variant lite
+
+# Or via cargo
+cargo install agentzero
+```
+
+## Use as a Rust Library
+
+AgentZero is also available as a library crate for embedding in your own Rust projects:
+
+```bash
+cargo add agentzero
+```
+
+```rust
+use agentzero::prelude::*;
+
+// Access core traits: Agent, Tool, ToolContext, ToolResult
+// Build providers: build_provider()
+// Load config: load_config()
+// Orchestrate: build_swarm(), Coordinator
+```
+
+Feature flags mirror the CLI: `--features minimal` for a lean build, `--features gateway` for the HTTP server, etc. See the [crate docs](https://docs.rs/agentzero) for the full API.
+
+For WASM plugin authors, the standalone SDK has no internal dependencies:
+
+```bash
+cargo add agentzero-plugin-sdk
+```
+
 ## Workspace layout (16 crates)
 
 | Crate | Purpose |
 |---|---|
-| `bin/agentzero` | Binary entrypoint |
+| `bin/agentzero` | Binary entrypoint + library facade |
+| `bin/agentzero-lite` | Lightweight gateway binary for edge devices |
 | `agentzero-core` | Traits (`Provider`, `Tool`, `MemoryStore`, `Channel`), types, security policy |
 | `agentzero-config` | TOML config, loader, policy validation |
 | `agentzero-storage` | Encrypted persistence (SQLCipher, XChaCha20Poly1305, Turso) |
