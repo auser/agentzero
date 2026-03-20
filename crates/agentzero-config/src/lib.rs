@@ -7,6 +7,7 @@
 mod loader;
 mod model;
 mod policy;
+#[cfg(feature = "yaml-policy")]
 pub mod security_policy;
 mod templates;
 pub mod watcher;

@@ -13,13 +13,14 @@ default = ["wasm-runtime"]
 wasm-runtime = ["dep:wasmi", "dep:wasmi_wasi", "dep:tracing"]
 wasm-jit = ["dep:wasmtime", "dep:wasmtime-wasi", "wasm-runtime"]
 plugin-dev = ["dep:notify", "dep:tracing"]
+signing = ["dep:ed25519-dalek", "dep:hex", "dep:rand"]
 
 [dependencies]
 anyhow.workspace = true
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+ed25519-dalek = { version = "2", features = ["rand_core"], optional = true }
 fd-lock = "4"
-hex = "0.4"
-rand = "0.8"
+hex = { version = "0.4", optional = true }
+rand = { version = "0.8", optional = true }
 semver = "1"
 serde.workspace = true
 serde_json.workspace = true

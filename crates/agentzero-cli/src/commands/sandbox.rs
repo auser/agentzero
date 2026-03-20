@@ -1,5 +1,6 @@
 use crate::cli::SandboxCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
+#[cfg(feature = "yaml-policy")]
 use agentzero_config::security_policy::SecurityPolicyFile;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -154,7 +155,7 @@ fn resolve_policy_path(ctx: &CommandContext, explicit: Option<&str>) -> anyhow::
     Ok(conventional)
 }
 
-/// Validate that the policy YAML file exists and is parseable as a `SecurityPolicyFile`.
+/// Validate that the policy YAML file exists and is parseable.
 fn validate_policy_file(path: &Path) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!(
@@ -165,10 +166,17 @@ fn validate_policy_file(path: &Path) -> anyhow::Result<()> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("failed to read policy file {}: {e}", path.display()))?;
 
-    // Validate by deserializing into the typed SecurityPolicyFile struct.
-    // This ensures the YAML has the required `default` key and valid structure.
-    let _policy: SecurityPolicyFile = serde_yaml::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("invalid security policy in {}: {e}", path.display()))?;
+    // When yaml-policy feature is enabled, fully validate the structure.
+    // Otherwise, just check the file is readable.
+    #[cfg(feature = "yaml-policy")]
+    {
+        let _policy: SecurityPolicyFile = serde_yaml::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("invalid security policy in {}: {e}", path.display()))?;
+    }
+    #[cfg(not(feature = "yaml-policy"))]
+    {
+        let _ = content;
+    }
 
     Ok(())
 }

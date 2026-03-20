@@ -6,6 +6,7 @@
 
 pub mod package;
 mod package_ref;
+#[cfg(feature = "signing")]
 pub mod signing;
 pub mod wasm;
 #[cfg(feature = "plugin-dev")]

@@ -491,17 +491,25 @@ impl AgentZeroCommand for PluginCommand {
                 println!("\nTo publish, add this entry to the registry index and open a PR.");
             }
             PluginCommands::Keygen { out } => {
-                let (private_key, public_key) = agentzero_plugins::signing::generate_keypair();
-                if let Some(out_path) = out {
-                    fs::write(&out_path, &private_key)?;
-                    println!("Private key written to {out_path}");
-                    println!("Public key: {public_key}");
-                    println!(
-                        "\nKeep the private key secret. Share the public key for verification."
-                    );
-                } else {
-                    println!("Private key: {private_key}");
-                    println!("Public key:  {public_key}");
+                #[cfg(feature = "plugin-signing")]
+                {
+                    let (private_key, public_key) = agentzero_plugins::signing::generate_keypair();
+                    if let Some(out_path) = out {
+                        fs::write(&out_path, &private_key)?;
+                        println!("Private key written to {out_path}");
+                        println!("Public key: {public_key}");
+                        println!(
+                            "\nKeep the private key secret. Share the public key for verification."
+                        );
+                    } else {
+                        println!("Private key: {private_key}");
+                        println!("Public key:  {public_key}");
+                    }
+                }
+                #[cfg(not(feature = "plugin-signing"))]
+                {
+                    let _ = out;
+                    anyhow::bail!("plugin signing requires the `plugin-signing` feature");
                 }
             }
             PluginCommands::Sign {
@@ -509,28 +517,45 @@ impl AgentZeroCommand for PluginCommand {
                 key,
                 key_id,
             } => {
-                let key_hex = read_key_or_hex(&key)?;
-                let mut m = load_manifest(&manifest)?;
-                let signature = agentzero_plugins::signing::sign_manifest(&m, &key_hex)?;
-                m.signature = Some(signature);
-                m.signing_key_id = key_id;
-                let json = serde_json::to_string_pretty(&m)?;
-                fs::write(&manifest, &json)?;
-                println!("Manifest signed and written to {manifest}");
+                #[cfg(feature = "plugin-signing")]
+                {
+                    let key_hex = read_key_or_hex(&key)?;
+                    let mut m = load_manifest(&manifest)?;
+                    let signature = agentzero_plugins::signing::sign_manifest(&m, &key_hex)?;
+                    m.signature = Some(signature);
+                    m.signing_key_id = key_id;
+                    let json = serde_json::to_string_pretty(&m)?;
+                    fs::write(&manifest, &json)?;
+                    println!("Manifest signed and written to {manifest}");
+                }
+                #[cfg(not(feature = "plugin-signing"))]
+                {
+                    let _ = (manifest, key, key_id);
+                    anyhow::bail!("plugin signing requires the `plugin-signing` feature");
+                }
             }
             PluginCommands::Verify { manifest, key } => {
-                let key_hex = read_key_or_hex(&key)?;
-                let m = load_manifest(&manifest)?;
-                let signature = m
-                    .signature
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("manifest has no signature field"))?;
-                let valid = agentzero_plugins::signing::verify_manifest(&m, signature, &key_hex)?;
-                if valid {
-                    println!("Signature is VALID");
-                } else {
-                    println!("Signature is INVALID");
-                    std::process::exit(1);
+                #[cfg(feature = "plugin-signing")]
+                {
+                    let key_hex = read_key_or_hex(&key)?;
+                    let m = load_manifest(&manifest)?;
+                    let signature = m
+                        .signature
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("manifest has no signature field"))?;
+                    let valid =
+                        agentzero_plugins::signing::verify_manifest(&m, signature, &key_hex)?;
+                    if valid {
+                        println!("Signature is VALID");
+                    } else {
+                        println!("Signature is INVALID");
+                        std::process::exit(1);
+                    }
+                }
+                #[cfg(not(feature = "plugin-signing"))]
+                {
+                    let _ = (manifest, key);
+                    anyhow::bail!("plugin signing requires the `plugin-signing` feature");
                 }
             }
         }

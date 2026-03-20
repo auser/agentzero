@@ -8,6 +8,10 @@ description.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+yaml-policy = ["dep:serde_yaml"]
+
 [dependencies]
 anyhow.workspace = true
 agentzero-core = { workspace = true }
@@ -16,7 +20,7 @@ config.workspace = true
 dotenvy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml = "0.9"
+serde_yaml = { version = "0.9", optional = true }
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
