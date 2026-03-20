@@ -944,7 +944,7 @@ fn parse_tool_chat_response(body: &str) -> anyhow::Result<ChatResult> {
         .unwrap_or_default();
     let stop_reason = map_openai_stop_reason(choice.and_then(|c| c.finish_reason.as_deref()));
 
-    let tool_calls = choice
+    let mut tool_calls: Vec<ToolUseRequest> = choice
         .and_then(|c| c.message.tool_calls.as_ref())
         .map(|tcs| {
             tcs.iter()
@@ -961,11 +961,53 @@ fn parse_tool_chat_response(body: &str) -> anyhow::Result<ChatResult> {
         })
         .unwrap_or_default();
 
+    // Fallback: some local models (e.g. Ollama llama3.2) return tool calls as
+    // JSON text in the content field instead of using the structured tool_calls
+    // array. Detect {"name": "...", "parameters": {...}} patterns and parse them.
+    if tool_calls.is_empty() && !output_text.is_empty() {
+        if let Some(parsed) = try_parse_text_tool_call(&output_text) {
+            tool_calls.push(parsed);
+        }
+    }
+
     Ok(ChatResult {
         output_text,
         tool_calls,
         stop_reason,
         ..Default::default()
+    })
+}
+
+/// Try to extract a tool call from text output.
+///
+/// Some local models (Ollama, llama.cpp) return tool calls as JSON text
+/// instead of using the structured `tool_calls` array. This detects patterns
+/// like `{"name": "echo", "parameters": {"message": "hello"}}` and converts
+/// them into a `ToolUseRequest`.
+fn try_parse_text_tool_call(text: &str) -> Option<ToolUseRequest> {
+    // Find JSON object in the text (may be surrounded by markdown or prose).
+    let start = text.find('{')?;
+    let end = text.rfind('}')? + 1;
+    let json_str = &text[start..end];
+
+    let parsed: Value = serde_json::from_str(json_str).ok()?;
+    let obj = parsed.as_object()?;
+
+    // Must have a "name" field to be a tool call.
+    let name = obj.get("name")?.as_str()?.to_string();
+
+    // Arguments can be under "parameters", "arguments", or "input".
+    let input = obj
+        .get("parameters")
+        .or_else(|| obj.get("arguments"))
+        .or_else(|| obj.get("input"))
+        .cloned()
+        .unwrap_or(Value::Object(serde_json::Map::new()));
+
+    Some(ToolUseRequest {
+        id: format!("text-{}", name),
+        name,
+        input,
     })
 }
 
@@ -1633,6 +1675,40 @@ mod tests {
         assert_eq!(result.output_text, "Hello");
         assert!(result.tool_calls.is_empty());
         assert_eq!(result.stop_reason, Some(StopReason::EndTurn));
+    }
+
+    #[test]
+    fn try_parse_text_tool_call_extracts_from_json() {
+        let text = r#"{"name": "echo", "parameters": {"message": "hello"}}"#;
+        let result = try_parse_text_tool_call(text).expect("should parse");
+        assert_eq!(result.name, "echo");
+        assert_eq!(result.input["message"], "hello");
+    }
+
+    #[test]
+    fn try_parse_text_tool_call_handles_arguments_key() {
+        let text = r#"{"name": "search", "arguments": {"query": "rust"}}"#;
+        let result = try_parse_text_tool_call(text).expect("should parse");
+        assert_eq!(result.name, "search");
+        assert_eq!(result.input["query"], "rust");
+    }
+
+    #[test]
+    fn try_parse_text_tool_call_extracts_from_prose() {
+        let text = "I'll call the tool: {\"name\": \"echo\", \"parameters\": {\"message\": \"hi\"}} for you.";
+        let result = try_parse_text_tool_call(text).expect("should parse");
+        assert_eq!(result.name, "echo");
+    }
+
+    #[test]
+    fn try_parse_text_tool_call_returns_none_for_non_tool_json() {
+        let text = r#"{"result": "not a tool call"}"#;
+        assert!(try_parse_text_tool_call(text).is_none());
+    }
+
+    #[test]
+    fn try_parse_text_tool_call_returns_none_for_plain_text() {
+        assert!(try_parse_text_tool_call("hello world").is_none());
     }
 
     #[test]
