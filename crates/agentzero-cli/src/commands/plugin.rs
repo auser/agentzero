@@ -565,6 +565,7 @@ impl AgentZeroCommand for PluginCommand {
 }
 
 /// Read a hex key from a file path or use the string directly as hex.
+#[cfg(feature = "plugin-signing")]
 fn read_key_or_hex(key_or_path: &str) -> anyhow::Result<String> {
     let path = Path::new(key_or_path);
     if path.exists() {
