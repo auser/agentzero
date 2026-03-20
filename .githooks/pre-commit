@@ -78,23 +78,42 @@ fi
 echo "Clippy passed"
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
-echo "Running tests..."
-if command -v cargo-nextest &>/dev/null; then
-    # shellcheck disable=SC2086
-    if ! cargo nextest run --no-fail-fast $CLIPPY_SCOPE --exclude agentzero-ffi --exclude agentzero-plugin-sdk; then
-        echo ""
-        echo "Tests failed."
-        exit 1
+# Build test scope: filter out crates that hang during test listing.
+SKIP_CRATES="agentzero-ffi agentzero-plugin-sdk"
+TEST_SCOPE=""
+for crate in $CHANGED_CRATES; do
+    skip=false
+    for s in $SKIP_CRATES; do
+        if [ "$crate" = "$s" ]; then skip=true; break; fi
+    done
+    if [ "$skip" = false ]; then
+        TEST_SCOPE="$TEST_SCOPE -p $crate"
     fi
+done
+
+if [ -n "$TEST_SCOPE" ] || [ "$WORKSPACE_MANIFEST_CHANGED" = true ]; then
+    if [ "$WORKSPACE_MANIFEST_CHANGED" = true ] && [ -z "$TEST_SCOPE" ]; then
+        TEST_SCOPE="--workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk"
+    fi
+    echo "Running tests..."
+    if command -v cargo-nextest &>/dev/null; then
+        # shellcheck disable=SC2086
+        if ! cargo nextest run --no-fail-fast $TEST_SCOPE; then
+            echo ""
+            echo "Tests failed."
+            exit 1
+        fi
+    else
+        # shellcheck disable=SC2086
+        if ! cargo test $TEST_SCOPE; then
+            echo ""
+            echo "Tests failed."
+            exit 1
+        fi
+    fi
+    echo "Tests passed"
 else
-    # Fallback to cargo test if nextest not installed
-    # shellcheck disable=SC2086
-    if ! cargo test $CLIPPY_SCOPE; then
-        echo ""
-        echo "Tests failed."
-        exit 1
-    fi
+    echo "No testable crates changed — skipping tests"
 fi
-echo "Tests passed"
 
 echo "All pre-commit checks passed!"

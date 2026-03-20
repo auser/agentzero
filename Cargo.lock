@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-cli",
  "agentzero-core",
@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-auth"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-storage",
  "anyhow",
@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-autopilot"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-bench"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-channels"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-config",
  "agentzero-core",
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-cli"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-auth",
  "agentzero-channels",
@@ -171,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-config"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-core",
  "agentzero-tools",
@@ -190,7 +190,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-config-ui"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-config",
  "agentzero-core",
@@ -210,7 +210,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-ffi"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-core",
  "agentzero-infra",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-gateway"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-channels",
  "agentzero-config",
@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-infra"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-auth",
  "agentzero-autopilot",
@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-lite"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-config",
  "agentzero-core",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-orchestrator"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-channels",
  "agentzero-config",
@@ -363,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-plugin-sdk"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -371,7 +371,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-plugins"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-providers"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -419,7 +419,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-storage"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-core",
  "anyhow",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-testkit"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-core",
  "agentzero-providers",
@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "agentzero-tools"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "agentzero-core",
  "agentzero-providers",
