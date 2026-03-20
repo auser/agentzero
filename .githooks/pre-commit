@@ -77,4 +77,24 @@ if ! cargo clippy --all-targets $CLIPPY_SCOPE -- -D warnings; then
 fi
 echo "Clippy passed"
 
+# ── Tests ─────────────────────────────────────────────────────────────────────
+echo "Running tests..."
+if command -v cargo-nextest &>/dev/null; then
+    # shellcheck disable=SC2086
+    if ! cargo nextest run --no-fail-fast $CLIPPY_SCOPE --exclude agentzero-ffi --exclude agentzero-plugin-sdk; then
+        echo ""
+        echo "Tests failed."
+        exit 1
+    fi
+else
+    # Fallback to cargo test if nextest not installed
+    # shellcheck disable=SC2086
+    if ! cargo test $CLIPPY_SCOPE; then
+        echo ""
+        echo "Tests failed."
+        exit 1
+    fi
+fi
+echo "Tests passed"
+
 echo "All pre-commit checks passed!"
