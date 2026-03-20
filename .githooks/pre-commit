@@ -59,11 +59,11 @@ fi
 
 # ── Clippy auto-fix ───────────────────────────────────────────────────────────
 echo "Auto-fixing clippy warnings in: $SCOPE_DESC..."
-# --allow-staged: permit fixing files that are partially staged.
+# --allow-dirty --allow-staged: fix all files regardless of git state.
 # Ignore exit code — auto-fix may not resolve everything; we verify below.
 # shellcheck disable=SC2086
-cargo clippy --fix --allow-staged --all-targets $CLIPPY_SCOPE -- -D warnings 2>/dev/null || true
-# Re-stage any files modified by clippy --fix
+cargo clippy --fix --allow-dirty --allow-staged --all-targets $CLIPPY_SCOPE -- -D warnings 2>/dev/null || true
+# Re-stage ALL modified files (including ones clippy touched outside the original diff)
 git add -u
 
 # ── Clippy verify ─────────────────────────────────────────────────────────────
