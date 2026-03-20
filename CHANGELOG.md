@@ -7,6 +7,36 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.8.1] - 2026-03-20
+
+### Added
+- MCP Server Mode: expose tools via JSON-RPC over stdio (`agentzero mcp-serve`) and HTTP (`POST /mcp/message`)
+- A2A Protocol: Agent Card discovery (`GET /.well-known/agent.json`), task lifecycle (`POST /a2a`), external agent client
+- Ed25519 plugin signing: `generate_keypair()`, `sign_manifest()`, `verify_manifest()` with CLI commands
+- Semantic memory: `EmbeddingProvider` trait, cosine similarity, `semantic_recall()` on MemoryStore, migration v6
+- API embedding provider: OpenAI-compatible `/v1/embeddings` client
+- `SemanticRecallTool`: vector similarity search over memory entries
+- Privacy-aware model routing: `PrivacyLevel` enum (Local/Cloud/Either) on ModelRoute
+- Declarative YAML security policies: `.agentzero/security-policy.yaml` with per-tool egress/command/filesystem rules
+- 4 vertical agent packages: OSINT analyst, social media manager, browser QA, lead generation
+- Docker CI workflow with ghcr.io publishing
+- E2E Ollama test infrastructure with CI workflow
+- A2A protocol and MCP Server Mode site documentation
+
+### Changed
+- `"private"` privacy mode: blocks network tools, auto-enables Noise Protocol, allows explicit cloud providers
+- agentzero-lite defaults to `--privacy-mode private` with tighter rate limits (120 req/min)
+- `POST /v1/tool-execute` now executes tools for real (no longer a stub)
+- Embedded binary slimmed: plain SQLite + core tools only (~6-7MB, down from 11.7MB)
+- Feature-gated serde_yaml (`yaml-policy`) and ed25519-dalek (`signing`) to reduce embedded size
+- Pre-commit hook: fmt + clippy auto-fix + tests in same commit
+- Branch protection enabled on main (requires PR with passing CI)
+
+### Fixed
+- Parse tool calls from text output for local model compatibility (Ollama, llama.cpp)
+- Exclude FFI + plugin-sdk from test runs to prevent nextest hanging
+- Docker build uses plain SQLite to avoid QEMU cross-compilation failures
+
 ## [0.8.0] - 2026-03-20
 
 ## [0.6.0] - 2026-03-14
