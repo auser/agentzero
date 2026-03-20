@@ -1,6 +1,7 @@
 # AGENTS.md
 
 ## Purpose
+
 Project-level operating rules for all contributors and coding agents working in this repository.
 
 ## Project Values
@@ -15,11 +16,13 @@ Project-level operating rules for all contributors and coding agents working in 
 8. **Idiomatic Rust** — always follow Rust best-practices; prefer generated code, builder patterns, trait-based dispatch, and macros over manual boilerplate.
 
 ## Core Principle: Privacy & Security First
+
 Privacy and security are foundational to every decision in this project. They are not optional, not deferrable, and not someone else's concern. Every contributor and agent must consider the privacy and security implications of every change — whether it touches authentication, data handling, network calls, CLI output, logging, error messages, or any other surface. When in doubt, fail closed, encrypt by default, and ask before exposing. This principle applies at all times, in all contexts, without exception.
 
 ## Required Workflow Rules
 
 ### 1) Comprehensive tests for every functionality change
+
 - Every feature (new or updated) must include **comprehensive** tests in the same PR — not just the minimum, but enough to give real confidence in correctness.
 - Every bug fix must include a regression test that fails before and passes after the fix.
 - Required minimum per change:
@@ -36,6 +39,7 @@ Privacy and security are foundational to every decision in this project. They ar
   - If a test is truly not feasible, the agent must explicitly state why and propose the nearest practical regression check.
 
 ### 2) Keep sprint plan current at all times
+
 - `specs/SPRINT.md` is the source of truth for execution status.
 - When starting work:
 - Mark task status from `[ ]` to `[-]`.
@@ -45,6 +49,7 @@ Privacy and security are foundational to every decision in this project. They ar
 - If scope changes, update `specs/SPRINT.md` before implementation.
 
 ### 3) Definition of done enforcement
+
 - A task is done only if:
 - Code is implemented.
 - High-coverage tests exist and pass (see rule 1 for minimum requirements).
@@ -54,17 +59,20 @@ Privacy and security are foundational to every decision in this project. They ar
 - **Site docs are mandatory**: Every code change that adds, modifies, or removes user-facing behavior (config options, CLI flags, privacy modes, tool changes, API endpoints) must include corresponding updates to the relevant site docs. This includes guides, config references, and the README if applicable. Do not consider a task done until docs reflect the current state.
 
 ### 4) Quality gates (must pass before merge)
+
 - `cargo fmt --all`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
 - **Clippy is mandatory**: Agents must run clippy after every code change and fix all warnings/errors before committing. Do not leave clippy issues for later — they block all other work. If a pre-commit hook catches clippy failures, fix them immediately and create a new commit (do not amend).
 
 ### 5) Architecture and scope discipline
+
 - Follow current scope in `docs/adr/0001-scope.md`.
 - Do not add daemon/channels/hardware/plugin/RAG work unless explicitly scheduled in sprint docs.
 - Any major scope/module expansion requires ADR update.
 
 ### 6) Crate boundary policy (major module per crate)
+
 - When practical, each major functionality module must live in its own crate.
 - Examples of major modules:
 - config, provider implementation, memory backend, tools by risk domain, observability, runtime orchestration.
@@ -73,6 +81,7 @@ Privacy and security are foundational to every decision in this project. They ar
 - very small glue logic that would add churn if split; exception must be documented in `specs/SPRINT.md`.
 
 ### 7) Security is P0 and blocks feature work
+
 - Security tasks in `Sprint 0` are highest priority and must be completed before non-critical expansion.
 - Any new feature that increases attack surface requires:
 - threat model update in **both** `docs/security/THREAT_MODEL.md` and `site/src/content/docs/security/threat-model.md`
@@ -81,6 +90,7 @@ Privacy and security are foundational to every decision in this project. They ar
 - No merge for security-sensitive functionality without tests and policy enforcement.
 
 ### 8) Workspace dependency policy (no per-crate path wiring)
+
 - Internal workspace crates must be declared via workspace dependencies, not direct relative paths.
 - Do this:
 - `agentzero-auth = { workspace = true }`
@@ -95,6 +105,7 @@ Privacy and security are foundational to every decision in this project. They ar
 - reference it from subcrates with `{ workspace = true }`
 
 ### 9) Persistence policy (use `agentzero-storage`)
+
 - All persisted application state must use `agentzero-storage`.
 - Do not add new direct persistence paths in CLI/domain code using ad-hoc `std::fs` JSON/TOML writes for runtime state.
 - Persistence implementations must go through storage abstractions provided by `agentzero-storage` (encrypted-at-rest where applicable).
@@ -103,6 +114,7 @@ Privacy and security are foundational to every decision in this project. They ar
 - a negative-path test for malformed/legacy payload handling
 
 ### 10) Rust best-practices (always follow)
+
 All code must follow idiomatic Rust. These are not suggestions — they are mandatory:
 - **Common crate first**: Shared types, utilities, and constants belong in `agentzero-common`. Before adding a helper to a domain crate, check whether it already exists in common or belongs there.
 - **Builder pattern for complex construction**: Functions or constructors that accept more than 3–4 parameters must use a builder struct (or a dedicated config/options struct with `Default`) instead of long argument lists. Prefer structs over positional arguments for clarity.
@@ -120,10 +132,12 @@ All code must follow idiomatic Rust. These are not suggestions — they are mand
 - **`where` clauses for readability**: Use `where` clauses (not inline bounds) when generic constraints span more than one trait bound.
 
 ### 11) Screenshots saved to `/tmp`
+
 - When taking screenshots (browser, UI verification, etc.), always save images to the `/tmp` directory.
 - Do not save screenshot files in the repository root or any tracked directory.
 
 ### 12) Keep `site/` documentation current
+
 - Any change that affects user-facing behavior must include corresponding updates to the documentation site in `site/src/content/docs/`.
 - Code-to-docs mapping — update the matching page(s) when you change:
   - CLI commands or flags → `site/src/content/docs/reference/cli-commands.md`
@@ -139,6 +153,7 @@ All code must follow idiomatic Rust. These are not suggestions — they are mand
   - If no documentation update is needed, the agent must explicitly state why.
 
 ### 13) Holistic problem-solving (no band-aids)
+
 - When encountering a bug, failure, or design problem, **do not patch the immediate symptom**. Step back, identify the root cause, and propose a solution that addresses the underlying issue.
 - Think like a principal systems architect:
   - Map the full blast radius of the problem — what else does it affect?
@@ -157,6 +172,7 @@ All code must follow idiomatic Rust. These are not suggestions — they are mand
 - If the proper fix is large, scope it explicitly and propose a phased plan — but never substitute a band-aid for phase 1.
 
 ## Preferred PR Checklist
+
 - [ ] Functionality implemented
 - [ ] Success-path tests added
 - [ ] Negative-path tests added
