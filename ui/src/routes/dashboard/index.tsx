@@ -1,11 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { runsApi } from '@/lib/api/runs'
+import { healthApi } from '@/lib/api/health'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { RegressionBanner } from '@/components/shared/RegressionBanner'
 import { Button } from '@/components/ui/button'
 import { Link } from '@tanstack/react-router'
-import { MessageSquare, PlayCircle, AlertTriangle, GitBranch } from 'lucide-react'
+import { MessageSquare, PlayCircle, AlertTriangle, GitBranch, WifiOff } from 'lucide-react'
 import { useState } from 'react'
 import { WorkflowTopology } from '@/components/dashboard/WorkflowTopology'
 import { SystemHealthBar } from '@/components/dashboard/SystemHealthBar'
@@ -23,10 +24,32 @@ function DashboardPage() {
   const [estopOpen, setEstopOpen] = useState(false)
   const queryClient = useQueryClient()
 
+  const { data: health, isError: gatewayDown } = useQuery({
+    queryKey: ['health'],
+    queryFn: () => healthApi.get(),
+    refetchInterval: 5_000,
+    retry: false,
+  })
+
   const estopMutation = useMutation({
     mutationFn: runsApi.estop,
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['runs'] }),
   })
+
+  if (gatewayDown && !health) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+        <WifiOff className="h-16 w-16 text-muted-foreground/20 mb-4" />
+        <h2 className="text-lg font-semibold mb-1">Gateway Offline</h2>
+        <p className="text-sm text-muted-foreground mb-4 max-w-md">
+          Cannot connect to the AgentZero gateway. Make sure it&apos;s running and accessible.
+        </p>
+        <code className="text-xs text-muted-foreground/60 bg-muted/30 px-3 py-1.5 rounded font-mono">
+          agentzero gateway --port 42617
+        </code>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-5 max-w-7xl">
