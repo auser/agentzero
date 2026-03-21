@@ -3,7 +3,7 @@
  * Supports drag-drop from the DraggablePalette to add nodes.
  * Shows KeySelector when connecting ports with different types.
  */
-import { useRef, useCallback, useState, type DragEvent } from 'react'
+import { useRef, useCallback, useState, useEffect, type DragEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -33,7 +33,7 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
   const cmdK = useCommandPalette()
 
   const navigate = useNavigate()
-  const { addedNodes, addNode: storeAddNode, addEdge: storeAddEdge, clear: storeClear } = useWorkflowStore()
+  const { addedNodes, addNode: storeAddNode, addEdge: storeAddEdge, removeNode: storeRemoveNode, clear: storeClear } = useWorkflowStore()
 
   const { data: topology } = useQuery({
     queryKey: ['topology'],
@@ -50,6 +50,31 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
     ...workflow,
     jobs: [...workflow.jobs, ...addedNodes],
   }
+
+  // Sync deletions: when Delete/Backspace is pressed, check which nodes
+  // were removed from WASM and remove them from the persisted store
+  useEffect(() => {
+    const handler = async (e: KeyboardEvent) => {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Wait a tick for WASM to process the deletion
+        await new Promise((r) => setTimeout(r, 50))
+        if (!graphRef.current) return
+        try {
+          const wasmNodes = await graphRef.current.getNodes()
+          const wasmIds = new Set(wasmNodes.map((n) => n.id))
+          for (const node of addedNodes) {
+            if (!wasmIds.has(node.id)) {
+              storeRemoveNode(node.id)
+            }
+          }
+        } catch {
+          // WASM might not be ready
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [addedNodes, storeRemoveNode])
 
   // Look up port type for a given node+port
   const getPortType = useCallback(
