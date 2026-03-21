@@ -134,12 +134,22 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
   const handleNodeClick = useCallback(() => {}, [])
 
   const handleNodeDragEnd = useCallback(
-    async (_jobId: string, x: number, y: number) => {
-      // Update position ref immediately so it survives topology resets
+    (_jobId: string, x: number, y: number) => {
+      // Save position directly — don't rely on getState which may fail
       savedPositionsRef.current = { ...savedPositionsRef.current, [_jobId]: [x, y] }
-      await saveCurrentState()
+      // Persist to localStorage via Zustand
+      saveGraphState({
+        version: 1,
+        workflow: { id: 'saved', name: 'saved', trigger: '', jobs: [] },
+        positions: savedPositionsRef.current,
+        edges: [],
+        zoom: 1,
+        pan_x: 0,
+        pan_y: 0,
+      })
+      console.log('[workflow] position saved for', _jobId, 'at', x, y)
     },
-    [saveCurrentState],
+    [saveGraphState],
   )
 
   const handleConnect = useCallback(
@@ -393,27 +403,12 @@ function InitDetector({
   onInit: () => void
 }) {
   useEffect(() => {
-    // Check if getState returns data (means WASM is fully initialized)
-    let attempts = 0
-    const check = setInterval(async () => {
-      attempts++
-      try {
-        const state = await graphRef.current?.getState()
-        if (state) {
-          console.log('[workflow] WASM initialized after', attempts, 'checks')
-          onInit()
-          clearInterval(check)
-        }
-      } catch {
-        // Not ready yet
-      }
-      if (attempts > 30) {
-        console.log('[workflow] init timeout — forcing initialized')
-        onInit()
-        clearInterval(check)
-      }
-    }, 500)
-    return () => clearInterval(check)
+    // Wait for WASM to initialize (setWorkflow is async, takes ~1s)
+    const timer = setTimeout(() => {
+      console.log('[workflow] init timer fired')
+      onInit()
+    }, 2000)
+    return () => clearTimeout(timer)
   }, [graphRef, onInit])
   return null
 }
