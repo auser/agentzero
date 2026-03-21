@@ -2,7 +2,7 @@
  * Interactive workflow topology visualization powered by workflow-graph WASM.
  * Supports drag-drop from the DraggablePalette to add nodes.
  */
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useState, type DragEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   WorkflowGraphComponent,
@@ -18,6 +18,7 @@ import type { DragNodeData } from '@/components/workflows/DraggablePalette'
 
 export function WorkflowTopology() {
   const graphRef = useRef<WorkflowGraphHandle>(null)
+  const [dragOver, setDragOver] = useState(false)
 
   const { data: topology } = useQuery({
     queryKey: ['topology'],
@@ -36,12 +37,25 @@ export function WorkflowTopology() {
     [],
   )
 
+  // Handle drop at React level (not WASM) to avoid borrow issues
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    setDragOver(true)
+  }, [])
+
+  const handleDragLeave = useCallback(() => {
+    setDragOver(false)
+  }, [])
+
   const handleDrop = useCallback(
-    (_x: number, _y: number, data: string) => {
+    (e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      setDragOver(false)
+      const data = e.dataTransfer.getData('application/workflow-node')
       if (!data) return
       try {
         const nodeData: DragNodeData = JSON.parse(data)
-        // Add the dropped node to the graph
         graphRef.current?.addNode({
           id: nodeData.id,
           name: nodeData.name,
@@ -51,8 +65,8 @@ export function WorkflowTopology() {
           metadata: nodeData.metadata,
           ports: nodeData.ports,
         })
-      } catch (e) {
-        console.error('Failed to parse drop data:', e)
+      } catch (err) {
+        console.error('Failed to add dropped node:', err)
       }
     },
     [],
@@ -60,7 +74,14 @@ export function WorkflowTopology() {
 
   if (nodes.length === 0) {
     return (
-      <div className="rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm">
+      <div
+        className={`rounded-lg border bg-card/80 backdrop-blur-sm transition-colors ${
+          dragOver ? 'border-primary/50 bg-primary/5' : 'border-border/50'
+        }`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
           <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
             <Network className="h-3.5 w-3.5" />
@@ -79,7 +100,14 @@ export function WorkflowTopology() {
   }
 
   return (
-    <div className="rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden">
+    <div
+      className={`rounded-lg border bg-card/80 backdrop-blur-sm overflow-hidden transition-colors ${
+        dragOver ? 'border-primary/50' : 'border-border/50'
+      }`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
         <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
           <Network className="h-3.5 w-3.5" />
@@ -132,7 +160,6 @@ export function WorkflowTopology() {
         autoResize
         onNodeClick={handleNodeClick}
         onRenderNode={renderNode}
-        onDrop={handleDrop}
         onError={(err) => console.error('Workflow graph error:', err)}
       />
     </div>
