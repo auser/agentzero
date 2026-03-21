@@ -98,11 +98,14 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
   useEffect(() => {
     if (!initialized || autoSaveMs <= 0) return
     const interval = setInterval(async () => {
-      const state = await graphRef.current?.getState()
-      if (state) {
-        // Update our position ref so topology resets get counteracted
-        savedPositionsRef.current = state.positions
-        saveGraphState(state)
+      try {
+        const state = await graphRef.current?.getState()
+        if (state && state.positions) {
+          savedPositionsRef.current = state.positions
+          saveGraphState(state)
+        }
+      } catch {
+        // getState may fail if WASM not ready
       }
     }, autoSaveMs)
     return () => clearInterval(interval)
@@ -352,7 +355,7 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
         }
       />
 
-      {/* Detect when graph finishes loading */}
+      {/* Detect when graph finishes loading — delay to let setWorkflow complete */}
       <InitDetector graphRef={graphRef} onInit={() => setInitialized(true)} />
 
       {pendingConnection && (
@@ -392,12 +395,18 @@ function InitDetector({
   onInit: () => void
 }) {
   useEffect(() => {
-    const check = setInterval(() => {
-      if (graphRef.current?.instance) {
-        onInit()
-        clearInterval(check)
+    // Check if getState returns data (means WASM is fully initialized)
+    const check = setInterval(async () => {
+      try {
+        const state = await graphRef.current?.getState()
+        if (state) {
+          onInit()
+          clearInterval(check)
+        }
+      } catch {
+        // Not ready yet
       }
-    }, 200)
+    }, 500)
     return () => clearInterval(check)
   }, [graphRef, onInit])
   return null
