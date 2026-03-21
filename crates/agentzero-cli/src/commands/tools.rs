@@ -12,7 +12,13 @@ impl AgentZeroCommand for ToolsCommand {
     type Options = ToolsCommands;
 
     async fn run(ctx: &CommandContext, opts: Self::Options) -> anyhow::Result<()> {
-        let policy = ToolSecurityPolicy::default_for_workspace(ctx.workspace_root.clone());
+        // Load tool policy from user config — not hardcoded defaults
+        let policy =
+            agentzero_config::load_tool_security_policy(&ctx.workspace_root, &ctx.config_path)
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to load tool security policy: {e}, using defaults");
+                    ToolSecurityPolicy::default_for_workspace(ctx.workspace_root.clone())
+                });
         let tools = default_tools(&policy, None, None)?;
 
         match opts {

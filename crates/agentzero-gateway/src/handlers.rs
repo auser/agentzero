@@ -2240,16 +2240,18 @@ pub(crate) async fn get_tools(
 ) -> Result<Json<ToolsResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
-    // Build tool policy from live config (or fallback to defaults)
+    // Build tool policy from user config — warn on failure instead of silent degradation
     let policy = if let Some(ref config_path) = state.config_path {
         let ws_root = config_path
             .parent()
             .unwrap_or(std::path::Path::new("."))
             .to_path_buf();
-        agentzero_config::load_tool_security_policy(&ws_root, config_path).unwrap_or_else(|_| {
+        agentzero_config::load_tool_security_policy(&ws_root, config_path).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "Failed to load tool security policy from config, using defaults");
             agentzero_infra::tools::ToolSecurityPolicy::default_for_workspace(ws_root)
         })
     } else {
+        tracing::debug!("No config path set, using default tool security policy");
         agentzero_infra::tools::ToolSecurityPolicy::default_for_workspace(std::env::temp_dir())
     };
     let tools = agentzero_infra::tools::default_tools(&policy, None, None).unwrap_or_default();
