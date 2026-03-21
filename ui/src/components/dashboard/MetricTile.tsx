@@ -22,6 +22,8 @@ const ACCENT_STYLES = {
   default: 'border-l-border',
 } as const
 
+// Tailwind standard palette — hex required for recharts SVG rendering
+// These match: green-500, blue-500, violet-500, yellow-500, red-500, gray-500
 const SPARKLINE_COLORS = {
   green: '#22c55e',
   blue: '#3b82f6',

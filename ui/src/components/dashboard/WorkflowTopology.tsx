@@ -272,7 +272,7 @@ export function WorkflowTopology() {
       <WorkflowGraphComponent
         ref={graphRef}
         workflow={mergedWorkflow}
-        className="w-full bg-[#0d1117]"
+        className="w-full bg-background"
         style={{ height: 320 }}
         theme={{
           ...darkTheme,

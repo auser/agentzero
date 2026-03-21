@@ -30,7 +30,8 @@ interface PaletteItem {
   category: string
   icon: React.ReactNode
   detail?: string
-  color: string
+  textClass: string
+  bgClass: string
   data: DragNodeData
 }
 
@@ -73,7 +74,8 @@ export function CommandPalette({ open, onClose, onSelect }: CommandPaletteProps)
         category: 'Agent',
         icon: <Bot className="h-3.5 w-3.5" />,
         detail: a.model,
-        color: '#3b82f6',
+        textClass: 'text-blue-500',
+        bgClass: 'bg-blue-500/15',
         data: {
           nodeType: 'agent', id: a.agent_id, name: a.name,
           metadata: { node_type: 'agent', model: a.model, description: a.description, status: a.status },
@@ -89,7 +91,8 @@ export function CommandPalette({ open, onClose, onSelect }: CommandPaletteProps)
         category: 'Tool',
         icon: <Wrench className="h-3.5 w-3.5" />,
         detail: t.description?.slice(0, 40),
-        color: '#8b5cf6',
+        textClass: 'text-violet-500',
+        bgClass: 'bg-violet-500/15',
         data: {
           nodeType: 'tool', id: `tool-${t.name}`, name: t.name,
           metadata: { node_type: 'tool', tool_name: t.name, description: t.description },
@@ -105,7 +108,8 @@ export function CommandPalette({ open, onClose, onSelect }: CommandPaletteProps)
         category: 'Channel',
         icon: <Radio className="h-3.5 w-3.5" />,
         detail: cfg.enabled !== false ? 'connected' : 'offline',
-        color: '#ec4899',
+        textClass: 'text-pink-500',
+        bgClass: 'bg-pink-500/15',
         data: {
           nodeType: 'channel', id: `channel-${name}`, name,
           metadata: { node_type: 'channel', channel_type: name, connected: cfg.enabled !== false },
@@ -221,17 +225,14 @@ export function CommandPalette({ open, onClose, onSelect }: CommandPaletteProps)
                 }}
                 onMouseEnter={() => setSelectedIndex(i)}
               >
-                <span style={{ color: item.color }}>{item.icon}</span>
+                <span className={item.textClass}>{item.icon}</span>
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-medium">{item.name}</span>
                   {item.detail && (
                     <span className="text-xs text-muted-foreground/50 ml-2 truncate">{item.detail}</span>
                   )}
                 </div>
-                <span
-                  className="text-[9px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded"
-                  style={{ color: item.color, background: item.color + '15' }}
-                >
+                <span className={`text-[9px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded ${item.textClass} ${item.bgClass}`}>
                   {item.category}
                 </span>
               </button>

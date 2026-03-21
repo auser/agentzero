@@ -9,6 +9,7 @@ import type { Port } from '@auser/workflow-graph-web'
 import { Bot, Wrench, Radio, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { type DragEvent, useState, useMemo } from 'react'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
+import { NODE_TYPES, type NodeType } from '@/lib/workflow-theme'
 
 interface ToolInfo {
   name: string
@@ -31,12 +32,6 @@ export interface DragNodeData {
   ports: Port[]
 }
 
-const TYPE_STYLES: Record<string, { bg: string; border: string; dot: string }> = {
-  agent: { bg: '#1e293b', border: '#3b82f6', dot: '#3b82f6' },
-  tool: { bg: '#1a1e2e', border: '#8b5cf6', dot: '#8b5cf6' },
-  channel: { bg: '#1e1a2e', border: '#ec4899', dot: '#ec4899' },
-}
-
 function NodeChip({
   data,
   name,
@@ -51,23 +46,15 @@ function NodeChip({
     e.dataTransfer.effectAllowed = 'copy'
   }
 
-  const style = TYPE_STYLES[nodeType] ?? TYPE_STYLES.tool
+  const theme = NODE_TYPES[nodeType as NodeType] ?? NODE_TYPES.tool
 
   return (
     <div
       draggable
       onDragStart={handleDragStart}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md cursor-grab active:cursor-grabbing hover:brightness-125 transition-all select-none text-[11px] font-medium"
-      style={{
-        background: style.bg,
-        border: `1px solid ${style.border}50`,
-        color: '#e5e7eb',
-      }}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border cursor-grab active:cursor-grabbing hover:brightness-125 transition-all select-none text-[11px] font-medium text-foreground ${theme.tailwind.bg} ${theme.tailwind.border}`}
     >
-      <span
-        className="h-2 w-2 rounded-full shrink-0"
-        style={{ background: style.dot }}
-      />
+      <span className={`h-2 w-2 rounded-full shrink-0 ${theme.tailwind.dot}`} />
       {name}
     </div>
   )
@@ -77,14 +64,14 @@ function CollapsibleSection({
   icon,
   label,
   count,
-  color,
+  textClass,
   defaultOpen = true,
   children,
 }: {
   icon: React.ReactNode
   label: string
   count: number
-  color: string
+  textClass: string
   defaultOpen?: boolean
   children: React.ReactNode
 }) {
@@ -96,7 +83,7 @@ function CollapsibleSection({
         onClick={() => setOpen(!open)}
         className="flex items-center justify-between w-full px-3 py-1.5 hover:bg-muted/20 transition-colors"
       >
-        <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color }}>
+        <span className={`flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider ${textClass}`}>
           {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           {icon}
           {label}
@@ -190,7 +177,7 @@ export function DraggablePalette() {
 
       <div className="overflow-y-auto flex-1">
         {filteredAgents.length > 0 && (
-          <CollapsibleSection icon={<Bot className="h-3 w-3" />} label="Agents" count={filteredAgents.length} color="#3b82f6">
+          <CollapsibleSection icon={<Bot className="h-3 w-3" />} label="Agents" count={filteredAgents.length} textClass="text-blue-500">
             {filteredAgents.map((a) => (
               <NodeChip
                 key={a.agent_id}
@@ -212,7 +199,7 @@ export function DraggablePalette() {
             icon={<Wrench className="h-3 w-3" />}
             label={category}
             count={tools.length}
-            color="#8b5cf6"
+            textClass="text-violet-500"
             defaultOpen={tools.length <= 6}
           >
             {tools.map((t) => (
@@ -231,7 +218,7 @@ export function DraggablePalette() {
         ))}
 
         {filteredChannels.length > 0 && (
-          <CollapsibleSection icon={<Radio className="h-3 w-3" />} label="Channels" count={filteredChannels.length} color="#ec4899">
+          <CollapsibleSection icon={<Radio className="h-3 w-3" />} label="Channels" count={filteredChannels.length} textClass="text-pink-500">
             {filteredChannels.map((ch) => (
               <NodeChip
                 key={ch.name}
