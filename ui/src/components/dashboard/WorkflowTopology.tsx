@@ -26,8 +26,6 @@ import { useWorkflowStore } from '@/store/workflowStore'
 
 interface WorkflowTopologyProps {
   fullHeight?: boolean
-  /** Auto-save interval in ms (default 2000). Set to 0 to disable. */
-  autoSaveMs?: number
 }
 
 const THEME = {
@@ -46,7 +44,7 @@ const THEME = {
   },
 }
 
-export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: WorkflowTopologyProps) {
+export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) {
   const graphRef = useRef<WorkflowGraphHandle>(null)
   const [dragOver, setDragOver] = useState(false)
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
@@ -94,35 +92,33 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialized])
 
-  // Auto-save: only save positions from WASM (which includes user's drag changes)
-  useEffect(() => {
-    if (!initialized || autoSaveMs <= 0) return
-    const interval = setInterval(async () => {
-      try {
-        const state = await graphRef.current?.getState()
-        if (state && state.positions) {
-          savedPositionsRef.current = state.positions
-          saveGraphState(state)
-        }
-      } catch {
-        // getState may fail if WASM not ready
+  // Save graph state helper — called on user interactions, not on a timer
+  const saveCurrentState = useCallback(async () => {
+    try {
+      const state = await graphRef.current?.getState()
+      if (state && state.positions) {
+        savedPositionsRef.current = state.positions
+        saveGraphState(state)
+        console.log('[workflow] state saved', Object.keys(state.positions).length, 'positions')
+      } else {
+        console.log('[workflow] getState returned', state ? 'no positions' : 'null')
       }
-    }, autoSaveMs)
-    return () => clearInterval(interval)
-  }, [initialized, autoSaveMs, saveGraphState])
+    } catch (e) {
+      console.log('[workflow] getState error:', e)
+    }
+  }, [saveGraphState])
 
-  // Sync deletions: when Delete/Backspace is pressed, save state
+  // Save on Delete/Backspace
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
       if (e.key === 'Delete' || e.key === 'Backspace') {
         await new Promise((r) => setTimeout(r, 100))
-        const state = await graphRef.current?.getState()
-        if (state) saveGraphState(state)
+        await saveCurrentState()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [saveGraphState])
+  }, [saveCurrentState])
 
   // Look up port type for a given node+port from the current workflow
   const getPortType = useCallback(
@@ -141,11 +137,9 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
     async (_jobId: string, x: number, y: number) => {
       // Update position ref immediately so it survives topology resets
       savedPositionsRef.current = { ...savedPositionsRef.current, [_jobId]: [x, y] }
-      // Save full state
-      const state = await graphRef.current?.getState()
-      if (state) saveGraphState(state)
+      await saveCurrentState()
     },
-    [saveGraphState],
+    [saveCurrentState],
   )
 
   const handleConnect = useCallback(
@@ -167,6 +161,8 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
         })
       } else {
         graphRef.current?.addEdge(fromNodeId, toNodeId, fromPortId, toPortId)
+          .then(() => saveCurrentState())
+          .catch(() => {})
       }
     },
     [getPortType],
@@ -226,7 +222,9 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
           dropX = e.clientX - rect.left
           dropY = e.clientY - rect.top
         }
-        graphRef.current?.addNode(newNode, dropX, dropY).catch(() => {})
+        graphRef.current?.addNode(newNode, dropX, dropY)
+          .then(() => saveCurrentState())
+          .catch(() => {})
       } catch (err) {
         console.error('Failed to add dropped node:', err)
       }
@@ -396,15 +394,23 @@ function InitDetector({
 }) {
   useEffect(() => {
     // Check if getState returns data (means WASM is fully initialized)
+    let attempts = 0
     const check = setInterval(async () => {
+      attempts++
       try {
         const state = await graphRef.current?.getState()
         if (state) {
+          console.log('[workflow] WASM initialized after', attempts, 'checks')
           onInit()
           clearInterval(check)
         }
       } catch {
         // Not ready yet
+      }
+      if (attempts > 30) {
+        console.log('[workflow] init timeout — forcing initialized')
+        onInit()
+        clearInterval(check)
       }
     }, 500)
     return () => clearInterval(check)
