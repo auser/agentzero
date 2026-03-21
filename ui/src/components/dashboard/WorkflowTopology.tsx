@@ -141,13 +141,20 @@ export function WorkflowTopology() {
           metadata: nodeData.metadata,
           ports: nodeData.ports,
         }
-        // Add to local state — the merged workflow will include it on next render,
-        // and the WorkflowGraphComponent will update via the workflow prop change.
-        // Also try addNode directly for immediate visual feedback.
+
+        // Convert drop position to graph-space coordinates
+        const canvas = (e.currentTarget as HTMLElement).querySelector('canvas')
+        let dropX: number | undefined
+        let dropY: number | undefined
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect()
+          // Approximate graph-space position (ignoring pan/zoom for now)
+          dropX = e.clientX - rect.left
+          dropY = e.clientY - rect.top
+        }
+
         setAddedNodes((prev) => [...prev, newNode])
-        graphRef.current?.addNode(newNode).catch(() => {
-          // If WASM call fails (stale graph instance), the node will still appear
-          // on next render via the updated mergedWorkflow prop
+        graphRef.current?.addNode(newNode, dropX, dropY).catch(() => {
           console.log('addNode WASM call failed, node will appear on next render')
         })
       } catch (err) {
