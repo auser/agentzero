@@ -9,11 +9,11 @@ importers:
   .:
     dependencies:
       '@auser/workflow-graph-react':
-        specifier: 0.8.5
-        version: 0.8.5(@auser/workflow-graph-web@0.8.5)(react@19.2.4)
+        specifier: 0.9.0
+        version: 0.9.0(@auser/workflow-graph-web@0.9.0)(react@19.2.4)
       '@auser/workflow-graph-web':
-        specifier: 0.8.5
-        version: 0.8.5
+        specifier: 0.9.0
+        version: 0.9.0
       '@radix-ui/react-accordion':
         specifier: ^1.2.12
         version: 1.2.12(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -132,15 +132,15 @@ importers:
 
 packages:
 
-  '@auser/workflow-graph-react@0.8.5':
-    resolution: {integrity: sha512-jzvbghkr0WPO+JnDrp13jGSxXZFDkCB3oFUYhENXvFuWzXdoe/xnrPkReY9/RAxo6pCU59o8ltxMk3ou+JNcCg==}
+  '@auser/workflow-graph-react@0.9.0':
+    resolution: {integrity: sha512-pPSlU0nL7qHE7d/tMpsJ8mEeh9ADC6U8Fqqx6tbhp0AP28XLeuk3sfPFjFTjvgx/k2EPwWU+4IhOBkm9FpA5zg==}
     engines: {node: '>=18'}
     peerDependencies:
       '@auser/workflow-graph-web': ^0.4.0
       react: ^18.0.0 || ^19.0.0
 
-  '@auser/workflow-graph-web@0.8.5':
-    resolution: {integrity: sha512-LXmTcmB5/DO3h90l5SeCRUxhWCaKDpMx/1zXxtmg0f8cCRPN1LlEiUymJiQLup7F/kTAKVGRhCJwNNJMez+Dzg==}
+  '@auser/workflow-graph-web@0.9.0':
+    resolution: {integrity: sha512-0JjqBRjm+u54vXq6W9Hk9GmiWvqVifnj9YEUryTu7cGGqJ57vFMKj2N/P5gIRgfRvWaKbWjP2XBGXgNWC1waXw==}
     engines: {node: '>=18'}
 
   '@babel/code-frame@7.29.0':
@@ -2356,12 +2356,12 @@ packages:
 
 snapshots:
 
-  '@auser/workflow-graph-react@0.8.5(@auser/workflow-graph-web@0.8.5)(react@19.2.4)':
+  '@auser/workflow-graph-react@0.9.0(@auser/workflow-graph-web@0.9.0)(react@19.2.4)':
     dependencies:
-      '@auser/workflow-graph-web': 0.8.5
+      '@auser/workflow-graph-web': 0.9.0
       react: 19.2.4
 
-  '@auser/workflow-graph-web@0.8.5': {}
+  '@auser/workflow-graph-web@0.9.0': {}
 
   '@babel/code-frame@7.29.0':
     dependencies:

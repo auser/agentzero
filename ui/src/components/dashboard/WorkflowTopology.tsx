@@ -2,6 +2,7 @@
  * Interactive workflow topology visualization powered by workflow-graph WASM.
  * Supports drag-drop from the DraggablePalette to add nodes.
  * Shows KeySelector when connecting ports with different types.
+ * Persists full graph state via workflow-graph's getState/loadState API.
  */
 import { useRef, useCallback, useState, useEffect, type DragEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -22,18 +23,37 @@ import { CommandPalette, useCommandPalette } from '@/components/workflows/Comman
 import { useWorkflowStore } from '@/store/workflowStore'
 
 interface WorkflowTopologyProps {
-  /** When true, fills parent height instead of using fixed 320px */
   fullHeight?: boolean
 }
+
+const THEME = {
+  ...darkTheme,
+  layout: {
+    node_width: 220,
+    node_height: 100,
+    node_radius: 8,
+    h_gap: 80,
+    v_gap: 40,
+    header_height: 0,
+    padding: 30,
+    junction_dot_radius: 3.5,
+    status_icon_radius: 6,
+    status_icon_margin: 8,
+  },
+}
+
+/** Auto-save interval in ms */
+const AUTOSAVE_INTERVAL = 2000
 
 export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) {
   const graphRef = useRef<WorkflowGraphHandle>(null)
   const [dragOver, setDragOver] = useState(false)
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
+  const [initialized, setInitialized] = useState(false)
   const cmdK = useCommandPalette()
-
   const navigate = useNavigate()
-  const { addedNodes, nodePositions, addNode: storeAddNode, addEdge: storeAddEdge, removeNode: storeRemoveNode, savePositions: storeSavePositions, clear: storeClear } = useWorkflowStore()
+
+  const { graphState, saveGraphState, clear: storeClear } = useWorkflowStore()
 
   const { data: topology } = useQuery({
     queryKey: ['topology'],
@@ -45,129 +65,92 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
   const edges = topology?.edges ?? []
   const workflow = topologyToWorkflow(nodes, edges)
 
-  // Merge topology nodes with manually added nodes
-  const mergedWorkflow = {
-    ...workflow,
-    jobs: [...workflow.jobs, ...addedNodes],
-  }
+  // Restore saved state after the graph initializes
+  useEffect(() => {
+    if (!initialized || !graphRef.current || !graphState) return
+    const timer = setTimeout(() => {
+      graphRef.current?.loadState(graphState).catch(() => {})
+    }, 300)
+    return () => clearTimeout(timer)
+    // Only run once after init
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialized])
 
-  // Sync deletions: when Delete/Backspace is pressed, check which nodes
-  // were removed from WASM and remove them from the persisted store
+  // Auto-save graph state periodically
+  useEffect(() => {
+    if (!initialized) return
+    const interval = setInterval(async () => {
+      const state = await graphRef.current?.getState()
+      if (state) saveGraphState(state)
+    }, AUTOSAVE_INTERVAL)
+    return () => clearInterval(interval)
+  }, [initialized, saveGraphState])
+
+  // Sync deletions: when Delete/Backspace is pressed, save state
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        // Wait a tick for WASM to process the deletion
-        await new Promise((r) => setTimeout(r, 50))
-        if (!graphRef.current) return
-        try {
-          const wasmNodes = await graphRef.current.getNodes()
-          const wasmIds = new Set(wasmNodes.map((n) => n.id))
-          for (const node of addedNodes) {
-            if (!wasmIds.has(node.id)) {
-              storeRemoveNode(node.id)
-            }
-          }
-        } catch {
-          // WASM might not be ready
-        }
+        await new Promise((r) => setTimeout(r, 100))
+        const state = await graphRef.current?.getState()
+        if (state) saveGraphState(state)
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [addedNodes, storeRemoveNode])
+  }, [saveGraphState])
 
-  // Look up port type for a given node+port
+  // Look up port type for a given node+port from the current workflow
   const getPortType = useCallback(
     (nodeId: string, portId: string): string => {
-      const job = mergedWorkflow.jobs.find((j) => j.id === nodeId)
+      const job = workflow.jobs.find((j) => j.id === nodeId)
       if (!job?.ports) return ''
       const port = job.ports.find((p) => p.id === portId)
       return port?.port_type ?? ''
     },
-    [mergedWorkflow.jobs],
+    [workflow.jobs],
   )
 
-  const handleNodeClick = useCallback(
-    (_jobId: string) => {
-      // no-op: selection handled internally by the graph
-    },
-    [],
-  )
+  const handleNodeClick = useCallback(() => {}, [])
 
-  // Save node position when dragged
   const handleNodeDragEnd = useCallback(
-    (jobId: string, x: number, y: number) => {
-      storeSavePositions({ [jobId]: [x, y] })
+    async () => {
+      // Save state after drag
+      const state = await graphRef.current?.getState()
+      if (state) saveGraphState(state)
     },
-    [storeSavePositions],
+    [saveGraphState],
   )
-
-  // Restore saved positions after graph initializes
-  useEffect(() => {
-    if (Object.keys(nodePositions).length > 0 && graphRef.current) {
-      const timer = setTimeout(() => {
-        graphRef.current?.setNodePositions(nodePositions).catch(() => {})
-      }, 500)
-      return () => clearTimeout(timer)
-    }
-  }, [nodePositions])
 
   const handleConnect = useCallback(
     (fromNodeId: string, fromPortId: string, toNodeId: string, toPortId: string) => {
-      console.log('onConnect fired:', { fromNodeId, fromPortId, toNodeId, toPortId })
       const fromType = getPortType(fromNodeId, fromPortId)
       const toType = getPortType(toNodeId, toPortId)
-      console.log('Port types:', { fromType, toType, fromNodeId, fromPortId, toNodeId, toPortId })
 
-      // Show key selector for any cross-type connection
-      const needsTransform =
-        fromType !== toType && fromType !== '' && toType !== ''
+      const needsTransform = fromType !== toType && fromType !== '' && toType !== ''
 
       if (needsTransform) {
         setPendingConnection({
-          fromNodeId,
-          fromPortId,
-          fromPortType: fromType,
-          toNodeId,
-          toPortId,
-          toPortType: toType,
+          fromNodeId, fromPortId, fromPortType: fromType,
+          toNodeId, toPortId, toPortType: toType,
         })
       } else if (fromType === '' || toType === '') {
-        // Unknown port types — show selector as a fallback
         setPendingConnection({
-          fromNodeId,
-          fromPortId,
-          fromPortType: fromType || 'unknown',
-          toNodeId,
-          toPortId,
-          toPortType: toType || 'unknown',
+          fromNodeId, fromPortId, fromPortType: fromType || 'unknown',
+          toNodeId, toPortId, toPortType: toType || 'unknown',
         })
       } else {
-        // Same type — direct connection
         graphRef.current?.addEdge(fromNodeId, toNodeId, fromPortId, toPortId)
-        storeAddEdge({ fromNodeId, fromPortId, toNodeId, toPortId })
       }
     },
-    [getPortType, storeAddEdge],
+    [getPortType],
   )
 
   const handleConnectionConfirm = useCallback(
     (conn: PendingConnection, keyPath: string | null) => {
       const metadata = keyPath ? { transform: `$.${keyPath}` } : undefined
       graphRef.current?.addEdge(
-        conn.fromNodeId,
-        conn.toNodeId,
-        conn.fromPortId,
-        conn.toPortId,
-        metadata,
+        conn.fromNodeId, conn.toNodeId, conn.fromPortId, conn.toPortId, metadata,
       ).catch(() => {})
-      storeAddEdge({
-        fromNodeId: conn.fromNodeId,
-        fromPortId: conn.fromPortId,
-        toNodeId: conn.toNodeId,
-        toPortId: conn.toPortId,
-        metadata,
-      })
       setPendingConnection(null)
     },
     [],
@@ -177,34 +160,24 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
     setPendingConnection(null)
   }, [])
 
-  // Handle Cmd+K node selection
   const handleCmdKSelect = useCallback(
     (data: DragNodeData) => {
       const newNode: Job = {
-        id: data.id,
-        name: data.name,
-        status: 'queued',
-        command: '',
-        depends_on: [],
-        metadata: data.metadata,
-        ports: data.ports,
+        id: data.id, name: data.name, status: 'queued', command: '',
+        depends_on: [], metadata: data.metadata, ports: data.ports,
       }
-      storeAddNode(newNode)
       graphRef.current?.addNode(newNode).catch(() => {})
     },
-    [storeAddNode],
+    [],
   )
 
-  // Handle drop at React level (not WASM) to avoid borrow issues
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
     setDragOver(true)
   }, [])
 
-  const handleDragLeave = useCallback(() => {
-    setDragOver(false)
-  }, [])
+  const handleDragLeave = useCallback(() => setDragOver(false), [])
 
   const handleDrop = useCallback(
     (e: DragEvent<HTMLDivElement>) => {
@@ -215,16 +188,9 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
       try {
         const nodeData: DragNodeData = JSON.parse(data)
         const newNode: Job = {
-          id: nodeData.id,
-          name: nodeData.name,
-          status: 'queued',
-          command: '',
-          depends_on: [],
-          metadata: nodeData.metadata,
-          ports: nodeData.ports,
+          id: nodeData.id, name: nodeData.name, status: 'queued', command: '',
+          depends_on: [], metadata: nodeData.metadata, ports: nodeData.ports,
         }
-
-        // Get drop position relative to canvas
         const canvas = (e.currentTarget as HTMLElement).querySelector('canvas')
         let dropX: number | undefined
         let dropY: number | undefined
@@ -233,11 +199,7 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
           dropX = e.clientX - rect.left
           dropY = e.clientY - rect.top
         }
-
-        storeAddNode(newNode)
-        graphRef.current?.addNode(newNode, dropX, dropY).catch(() => {
-          // Node persisted in store, will appear on next render
-        })
+        graphRef.current?.addNode(newNode, dropX, dropY).catch(() => {})
       } catch (err) {
         console.error('Failed to add dropped node:', err)
       }
@@ -245,12 +207,18 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
     [],
   )
 
-  const isEmpty = nodes.length === 0 && addedNodes.length === 0
+  const handleClear = useCallback(() => {
+    storeClear()
+    window.location.reload()
+  }, [storeClear])
+
+  const nodeCount = workflow.jobs.length + (graphState?.workflow?.jobs?.length ?? 0)
+  const isEmpty = nodes.length === 0 && !graphState
 
   if (isEmpty) {
     return (
       <div
-        className={`rounded-lg border bg-card/80 backdrop-blur-sm transition-colors relative ${
+        className={`rounded-lg border bg-card/80 backdrop-blur-sm transition-colors relative ${fullHeight ? 'h-full flex flex-col' : ''} ${
           dragOver ? 'border-primary/50 bg-primary/5' : 'border-border/50'
         }`}
         onDragOver={handleDragOver}
@@ -288,14 +256,14 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
           <Network className="h-3.5 w-3.5" />
           Workflow Topology
           <span className="text-[10px] text-muted-foreground/60 normal-case tracking-normal font-normal">
-            {mergedWorkflow.jobs.length} node{mergedWorkflow.jobs.length !== 1 ? 's' : ''} · {edges.length} connection{edges.length !== 1 ? 's' : ''}
+            {nodeCount} node{nodeCount !== 1 ? 's' : ''}
           </span>
         </h3>
         <div className="flex items-center gap-1">
-          {addedNodes.length > 0 && (
+          {graphState && (
             <button
-              onClick={storeClear}
-              className="flex items-center gap-1 h-7 px-2 text-[10px] text-muted-foreground/40 hover:text-red-400 bg-muted/20 hover:bg-red-500/10 rounded border border-border/30 transition-colors"
+              onClick={handleClear}
+              className="flex items-center gap-1 h-7 px-2 text-[10px] text-muted-foreground/40 hover:text-destructive bg-muted/20 hover:bg-destructive/10 rounded border border-border/30 transition-colors"
               title="Clear added nodes"
             >
               Clear
@@ -330,32 +298,27 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
       </div>
       <WorkflowGraphComponent
         ref={graphRef}
-        workflow={mergedWorkflow}
+        workflow={workflow}
         className={`w-full bg-background ${fullHeight ? 'flex-1' : ''}`}
         style={fullHeight ? undefined : { height: 320 }}
-        theme={{
-          ...darkTheme,
-          layout: {
-            node_width: 220,
-            node_height: 100,
-            node_radius: 8,
-            h_gap: 80,
-            v_gap: 40,
-            header_height: 0,
-            padding: 30,
-            junction_dot_radius: 3.5,
-            status_icon_radius: 6,
-            status_icon_margin: 8,
-          },
-        }}
+        theme={THEME}
         autoResize
         onNodeClick={handleNodeClick}
         onNodeDragEnd={handleNodeDragEnd}
         onConnect={handleConnect}
-        onError={(err) => console.error('Workflow graph error:', err)}
+        onError={() => {
+          if (!initialized) setInitialized(true)
+        }}
+        loadingSkeleton={
+          <div className="flex items-center justify-center h-full text-muted-foreground/30 text-sm">
+            Loading graph...
+          </div>
+        }
       />
 
-      {/* Key selector overlay */}
+      {/* Detect when graph finishes loading */}
+      <InitDetector graphRef={graphRef} onInit={() => setInitialized(true)} />
+
       {pendingConnection && (
         <KeySelector
           connection={pendingConnection}
@@ -364,7 +327,6 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         />
       )}
 
-      {/* Cmd+K command palette */}
       <CommandPalette
         open={cmdK.open}
         onClose={cmdK.onClose}
@@ -373,4 +335,24 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
       />
     </div>
   )
+}
+
+/** Detects when the graph finishes initializing by polling for the canvas. */
+function InitDetector({
+  graphRef,
+  onInit,
+}: {
+  graphRef: React.RefObject<WorkflowGraphHandle | null>
+  onInit: () => void
+}) {
+  useEffect(() => {
+    const check = setInterval(() => {
+      if (graphRef.current?.instance) {
+        onInit()
+        clearInterval(check)
+      }
+    }, 200)
+    return () => clearInterval(check)
+  }, [graphRef, onInit])
+  return null
 }
