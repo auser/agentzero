@@ -1,9 +1,9 @@
 /**
  * Interactive workflow topology visualization powered by workflow-graph WASM.
+ * Supports drag-drop from the DraggablePalette to add nodes.
  */
 import { useRef, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
 import {
   WorkflowGraphComponent,
   type WorkflowGraphHandle,
@@ -14,10 +14,10 @@ import { topologyToWorkflow } from '@/components/workflows/WorkflowCanvas'
 import { renderNode } from '@/components/workflows/NodeRenderer'
 import { Button } from '@/components/ui/button'
 import { Maximize2, RotateCcw, Network } from 'lucide-react'
+import type { DragNodeData } from '@/components/workflows/DraggablePalette'
 
 export function WorkflowTopology() {
   const graphRef = useRef<WorkflowGraphHandle>(null)
-  const navigate = useNavigate()
 
   const { data: topology } = useQuery({
     queryKey: ['topology'],
@@ -29,18 +29,33 @@ export function WorkflowTopology() {
   const edges = topology?.edges ?? []
   const workflow = topologyToWorkflow(nodes, edges)
 
-  // Single click selects the node (handled by workflow-graph internally).
-  // We don't navigate on single click — the user asked for double-click only.
   const handleNodeClick = useCallback(
     (_jobId: string) => {
-      // no-op: selection is handled internally by the graph
+      // no-op: selection handled internally by the graph
     },
     [],
   )
 
-  // TODO: workflow-graph doesn't expose onNodeDoubleClick yet.
-  // For now, users navigate via the "Manage" link in AgentStatusPanel.
-  void navigate
+  const handleDrop = useCallback(
+    (_x: number, _y: number, data: string) => {
+      if (!data) return
+      try {
+        const nodeData: DragNodeData = JSON.parse(data)
+        // Add the dropped node to the graph
+        graphRef.current?.addNode({
+          id: nodeData.id,
+          name: nodeData.name,
+          status: 'queued',
+          command: '',
+          depends_on: [],
+          metadata: nodeData.metadata,
+        })
+      } catch (e) {
+        console.error('Failed to parse drop data:', e)
+      }
+    },
+    [],
+  )
 
   if (nodes.length === 0) {
     return (
@@ -55,7 +70,7 @@ export function WorkflowTopology() {
           <Network className="h-10 w-10 mb-3 opacity-20" />
           <p className="text-sm">No agents configured</p>
           <p className="text-xs text-muted-foreground/60 mt-1">
-            Add agents to visualize your workflow topology
+            Drag agents, tools, or channels from the palette to build your workflow
           </p>
         </div>
       </div>
@@ -116,6 +131,7 @@ export function WorkflowTopology() {
         autoResize
         onNodeClick={handleNodeClick}
         onRenderNode={renderNode}
+        onDrop={handleDrop}
         onError={(err) => console.error('Workflow graph error:', err)}
       />
     </div>
