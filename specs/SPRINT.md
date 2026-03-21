@@ -1344,33 +1344,50 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 
 ### Phase 3: Builder Features (HIGH)
 
-- [x] **Graph persistence** — Full state (nodes, positions, edges, zoom, pan) persisted via workflow-graph's `getState()`/`loadState()` API. Auto-saves every 2s. Immediate save on delete/drag. Stored in localStorage via Zustand persist.
 - [x] **User config audit** — `GET /v1/tools` and CLI `tools list` now use user config instead of hardcoded defaults. All default policy fallback locations audited and fixed.
-- [ ] **Server-side persistence** — `PUT/GET /v1/workflows` API to store graph in SQLite. Maps to `SwarmConfig`.
-- [ ] **NodePopover** — Click node → inline Radix Popover with name, type badge, key fields.
-- [ ] **NodeInspector** — Double-click → right-side Radix Sheet with full property form per node type.
+- [x] **Create Agent dialog** — inline from Cmd+K, creates via POST /v1/agents.
+- [x] **Config toggles panel** — settings gear in toolbar, tool enable/disable, saves via PUT /v1/config.
+- [x] **Compound nodes data model** — `children: Option<Vec<Job>>`, `collapsed: bool` on Job. WASM `group_selected`, `ungroup_node`, `toggle_collapse`. Ctrl+G keyboard shortcut. Published in workflow-graph v1.0.0.
+- [x] **Palette: channels/schedules/gates** — always-visible common channel types (slack, discord, telegram, email, webhook, chat), cron schedule, approval gate nodes.
+- [x] **initialPositions prop** — positions flow as a prop to WorkflowGraphComponent, applied after setWorkflow and every topology poll. No timers. Published in workflow-graph v1.0.1.
+
+**Known Bugs (must fix next):**
+- [ ] **BUG: Dropped nodes don't persist** — nodes from palette/Cmd+K disappear on refresh. Root cause: `getState()` returns null because `WorkflowGraph.initialized` stays false when `setWorkflow` fails silently (theme parse error). Need to either fix WASM lifecycle or manage all state in React.
+- [ ] **BUG: Connections don't persist** — port-to-port edges disappear on refresh. Same root cause as above.
+- [ ] **BUG: Node positions flicker** — topology poll resets layout, `initialPositions` counteracts but causes a visual flash.
+
+**Remaining Features:**
+- [ ] **Drag-select box** — rubber-band selection for multi-select.
+- [ ] **Compound node rendering** — collapsed single-node view, expanded with dashed border.
+- [ ] **Server-side persistence** — `PUT/GET /v1/workflows` API to store graph in SQLite.
+- [ ] **NodePopover** — Click node → inline popover with editable fields.
+- [ ] **NodeInspector** — Double-click → right-side sheet with full property form.
 - [ ] **WorkflowToolbar** — Save, Deploy, Export TOML, Import, Auto-layout, Zoom.
 - [ ] **QuickCreateWizard** — 6-step wizard: name → agent → tools → channel → schedule → review.
-- [ ] **Serialization** — Builder ↔ SwarmConfig round-trip (toSwarmConfig + loadFromSwarmConfig).
-- [ ] **Production node design** — chaiNNer/LangChain-style: colored headers, inline fields, dropdowns, code blocks, previews, multi-select, compound nodes (`specs/plans/27`, `specs/plans/28`).
+- [ ] **Serialization** — Builder ↔ SwarmConfig round-trip.
+- [ ] **Production node design** — chaiNNer/LangChain-style (`specs/plans/27`, `specs/plans/28`).
 
 ---
 
 ### Acceptance Criteria (Sprint 60)
 
-- [x] workflow-graph v0.9.0 published with ports, drag-drop, delete, getState/loadState
+- [x] workflow-graph v1.0.1 published with ports, drag-drop, delete, compound nodes, initialPositions
 - [x] Dashboard renders live topology with typed ports and node visuals
 - [x] Drag-drop: agents/tools/channels from palette → canvas creates nodes with ports
 - [x] Port-to-port connection dragging (output → input) with bezier preview
 - [x] KeySelector popup for cross-type connections
-- [x] Delete/Backspace removes selected nodes (synced to store)
-- [x] Graph state persists across refresh (nodes, positions, edges, zoom, pan)
+- [x] Delete/Backspace removes selected nodes
 - [x] Cmd+K command palette with fuzzy search and "Create new agent"
 - [x] Dedicated /workflows full-screen graph view
 - [x] Gateway offline page with auto-recovery
 - [x] All tools/CLI use user config (not hardcoded defaults)
+- [x] Create Agent dialog and Config toggles panel
+- [x] Channels, schedules, gates in palette
+- [ ] **Dropped nodes and connections persist across refresh**
+- [ ] Drag-select box for multi-select
+- [ ] Compound node rendering (collapsed/expanded)
 - [ ] Server-side workflow persistence API
-- [ ] Blender-style node rendering (specs/plans/27)
+- [ ] Production node design (specs/plans/27, 28)
 - [ ] Round-trip: load SwarmConfig → edit → deploy → reload → no data loss
 - [x] `cargo clippy` — 0 warnings
 - [x] All existing tests pass (51 in workflow-graph, 210+ in agentzero)
