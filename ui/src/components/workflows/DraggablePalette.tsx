@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { agentsApi } from '@/lib/api/agents'
 import { api } from '@/lib/api/client'
 import type { Port } from '@auser/workflow-graph-web'
-import { Bot, Wrench, Radio, ChevronDown, ChevronRight, Search } from 'lucide-react'
+import { Bot, Wrench, Radio, CalendarClock, ShieldCheck, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { type DragEvent, useState, useMemo } from 'react'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
 import { NODE_TYPES, type NodeType } from '@/lib/workflow-theme'
@@ -157,6 +157,56 @@ export function DraggablePalette() {
     return Object.entries(cats).filter(([, tools]) => tools.length > 0)
   }, [filteredTools])
 
+  // Common channel types (always available, even if not configured)
+  const COMMON_CHANNELS = ['slack', 'discord', 'telegram', 'email', 'webhook', 'chat']
+  const allChannelItems: DragNodeData[] = useMemo(() => {
+    const items: DragNodeData[] = []
+    const seen = new Set<string>()
+
+    // Add configured channels first
+    for (const ch of filteredChannels) {
+      seen.add(ch.name)
+      items.push({
+        nodeType: 'channel', id: `channel-${ch.name}`, name: ch.name,
+        metadata: { node_type: 'channel', channel_type: ch.name, connected: ch.connected },
+        ports: portsForNodeType('channel'),
+      })
+    }
+
+    // Add common unconfigured channels
+    for (const name of COMMON_CHANNELS) {
+      if (!seen.has(name) && name.includes(filter)) {
+        items.push({
+          nodeType: 'channel', id: `channel-${name}`, name,
+          metadata: { node_type: 'channel', channel_type: name, connected: false },
+          ports: portsForNodeType('channel'),
+        })
+      }
+    }
+
+    return items
+  }, [filteredChannels, filter])
+
+  // Schedule nodes
+  const filteredSchedules: DragNodeData[] = useMemo(() => {
+    if (!('schedule'.includes(filter) || 'cron'.includes(filter))) return []
+    return [{
+      nodeType: 'channel' as const, id: 'schedule-cron', name: 'cron schedule',
+      metadata: { node_type: 'schedule' },
+      ports: portsForNodeType('schedule'),
+    }]
+  }, [filter])
+
+  // Gate nodes
+  const filteredGates: DragNodeData[] = useMemo(() => {
+    if (!('gate'.includes(filter) || 'approval'.includes(filter))) return []
+    return [{
+      nodeType: 'channel' as const, id: 'gate-approval', name: 'approval gate',
+      metadata: { node_type: 'gate' },
+      ports: portsForNodeType('gate'),
+    }]
+  }, [filter])
+
   return (
     <div className="rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden h-full flex flex-col">
       <div className="px-3 py-2.5 border-b border-border/50">
@@ -217,19 +267,32 @@ export function DraggablePalette() {
           </CollapsibleSection>
         ))}
 
-        {filteredChannels.length > 0 && (
-          <CollapsibleSection icon={<Radio className="h-3 w-3" />} label="Channels" count={filteredChannels.length} textClass="text-pink-500">
-            {filteredChannels.map((ch) => (
-              <NodeChip
-                key={ch.name}
-                name={ch.name}
-                nodeType="channel"
-                data={{
-                  nodeType: 'channel', id: `channel-${ch.name}`, name: ch.name,
-                  metadata: { node_type: 'channel', channel_type: ch.name, connected: ch.connected },
-                  ports: portsForNodeType('channel'),
-                }}
-              />
+        {/* Channels — always show common types + any configured ones */}
+        <CollapsibleSection icon={<Radio className="h-3 w-3" />} label="Channels" count={allChannelItems.length} textClass="text-pink-500">
+          {allChannelItems.map((ch) => (
+            <NodeChip
+              key={ch.id}
+              name={ch.name}
+              nodeType="channel"
+              data={ch}
+            />
+          ))}
+        </CollapsibleSection>
+
+        {/* Schedules */}
+        {filteredSchedules.length > 0 && (
+          <CollapsibleSection icon={<CalendarClock className="h-3 w-3" />} label="Schedules" count={filteredSchedules.length} textClass="text-yellow-500">
+            {filteredSchedules.map((s) => (
+              <NodeChip key={s.id} name={s.name} nodeType="channel" data={s} />
+            ))}
+          </CollapsibleSection>
+        )}
+
+        {/* Gates */}
+        {filteredGates.length > 0 && (
+          <CollapsibleSection icon={<ShieldCheck className="h-3 w-3" />} label="Gates" count={filteredGates.length} textClass="text-red-500">
+            {filteredGates.map((g) => (
+              <NodeChip key={g.id} name={g.name} nodeType="channel" data={g} />
             ))}
           </CollapsibleSection>
         )}

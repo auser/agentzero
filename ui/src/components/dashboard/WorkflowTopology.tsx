@@ -67,14 +67,23 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
   const edges = topology?.edges ?? []
   const workflow = topologyToWorkflow(nodes, edges)
 
-  // Restore saved state after the graph initializes
+  // Restore saved positions after the graph initializes.
+  // We wait longer (1.5s) to let the topology poll settle first,
+  // then re-apply saved positions on top of whatever layout exists.
   useEffect(() => {
     if (!initialized || !graphRef.current || !graphState) return
-    const timer = setTimeout(() => {
-      graphRef.current?.loadState(graphState).catch(() => {})
-    }, 300)
+    const timer = setTimeout(async () => {
+      if (!graphRef.current) return
+      // Restore positions (don't replace workflow — topology manages that)
+      if (graphState.positions && Object.keys(graphState.positions).length > 0) {
+        await graphRef.current.setNodePositions(graphState.positions).catch(() => {})
+      }
+      // Restore zoom and pan
+      if (graphState.zoom && graphState.zoom !== 1) {
+        await graphRef.current.setZoom(graphState.zoom).catch(() => {})
+      }
+    }, 1500)
     return () => clearTimeout(timer)
-    // Only run once after init
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialized])
 
