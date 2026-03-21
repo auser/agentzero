@@ -1349,7 +1349,11 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 - [x] workflow-graph v0.7.2 published with metadata, WASM node CRUD API, ports, drag-drop
 - [x] Dashboard renders live topology with type-specific node visuals and ports
 - [x] Drag-drop: agents/tools/channels from palette → canvas creates nodes with ports
-- [ ] Port-to-port connection dragging (output → input)
+- [x] Port-to-port connection dragging (output → input)
+- [ ] Workflow graph persistence (localStorage + server-side API)
+- [ ] Cmd+K command palette to add nodes
+- [ ] Dedicated /workflows full-screen graph view
+- [ ] Blender-style node rendering (specs/plans/27)
 - [ ] Quick-Create Wizard: 6 steps → populated builder canvas
 - [ ] NodePopover (click) + NodeInspector (double-click) property editing works
 - [ ] Round-trip: load SwarmConfig → edit → deploy → reload → no data loss

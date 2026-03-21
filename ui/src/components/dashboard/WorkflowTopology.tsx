@@ -13,18 +13,18 @@ import {
 } from '@auser/workflow-graph-react'
 import { topologyApi } from '@/lib/api/topology'
 import { topologyToWorkflow } from '@/components/workflows/WorkflowCanvas'
-// Custom node rendering disabled — using WASM default renderer + port overlay
-// import { renderNode } from '@/components/workflows/NodeRenderer'
 import { Button } from '@/components/ui/button'
 import { Maximize2, RotateCcw, Network } from 'lucide-react'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
 import { KeySelector, type PendingConnection } from '@/components/workflows/KeySelector'
+import { useWorkflowStore } from '@/store/workflowStore'
 
 export function WorkflowTopology() {
   const graphRef = useRef<WorkflowGraphHandle>(null)
   const [dragOver, setDragOver] = useState(false)
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
-  const [addedNodes, setAddedNodes] = useState<Job[]>([])
+
+  const { addedNodes, addNode: storeAddNode, addEdge: storeAddEdge } = useWorkflowStore()
 
   const { data: topology } = useQuery({
     queryKey: ['topology'],
@@ -93,9 +93,10 @@ export function WorkflowTopology() {
       } else {
         // Same type — direct connection
         graphRef.current?.addEdge(fromNodeId, toNodeId, fromPortId, toPortId)
+        storeAddEdge({ fromNodeId, fromPortId, toNodeId, toPortId })
       }
     },
-    [getPortType],
+    [getPortType, storeAddEdge],
   )
 
   const handleConnectionConfirm = useCallback(
@@ -107,8 +108,13 @@ export function WorkflowTopology() {
         conn.fromPortId,
         conn.toPortId,
         metadata,
-      ).catch(() => {
-        console.log('addEdge WASM call failed')
+      ).catch(() => {})
+      storeAddEdge({
+        fromNodeId: conn.fromNodeId,
+        fromPortId: conn.fromPortId,
+        toNodeId: conn.toNodeId,
+        toPortId: conn.toPortId,
+        metadata,
       })
       setPendingConnection(null)
     },
@@ -158,9 +164,9 @@ export function WorkflowTopology() {
           dropY = e.clientY - rect.top
         }
 
-        setAddedNodes((prev) => [...prev, newNode])
+        storeAddNode(newNode)
         graphRef.current?.addNode(newNode, dropX, dropY).catch(() => {
-          console.log('addNode WASM call failed, node will appear on next render')
+          // Node persisted in store, will appear on next render
         })
       } catch (err) {
         console.error('Failed to add dropped node:', err)
