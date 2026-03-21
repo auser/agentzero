@@ -112,7 +112,7 @@ export function WorkflowTopology() {
       <WorkflowGraphComponent
         ref={graphRef}
         workflow={workflow}
-        className="w-full bg-[#0d1117] [&>div]:h-full"
+        className="w-full bg-[#0d1117]"
         style={{ height: 320 }}
         theme={{
           ...darkTheme,
