@@ -33,7 +33,7 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
   const cmdK = useCommandPalette()
 
   const navigate = useNavigate()
-  const { addedNodes, addNode: storeAddNode, addEdge: storeAddEdge, removeNode: storeRemoveNode, clear: storeClear } = useWorkflowStore()
+  const { addedNodes, nodePositions, addNode: storeAddNode, addEdge: storeAddEdge, removeNode: storeRemoveNode, savePositions: storeSavePositions, clear: storeClear } = useWorkflowStore()
 
   const { data: topology } = useQuery({
     queryKey: ['topology'],
@@ -93,6 +93,24 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
     },
     [],
   )
+
+  // Save node position when dragged
+  const handleNodeDragEnd = useCallback(
+    (jobId: string, x: number, y: number) => {
+      storeSavePositions({ [jobId]: [x, y] })
+    },
+    [storeSavePositions],
+  )
+
+  // Restore saved positions after graph initializes
+  useEffect(() => {
+    if (Object.keys(nodePositions).length > 0 && graphRef.current) {
+      const timer = setTimeout(() => {
+        graphRef.current?.setNodePositions(nodePositions).catch(() => {})
+      }, 500)
+      return () => clearTimeout(timer)
+    }
+  }, [nodePositions])
 
   const handleConnect = useCallback(
     (fromNodeId: string, fromPortId: string, toNodeId: string, toPortId: string) => {
@@ -332,6 +350,7 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         }}
         autoResize
         onNodeClick={handleNodeClick}
+        onNodeDragEnd={handleNodeDragEnd}
         onConnect={handleConnect}
         onError={(err) => console.error('Workflow graph error:', err)}
       />

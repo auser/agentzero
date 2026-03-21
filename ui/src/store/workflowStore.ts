@@ -1,6 +1,6 @@
 /**
  * Persisted workflow state — survives page refresh.
- * Stores manually added nodes and edges (not topology-sourced ones).
+ * Stores manually added nodes, edges, and node positions.
  */
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -19,11 +19,14 @@ interface WorkflowState {
   addedNodes: Job[]
   /** Manually created edges (port-to-port connections). */
   edges: WorkflowEdge[]
+  /** Persisted node positions keyed by node ID. */
+  nodePositions: Record<string, [number, number]>
 
   addNode: (node: Job) => void
   removeNode: (id: string) => void
   addEdge: (edge: WorkflowEdge) => void
   removeEdge: (fromNodeId: string, toNodeId: string) => void
+  savePositions: (positions: Record<string, [number, number]>) => void
   clear: () => void
 }
 
@@ -32,6 +35,7 @@ export const useWorkflowStore = create<WorkflowState>()(
     (set) => ({
       addedNodes: [],
       edges: [],
+      nodePositions: {},
 
       addNode: (node) =>
         set((state) => {
@@ -40,12 +44,16 @@ export const useWorkflowStore = create<WorkflowState>()(
         }),
 
       removeNode: (id) =>
-        set((state) => ({
-          addedNodes: state.addedNodes.filter((n) => n.id !== id),
-          edges: state.edges.filter(
-            (e) => e.fromNodeId !== id && e.toNodeId !== id,
-          ),
-        })),
+        set((state) => {
+          const { [id]: _, ...restPositions } = state.nodePositions
+          return {
+            addedNodes: state.addedNodes.filter((n) => n.id !== id),
+            edges: state.edges.filter(
+              (e) => e.fromNodeId !== id && e.toNodeId !== id,
+            ),
+            nodePositions: restPositions,
+          }
+        }),
 
       addEdge: (edge) =>
         set((state) => {
@@ -67,7 +75,12 @@ export const useWorkflowStore = create<WorkflowState>()(
           ),
         })),
 
-      clear: () => set({ addedNodes: [], edges: [] }),
+      savePositions: (positions) =>
+        set((state) => ({
+          nodePositions: { ...state.nodePositions, ...positions },
+        })),
+
+      clear: () => set({ addedNodes: [], edges: [], nodePositions: {} }),
     }),
     { name: 'agentzero-workflow' },
   ),
