@@ -1352,7 +1352,7 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 - [ ] **WorkflowToolbar** — Save, Deploy, Export TOML, Import, Auto-layout, Zoom.
 - [ ] **QuickCreateWizard** — 6-step wizard: name → agent → tools → channel → schedule → review.
 - [ ] **Serialization** — Builder ↔ SwarmConfig round-trip (toSwarmConfig + loadFromSwarmConfig).
-- [ ] **Blender-style node rendering** — Colored headers, inline values, collapsible sections (`specs/plans/27`).
+- [ ] **Production node design** — chaiNNer/LangChain-style: colored headers, inline fields, dropdowns, code blocks, previews, multi-select, compound nodes (`specs/plans/27`, `specs/plans/28`).
 
 ---
 
