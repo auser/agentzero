@@ -67,32 +67,43 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
   const edges = topology?.edges ?? []
   const workflow = topologyToWorkflow(nodes, edges)
 
-  // Restore saved positions after the graph initializes.
-  // We wait longer (1.5s) to let the topology poll settle first,
-  // then re-apply saved positions on top of whatever layout exists.
+  // Track saved positions in a ref so we can re-apply after topology resets
+  const savedPositionsRef = useRef<Record<string, [number, number]>>(
+    graphState?.positions ?? {},
+  )
+
+  // Re-apply saved positions whenever the workflow (topology) changes
+  // This counteracts the layout reset that happens on each topology poll
+  useEffect(() => {
+    if (!initialized || !graphRef.current) return
+    const positions = savedPositionsRef.current
+    if (Object.keys(positions).length === 0) return
+    // Small delay to let the WASM update finish
+    const timer = setTimeout(() => {
+      graphRef.current?.setNodePositions(positions).catch(() => {})
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [initialized, workflow]) // re-run when topology data changes
+
+  // Restore zoom on first init
   useEffect(() => {
     if (!initialized || !graphRef.current || !graphState) return
-    const timer = setTimeout(async () => {
-      if (!graphRef.current) return
-      // Restore positions (don't replace workflow — topology manages that)
-      if (graphState.positions && Object.keys(graphState.positions).length > 0) {
-        await graphRef.current.setNodePositions(graphState.positions).catch(() => {})
-      }
-      // Restore zoom and pan
-      if (graphState.zoom && graphState.zoom !== 1) {
-        await graphRef.current.setZoom(graphState.zoom).catch(() => {})
-      }
-    }, 1500)
-    return () => clearTimeout(timer)
+    if (graphState.zoom && graphState.zoom !== 1) {
+      graphRef.current.setZoom(graphState.zoom).catch(() => {})
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialized])
 
-  // Auto-save graph state periodically
+  // Auto-save: only save positions from WASM (which includes user's drag changes)
   useEffect(() => {
     if (!initialized || autoSaveMs <= 0) return
     const interval = setInterval(async () => {
       const state = await graphRef.current?.getState()
-      if (state) saveGraphState(state)
+      if (state) {
+        // Update our position ref so topology resets get counteracted
+        savedPositionsRef.current = state.positions
+        saveGraphState(state)
+      }
     }, autoSaveMs)
     return () => clearInterval(interval)
   }, [initialized, autoSaveMs, saveGraphState])
@@ -124,8 +135,10 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
   const handleNodeClick = useCallback(() => {}, [])
 
   const handleNodeDragEnd = useCallback(
-    async () => {
-      // Save state after drag
+    async (_jobId: string, x: number, y: number) => {
+      // Update position ref immediately so it survives topology resets
+      savedPositionsRef.current = { ...savedPositionsRef.current, [_jobId]: [x, y] }
+      // Save full state
       const state = await graphRef.current?.getState()
       if (state) saveGraphState(state)
     },

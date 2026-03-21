@@ -63,10 +63,18 @@
 2. Port type labels with data previews
 3. Shadows, rounded corners, status badges
 
-### Phase D: Templates + LangChain UX
-1. Template gallery page
-2. User/Response/Model node types
-3. Live execution status overlay
+### Phase D: Code Blocks + API Nodes
+1. Code block node — syntax-highlighted code editor (Python, JS, cURL) inside nodes
+2. Tabbed code views — "Run cURL | Python API | Python Code | JS API" tabs within a single node
+3. Copy button on code blocks
+4. "Flow as an API" — export workflow as deployable API endpoint with auto-generated client code
+
+### Phase E: Templates + LangChain UX
+1. Template gallery page — card grid with Content Search, Code Debugger, Basic Prompting, API Integration, Doc Assistant, Basic Agent
+2. Template cards with title, description, category badge, provider chips (Anthropic, MistralAI, OpenAI, etc.)
+3. User/Response/Model node types for conversational flows
+4. Live execution status overlay ("Responding..." animation)
+5. One-click deploy from template
 
 ## Key Files
 - `workflow-graph/crates/web/src/render.rs` — node rendering
