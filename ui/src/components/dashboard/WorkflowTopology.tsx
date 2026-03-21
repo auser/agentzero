@@ -24,6 +24,8 @@ import { useWorkflowStore } from '@/store/workflowStore'
 
 interface WorkflowTopologyProps {
   fullHeight?: boolean
+  /** Auto-save interval in ms (default 2000). Set to 0 to disable. */
+  autoSaveMs?: number
 }
 
 const THEME = {
@@ -42,10 +44,7 @@ const THEME = {
   },
 }
 
-/** Auto-save interval in ms */
-const AUTOSAVE_INTERVAL = 2000
-
-export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) {
+export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: WorkflowTopologyProps) {
   const graphRef = useRef<WorkflowGraphHandle>(null)
   const [dragOver, setDragOver] = useState(false)
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
@@ -78,13 +77,13 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
 
   // Auto-save graph state periodically
   useEffect(() => {
-    if (!initialized) return
+    if (!initialized || autoSaveMs <= 0) return
     const interval = setInterval(async () => {
       const state = await graphRef.current?.getState()
       if (state) saveGraphState(state)
-    }, AUTOSAVE_INTERVAL)
+    }, autoSaveMs)
     return () => clearInterval(interval)
-  }, [initialized, saveGraphState])
+  }, [initialized, autoSaveMs, saveGraphState])
 
   // Sync deletions: when Delete/Backspace is pressed, save state
   useEffect(() => {

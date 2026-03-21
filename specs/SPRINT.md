@@ -1320,29 +1320,33 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 - [x] **Port system** — `Port` struct (id, label, direction, port_type, color). `Job.ports: Vec<Port>`. Port rendering with type-colored dots. Port hit-testing. Port-to-port connection dragging with bezier preview line. `onConnect` callback.
 - [x] **Native drag-drop** — `onDrop` callback with graph-space coordinates. `onDragOver` prevents default.
 - [x] **Delete key** — Select node + Delete/Backspace removes node and connected edges.
-- [x] **Canvas fills parent** — `autoResize` uses parent container dimensions. Free node dragging without clamping.
-- [x] **Destroyed flag** — All event handlers, ResizeObserver, animation loop check `destroyed` flag to prevent post-unmount errors.
+- [x] **Canvas fills parent** — `autoResize` uses parent container dimensions. Free node dragging without clamping. Infinite canvas (no boundary box).
+- [x] **Destroyed flag** — JS-level `destroyed` guard on all WASM calls + Rust `destroyed` field on `GraphState`. Prevents all post-unmount errors.
 - [x] **try_borrow safety** — All RefCell borrows use `try_borrow`/`try_borrow_mut` to prevent cascading WASM panics.
 - [x] **Ghost line fix** — mousemove checks `event.buttons()==0` to clear stale port drag state.
-- [x] **Published** — workflow-graph v0.8.2 (npm + crates.io). 51 tests passing.
+- [x] **getState/loadState API** — Full graph state serialization (workflow, positions, edges, zoom, pan) for persistence. Consumers store wherever they want.
+- [x] **ThemeLayout serde(default)** — Partial theme JSON no longer fails. Theme re-applied after init.
+- [x] **Published** — workflow-graph v0.9.0 (npm + crates.io). 51 tests passing.
 
 ### Phase 2: Dashboard Integration (MEDIUM)
 
 - [x] **WorkflowCanvas** — `topologyToWorkflow()` converter with port definitions for 6 node types.
 - [x] **Port definitions** — Agent (message/context/tools → response/tool_calls/events), Tool (input/config → result), Channel (send → trigger/message), Schedule (→ trigger), Gate (request → approved/denied), SubAgent (task/context → result/status).
-- [x] **WorkflowTopology** — Dashboard component with zoom/reset controls, drag-over highlight, React-level drop handler.
-- [x] **DraggablePalette** — Categorized node chips (Agents, File & Search, Memory, System, Other, Channels) with search filter, collapsible sections, scrollable.
-- [x] **Dashboard redesign** — Bento grid: metrics row → topology + palette → agents + runs → schedules + channels. Modern glass morphism, sparkline trends.
-- [x] **KeySelector** — Popover for cross-type port connections (json↔text) with key path input and suggestions.
+- [x] **WorkflowTopology** — Dashboard component with zoom/reset controls, drag-over highlight, React-level drop handler. Supports `fullHeight` prop for /workflows page.
+- [x] **DraggablePalette** — Categorized node chips (Agents, File & Search, Memory, System, Other, Channels) with search filter, collapsible sections, scrollable. Tailwind-themed (no hardcoded colors).
+- [x] **Dashboard redesign** — Bento grid: metrics row → topology + palette → agents + runs → schedules + channels. Modern glass morphism, sparkline trends. Gateway offline page with auto-recovery.
+- [x] **KeySelector** — Popover for any cross-type port connections with key path input and suggestions.
 - [x] **React StrictMode disabled** — Prevents double mount/unmount that breaks WASM canvas lifecycle.
+- [x] **Cmd+K command palette** — Quick-add nodes by typing name (fuzzy search across agents/tools/channels). "Create new agent" action. Dark backdrop, arrow key navigation.
+- [x] **Dedicated `/workflows` page** — Full-screen graph editor with palette sidebar, clear button, node count. Fills all available height.
+- [x] **Sidebar nav** — "Workflows" entry with GitBranch icon after Dashboard.
 - [ ] **Embedded UI** — Add `*.wasm` to `rust_embed` include list in gateway router.
 
 ### Phase 3: Builder Features (HIGH)
 
-- [x] **workflowStore** — Zustand + persist: added nodes and edges saved to localStorage, survives refresh.
+- [x] **Graph persistence** — Full state (nodes, positions, edges, zoom, pan) persisted via workflow-graph's `getState()`/`loadState()` API. Auto-saves every 2s. Immediate save on delete/drag. Stored in localStorage via Zustand persist.
+- [x] **User config audit** — `GET /v1/tools` and CLI `tools list` now use user config instead of hardcoded defaults. All default policy fallback locations audited and fixed.
 - [ ] **Server-side persistence** — `PUT/GET /v1/workflows` API to store graph in SQLite. Maps to `SwarmConfig`.
-- [ ] **Cmd+K command palette** — Quick-add nodes by typing name (fuzzy search across agents/tools/channels).
-- [ ] **Dedicated `/workflows` page** — Full-screen graph view without dashboard chrome.
 - [ ] **NodePopover** — Click node → inline Radix Popover with name, type badge, key fields.
 - [ ] **NodeInspector** — Double-click → right-side Radix Sheet with full property form per node type.
 - [ ] **WorkflowToolbar** — Save, Deploy, Export TOML, Import, Auto-layout, Zoom.
@@ -1354,20 +1358,22 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 
 ### Acceptance Criteria (Sprint 60)
 
-- [x] workflow-graph v0.8.2 published with ports, drag-drop, delete, persistence
+- [x] workflow-graph v0.9.0 published with ports, drag-drop, delete, getState/loadState
 - [x] Dashboard renders live topology with typed ports and node visuals
 - [x] Drag-drop: agents/tools/channels from palette → canvas creates nodes with ports
 - [x] Port-to-port connection dragging (output → input) with bezier preview
 - [x] KeySelector popup for cross-type connections
-- [x] Delete/Backspace removes selected nodes
-- [x] Graph persists across page refresh (localStorage)
+- [x] Delete/Backspace removes selected nodes (synced to store)
+- [x] Graph state persists across refresh (nodes, positions, edges, zoom, pan)
+- [x] Cmd+K command palette with fuzzy search and "Create new agent"
+- [x] Dedicated /workflows full-screen graph view
+- [x] Gateway offline page with auto-recovery
+- [x] All tools/CLI use user config (not hardcoded defaults)
 - [ ] Server-side workflow persistence API
-- [ ] Cmd+K command palette to add nodes
-- [ ] Dedicated /workflows full-screen graph view
 - [ ] Blender-style node rendering (specs/plans/27)
 - [ ] Round-trip: load SwarmConfig → edit → deploy → reload → no data loss
 - [x] `cargo clippy` — 0 warnings
-- [x] All existing tests pass (51 in workflow-graph, all in agentzero)
+- [x] All existing tests pass (51 in workflow-graph, 210+ in agentzero)
 
 ---
 
