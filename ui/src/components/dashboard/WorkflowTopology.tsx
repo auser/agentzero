@@ -5,6 +5,7 @@
  */
 import { useRef, useCallback, useState, type DragEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import {
   WorkflowGraphComponent,
   type WorkflowGraphHandle,
@@ -26,7 +27,8 @@ export function WorkflowTopology() {
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
   const cmdK = useCommandPalette()
 
-  const { addedNodes, addNode: storeAddNode, addEdge: storeAddEdge } = useWorkflowStore()
+  const navigate = useNavigate()
+  const { addedNodes, addNode: storeAddNode, addEdge: storeAddEdge, clear: storeClear } = useWorkflowStore()
 
   const { data: topology } = useQuery({
     queryKey: ['topology'],
@@ -242,6 +244,15 @@ export function WorkflowTopology() {
           </span>
         </h3>
         <div className="flex items-center gap-1">
+          {addedNodes.length > 0 && (
+            <button
+              onClick={storeClear}
+              className="flex items-center gap-1 h-7 px-2 text-[10px] text-muted-foreground/40 hover:text-red-400 bg-muted/20 hover:bg-red-500/10 rounded border border-border/30 transition-colors"
+              title="Clear added nodes"
+            >
+              Clear
+            </button>
+          )}
           <button
             onClick={() => cmdK.setOpen(true)}
             className="flex items-center gap-1.5 h-7 px-2 text-[10px] text-muted-foreground/50 hover:text-muted-foreground bg-muted/20 hover:bg-muted/40 rounded border border-border/30 transition-colors"
@@ -309,6 +320,7 @@ export function WorkflowTopology() {
         open={cmdK.open}
         onClose={cmdK.onClose}
         onSelect={handleCmdKSelect}
+        onCreateAgent={() => void navigate({ to: '/agents' })}
       />
     </div>
   )

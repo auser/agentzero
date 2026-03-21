@@ -5,6 +5,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { agentsApi } from '@/lib/api/agents'
+import { Plus } from 'lucide-react'
 import { api } from '@/lib/api/client'
 import { Bot, Wrench, Radio, Search } from 'lucide-react'
 import type { Port } from '@auser/workflow-graph-web'
@@ -39,9 +40,10 @@ interface CommandPaletteProps {
   open: boolean
   onClose: () => void
   onSelect: (data: DragNodeData) => void
+  onCreateAgent?: () => void
 }
 
-export function CommandPalette({ open, onClose, onSelect }: CommandPaletteProps) {
+export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -66,6 +68,23 @@ export function CommandPalette({ open, onClose, onSelect }: CommandPaletteProps)
   // Build flat list of all items
   const allItems: PaletteItem[] = useMemo(() => {
     const items: PaletteItem[] = []
+
+    // "Create new agent" action at the top
+    if (onCreateAgent) {
+      items.push({
+        id: '__create_agent__',
+        name: 'Create new agent...',
+        category: 'Action',
+        icon: <Plus className="h-3.5 w-3.5" />,
+        detail: 'Add a new agent to your workspace',
+        textClass: 'text-emerald-500',
+        bgClass: 'bg-emerald-500/15',
+        data: {
+          nodeType: 'agent', id: '', name: '',
+          metadata: {}, ports: portsForNodeType('agent'),
+        },
+      })
+    }
 
     for (const a of agents?.data ?? []) {
       items.push({
@@ -172,7 +191,11 @@ export function CommandPalette({ open, onClose, onSelect }: CommandPaletteProps)
       } else if (e.key === 'Enter') {
         e.preventDefault()
         if (filtered[selectedIndex]) {
-          onSelect(filtered[selectedIndex].data)
+          if (filtered[selectedIndex].id === '__create_agent__') {
+            onCreateAgent?.()
+          } else {
+            onSelect(filtered[selectedIndex].data)
+          }
           onClose()
         }
       } else if (e.key === 'Escape') {
@@ -220,7 +243,11 @@ export function CommandPalette({ open, onClose, onSelect }: CommandPaletteProps)
                   i === selectedIndex ? 'bg-primary/15 border-l-2 border-primary' : 'hover:bg-muted/30 border-l-2 border-transparent'
                 }`}
                 onClick={() => {
-                  onSelect(item.data)
+                  if (item.id === '__create_agent__') {
+                    onCreateAgent?.()
+                  } else {
+                    onSelect(item.data)
+                  }
                   onClose()
                 }}
                 onMouseEnter={() => setSelectedIndex(i)}
