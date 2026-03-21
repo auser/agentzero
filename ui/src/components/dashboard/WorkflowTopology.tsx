@@ -48,7 +48,6 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
   const graphRef = useRef<WorkflowGraphHandle>(null)
   const [dragOver, setDragOver] = useState(false)
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
-  const [initialized, setInitialized] = useState(false)
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   const [configPanelOpen, setConfigPanelOpen] = useState(false)
   const cmdK = useCommandPalette()
@@ -70,19 +69,8 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
     (graphState && typeof graphState === 'object' && graphState.positions) ? graphState.positions : {},
   )
 
-  // Re-apply saved positions whenever the workflow (topology) changes.
-  // Runs on every render cycle — counteracts layout resets from topology polls.
-  // Uses a short delay to let the WASM finish its update first.
-  useEffect(() => {
-    if (!graphRef.current) return
-    const positions = savedPositionsRef.current
-    if (!positions || Object.keys(positions).length === 0) return
-    // 50ms delay — just enough for WASM to finish compute_layout
-    const timer = setTimeout(() => {
-      graphRef.current?.setNodePositions(positions).catch(() => {})
-    }, 50)
-    return () => clearTimeout(timer)
-  }, [workflow]) // re-run when topology data changes
+  // Positions are now handled by the initialPositions prop on WorkflowGraphComponent
+  // No manual setNodePositions calls needed
 
   // Save graph state helper — called on user interactions, not on a timer
   const saveCurrentState = useCallback(async () => {
@@ -341,13 +329,12 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         className={`w-full bg-background ${fullHeight ? 'flex-1' : ''}`}
         style={fullHeight ? undefined : { height: 320 }}
         theme={THEME}
+        initialPositions={savedPositionsRef.current}
         autoResize
         onNodeClick={handleNodeClick}
         onNodeDragEnd={handleNodeDragEnd}
         onConnect={handleConnect}
-        onError={() => {
-          if (!initialized) setInitialized(true)
-        }}
+        onError={(err) => console.error('Workflow graph error:', err)}
         loadingSkeleton={
           <div className="flex items-center justify-center h-full text-muted-foreground/30 text-sm">
             Loading graph...
@@ -355,8 +342,6 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         }
       />
 
-      {/* Detect when graph finishes loading — delay to let setWorkflow complete */}
-      <InitDetector graphRef={graphRef} onInit={() => setInitialized(true)} />
 
       {pendingConnection && (
         <KeySelector
@@ -387,20 +372,3 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
 }
 
 /** Detects when the graph finishes initializing by polling for the canvas. */
-function InitDetector({
-  graphRef,
-  onInit,
-}: {
-  graphRef: React.RefObject<WorkflowGraphHandle | null>
-  onInit: () => void
-}) {
-  useEffect(() => {
-    // Wait for WASM to initialize (setWorkflow is async, takes ~1s)
-    const timer = setTimeout(() => {
-      console.log('[workflow] init timer fired')
-      onInit()
-    }, 2000)
-    return () => clearTimeout(timer)
-  }, [graphRef, onInit])
-  return null
-}
