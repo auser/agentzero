@@ -1371,6 +1371,29 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 
 ---
 
+### Future: AI Chat Bubble for Agent Creation (HIGH)
+
+Floating chat bubble (powered by a local model) that lets the user describe the agent they want in natural language and auto-creates it. The chat assistant has full access to all AgentZero subsystems:
+
+- [ ] **Floating chat widget** — persistent bubble in bottom-right corner, expands to chat panel
+- [ ] **Local model integration** — runs through a local LLM (Ollama/llama.cpp) for privacy
+- [ ] **Agent creation from description** — "I want an agent that reads my email every morning and summarizes it" → creates agent config, tools, schedule, channel
+- [ ] **Full subsystem awareness** — chat can inform and modify:
+  - Schedule (create/modify cron jobs)
+  - Chat (start conversations with agents)
+  - Runs (submit/monitor/cancel runs)
+  - Tools (enable/disable tools, configure policies)
+  - Channels (connect Slack/Discord/Telegram)
+  - Models (select provider/model for the agent)
+  - Config (update TOML settings)
+  - Memory (set up memory stores)
+  - Approvals (configure approval workflows)
+  - Events (subscribe to event topics)
+- [ ] **Workflow graph integration** — auto-creates nodes and connections in the visual builder
+- [ ] **Iterative refinement** — user can refine the agent through conversation
+
+---
+
 ## Backlog
 
 ### Embedded Binary Size Reduction (HIGH)
