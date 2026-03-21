@@ -69,7 +69,7 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
 
   // Track saved positions in a ref so we can re-apply after topology resets
   const savedPositionsRef = useRef<Record<string, [number, number]>>(
-    graphState?.positions ?? {},
+    (graphState && typeof graphState === 'object' && graphState.positions) ? graphState.positions : {},
   )
 
   // Re-apply saved positions whenever the workflow (topology) changes
@@ -77,7 +77,7 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
   useEffect(() => {
     if (!initialized || !graphRef.current) return
     const positions = savedPositionsRef.current
-    if (Object.keys(positions).length === 0) return
+    if (!positions || Object.keys(positions).length === 0) return
     // Small delay to let the WASM update finish
     const timer = setTimeout(() => {
       graphRef.current?.setNodePositions(positions).catch(() => {})
@@ -87,8 +87,8 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
 
   // Restore zoom on first init
   useEffect(() => {
-    if (!initialized || !graphRef.current || !graphState) return
-    if (graphState.zoom && graphState.zoom !== 1) {
+    if (!initialized || !graphRef.current) return
+    if (graphState && typeof graphState === 'object' && graphState.zoom && graphState.zoom !== 1) {
       graphRef.current.setZoom(graphState.zoom).catch(() => {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -236,8 +236,9 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
     window.location.reload()
   }, [storeClear])
 
-  const nodeCount = workflow.jobs.length + (graphState?.workflow?.jobs?.length ?? 0)
-  const isEmpty = nodes.length === 0 && !graphState
+  const savedJobCount = (graphState && typeof graphState === 'object' && graphState.workflow?.jobs?.length) ? graphState.workflow.jobs.length : 0
+  const nodeCount = workflow.jobs.length + savedJobCount
+  const isEmpty = nodes.length === 0 && savedJobCount === 0
 
   if (isEmpty) {
     return (

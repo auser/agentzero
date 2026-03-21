@@ -15,6 +15,25 @@ interface WorkflowStoreState {
   clear: () => void
 }
 
+// Migrate from old format (addedNodes/edges/nodePositions) to new (graphState)
+function migrateOldFormat() {
+  try {
+    const raw = localStorage.getItem('agentzero-workflow')
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    // Old format had addedNodes/edges/nodePositions, new format has graphState
+    if (parsed?.state?.addedNodes || parsed?.state?.edges || parsed?.state?.nodePositions) {
+      localStorage.removeItem('agentzero-workflow')
+    }
+  } catch {
+    // If parsing fails, clear it
+    localStorage.removeItem('agentzero-workflow')
+  }
+}
+
+// Run migration on load
+migrateOldFormat()
+
 export const useWorkflowStore = create<WorkflowStoreState>()(
   persist(
     (set) => ({
