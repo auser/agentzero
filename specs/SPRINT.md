@@ -1346,14 +1346,15 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 
 ### Acceptance Criteria (Sprint 60)
 
-- [ ] workflow-graph v0.5.0 published with metadata + WASM node CRUD API
-- [ ] `/workflows` page renders live topology with type-specific node visuals
-- [ ] Visual builder: drag Agent + Tool nodes, connect edges, deploy to swarm
+- [x] workflow-graph v0.7.2 published with metadata, WASM node CRUD API, ports, drag-drop
+- [x] Dashboard renders live topology with type-specific node visuals and ports
+- [x] Drag-drop: agents/tools/channels from palette → canvas creates nodes with ports
+- [ ] Port-to-port connection dragging (output → input)
 - [ ] Quick-Create Wizard: 6 steps → populated builder canvas
 - [ ] NodePopover (click) + NodeInspector (double-click) property editing works
 - [ ] Round-trip: load SwarmConfig → edit → deploy → reload → no data loss
-- [ ] `cargo clippy` — 0 warnings
-- [ ] All existing tests pass
+- [x] `cargo clippy` — 0 warnings
+- [x] All existing tests pass
 
 ---
 
