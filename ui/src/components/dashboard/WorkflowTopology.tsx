@@ -49,6 +49,7 @@ export function WorkflowTopology() {
           command: '',
           depends_on: [],
           metadata: nodeData.metadata,
+          ports: nodeData.ports,
         })
       } catch (e) {
         console.error('Failed to parse drop data:', e)

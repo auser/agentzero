@@ -6,8 +6,10 @@ import { useQuery } from '@tanstack/react-query'
 import { agentsApi } from '@/lib/api/agents'
 import { api } from '@/lib/api/client'
 import { topologyApi } from '@/lib/api/topology'
+import type { Port } from '@auser/workflow-graph-web'
 import { Bot, Wrench, Radio, GripVertical } from 'lucide-react'
 import type { DragEvent } from 'react'
+import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
 
 interface ToolInfo {
   name: string
@@ -28,6 +30,7 @@ export interface DragNodeData {
   id: string
   name: string
   metadata: Record<string, unknown>
+  ports: Port[]
 }
 
 function SectionHeader({ icon, label, count }: { icon: React.ReactNode; label: string; count: number }) {
@@ -140,6 +143,7 @@ export function DraggablePalette() {
                   description: a.description,
                   status: a.status,
                 },
+                ports: portsForNodeType('agent'),
               }}
             />
           ))}
@@ -162,6 +166,7 @@ export function DraggablePalette() {
                   tool_name: t.name,
                   description: t.description,
                 },
+                ports: portsForNodeType('tool'),
               }}
             />
           ))}
@@ -186,6 +191,7 @@ export function DraggablePalette() {
                     channel_type: ch.name,
                     connected: ch.connected,
                   },
+                  ports: portsForNodeType('channel'),
                 }}
               />
             ))}
