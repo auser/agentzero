@@ -1377,6 +1377,35 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 
 ---
 
+### Phase 4: Inline Agent Creation + Config Toggles (HIGH)
+
+- [ ] **Create Agent dialog** — Cmd+K → "Create new agent..." → modal with name, model dropdown (from `/v1/models`), system prompt textarea. Creates via `POST /v1/agents`. Agent appears in palette immediately.
+- [ ] **Quick config toggles** — collapsible panel in workflow toolbar. Tool enable/disable checkboxes (write_file, web_search, browser, etc.), provider/model selector. Saves via `PUT /v1/config`, hot-reloaded by ConfigWatcher.
+- [ ] **Full config on /config page** — existing page handles all settings. Both views share the same API.
+
+### Phase 5: Floating AI Chat Bubble (HIGH)
+
+Global floating chat widget available across the entire UI (not just workflows). Powered by a **local model** (Ollama/llama.cpp) for privacy.
+
+- [ ] **Floating bubble component** — persistent bottom-right corner bubble, expands to chat panel. Available on every page via root layout.
+- [ ] **Embedded local model** — runs inference directly in the Rust binary via `candle` or `llama-cpp-2`. No external server needed. Single binary, fully offline capable. Model weights bundled or downloaded on first run. Never sends data to remote APIs.
+- [ ] **Agent creation from chat** — "I want an agent that reads my email every morning" → creates agent config, tools, schedule, channel automatically.
+- [ ] **Full subsystem awareness** — chat can read and modify all AgentZero subsystems:
+  - Schedule (create/modify cron jobs)
+  - Chat (start conversations with agents)
+  - Runs (submit/monitor/cancel)
+  - Tools (enable/disable, configure policies)
+  - Channels (connect Slack/Discord/Telegram)
+  - Models (select provider/model)
+  - Config (update TOML settings via PUT /v1/config)
+  - Memory (set up memory stores)
+  - Approvals (configure approval workflows)
+  - Events (subscribe to event topics)
+- [ ] **Workflow graph integration** — auto-creates nodes and connections in the visual builder.
+- [ ] **Iterative refinement** — user can refine the agent through conversation.
+
+---
+
 ### Future: AI Chat Bubble for Agent Creation (HIGH)
 
 Floating chat bubble (powered by a local model) that lets the user describe the agent they want in natural language and auto-creates it. The chat assistant has full access to all AgentZero subsystems:
