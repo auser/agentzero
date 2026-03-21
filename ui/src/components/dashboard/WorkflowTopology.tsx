@@ -142,13 +142,12 @@ export function WorkflowTopology() {
           ports: nodeData.ports,
         }
 
-        // Convert drop position to graph-space coordinates
+        // Get drop position relative to canvas
         const canvas = (e.currentTarget as HTMLElement).querySelector('canvas')
         let dropX: number | undefined
         let dropY: number | undefined
         if (canvas) {
           const rect = canvas.getBoundingClientRect()
-          // Approximate graph-space position (ignoring pan/zoom for now)
           dropX = e.clientX - rect.left
           dropY = e.clientY - rect.top
         }
