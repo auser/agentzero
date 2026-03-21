@@ -6,7 +6,7 @@
  */
 import { useRef, useCallback, useState, useEffect, type DragEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
+// useNavigate removed — agent creation now uses inline dialog
 import {
   WorkflowGraphComponent,
   type WorkflowGraphHandle,
@@ -16,10 +16,12 @@ import {
 import { topologyApi } from '@/lib/api/topology'
 import { topologyToWorkflow } from '@/components/workflows/WorkflowCanvas'
 import { Button } from '@/components/ui/button'
-import { Maximize2, RotateCcw, Network } from 'lucide-react'
+import { Maximize2, RotateCcw, Network, Settings } from 'lucide-react'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
 import { KeySelector, type PendingConnection } from '@/components/workflows/KeySelector'
 import { CommandPalette, useCommandPalette } from '@/components/workflows/CommandPalette'
+import { CreateAgentDialog } from '@/components/workflows/CreateAgentDialog'
+import { ConfigPanel } from '@/components/workflows/ConfigPanel'
 import { useWorkflowStore } from '@/store/workflowStore'
 
 interface WorkflowTopologyProps {
@@ -49,8 +51,9 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
   const [dragOver, setDragOver] = useState(false)
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
   const [initialized, setInitialized] = useState(false)
+  const [createAgentOpen, setCreateAgentOpen] = useState(false)
+  const [configPanelOpen, setConfigPanelOpen] = useState(false)
   const cmdK = useCommandPalette()
-  const navigate = useNavigate()
 
   const { graphState, saveGraphState, clear: storeClear } = useWorkflowStore()
 
@@ -275,6 +278,17 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
             <span>Add node</span>
             <kbd className="text-[9px] bg-muted/30 px-1 py-0.5 rounded">⌘K</kbd>
           </button>
+          <button
+            onClick={() => setConfigPanelOpen((v) => !v)}
+            className={`flex items-center gap-1 h-7 px-2 text-[10px] rounded border border-border/30 transition-colors ${
+              configPanelOpen
+                ? 'text-primary bg-primary/10 border-primary/30'
+                : 'text-muted-foreground/50 hover:text-muted-foreground bg-muted/20 hover:bg-muted/40'
+            }`}
+            title="Quick config"
+          >
+            <Settings className="h-3 w-3" />
+          </button>
           <Button
             variant="ghost"
             size="icon"
@@ -326,11 +340,21 @@ export function WorkflowTopology({ fullHeight = false, autoSaveMs = 2000 }: Work
         />
       )}
 
+      {/* Config panel (anchored to toolbar) */}
+      <ConfigPanel open={configPanelOpen} onClose={() => setConfigPanelOpen(false)} />
+
+      {/* Cmd+K command palette */}
       <CommandPalette
         open={cmdK.open}
         onClose={cmdK.onClose}
         onSelect={handleCmdKSelect}
-        onCreateAgent={() => void navigate({ to: '/agents' })}
+        onCreateAgent={() => setCreateAgentOpen(true)}
+      />
+
+      {/* Create agent dialog */}
+      <CreateAgentDialog
+        open={createAgentOpen}
+        onClose={() => setCreateAgentOpen(false)}
       />
     </div>
   )
