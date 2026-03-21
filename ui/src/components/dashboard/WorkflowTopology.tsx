@@ -70,27 +70,19 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
     (graphState && typeof graphState === 'object' && graphState.positions) ? graphState.positions : {},
   )
 
-  // Re-apply saved positions whenever the workflow (topology) changes
-  // This counteracts the layout reset that happens on each topology poll
+  // Re-apply saved positions whenever the workflow (topology) changes.
+  // Runs on every render cycle — counteracts layout resets from topology polls.
+  // Uses a short delay to let the WASM finish its update first.
   useEffect(() => {
-    if (!initialized || !graphRef.current) return
+    if (!graphRef.current) return
     const positions = savedPositionsRef.current
     if (!positions || Object.keys(positions).length === 0) return
-    // Small delay to let the WASM update finish
+    // 50ms delay — just enough for WASM to finish compute_layout
     const timer = setTimeout(() => {
       graphRef.current?.setNodePositions(positions).catch(() => {})
-    }, 100)
+    }, 50)
     return () => clearTimeout(timer)
-  }, [initialized, workflow]) // re-run when topology data changes
-
-  // Restore zoom on first init
-  useEffect(() => {
-    if (!initialized || !graphRef.current) return
-    if (graphState && typeof graphState === 'object' && graphState.zoom && graphState.zoom !== 1) {
-      graphRef.current.setZoom(graphState.zoom).catch(() => {})
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialized])
+  }, [workflow]) // re-run when topology data changes
 
   // Save graph state helper — called on user interactions, not on a timer
   const saveCurrentState = useCallback(async () => {
