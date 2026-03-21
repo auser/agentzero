@@ -43,8 +43,8 @@ function WorkflowsPage() {
       {/* Main area: graph + palette */}
       <div className="flex-1 flex min-h-0">
         {/* Graph canvas (fills remaining space) */}
-        <div className="flex-1 min-w-0">
-          <WorkflowTopology />
+        <div className="flex-1 min-w-0 h-full">
+          <WorkflowTopology fullHeight />
         </div>
 
         {/* Palette sidebar */}

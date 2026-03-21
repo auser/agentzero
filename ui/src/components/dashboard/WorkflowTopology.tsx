@@ -21,7 +21,12 @@ import { KeySelector, type PendingConnection } from '@/components/workflows/KeyS
 import { CommandPalette, useCommandPalette } from '@/components/workflows/CommandPalette'
 import { useWorkflowStore } from '@/store/workflowStore'
 
-export function WorkflowTopology() {
+interface WorkflowTopologyProps {
+  /** When true, fills parent height instead of using fixed 320px */
+  fullHeight?: boolean
+}
+
+export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) {
   const graphRef = useRef<WorkflowGraphHandle>(null)
   const [dragOver, setDragOver] = useState(false)
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
@@ -228,7 +233,7 @@ export function WorkflowTopology() {
 
   return (
     <div
-      className={`rounded-lg border bg-card/80 backdrop-blur-sm overflow-hidden transition-colors relative ${
+      className={`rounded-lg border bg-card/80 backdrop-blur-sm overflow-hidden transition-colors relative ${fullHeight ? 'h-full flex flex-col' : ''} ${
         dragOver ? 'border-primary/50' : 'border-border/50'
       }`}
       onDragOver={handleDragOver}
@@ -283,8 +288,8 @@ export function WorkflowTopology() {
       <WorkflowGraphComponent
         ref={graphRef}
         workflow={mergedWorkflow}
-        className="w-full bg-background"
-        style={{ height: 320 }}
+        className={`w-full bg-background ${fullHeight ? 'flex-1' : ''}`}
+        style={fullHeight ? undefined : { height: 320 }}
         theme={{
           ...darkTheme,
           layout: {
