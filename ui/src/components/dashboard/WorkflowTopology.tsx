@@ -279,7 +279,7 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         ref={graphRef}
         workflow={workflow}
         className={`w-full bg-background ${fullHeight ? 'flex-1' : ''}`}
-        style={fullHeight ? undefined : { height: 320 }}
+        style={fullHeight ? { width: '100%', height: '100%' } : { height: 320, width: '100%' }}
         theme={THEME}
         persist={{ key: 'agentzero-workflow-graph' }}
         autoResize
