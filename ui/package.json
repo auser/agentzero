@@ -12,8 +12,8 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
-    "@auser/workflow-graph-react": "0.7.2",
-    "@auser/workflow-graph-web": "0.7.2",
+    "@auser/workflow-graph-react": "0.7.3",
+    "@auser/workflow-graph-web": "0.7.3",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",

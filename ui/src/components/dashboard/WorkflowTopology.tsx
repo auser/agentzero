@@ -37,6 +37,15 @@ export function WorkflowTopology() {
     [],
   )
 
+  const handleConnect = useCallback(
+    (fromNodeId: string, fromPortId: string, toNodeId: string, toPortId: string) => {
+      console.log(`Connected: ${fromNodeId}:${fromPortId} → ${toNodeId}:${toPortId}`)
+      // Create an edge between the nodes via the WASM API
+      graphRef.current?.addEdge(fromNodeId, toNodeId, fromPortId, toPortId)
+    },
+    [],
+  )
+
   // Handle drop at React level (not WASM) to avoid borrow issues
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -160,6 +169,7 @@ export function WorkflowTopology() {
         autoResize
         onNodeClick={handleNodeClick}
         onRenderNode={renderNode}
+        onConnect={handleConnect}
         onError={(err) => console.error('Workflow graph error:', err)}
       />
     </div>
