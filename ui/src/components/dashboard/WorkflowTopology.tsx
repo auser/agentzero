@@ -101,7 +101,9 @@ export function WorkflowTopology() {
         conn.fromPortId,
         conn.toPortId,
         metadata,
-      )
+      ).catch(() => {
+        console.log('addEdge WASM call failed')
+      })
       setPendingConnection(null)
     },
     [],
@@ -139,8 +141,15 @@ export function WorkflowTopology() {
           metadata: nodeData.metadata,
           ports: nodeData.ports,
         }
-        graphRef.current?.addNode(newNode)
+        // Add to local state — the merged workflow will include it on next render,
+        // and the WorkflowGraphComponent will update via the workflow prop change.
+        // Also try addNode directly for immediate visual feedback.
         setAddedNodes((prev) => [...prev, newNode])
+        graphRef.current?.addNode(newNode).catch(() => {
+          // If WASM call fails (stale graph instance), the node will still appear
+          // on next render via the updated mergedWorkflow prop
+          console.log('addNode WASM call failed, node will appear on next render')
+        })
       } catch (err) {
         console.error('Failed to add dropped node:', err)
       }
