@@ -3,7 +3,7 @@ import {
   LayoutDashboard, MessageSquare, Bot, PlayCircle,
   Wrench, Radio, Cpu, Settings, Brain,
   CalendarClock, CheckSquare, Activity, AlertTriangle,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, GitBranch,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -16,6 +16,7 @@ import { useQueryClient } from '@tanstack/react-query'
 
 const navItems = [
   { to: '/dashboard',  label: 'Dashboard',  icon: LayoutDashboard },
+  { to: '/workflows',  label: 'Workflows',  icon: GitBranch },
   { to: '/chat',       label: 'Chat',        icon: MessageSquare },
   { to: '/agents',     label: 'Agents',      icon: Bot },
   { to: '/runs',       label: 'Runs',        icon: PlayCircle },

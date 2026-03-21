@@ -17,12 +17,14 @@ import { Button } from '@/components/ui/button'
 import { Maximize2, RotateCcw, Network } from 'lucide-react'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
 import { KeySelector, type PendingConnection } from '@/components/workflows/KeySelector'
+import { CommandPalette, useCommandPalette } from '@/components/workflows/CommandPalette'
 import { useWorkflowStore } from '@/store/workflowStore'
 
 export function WorkflowTopology() {
   const graphRef = useRef<WorkflowGraphHandle>(null)
   const [dragOver, setDragOver] = useState(false)
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
+  const cmdK = useCommandPalette()
 
   const { addedNodes, addNode: storeAddNode, addEdge: storeAddEdge } = useWorkflowStore()
 
@@ -125,6 +127,24 @@ export function WorkflowTopology() {
     setPendingConnection(null)
   }, [])
 
+  // Handle Cmd+K node selection
+  const handleCmdKSelect = useCallback(
+    (data: DragNodeData) => {
+      const newNode: Job = {
+        id: data.id,
+        name: data.name,
+        status: 'queued',
+        command: '',
+        depends_on: [],
+        metadata: data.metadata,
+        ports: data.ports,
+      }
+      storeAddNode(newNode)
+      graphRef.current?.addNode(newNode).catch(() => {})
+    },
+    [storeAddNode],
+  )
+
   // Handle drop at React level (not WASM) to avoid borrow issues
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -221,7 +241,14 @@ export function WorkflowTopology() {
             {mergedWorkflow.jobs.length} node{mergedWorkflow.jobs.length !== 1 ? 's' : ''} · {edges.length} connection{edges.length !== 1 ? 's' : ''}
           </span>
         </h3>
-        <div className="flex gap-0.5">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => cmdK.setOpen(true)}
+            className="flex items-center gap-1.5 h-7 px-2 text-[10px] text-muted-foreground/50 hover:text-muted-foreground bg-muted/20 hover:bg-muted/40 rounded border border-border/30 transition-colors"
+          >
+            <span>Add node</span>
+            <kbd className="text-[9px] bg-muted/30 px-1 py-0.5 rounded">⌘K</kbd>
+          </button>
           <Button
             variant="ghost"
             size="icon"
@@ -276,6 +303,13 @@ export function WorkflowTopology() {
           onCancel={handleConnectionCancel}
         />
       )}
+
+      {/* Cmd+K command palette */}
+      <CommandPalette
+        open={cmdK.open}
+        onClose={cmdK.onClose}
+        onSelect={handleCmdKSelect}
+      />
     </div>
   )
 }
