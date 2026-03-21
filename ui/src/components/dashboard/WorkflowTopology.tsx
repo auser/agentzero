@@ -1,12 +1,14 @@
 /**
  * Interactive workflow topology visualization powered by workflow-graph WASM.
  * Supports drag-drop from the DraggablePalette to add nodes.
+ * Shows KeySelector when connecting ports with different types.
  */
 import { useRef, useCallback, useState, type DragEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   WorkflowGraphComponent,
   type WorkflowGraphHandle,
+  type Job,
   darkTheme,
 } from '@auser/workflow-graph-react'
 import { topologyApi } from '@/lib/api/topology'
@@ -15,10 +17,13 @@ import { renderNode } from '@/components/workflows/NodeRenderer'
 import { Button } from '@/components/ui/button'
 import { Maximize2, RotateCcw, Network } from 'lucide-react'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
+import { KeySelector, type PendingConnection } from '@/components/workflows/KeySelector'
 
 export function WorkflowTopology() {
   const graphRef = useRef<WorkflowGraphHandle>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
+  const [addedNodes, setAddedNodes] = useState<Job[]>([])
 
   const { data: topology } = useQuery({
     queryKey: ['topology'],
@@ -30,6 +35,23 @@ export function WorkflowTopology() {
   const edges = topology?.edges ?? []
   const workflow = topologyToWorkflow(nodes, edges)
 
+  // Merge topology nodes with manually added nodes
+  const mergedWorkflow = {
+    ...workflow,
+    jobs: [...workflow.jobs, ...addedNodes],
+  }
+
+  // Look up port type for a given node+port
+  const getPortType = useCallback(
+    (nodeId: string, portId: string): string => {
+      const job = mergedWorkflow.jobs.find((j) => j.id === nodeId)
+      if (!job?.ports) return ''
+      const port = job.ports.find((p) => p.id === portId)
+      return port?.port_type ?? ''
+    },
+    [mergedWorkflow.jobs],
+  )
+
   const handleNodeClick = useCallback(
     (_jobId: string) => {
       // no-op: selection handled internally by the graph
@@ -39,12 +61,52 @@ export function WorkflowTopology() {
 
   const handleConnect = useCallback(
     (fromNodeId: string, fromPortId: string, toNodeId: string, toPortId: string) => {
-      console.log(`Connected: ${fromNodeId}:${fromPortId} → ${toNodeId}:${toPortId}`)
-      // Create an edge between the nodes via the WASM API
-      graphRef.current?.addEdge(fromNodeId, toNodeId, fromPortId, toPortId)
+      const fromType = getPortType(fromNodeId, fromPortId)
+      const toType = getPortType(toNodeId, toPortId)
+
+      const needsTransform =
+        fromType !== toType &&
+        fromType !== '' &&
+        toType !== '' &&
+        ((fromType === 'json' && toType === 'text') ||
+          (fromType === 'text' && toType === 'json'))
+
+      if (needsTransform) {
+        // Show key selector
+        setPendingConnection({
+          fromNodeId,
+          fromPortId,
+          fromPortType: fromType,
+          toNodeId,
+          toPortId,
+          toPortType: toType,
+        })
+      } else {
+        // Direct connection
+        graphRef.current?.addEdge(fromNodeId, toNodeId, fromPortId, toPortId)
+      }
+    },
+    [getPortType],
+  )
+
+  const handleConnectionConfirm = useCallback(
+    (conn: PendingConnection, keyPath: string | null) => {
+      const metadata = keyPath ? { transform: `$.${keyPath}` } : undefined
+      graphRef.current?.addEdge(
+        conn.fromNodeId,
+        conn.toNodeId,
+        conn.fromPortId,
+        conn.toPortId,
+        metadata,
+      )
+      setPendingConnection(null)
     },
     [],
   )
+
+  const handleConnectionCancel = useCallback(() => {
+    setPendingConnection(null)
+  }, [])
 
   // Handle drop at React level (not WASM) to avoid borrow issues
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
@@ -65,7 +127,7 @@ export function WorkflowTopology() {
       if (!data) return
       try {
         const nodeData: DragNodeData = JSON.parse(data)
-        graphRef.current?.addNode({
+        const newNode: Job = {
           id: nodeData.id,
           name: nodeData.name,
           status: 'queued',
@@ -73,7 +135,9 @@ export function WorkflowTopology() {
           depends_on: [],
           metadata: nodeData.metadata,
           ports: nodeData.ports,
-        })
+        }
+        graphRef.current?.addNode(newNode)
+        setAddedNodes((prev) => [...prev, newNode])
       } catch (err) {
         console.error('Failed to add dropped node:', err)
       }
@@ -81,10 +145,12 @@ export function WorkflowTopology() {
     [],
   )
 
-  if (nodes.length === 0) {
+  const isEmpty = nodes.length === 0 && addedNodes.length === 0
+
+  if (isEmpty) {
     return (
       <div
-        className={`rounded-lg border bg-card/80 backdrop-blur-sm transition-colors ${
+        className={`rounded-lg border bg-card/80 backdrop-blur-sm transition-colors relative ${
           dragOver ? 'border-primary/50 bg-primary/5' : 'border-border/50'
         }`}
         onDragOver={handleDragOver}
@@ -110,7 +176,7 @@ export function WorkflowTopology() {
 
   return (
     <div
-      className={`rounded-lg border bg-card/80 backdrop-blur-sm overflow-hidden transition-colors ${
+      className={`rounded-lg border bg-card/80 backdrop-blur-sm overflow-hidden transition-colors relative ${
         dragOver ? 'border-primary/50' : 'border-border/50'
       }`}
       onDragOver={handleDragOver}
@@ -122,7 +188,7 @@ export function WorkflowTopology() {
           <Network className="h-3.5 w-3.5" />
           Workflow Topology
           <span className="text-[10px] text-muted-foreground/60 normal-case tracking-normal font-normal">
-            {nodes.length} agent{nodes.length !== 1 ? 's' : ''} · {edges.length} connection{edges.length !== 1 ? 's' : ''}
+            {mergedWorkflow.jobs.length} node{mergedWorkflow.jobs.length !== 1 ? 's' : ''} · {edges.length} connection{edges.length !== 1 ? 's' : ''}
           </span>
         </h3>
         <div className="flex gap-0.5">
@@ -148,7 +214,7 @@ export function WorkflowTopology() {
       </div>
       <WorkflowGraphComponent
         ref={graphRef}
-        workflow={workflow}
+        workflow={mergedWorkflow}
         className="w-full bg-[#0d1117]"
         style={{ height: 320 }}
         theme={{
@@ -172,6 +238,15 @@ export function WorkflowTopology() {
         onConnect={handleConnect}
         onError={(err) => console.error('Workflow graph error:', err)}
       />
+
+      {/* Key selector overlay */}
+      {pendingConnection && (
+        <KeySelector
+          connection={pendingConnection}
+          onConfirm={handleConnectionConfirm}
+          onCancel={handleConnectionCancel}
+        />
+      )}
     </div>
   )
 }
