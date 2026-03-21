@@ -65,17 +65,13 @@ export function WorkflowTopology() {
       console.log('onConnect fired:', { fromNodeId, fromPortId, toNodeId, toPortId })
       const fromType = getPortType(fromNodeId, fromPortId)
       const toType = getPortType(toNodeId, toPortId)
-      console.log('Port types:', { fromType, toType })
+      console.log('Port types:', { fromType, toType, fromNodeId, fromPortId, toNodeId, toPortId })
 
+      // Show key selector for any cross-type connection
       const needsTransform =
-        fromType !== toType &&
-        fromType !== '' &&
-        toType !== '' &&
-        ((fromType === 'json' && toType === 'text') ||
-          (fromType === 'text' && toType === 'json'))
+        fromType !== toType && fromType !== '' && toType !== ''
 
       if (needsTransform) {
-        // Show key selector
         setPendingConnection({
           fromNodeId,
           fromPortId,
@@ -84,8 +80,18 @@ export function WorkflowTopology() {
           toPortId,
           toPortType: toType,
         })
+      } else if (fromType === '' || toType === '') {
+        // Unknown port types — show selector as a fallback
+        setPendingConnection({
+          fromNodeId,
+          fromPortId,
+          fromPortType: fromType || 'unknown',
+          toNodeId,
+          toPortId,
+          toPortType: toType || 'unknown',
+        })
       } else {
-        // Direct connection
+        // Same type — direct connection
         graphRef.current?.addEdge(fromNodeId, toNodeId, fromPortId, toPortId)
       }
     },

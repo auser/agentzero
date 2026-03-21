@@ -39,9 +39,8 @@ export function KeySelector({ connection, onConfirm, onCancel }: KeySelectorProp
     inputRef.current?.focus()
   }, [])
 
-  const needsTransform =
-    (connection.fromPortType === 'json' && connection.toPortType === 'text') ||
-    (connection.fromPortType === 'text' && connection.toPortType === 'json')
+  // Always show the selector when types differ
+  const needsTransform = connection.fromPortType !== connection.toPortType
 
   const suggestions = COMMON_PATHS[connection.fromPortId] ?? COMMON_PATHS.default
 
