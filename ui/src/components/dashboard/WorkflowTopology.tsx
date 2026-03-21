@@ -13,7 +13,8 @@ import {
 } from '@auser/workflow-graph-react'
 import { topologyApi } from '@/lib/api/topology'
 import { topologyToWorkflow } from '@/components/workflows/WorkflowCanvas'
-import { renderNode } from '@/components/workflows/NodeRenderer'
+// Custom node rendering disabled — using WASM default renderer + port overlay
+// import { renderNode } from '@/components/workflows/NodeRenderer'
 import { Button } from '@/components/ui/button'
 import { Maximize2, RotateCcw, Network } from 'lucide-react'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
@@ -61,8 +62,10 @@ export function WorkflowTopology() {
 
   const handleConnect = useCallback(
     (fromNodeId: string, fromPortId: string, toNodeId: string, toPortId: string) => {
+      console.log('onConnect fired:', { fromNodeId, fromPortId, toNodeId, toPortId })
       const fromType = getPortType(fromNodeId, fromPortId)
       const toType = getPortType(toNodeId, toPortId)
+      console.log('Port types:', { fromType, toType })
 
       const needsTransform =
         fromType !== toType &&
@@ -234,7 +237,6 @@ export function WorkflowTopology() {
         }}
         autoResize
         onNodeClick={handleNodeClick}
-        onRenderNode={renderNode}
         onConnect={handleConnect}
         onError={(err) => console.error('Workflow graph error:', err)}
       />
