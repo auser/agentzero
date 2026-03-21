@@ -2240,8 +2240,18 @@ pub(crate) async fn get_tools(
 ) -> Result<Json<ToolsResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
-    let policy =
-        agentzero_infra::tools::ToolSecurityPolicy::default_for_workspace(std::env::temp_dir());
+    // Build tool policy from live config (or fallback to defaults)
+    let policy = if let Some(ref config_path) = state.config_path {
+        let ws_root = config_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
+        agentzero_config::load_tool_security_policy(&ws_root, config_path).unwrap_or_else(|_| {
+            agentzero_infra::tools::ToolSecurityPolicy::default_for_workspace(ws_root)
+        })
+    } else {
+        agentzero_infra::tools::ToolSecurityPolicy::default_for_workspace(std::env::temp_dir())
+    };
     let tools = agentzero_infra::tools::default_tools(&policy, None, None).unwrap_or_default();
 
     let summaries: Vec<ToolSummary> = tools
