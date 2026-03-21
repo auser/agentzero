@@ -1,14 +1,13 @@
 /**
  * Draggable palette of agents, tools, and channels.
- * Items can be dragged onto the workflow canvas to add as nodes.
+ * Collapsible sections with search filter and compact items.
  */
 import { useQuery } from '@tanstack/react-query'
 import { agentsApi } from '@/lib/api/agents'
 import { api } from '@/lib/api/client'
-import { topologyApi } from '@/lib/api/topology'
 import type { Port } from '@auser/workflow-graph-web'
-import { Bot, Wrench, Radio, GripVertical } from 'lucide-react'
-import type { DragEvent } from 'react'
+import { Bot, Wrench, Radio, GripVertical, ChevronDown, ChevronRight, Search } from 'lucide-react'
+import { type DragEvent, useState, useMemo } from 'react'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
 
 interface ToolInfo {
@@ -33,30 +32,16 @@ export interface DragNodeData {
   ports: Port[]
 }
 
-function SectionHeader({ icon, label, count }: { icon: React.ReactNode; label: string; count: number }) {
-  return (
-    <div className="flex items-center justify-between px-3 py-2">
-      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-        {icon}
-        {label}
-      </span>
-      <span className="text-[10px] text-muted-foreground/60 bg-muted/50 px-1.5 py-0.5 rounded">
-        {count}
-      </span>
-    </div>
-  )
-}
-
 function DraggableItem({
   data,
   name,
   detail,
-  dot,
+  color,
 }: {
   data: DragNodeData
   name: string
   detail?: string
-  dot?: string
+  color: string
 }) {
   const handleDragStart = (e: DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('application/workflow-node', JSON.stringify(data))
@@ -67,21 +52,63 @@ function DraggableItem({
     <div
       draggable
       onDragStart={handleDragStart}
-      className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-grab active:cursor-grabbing hover:bg-muted/30 rounded-sm transition-colors group select-none"
+      className="flex items-center gap-1.5 px-2 py-1 text-[11px] cursor-grab active:cursor-grabbing hover:bg-muted/40 rounded transition-colors group"
     >
-      <GripVertical className="h-3 w-3 text-muted-foreground/30 group-hover:text-muted-foreground/60 shrink-0 transition-colors" />
-      {dot && (
-        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dot}`} />
-      )}
-      <span className="truncate">{name}</span>
+      <GripVertical className="h-3 w-3 text-muted-foreground/20 group-hover:text-muted-foreground/50 shrink-0" />
+      <span
+        className="h-2 w-2 rounded-full shrink-0"
+        style={{ backgroundColor: color }}
+      />
+      <span className="truncate font-medium">{name}</span>
       {detail && (
-        <span className="text-[10px] text-muted-foreground/50 ml-auto shrink-0">{detail}</span>
+        <span className="text-[9px] text-muted-foreground/40 ml-auto truncate max-w-[80px]">
+          {detail}
+        </span>
       )}
     </div>
   )
 }
 
+function CollapsibleSection({
+  icon,
+  label,
+  count,
+  color,
+  defaultOpen = true,
+  children,
+}: {
+  icon: React.ReactNode
+  label: string
+  count: number
+  color: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center justify-between w-full px-3 py-1.5 hover:bg-muted/20 transition-colors"
+      >
+        <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color }}>
+          {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          {icon}
+          {label}
+        </span>
+        <span className="text-[9px] text-muted-foreground/50 bg-muted/30 px-1.5 py-0.5 rounded-full">
+          {count}
+        </span>
+      </button>
+      {open && <div className="pb-1">{children}</div>}
+    </div>
+  )
+}
+
 export function DraggablePalette() {
+  const [search, setSearch] = useState('')
+
   const { data: agents } = useQuery({
     queryKey: ['agents'],
     queryFn: () => agentsApi.list(),
@@ -99,89 +126,148 @@ export function DraggablePalette() {
     retry: false,
   })
 
-  const { data: topology } = useQuery({
-    queryKey: ['topology'],
-    queryFn: () => topologyApi.get(),
-    refetchInterval: 3_000,
-  })
-
   const agentList = agents?.data ?? []
-  const tools = toolsData?.tools ?? []
+  const allTools = toolsData?.tools ?? []
   const channels = Object.entries(configData?.channels ?? {}).map(([name, cfg]) => ({
     name,
     connected: cfg.enabled !== false,
   }))
-  const nodes = topology?.nodes ?? []
+
+  // Filter by search
+  const filter = search.toLowerCase()
+  const filteredAgents = useMemo(
+    () => agentList.filter((a) => a.name.toLowerCase().includes(filter)),
+    [agentList, filter],
+  )
+  const filteredTools = useMemo(
+    () => allTools.filter((t) => t.name.toLowerCase().includes(filter) || t.description?.toLowerCase().includes(filter)),
+    [allTools, filter],
+  )
+  const filteredChannels = useMemo(
+    () => channels.filter((c) => c.name.toLowerCase().includes(filter)),
+    [channels, filter],
+  )
+
+  // Categorize tools
+  const toolCategories = useMemo(() => {
+    const cats: Record<string, ToolInfo[]> = {
+      'File & Search': [],
+      'Memory': [],
+      'Agents': [],
+      'System': [],
+      'Other': [],
+    }
+    for (const tool of filteredTools) {
+      const name = tool.name
+      if (name.startsWith('memory_')) cats['Memory'].push(tool)
+      else if (['read_file', 'glob_search', 'content_search', 'pdf_read', 'image_info', 'docx_read'].includes(name)) cats['File & Search'].push(tool)
+      else if (['subagent_spawn', 'subagent_list', 'subagent_manage', 'delegate_coordination_status', 'agents_ipc'].includes(name)) cats['Agents'].push(tool)
+      else if (['shell', 'process', 'screenshot', 'task_plan', 'cli_discovery', 'proxy_config'].includes(name)) cats['System'].push(tool)
+      else cats['Other'].push(tool)
+    }
+    // Remove empty categories
+    return Object.entries(cats).filter(([, tools]) => tools.length > 0)
+  }, [filteredTools])
 
   return (
     <div className="rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden h-full flex flex-col">
-      <div className="px-4 py-3 border-b border-border/50">
-        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      {/* Header */}
+      <div className="px-3 py-2.5 border-b border-border/50">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
           Components
         </h3>
-        <p className="text-[10px] text-muted-foreground/50 mt-0.5">
-          Drag items onto the canvas
-        </p>
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground/40" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filter..."
+            className="w-full h-6 pl-6 pr-2 text-[11px] rounded border border-border/50 bg-background/50 focus:ring-1 focus:ring-ring outline-none placeholder:text-muted-foreground/30"
+          />
+        </div>
       </div>
-      <div className="overflow-y-auto flex-1 divide-y divide-border/30">
-        {/* Agents */}
-        <div className="py-1">
-          <SectionHeader icon={<Bot className="h-3 w-3" />} label="Agents" count={agentList.length} />
-          {agentList.map((a) => (
-            <DraggableItem
-              key={a.agent_id}
-              name={a.name}
-              detail={a.model}
-              dot={a.status === 'active' ? 'bg-emerald-500' : a.status === 'running' ? 'bg-blue-500' : 'bg-zinc-600'}
-              data={{
-                nodeType: 'agent',
-                id: a.agent_id,
-                name: a.name,
-                metadata: {
-                  node_type: 'agent',
-                  model: a.model,
-                  description: a.description,
-                  status: a.status,
-                },
-                ports: portsForNodeType('agent'),
-              }}
-            />
-          ))}
-        </div>
 
-        {/* Tools */}
-        <div className="py-1">
-          <SectionHeader icon={<Wrench className="h-3 w-3" />} label="Tools" count={tools.length} />
-          {tools.map((t) => (
-            <DraggableItem
-              key={t.name}
-              name={t.name}
-              detail={t.description?.slice(0, 20)}
-              data={{
-                nodeType: 'tool',
-                id: `tool-${t.name}`,
-                name: t.name,
-                metadata: {
-                  node_type: 'tool',
-                  tool_name: t.name,
-                  description: t.description,
-                },
-                ports: portsForNodeType('tool'),
-              }}
-            />
-          ))}
-        </div>
+      {/* Scrollable content */}
+      <div className="overflow-y-auto flex-1">
+        {/* Agents */}
+        {filteredAgents.length > 0 && (
+          <CollapsibleSection
+            icon={<Bot className="h-3 w-3" />}
+            label="Agents"
+            count={filteredAgents.length}
+            color="#3b82f6"
+          >
+            {filteredAgents.map((a) => (
+              <DraggableItem
+                key={a.agent_id}
+                name={a.name}
+                detail={a.model}
+                color={a.status === 'active' ? '#22c55e' : '#6b7280'}
+                data={{
+                  nodeType: 'agent',
+                  id: a.agent_id,
+                  name: a.name,
+                  metadata: {
+                    node_type: 'agent',
+                    model: a.model,
+                    description: a.description,
+                    status: a.status,
+                  },
+                  ports: portsForNodeType('agent'),
+                }}
+              />
+            ))}
+          </CollapsibleSection>
+        )}
+
+        {/* Tool categories */}
+        {toolCategories.map(([category, tools]) => (
+          <CollapsibleSection
+            key={category}
+            icon={<Wrench className="h-3 w-3" />}
+            label={category}
+            count={tools.length}
+            color="#8b5cf6"
+            defaultOpen={category === 'File & Search' || category === 'System'}
+          >
+            {tools.map((t) => (
+              <DraggableItem
+                key={t.name}
+                name={t.name}
+                detail={t.description?.slice(0, 25)}
+                color="#8b5cf6"
+                data={{
+                  nodeType: 'tool',
+                  id: `tool-${t.name}`,
+                  name: t.name,
+                  metadata: {
+                    node_type: 'tool',
+                    tool_name: t.name,
+                    description: t.description,
+                  },
+                  ports: portsForNodeType('tool'),
+                }}
+              />
+            ))}
+          </CollapsibleSection>
+        ))}
 
         {/* Channels */}
-        {channels.length > 0 && (
-          <div className="py-1">
-            <SectionHeader icon={<Radio className="h-3 w-3" />} label="Channels" count={channels.length} />
-            {channels.map((ch) => (
+        {filteredChannels.length > 0 && (
+          <CollapsibleSection
+            icon={<Radio className="h-3 w-3" />}
+            label="Channels"
+            count={filteredChannels.length}
+            color="#ec4899"
+          >
+            {filteredChannels.map((ch) => (
               <DraggableItem
                 key={ch.name}
                 name={ch.name}
-                dot={ch.connected ? 'bg-emerald-500' : 'bg-zinc-600'}
-                detail={ch.connected ? 'on' : 'off'}
+                detail={ch.connected ? 'connected' : 'off'}
+                color={ch.connected ? '#22c55e' : '#6b7280'}
                 data={{
                   nodeType: 'channel',
                   id: `channel-${ch.name}`,
@@ -195,30 +281,7 @@ export function DraggablePalette() {
                 }}
               />
             ))}
-          </div>
-        )}
-
-        {/* Active topology nodes (read-only info) */}
-        {nodes.length > 0 && (
-          <div className="py-1">
-            <SectionHeader icon={<Bot className="h-3 w-3" />} label="Active Nodes" count={nodes.length} />
-            {nodes.map((n) => (
-              <div
-                key={n.agent_id}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground/70"
-              >
-                <span
-                  className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                    n.status === 'running' ? 'bg-emerald-500' : n.status === 'active' ? 'bg-blue-500' : 'bg-zinc-600'
-                  }`}
-                />
-                <span className="truncate">{n.name}</span>
-                <span className="text-[10px] text-muted-foreground/40 ml-auto">
-                  {n.active_run_count} run{n.active_run_count !== 1 ? 's' : ''}
-                </span>
-              </div>
-            ))}
-          </div>
+          </CollapsibleSection>
         )}
       </div>
     </div>
