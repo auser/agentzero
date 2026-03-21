@@ -1,6 +1,6 @@
 /**
  * Draggable palette of agents, tools, and channels.
- * Items rendered as miniature node previews matching the canvas style.
+ * Items rendered as small draggable node chips.
  */
 import { useQuery } from '@tanstack/react-query'
 import { agentsApi } from '@/lib/api/agents'
@@ -31,112 +31,44 @@ export interface DragNodeData {
   ports: Port[]
 }
 
-const TYPE_COLORS: Record<string, { header: string; border: string; dot: string }> = {
-  agent: { header: '#3b82f6', border: '#2563eb', dot: '#22c55e' },
-  tool: { header: '#8b5cf6', border: '#7c3aed', dot: '#8b5cf6' },
-  channel: { header: '#ec4899', border: '#db2777', dot: '#ec4899' },
+const TYPE_STYLES: Record<string, { bg: string; border: string; dot: string }> = {
+  agent: { bg: '#1e293b', border: '#3b82f6', dot: '#3b82f6' },
+  tool: { bg: '#1a1e2e', border: '#8b5cf6', dot: '#8b5cf6' },
+  channel: { bg: '#1e1a2e', border: '#ec4899', dot: '#ec4899' },
 }
 
-const PORT_TYPE_COLORS: Record<string, string> = {
-  text: '#3b82f6',
-  json: '#8b5cf6',
-  tool_call: '#f97316',
-  event: '#22c55e',
-  config: '#6b7280',
-}
-
-function MiniNode({
+function NodeChip({
   data,
   name,
   nodeType,
-  detail,
-  ports,
 }: {
   data: DragNodeData
   name: string
   nodeType: string
-  detail?: string
-  ports: Port[]
 }) {
   const handleDragStart = (e: DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('application/workflow-node', JSON.stringify(data))
     e.dataTransfer.effectAllowed = 'copy'
   }
 
-  const colors = TYPE_COLORS[nodeType] ?? TYPE_COLORS.tool
-  const inputPorts = ports.filter((p) => p.direction === 'input')
-  const outputPorts = ports.filter((p) => p.direction === 'output')
-  const maxPorts = Math.max(inputPorts.length, outputPorts.length)
+  const style = TYPE_STYLES[nodeType] ?? TYPE_STYLES.tool
 
   return (
     <div
       draggable
       onDragStart={handleDragStart}
-      className="rounded-md border overflow-hidden cursor-grab active:cursor-grabbing hover:scale-[1.02] hover:shadow-lg transition-all select-none"
-      style={{ borderColor: colors.border + '60', background: '#1f2937' }}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md cursor-grab active:cursor-grabbing hover:brightness-125 transition-all select-none text-[11px] font-medium"
+      style={{
+        background: style.bg,
+        border: `1px solid ${style.border}50`,
+        color: '#e5e7eb',
+      }}
     >
-      {/* Header bar */}
-      <div
-        className="px-2 py-1 flex items-center gap-1.5"
-        style={{ background: colors.header + '30', borderBottom: `1px solid ${colors.border}40` }}
-      >
-        <span
-          className="h-1.5 w-1.5 rounded-full"
-          style={{ background: colors.dot }}
-        />
-        <span className="text-[10px] font-semibold truncate" style={{ color: colors.header }}>
-          {name}
-        </span>
-      </div>
-
-      {/* Ports */}
-      {maxPorts > 0 && (
-        <div className="px-1.5 py-1 space-y-0.5">
-          {Array.from({ length: maxPorts }).map((_, i) => {
-            const inp = inputPorts[i]
-            const out = outputPorts[i]
-            return (
-              <div key={i} className="flex items-center justify-between text-[8px] leading-tight">
-                {/* Input port */}
-                <div className="flex items-center gap-1 min-w-0 flex-1">
-                  {inp ? (
-                    <>
-                      <span
-                        className="h-1.5 w-1.5 rounded-full shrink-0"
-                        style={{ background: PORT_TYPE_COLORS[inp.port_type ?? ''] ?? '#6b7280' }}
-                      />
-                      <span className="text-muted-foreground/70 truncate">{inp.label}</span>
-                    </>
-                  ) : (
-                    <span />
-                  )}
-                </div>
-                {/* Output port */}
-                <div className="flex items-center gap-1 min-w-0 flex-1 justify-end">
-                  {out ? (
-                    <>
-                      <span className="text-muted-foreground/70 truncate">{out.label}</span>
-                      <span
-                        className="h-1.5 w-1.5 rounded-full shrink-0"
-                        style={{ background: PORT_TYPE_COLORS[out.port_type ?? ''] ?? '#6b7280' }}
-                      />
-                    </>
-                  ) : (
-                    <span />
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Detail */}
-      {detail && (
-        <div className="px-2 pb-1">
-          <span className="text-[7px] text-muted-foreground/30 truncate block">{detail}</span>
-        </div>
-      )}
+      <span
+        className="h-2 w-2 rounded-full shrink-0"
+        style={{ background: style.dot }}
+      />
+      {name}
     </div>
   )
 }
@@ -173,7 +105,7 @@ function CollapsibleSection({
           {count}
         </span>
       </button>
-      {open && <div className="px-2 pb-2 grid gap-1.5">{children}</div>}
+      {open && <div className="px-2 pb-2 flex flex-wrap gap-1.5">{children}</div>}
     </div>
   )
 }
@@ -219,7 +151,6 @@ export function DraggablePalette() {
     [channels, filter],
   )
 
-  // Categorize tools
   const toolCategories = useMemo(() => {
     const cats: Record<string, ToolInfo[]> = {
       'File & Search': [],
@@ -258,25 +189,15 @@ export function DraggablePalette() {
       </div>
 
       <div className="overflow-y-auto flex-1">
-        {/* Agents */}
         {filteredAgents.length > 0 && (
-          <CollapsibleSection
-            icon={<Bot className="h-3 w-3" />}
-            label="Agents"
-            count={filteredAgents.length}
-            color="#3b82f6"
-          >
+          <CollapsibleSection icon={<Bot className="h-3 w-3" />} label="Agents" count={filteredAgents.length} color="#3b82f6">
             {filteredAgents.map((a) => (
-              <MiniNode
+              <NodeChip
                 key={a.agent_id}
                 name={a.name}
                 nodeType="agent"
-                detail={a.model}
-                ports={portsForNodeType('agent')}
                 data={{
-                  nodeType: 'agent',
-                  id: a.agent_id,
-                  name: a.name,
+                  nodeType: 'agent', id: a.agent_id, name: a.name,
                   metadata: { node_type: 'agent', model: a.model, description: a.description, status: a.status },
                   ports: portsForNodeType('agent'),
                 }}
@@ -285,7 +206,6 @@ export function DraggablePalette() {
           </CollapsibleSection>
         )}
 
-        {/* Tool categories */}
         {toolCategories.map(([category, tools]) => (
           <CollapsibleSection
             key={category}
@@ -296,16 +216,12 @@ export function DraggablePalette() {
             defaultOpen={tools.length <= 6}
           >
             {tools.map((t) => (
-              <MiniNode
+              <NodeChip
                 key={t.name}
                 name={t.name}
                 nodeType="tool"
-                detail={t.description?.slice(0, 30)}
-                ports={portsForNodeType('tool')}
                 data={{
-                  nodeType: 'tool',
-                  id: `tool-${t.name}`,
-                  name: t.name,
+                  nodeType: 'tool', id: `tool-${t.name}`, name: t.name,
                   metadata: { node_type: 'tool', tool_name: t.name, description: t.description },
                   ports: portsForNodeType('tool'),
                 }}
@@ -314,25 +230,15 @@ export function DraggablePalette() {
           </CollapsibleSection>
         ))}
 
-        {/* Channels */}
         {filteredChannels.length > 0 && (
-          <CollapsibleSection
-            icon={<Radio className="h-3 w-3" />}
-            label="Channels"
-            count={filteredChannels.length}
-            color="#ec4899"
-          >
+          <CollapsibleSection icon={<Radio className="h-3 w-3" />} label="Channels" count={filteredChannels.length} color="#ec4899">
             {filteredChannels.map((ch) => (
-              <MiniNode
+              <NodeChip
                 key={ch.name}
                 name={ch.name}
                 nodeType="channel"
-                detail={ch.connected ? 'connected' : 'offline'}
-                ports={portsForNodeType('channel')}
                 data={{
-                  nodeType: 'channel',
-                  id: `channel-${ch.name}`,
-                  name: ch.name,
+                  nodeType: 'channel', id: `channel-${ch.name}`, name: ch.name,
                   metadata: { node_type: 'channel', channel_type: ch.name, connected: ch.connected },
                   ports: portsForNodeType('channel'),
                 }}
