@@ -4,7 +4,7 @@
  * Shows KeySelector when connecting ports with different types.
  * Persists full graph state via workflow-graph's getState/loadState API.
  */
-import { useRef, useCallback, useState, useEffect, type DragEvent } from 'react'
+import { useRef, useCallback, useState, type DragEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 // useNavigate removed — agent creation now uses inline dialog
 import {
@@ -52,7 +52,7 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
   const [configPanelOpen, setConfigPanelOpen] = useState(false)
   const cmdK = useCommandPalette()
 
-  const { graphState, saveGraphState, clear: storeClear } = useWorkflowStore()
+  const { clear: storeClear } = useWorkflowStore()
 
   const { data: topology } = useQuery({
     queryKey: ['topology'],
@@ -64,41 +64,8 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
   const edges = topology?.edges ?? []
   const workflow = topologyToWorkflow(nodes, edges)
 
-  // Track saved positions in a ref so we can re-apply after topology resets
-  const savedPositionsRef = useRef<Record<string, [number, number]>>(
-    (graphState && typeof graphState === 'object' && graphState.positions) ? graphState.positions : {},
-  )
-
-  // Positions are now handled by the initialPositions prop on WorkflowGraphComponent
-  // No manual setNodePositions calls needed
-
-  // Save graph state helper — called on user interactions, not on a timer
-  const saveCurrentState = useCallback(async () => {
-    try {
-      const state = await graphRef.current?.getState()
-      if (state && state.positions) {
-        savedPositionsRef.current = state.positions
-        saveGraphState(state)
-        console.log('[workflow] state saved', Object.keys(state.positions).length, 'positions')
-      } else {
-        console.log('[workflow] getState returned', state ? 'no positions' : 'null')
-      }
-    } catch (e) {
-      console.log('[workflow] getState error:', e)
-    }
-  }, [saveGraphState])
-
-  // Save on Delete/Backspace
-  useEffect(() => {
-    const handler = async (e: KeyboardEvent) => {
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        await new Promise((r) => setTimeout(r, 100))
-        await saveCurrentState()
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [saveCurrentState])
+  // Persistence is handled by workflow-graph's built-in persist option
+  // No manual save/restore needed
 
   // Look up port type for a given node+port from the current workflow
   const getPortType = useCallback(
@@ -113,23 +80,12 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
 
   const handleNodeClick = useCallback(() => {}, [])
 
+  // Drag end is auto-persisted by workflow-graph's persist option
   const handleNodeDragEnd = useCallback(
-    (_jobId: string, x: number, y: number) => {
-      // Save position directly — don't rely on getState which may fail
-      savedPositionsRef.current = { ...savedPositionsRef.current, [_jobId]: [x, y] }
-      // Persist to localStorage via Zustand
-      saveGraphState({
-        version: 1,
-        workflow: { id: 'saved', name: 'saved', trigger: '', jobs: [] },
-        positions: savedPositionsRef.current,
-        edges: [],
-        zoom: 1,
-        pan_x: 0,
-        pan_y: 0,
-      })
-      console.log('[workflow] position saved for', _jobId, 'at', x, y)
+    () => {
+      // Auto-persisted by workflow-graph
     },
-    [saveGraphState],
+    [],
   )
 
   const handleConnect = useCallback(
@@ -151,7 +107,6 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         })
       } else {
         graphRef.current?.addEdge(fromNodeId, toNodeId, fromPortId, toPortId)
-          .then(() => saveCurrentState())
           .catch(() => {})
       }
     },
@@ -213,7 +168,6 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
           dropY = e.clientY - rect.top
         }
         graphRef.current?.addNode(newNode, dropX, dropY)
-          .then(() => saveCurrentState())
           .catch(() => {})
       } catch (err) {
         console.error('Failed to add dropped node:', err)
@@ -224,12 +178,12 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
 
   const handleClear = useCallback(() => {
     storeClear()
+    localStorage.removeItem('agentzero-workflow-graph')
     window.location.reload()
   }, [storeClear])
 
-  const savedJobCount = (graphState && typeof graphState === 'object' && graphState.workflow?.jobs?.length) ? graphState.workflow.jobs.length : 0
-  const nodeCount = workflow.jobs.length + savedJobCount
-  const isEmpty = nodes.length === 0 && savedJobCount === 0
+  const nodeCount = workflow.jobs.length
+  const isEmpty = nodes.length === 0
 
   if (isEmpty) {
     return (
@@ -276,15 +230,13 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
           </span>
         </h3>
         <div className="flex items-center gap-1">
-          {graphState && (
-            <button
-              onClick={handleClear}
-              className="flex items-center gap-1 h-7 px-2 text-[10px] text-muted-foreground/40 hover:text-destructive bg-muted/20 hover:bg-destructive/10 rounded border border-border/30 transition-colors"
-              title="Clear added nodes"
-            >
-              Clear
-            </button>
-          )}
+          <button
+            onClick={handleClear}
+            className="flex items-center gap-1 h-7 px-2 text-[10px] text-muted-foreground/40 hover:text-destructive bg-muted/20 hover:bg-destructive/10 rounded border border-border/30 transition-colors"
+            title="Clear saved layout"
+          >
+            Clear
+          </button>
           <button
             onClick={() => cmdK.setOpen(true)}
             className="flex items-center gap-1.5 h-7 px-2 text-[10px] text-muted-foreground/50 hover:text-muted-foreground bg-muted/20 hover:bg-muted/40 rounded border border-border/30 transition-colors"
@@ -329,7 +281,7 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         className={`w-full bg-background ${fullHeight ? 'flex-1' : ''}`}
         style={fullHeight ? undefined : { height: 320 }}
         theme={THEME}
-        initialPositions={savedPositionsRef.current}
+        persist={{ key: 'agentzero-workflow-graph' }}
         autoResize
         onNodeClick={handleNodeClick}
         onNodeDragEnd={handleNodeDragEnd}
