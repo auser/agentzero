@@ -173,6 +173,8 @@ pub mod proxy_config;
 #[cfg(feature = "tools-extended")]
 pub mod schedule;
 #[cfg(feature = "tools-extended")]
+pub mod sop;
+#[cfg(feature = "tools-extended")]
 pub mod sop_tools;
 #[cfg(feature = "tools-extended")]
 pub mod url_validation;
