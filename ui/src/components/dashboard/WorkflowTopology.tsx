@@ -64,6 +64,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
   const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false)
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
   const [templateName, setTemplateName] = useState('')
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const cmdK = useCommandPalette()
@@ -326,6 +327,9 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     } else if (mod && e.shiftKey && e.key === 'f') {
       e.preventDefault()
       reactFlowInstance.fitView({ padding: 0.2, duration: 300 })
+    } else if (mod && e.shiftKey && e.key === '?') {
+      e.preventDefault()
+      setShortcutsOpen((v) => !v)
     }
   }, [readOnly, handleGroupSelected, handleUngroupSelected, reactFlowInstance])
 
@@ -554,6 +558,65 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
         nodeId={selectedNodeId}
         onClose={handlePaneClick}
       />
+
+      {/* Keyboard shortcuts panel */}
+      {shortcutsOpen && (
+        <div
+          style={{
+            position: 'absolute', inset: 0, zIndex: 50,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          }}
+          onClick={() => setShortcutsOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 420, background: '#1C1C1E', borderRadius: 14,
+              border: '1px solid rgba(255,255,255,0.06)',
+              fontFamily: "'JetBrains Mono', monospace",
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)',
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#E5E5E5' }}>Keyboard Shortcuts</span>
+              <button
+                onClick={() => setShortcutsOpen(false)}
+                style={{ background: 'none', border: 'none', color: '#737373', cursor: 'pointer', fontSize: 16 }}
+              >&#x2715;</button>
+            </div>
+            <div style={{ padding: '12px 20px 20px' }}>
+              {[
+                ['Cmd + K', 'Command palette'],
+                ['Cmd + Z', 'Undo'],
+                ['Cmd + Shift + Z', 'Redo'],
+                ['Cmd + Shift + F', 'Zoom to fit'],
+                ['Cmd + G', 'Group selected nodes'],
+                ['Cmd + Shift + G', 'Ungroup'],
+                ['Cmd + Shift + ?', 'Toggle this panel'],
+                ['Backspace / Delete', 'Delete selected'],
+                ['Right-click', 'Context menu'],
+              ].map(([key, desc]) => (
+                <div key={key} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.02)',
+                }}>
+                  <span style={{ fontSize: 12, color: '#A3A3A3' }}>{desc}</span>
+                  <kbd style={{
+                    fontSize: 11, color: '#E5E5E5', background: '#0F0F11',
+                    padding: '3px 8px', borderRadius: 5,
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}>{key}</kbd>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
