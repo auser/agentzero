@@ -71,7 +71,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const cmdK = useCommandPalette()
 
-  const { persistState, handleClear } = useWorkflowPersistence(setNodes, setEdges)
+  const { persistState, handleClear, workflowId } = useWorkflowPersistence(setNodes, setEdges)
   const { push: pushHistory, undo, redo } = useUndoRedo(setNodes, setEdges)
 
   // Push history snapshot on every persist (debounced saves also capture undo state)
@@ -104,37 +104,72 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     setSelectedNodeId(null)
   }, [])
 
-  // Detach child node from group when dragged outside parent bounds
-  const handleNodeDragStop = useCallback((_: React.MouseEvent, node: Node) => {
-    if (!node.parentId) return
-    const parent = reactFlowInstance.getNode(node.parentId)
-    if (!parent) return
+  // Detach from group when dragged outside, attach when dragged into a group
+  const handleNodeDragStop = useCallback((_: React.MouseEvent, draggedNode: Node) => {
+    if (draggedNode.type === 'group') return
+    const allNodes = reactFlowInstance.getNodes()
 
-    const pw = (parent.measured?.width ?? parent.width ?? parent.style?.width ?? 300) as number
-    const ph = (parent.measured?.height ?? parent.height ?? parent.style?.height ?? 200) as number
+    // ── Detach: child dragged outside parent ──
+    if (draggedNode.parentId) {
+      const parent = reactFlowInstance.getNode(draggedNode.parentId)
+      if (parent) {
+        const pw = (parent.measured?.width ?? parent.style?.width ?? 300) as number
+        const ph = (parent.measured?.height ?? parent.style?.height ?? 200) as number
+        const outside =
+          draggedNode.position.x < -20 || draggedNode.position.y < -20 ||
+          draggedNode.position.x > pw + 20 || draggedNode.position.y > ph + 20
+        if (outside) {
+          setNodes((nds) =>
+            nds.map((n) =>
+              n.id === draggedNode.id
+                ? {
+                    ...n,
+                    parentId: undefined,
+                    expandParent: undefined,
+                    position: {
+                      x: draggedNode.position.x + parent.position.x,
+                      y: draggedNode.position.y + parent.position.y,
+                    },
+                  }
+                : n,
+            ),
+          )
+          return
+        }
+      }
+    }
 
-    const outside =
-      node.position.x < -20 ||
-      node.position.y < -20 ||
-      node.position.x > pw + 20 ||
-      node.position.y > ph + 20
-
-    if (outside) {
-      setNodes((nds) =>
-        nds.map((n) =>
-          n.id === node.id
-            ? {
-                ...n,
-                parentId: undefined,
-                expandParent: undefined,
-                position: {
-                  x: node.position.x + parent.position.x,
-                  y: node.position.y + parent.position.y,
-                },
-              }
-            : n,
-        ),
-      )
+    // ── Attach: free node dragged into a group ──
+    if (!draggedNode.parentId) {
+      const absX = draggedNode.position.x
+      const absY = draggedNode.position.y
+      for (const group of allNodes) {
+        if (group.type !== 'group' || group.id === draggedNode.id) continue
+        if ((group.data as Record<string, unknown>).collapsed) continue
+        const gw = (group.measured?.width ?? group.style?.width ?? 300) as number
+        const gh = (group.measured?.height ?? group.style?.height ?? 200) as number
+        if (
+          absX > group.position.x && absX < group.position.x + gw &&
+          absY > group.position.y && absY < group.position.y + gh
+        ) {
+          setNodes((nds) =>
+            nds.map((n) =>
+              n.id === draggedNode.id
+                ? {
+                    ...n,
+                    parentId: group.id,
+                    expandParent: true,
+                    position: {
+                      x: absX - group.position.x,
+                      y: absY - group.position.y,
+                    },
+                  }
+                : n,
+            ),
+          )
+          return
+        }
+      }
     }
   }, [reactFlowInstance, setNodes])
 
@@ -365,7 +400,34 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
         />
       )}
 
-      {!readOnly && <RunWorkflowButton />}
+      {!readOnly && <RunWorkflowButton workflowId={workflowId} />}
+
+      {/* Templates toolbar button — always visible */}
+      {!readOnly && (
+        <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 20 }}>
+          <button
+            onClick={() => setTemplateGalleryOpen(true)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '8px 14px',
+              background: '#1C1C1E',
+              color: '#A3A3A3',
+              border: '1px solid rgba(255,255,255,0.06)',
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 500,
+              fontFamily: "'JetBrains Mono', monospace",
+              cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+            }}
+          >
+            <span style={{ fontSize: 14 }}>&#x2B1A;</span>
+            Templates
+          </button>
+        </div>
+      )}
 
       {!readOnly && <ConfigPanel open={configPanelOpen} onClose={() => setConfigPanelOpen(false)} />}
 
