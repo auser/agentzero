@@ -148,15 +148,21 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
       })
     }
 
-    // ── API-sourced channels (configured instances) ──
-    for (const [name, cfg] of Object.entries(configData?.channels ?? {})) {
+    // ── Channels — from API config, or fallback to common channel names ──
+    const COMMON_CHANNELS = ['telegram', 'discord', 'slack', 'email', 'webhook', 'chat']
+    const apiChannels = Object.entries(configData?.channels ?? {})
+    const channelNames = apiChannels.length > 0
+      ? apiChannels
+      : COMMON_CHANNELS.map((name) => [name, { enabled: undefined }] as const)
+
+    for (const [name, cfg] of channelNames) {
       const def = getDefinition('channel')
       items.push({
         id: `channel-${name}`,
         name,
         category: 'Channel',
         icon: <span style={{ fontSize: 13 }}>{def?.icon ?? '📡'}</span>,
-        detail: cfg.enabled !== false ? 'connected' : 'offline',
+        detail: cfg.enabled === undefined ? 'channel' : cfg.enabled !== false ? 'connected' : 'offline',
         color: def?.headerColor ?? '#ec4899',
         data: {
           nodeType: 'channel', id: `channel-${name}`, name,

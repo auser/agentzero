@@ -48,7 +48,7 @@ export const templatesApi = {
     api.post<TemplateRecord>('/v1/templates', payload),
 
   update: (id: string, payload: Partial<CreateTemplatePayload>) =>
-    api.put<TemplateRecord>(`/v1/templates/${id}`, payload),
+    api.patch<TemplateRecord>(`/v1/templates/${id}`, payload),
 
   delete: (id: string) =>
     api.delete<{ template_id: string; deleted: boolean }>(`/v1/templates/${id}`),
