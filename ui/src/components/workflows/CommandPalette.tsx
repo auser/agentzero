@@ -2,14 +2,14 @@
  * Cmd+K command palette for quickly adding nodes to the workflow canvas.
  * Fuzzy searches across agents, tools, and channels.
  */
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { agentsApi } from '@/lib/api/agents'
 import { Plus } from 'lucide-react'
 import { api } from '@/lib/api/client'
-import { Bot, Wrench, Radio, Search } from 'lucide-react'
+import { Bot, Wrench, Radio, Search, Hand, Clock, Shield, GitBranch, Sparkles, Zap, Theater } from 'lucide-react'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
-import { getDefinition } from '@/lib/node-definitions'
+import { getDefinition, ALL_NODE_DEFINITIONS } from '@/lib/node-definitions'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
 
 interface ToolInfo {
@@ -132,6 +132,37 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
       })
     }
 
+    // Static node types — always available regardless of API data
+    const STATIC_ICON_MAP: Record<string, React.ReactNode> = {
+      role: <Theater className="h-3.5 w-3.5" />,
+      schedule: <Clock className="h-3.5 w-3.5" />,
+      gate: <Shield className="h-3.5 w-3.5" />,
+      subagent: <GitBranch className="h-3.5 w-3.5" />,
+      human_input: <Hand className="h-3.5 w-3.5" />,
+      provider: <Zap className="h-3.5 w-3.5" />,
+    }
+
+    for (const def of ALL_NODE_DEFINITIONS) {
+      // Skip types already covered by dynamic data above
+      if (['agent', 'tool', 'channel'].includes(def.type)) continue
+      const icon = STATIC_ICON_MAP[def.type] ?? <Sparkles className="h-3.5 w-3.5" />
+      items.push({
+        id: `${def.type}_static`,
+        name: def.label,
+        category: def.category === 'core' ? 'Node' : def.category === 'integration' ? 'Channel' : def.category,
+        icon,
+        detail: def.fields?.[0]?.label ?? def.type,
+        color: def.headerColor,
+        data: {
+          nodeType: def.type,
+          id: `${def.type}_new`,
+          name: def.label,
+          metadata: { node_type: def.type },
+          ports: portsForNodeType(def.type),
+        },
+      })
+    }
+
     return items
   }, [agents, toolsData, configData, onCreateAgent])
 
@@ -148,20 +179,24 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
   }, [allItems, query])
 
   // Reset selection when query changes
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset derived from query
-  useEffect(() => { setSelectedIndex(0) }, [query])
+  useEffect(() => {
+    setSelectedIndex(0) // eslint-disable-line react-hooks/set-state-in-effect -- reset on query change
+  }, [query])
 
   // Focus input when opened
   useEffect(() => {
     if (open) {
-      setQuery('') // eslint-disable-line react-hooks/set-state-in-effect -- intentional reset on open
+      setQuery('') // eslint-disable-line react-hooks/set-state-in-effect -- reset on open
       setSelectedIndex(0)
       setTimeout(() => inputRef.current?.focus(), 50)
     }
   }, [open])
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+  // Global keyboard handler — works regardless of focus
+  useEffect(() => {
+    if (!open) return
+
+    const handler = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSelectedIndex((i) => Math.min(i + 1, filtered.length - 1))
@@ -181,9 +216,11 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
       } else if (e.key === 'Escape') {
         onClose()
       }
-    },
-    [filtered, selectedIndex, onSelect, onClose, onCreateAgent],
-  )
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [open, filtered, selectedIndex, onSelect, onClose, onCreateAgent])
 
   if (!open) return null
 
@@ -198,10 +235,10 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
           <Search className="h-4 w-4 text-muted-foreground/50 shrink-0" />
           <input
             ref={inputRef}
+            autoFocus
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
             placeholder="Add a node... (agent, tool, or channel)"
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/40"
           />

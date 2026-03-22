@@ -67,7 +67,11 @@ export function useNodeActions(
       x: window.innerWidth / 2,
       y: window.innerHeight / 2,
     })
-    addNode(dragPayloadToNode(data, position))
+    // Ensure unique node ID (static palette items use template IDs like "role_new")
+    const uniqueData = data.id.endsWith('_new')
+      ? { ...data, id: `${data.nodeType}_${Date.now()}` }
+      : data
+    addNode(dragPayloadToNode(uniqueData, position))
   }, [reactFlow, addNode])
 
   const isValidConnection = useConnectionValidation()
