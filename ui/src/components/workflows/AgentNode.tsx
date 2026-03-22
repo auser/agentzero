@@ -19,7 +19,7 @@ import { getDefinition } from '@/lib/node-definitions'
 import { portTypeColor, statusColor } from '@/lib/workflow-types'
 import { modelsApi } from '@/lib/api/models'
 import { agentsApi } from '@/lib/api/agents'
-import type { Port } from '@/lib/workflow-types'
+
 
 export interface AgentNodeData {
   name: string
@@ -93,8 +93,9 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
   }, [reactFlow, id, nodeData.metadata])
   const icon = NODE_ICONS[nodeData.nodeType] ?? '⚙️'
   const label = def?.label ?? 'Node'
-  const inputs = def?.inputs ?? []
-  const outputs = def?.outputs ?? []
+  // Use tool-specific ports from metadata if available (derived from input_schema)
+  const inputs = (nodeData.metadata?.tool_inputs as typeof def.inputs) ?? def?.inputs ?? []
+  const outputs = (nodeData.metadata?.tool_outputs as typeof def.outputs) ?? def?.outputs ?? []
   const fields = def?.fields ?? []
   const status = nodeData.status ?? 'queued'
   const sColor = statusColor(status)

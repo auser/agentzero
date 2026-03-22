@@ -330,6 +330,324 @@ pub fn compile(
     })
 }
 
+// ── Executor ─────────────────────────────────────────────────────────────────
+
+/// Trait for dispatching individual workflow steps.
+/// Implemented by the gateway/infra layer to wire real agent execution.
+#[async_trait::async_trait]
+pub trait StepDispatcher: Send + Sync {
+    /// Execute an agent node. Returns the response text.
+    async fn run_agent(
+        &self,
+        step: &ExecutionStep,
+        input: &str,
+        context: Option<&serde_json::Value>,
+    ) -> anyhow::Result<String>;
+
+    /// Execute a tool node directly. Returns the tool output.
+    async fn run_tool(&self, tool_name: &str, input: &serde_json::Value) -> anyhow::Result<String>;
+
+    /// Send a message to a channel.
+    async fn send_channel(&self, channel_type: &str, message: &str) -> anyhow::Result<()>;
+}
+
+/// Execute a compiled workflow plan.
+///
+/// Walks topological levels, dispatching each step via the `StepDispatcher`,
+/// collecting outputs, and routing data through edges.
+pub async fn execute(
+    plan: &ExecutionPlan,
+    initial_input: &str,
+    dispatcher: &dyn StepDispatcher,
+) -> anyhow::Result<WorkflowRun> {
+    let run_id = format!(
+        "wfrun-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+
+    let mut run = WorkflowRun {
+        run_id,
+        workflow_id: plan.workflow_id.clone(),
+        outputs: HashMap::new(),
+        node_statuses: HashMap::new(),
+    };
+
+    // Initialize all nodes as Pending
+    for level in &plan.levels {
+        for step in level {
+            run.node_statuses
+                .insert(step.node_id.clone(), NodeStatus::Pending);
+        }
+    }
+
+    // Seed trigger/first-level nodes with the initial input
+    if let Some(first_level) = plan.levels.first() {
+        for step in first_level {
+            run.outputs.insert(
+                (step.node_id.clone(), "input".to_string()),
+                serde_json::Value::String(initial_input.to_string()),
+            );
+        }
+    }
+
+    // Walk each level
+    for level in &plan.levels {
+        let handles: Vec<(
+            String,
+            tokio::task::JoinHandle<Result<StepOutput, anyhow::Error>>,
+        )> = Vec::new();
+
+        for step in level {
+            // Check if this node should be skipped (gate routing)
+            if run.node_statuses.get(&step.node_id) == Some(&NodeStatus::Skipped) {
+                continue;
+            }
+
+            // Collect inputs from upstream via reverse edge map
+            let input_text = collect_input_text(&run, &plan.reverse_edges, &step.node_id);
+            let context = collect_context(&run, &plan.reverse_edges, &step.node_id);
+
+            run.node_statuses
+                .insert(step.node_id.clone(), NodeStatus::Running);
+
+            // Dispatch based on node type
+            let step_clone = step.clone();
+            let input_clone = input_text.clone();
+            let ctx_clone = context.clone();
+
+            // For truly parallel execution within a level, we'd spawn tasks.
+            // For now, execute sequentially within each level for simplicity
+            // and to avoid complex lifetime issues with the dispatcher ref.
+            let result =
+                dispatch_step(dispatcher, &step_clone, &input_clone, ctx_clone.as_ref()).await;
+
+            match result {
+                Ok(output) => {
+                    // Store outputs keyed by (node_id, port_id)
+                    for (port_id, value) in &output.port_values {
+                        run.outputs
+                            .insert((step.node_id.clone(), port_id.clone()), value.clone());
+                    }
+
+                    // Handle gate routing — skip inactive branches
+                    if step.node_type == NodeType::Gate {
+                        handle_gate_routing(
+                            &output,
+                            &step.node_id,
+                            &plan.edges,
+                            &mut run.node_statuses,
+                        );
+                    }
+
+                    run.node_statuses
+                        .insert(step.node_id.clone(), NodeStatus::Completed);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        node_id = %step.node_id,
+                        error = %e,
+                        "workflow step failed"
+                    );
+                    run.node_statuses
+                        .insert(step.node_id.clone(), NodeStatus::Failed);
+                    // Continue executing other nodes in the level,
+                    // but downstream dependents will get empty inputs.
+                }
+            }
+        }
+
+        // Await any parallel handles (future use)
+        for (node_id, handle) in handles {
+            match handle.await {
+                Ok(Ok(output)) => {
+                    for (port_id, value) in &output.port_values {
+                        run.outputs
+                            .insert((node_id.clone(), port_id.clone()), value.clone());
+                    }
+                    run.node_statuses.insert(node_id, NodeStatus::Completed);
+                }
+                Ok(Err(e)) => {
+                    tracing::error!(node_id = %node_id, error = %e, "parallel step failed");
+                    run.node_statuses.insert(node_id, NodeStatus::Failed);
+                }
+                Err(e) => {
+                    tracing::error!(node_id = %node_id, error = %e, "parallel step panicked");
+                    run.node_statuses.insert(node_id, NodeStatus::Failed);
+                }
+            }
+        }
+    }
+
+    Ok(run)
+}
+
+/// Output from a single step execution.
+struct StepOutput {
+    /// Values keyed by output port ID.
+    port_values: HashMap<String, serde_json::Value>,
+}
+
+/// Dispatch a single step to the appropriate handler.
+async fn dispatch_step(
+    dispatcher: &dyn StepDispatcher,
+    step: &ExecutionStep,
+    input: &str,
+    context: Option<&serde_json::Value>,
+) -> anyhow::Result<StepOutput> {
+    match step.node_type {
+        NodeType::Agent | NodeType::SubAgent => {
+            let response = dispatcher.run_agent(step, input, context).await?;
+            let mut ports = HashMap::new();
+            ports.insert(
+                "response".to_string(),
+                serde_json::Value::String(response.clone()),
+            );
+            ports.insert("tool_calls".to_string(), serde_json::Value::Array(vec![]));
+            Ok(StepOutput { port_values: ports })
+        }
+        NodeType::Tool => {
+            let tool_name = step.metadata["tool_name"].as_str().unwrap_or_default();
+            let tool_input = if input.is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::from_str(input).unwrap_or(serde_json::json!({ "input": input }))
+            };
+            let result = dispatcher.run_tool(tool_name, &tool_input).await?;
+            let mut ports = HashMap::new();
+            ports.insert("result".to_string(), serde_json::Value::String(result));
+            Ok(StepOutput { port_values: ports })
+        }
+        NodeType::Channel => {
+            let channel_type = step.metadata["channel_type"].as_str().unwrap_or_default();
+            // Channel as sink — send the input
+            if !input.is_empty() {
+                dispatcher.send_channel(channel_type, input).await?;
+            }
+            // Channel as trigger — output the input as trigger/message
+            let mut ports = HashMap::new();
+            ports.insert(
+                "trigger".to_string(),
+                serde_json::Value::String(input.to_string()),
+            );
+            ports.insert(
+                "message".to_string(),
+                serde_json::Value::String(input.to_string()),
+            );
+            Ok(StepOutput { port_values: ports })
+        }
+        NodeType::Gate => {
+            // Gates always "approve" for now. Real implementation would suspend
+            // and wait for human input via the resume() mechanism.
+            let mut ports = HashMap::new();
+            ports.insert(
+                "approved".to_string(),
+                serde_json::Value::String(input.to_string()),
+            );
+            // The "denied" port intentionally gets no value — downstream
+            // nodes connected to it will be skipped by handle_gate_routing.
+            Ok(StepOutput { port_values: ports })
+        }
+        NodeType::Schedule => {
+            // Schedule nodes are triggers — they just pass through.
+            let mut ports = HashMap::new();
+            ports.insert(
+                "trigger".to_string(),
+                serde_json::Value::String(input.to_string()),
+            );
+            Ok(StepOutput { port_values: ports })
+        }
+        NodeType::Provider | NodeType::Role => {
+            // Config nodes should never be in the execution plan.
+            anyhow::bail!(
+                "config node {} should not be in execution plan",
+                step.node_id
+            );
+        }
+    }
+}
+
+/// Collect the input text for a node from its upstream connections.
+fn collect_input_text(
+    run: &WorkflowRun,
+    reverse_edges: &HashMap<(String, String), Vec<(String, String)>>,
+    node_id: &str,
+) -> String {
+    // Check the "input" port first, then "task", then "send", then "request"
+    for port in &["input", "task", "send", "request"] {
+        let key = (node_id.to_string(), port.to_string());
+        if let Some(sources) = reverse_edges.get(&key) {
+            let mut parts = Vec::new();
+            for (src_node, src_port) in sources {
+                if let Some(val) = run.outputs.get(&(src_node.clone(), src_port.clone())) {
+                    match val {
+                        serde_json::Value::String(s) => parts.push(s.clone()),
+                        other => parts.push(other.to_string()),
+                    }
+                }
+            }
+            if !parts.is_empty() {
+                return parts.join("\n");
+            }
+        }
+    }
+
+    // Fallback: check if there's a seeded input
+    if let Some(val) = run.outputs.get(&(node_id.to_string(), "input".to_string())) {
+        return val.as_str().unwrap_or_default().to_string();
+    }
+
+    String::new()
+}
+
+/// Collect context JSON for an agent node from its "context" port.
+fn collect_context(
+    run: &WorkflowRun,
+    reverse_edges: &HashMap<(String, String), Vec<(String, String)>>,
+    node_id: &str,
+) -> Option<serde_json::Value> {
+    let key = (node_id.to_string(), "context".to_string());
+    let sources = reverse_edges.get(&key)?;
+
+    let mut context_parts = Vec::new();
+    for (src_node, src_port) in sources {
+        if let Some(val) = run.outputs.get(&(src_node.clone(), src_port.clone())) {
+            context_parts.push(val.clone());
+        }
+    }
+
+    if context_parts.is_empty() {
+        None
+    } else if context_parts.len() == 1 {
+        Some(context_parts.into_iter().next().expect("just checked len"))
+    } else {
+        Some(serde_json::Value::Array(context_parts))
+    }
+}
+
+/// Handle gate routing — mark downstream nodes on the inactive port as Skipped.
+fn handle_gate_routing(
+    output: &StepOutput,
+    gate_node_id: &str,
+    edges: &HashMap<(String, String), Vec<(String, String)>>,
+    node_statuses: &mut HashMap<String, NodeStatus>,
+) {
+    // Determine which output port was activated (has a value)
+    let approved = output.port_values.contains_key("approved");
+    let inactive_port = if approved { "denied" } else { "approved" };
+
+    // Skip all downstream nodes connected to the inactive port
+    let inactive_key = (gate_node_id.to_string(), inactive_port.to_string());
+    if let Some(targets) = edges.get(&inactive_key) {
+        for (target_node, _) in targets {
+            node_statuses.insert(target_node.clone(), NodeStatus::Skipped);
+            // TODO: recursively skip descendants of skipped nodes
+        }
+    }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -586,6 +904,209 @@ mod tests {
         assert_eq!(
             reverse.expect("edge exists")[0],
             ("a1".to_string(), "response".to_string())
+        );
+    }
+
+    // ── Executor tests ───────────────────────────────────────────────────
+
+    struct MockDispatcher;
+
+    #[async_trait::async_trait]
+    impl super::StepDispatcher for MockDispatcher {
+        async fn run_agent(
+            &self,
+            step: &super::ExecutionStep,
+            input: &str,
+            _context: Option<&serde_json::Value>,
+        ) -> anyhow::Result<String> {
+            Ok(format!("[{}] processed: {}", step.name, input))
+        }
+
+        async fn run_tool(
+            &self,
+            tool_name: &str,
+            input: &serde_json::Value,
+        ) -> anyhow::Result<String> {
+            Ok(format!("tool:{} result for {}", tool_name, input))
+        }
+
+        async fn send_channel(&self, channel_type: &str, _message: &str) -> anyhow::Result<()> {
+            tracing::info!(channel = channel_type, "mock channel send");
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_single_agent() {
+        let nodes = vec![agent_node("a1", "analyzer")];
+        let edges: Vec<serde_json::Value> = vec![];
+        let plan = compile("wf-1", &nodes, &edges).expect("compile");
+
+        let run = super::execute(&plan, "Hello world", &MockDispatcher)
+            .await
+            .expect("execute");
+
+        assert_eq!(
+            run.node_statuses.get("a1"),
+            Some(&super::NodeStatus::Completed)
+        );
+        let output = run.outputs.get(&("a1".to_string(), "response".to_string()));
+        assert!(output.is_some());
+        let text = output.expect("output").as_str().expect("string");
+        assert!(text.contains("analyzer"));
+        assert!(text.contains("Hello world"));
+    }
+
+    #[tokio::test]
+    async fn execute_agent_chain() {
+        let nodes = vec![agent_node("a1", "first"), agent_node("a2", "second")];
+        let edges = vec![edge("e1", "a1", "a2")];
+        let plan = compile("wf-2", &nodes, &edges).expect("compile");
+
+        let run = super::execute(&plan, "start", &MockDispatcher)
+            .await
+            .expect("execute");
+
+        // Both should complete
+        assert_eq!(
+            run.node_statuses.get("a1"),
+            Some(&super::NodeStatus::Completed)
+        );
+        assert_eq!(
+            run.node_statuses.get("a2"),
+            Some(&super::NodeStatus::Completed)
+        );
+
+        // a2's response should contain a1's output
+        let a2_out = run
+            .outputs
+            .get(&("a2".to_string(), "response".to_string()))
+            .expect("a2 output")
+            .as_str()
+            .expect("string");
+        assert!(a2_out.contains("[first] processed: start"));
+    }
+
+    #[tokio::test]
+    async fn execute_tool_node() {
+        let nodes = vec![tool_node("t1", "shell")];
+        let edges: Vec<serde_json::Value> = vec![];
+        let plan = compile("wf-tool", &nodes, &edges).expect("compile");
+
+        let run = super::execute(&plan, "ls -la", &MockDispatcher)
+            .await
+            .expect("execute");
+
+        assert_eq!(
+            run.node_statuses.get("t1"),
+            Some(&super::NodeStatus::Completed)
+        );
+        let output = run
+            .outputs
+            .get(&("t1".to_string(), "result".to_string()))
+            .expect("tool output")
+            .as_str()
+            .expect("string");
+        assert!(output.contains("tool:shell"));
+    }
+
+    #[tokio::test]
+    async fn execute_gate_routes_to_approved() {
+        // a1 → gate → a2 (approved path)
+        //              a3 (denied path — should be skipped)
+        let nodes = vec![
+            agent_node("a1", "check"),
+            gate_node("g1"),
+            agent_node("a2", "proceed"),
+            agent_node("a3", "reject"),
+        ];
+        let edges = vec![
+            edge("e1", "a1", "g1"),
+            json!({
+                "id": "e2", "source": "g1", "target": "a2",
+                "sourceHandle": "approved", "targetHandle": "input"
+            }),
+            json!({
+                "id": "e3", "source": "g1", "target": "a3",
+                "sourceHandle": "denied", "targetHandle": "input"
+            }),
+        ];
+        let plan = compile("wf-gate", &nodes, &edges).expect("compile");
+
+        let run = super::execute(&plan, "review this", &MockDispatcher)
+            .await
+            .expect("execute");
+
+        assert_eq!(
+            run.node_statuses.get("a2"),
+            Some(&super::NodeStatus::Completed)
+        );
+        assert_eq!(
+            run.node_statuses.get("a3"),
+            Some(&super::NodeStatus::Skipped)
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_fan_out() {
+        // a1 → a2, a1 → a3 (both should execute)
+        let nodes = vec![
+            agent_node("a1", "splitter"),
+            agent_node("a2", "left"),
+            agent_node("a3", "right"),
+        ];
+        let edges = vec![edge("e1", "a1", "a2"), edge("e2", "a1", "a3")];
+        let plan = compile("wf-parallel", &nodes, &edges).expect("compile");
+
+        let run = super::execute(&plan, "split me", &MockDispatcher)
+            .await
+            .expect("execute");
+
+        assert_eq!(
+            run.node_statuses.get("a2"),
+            Some(&super::NodeStatus::Completed)
+        );
+        assert_eq!(
+            run.node_statuses.get("a3"),
+            Some(&super::NodeStatus::Completed)
+        );
+    }
+
+    struct FailingDispatcher;
+
+    #[async_trait::async_trait]
+    impl super::StepDispatcher for FailingDispatcher {
+        async fn run_agent(
+            &self,
+            _step: &super::ExecutionStep,
+            _input: &str,
+            _context: Option<&serde_json::Value>,
+        ) -> anyhow::Result<String> {
+            anyhow::bail!("agent failed")
+        }
+
+        async fn run_tool(&self, _: &str, _: &serde_json::Value) -> anyhow::Result<String> {
+            anyhow::bail!("tool failed")
+        }
+
+        async fn send_channel(&self, _: &str, _: &str) -> anyhow::Result<()> {
+            anyhow::bail!("channel failed")
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_failed_node_marked_as_failed() {
+        let nodes = vec![agent_node("a1", "fail")];
+        let edges: Vec<serde_json::Value> = vec![];
+        let plan = compile("wf-fail", &nodes, &edges).expect("compile");
+
+        let run = super::execute(&plan, "boom", &FailingDispatcher)
+            .await
+            .expect("execute completes even with failures");
+
+        assert_eq!(
+            run.node_statuses.get("a1"),
+            Some(&super::NodeStatus::Failed)
         );
     }
 }

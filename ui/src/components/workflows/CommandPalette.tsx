@@ -10,12 +10,8 @@ import { api } from '@/lib/api/client'
 import { Bot, Wrench, Radio, Search, Hand, Clock, Shield, GitBranch, Sparkles, Zap, Theater } from 'lucide-react'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
 import { getDefinition, ALL_NODE_DEFINITIONS } from '@/lib/node-definitions'
+import { portsFromSchema, type ToolInfo } from '@/lib/workflow-types'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
-
-interface ToolInfo {
-  name: string
-  description?: string
-}
 
 interface ToolsResponse {
   tools: ToolInfo[]
@@ -101,17 +97,28 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
     }
 
     for (const t of toolsData?.tools ?? []) {
+      const schemaPorts = portsFromSchema(t.input_schema)
+      const toolDef = getDefinition('tool')
+      // Use schema-derived input ports if available, otherwise fall back to generic
+      const toolInputs = schemaPorts.length > 0 ? schemaPorts : (toolDef?.inputs ?? [])
+      const toolOutputs = toolDef?.outputs ?? []
       items.push({
         id: `tool-${t.name}`,
         name: t.name,
         category: 'Tool',
         icon: <Wrench className="h-3.5 w-3.5" />,
         detail: t.description?.slice(0, 40),
-        color: getDefinition('tool')?.headerColor ?? '#8b5cf6',
+        color: toolDef?.headerColor ?? '#8b5cf6',
         data: {
           nodeType: 'tool', id: `tool-${t.name}`, name: t.name,
-          metadata: { node_type: 'tool', tool_name: t.name, description: t.description },
-          ports: portsForNodeType('tool'),
+          metadata: {
+            node_type: 'tool',
+            tool_name: t.name,
+            description: t.description,
+            tool_inputs: toolInputs,
+            tool_outputs: toolOutputs,
+          },
+          ports: [...toolInputs, ...toolOutputs],
         },
       })
     }
@@ -256,9 +263,12 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
               <button
                 key={item.id}
                 ref={(el) => { if (i === selectedIndex && el) el.scrollIntoView({ block: 'nearest' }) }}
-                className={`flex items-center gap-3 w-full px-4 py-2 text-left transition-colors ${
-                  i === selectedIndex ? 'bg-primary/15 border-l-2 border-primary' : 'hover:bg-muted/30 border-l-2 border-transparent'
-                }`}
+                className="flex items-center gap-3 w-full px-4 py-2.5 text-left transition-colors rounded-md mx-1"
+                style={{
+                  width: 'calc(100% - 8px)',
+                  background: i === selectedIndex ? 'rgba(255,255,255,0.1)' : undefined,
+                  color: i === selectedIndex ? '#fff' : undefined,
+                }}
                 onClick={() => {
                   if (item.id === '__create_agent__') {
                     onCreateAgent?.()

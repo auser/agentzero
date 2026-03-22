@@ -40,15 +40,12 @@ const TOOL_DEFINITION: NodeDefinition = {
   icon: '🔧',
   headerColor: '#8b5cf6',
   category: 'core',
-  fields: [
-    { key: 'tool_name', type: 'select', label: 'Tool' },
-  ],
+  fields: [],
   inputs: [
-    { id: 'input', label: 'input', direction: 'input', port_type: 'json' },
-    { id: 'config', label: 'config', direction: 'input', port_type: 'config' },
+    { id: 'input', label: 'input', direction: 'input', port_type: 'text' },
   ],
   outputs: [
-    { id: 'result', label: 'result', direction: 'output', port_type: 'json' },
+    { id: 'result', label: 'result', direction: 'output', port_type: 'text' },
   ],
 }
 
@@ -80,18 +77,12 @@ const HUMAN_INPUT_DEFINITION: NodeDefinition = {
   icon: '✋',
   headerColor: '#f59e0b',
   category: 'integration',
-  fields: [
-    { key: 'prompt', type: 'textarea', label: 'Prompt' },
-    { key: 'channel', type: 'select', label: 'Channel', options: ['chat', 'telegram', 'discord', 'slack', 'email'] },
-    { key: 'timeout', type: 'text', label: 'Timeout' },
-  ],
+  fields: [],
   inputs: [
-    { id: 'request', label: 'request', direction: 'input', port_type: 'text' },
-    { id: 'context', label: 'context', direction: 'input', port_type: 'json' },
+    { id: 'input', label: 'input', direction: 'input', port_type: 'text' },
   ],
   outputs: [
     { id: 'response', label: 'response', direction: 'output', port_type: 'text' },
-    { id: 'timed_out', label: 'timed out', direction: 'output', port_type: 'event' },
   ],
 }
 

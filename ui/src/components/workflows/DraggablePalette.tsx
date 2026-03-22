@@ -5,16 +5,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { agentsApi } from '@/lib/api/agents'
 import { api } from '@/lib/api/client'
-import type { Port } from '@/lib/workflow-types'
+import { portsFromSchema, type Port, type ToolInfo } from '@/lib/workflow-types'
 import { Bot, Wrench, Radio, CalendarClock, ShieldCheck, Zap, GitFork, UserCircle, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { type DragEvent, useState, useMemo } from 'react'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
 import { getDefinition } from '@/lib/node-definitions'
-
-interface ToolInfo {
-  name: string
-  description?: string
-}
 
 interface ToolsResponse {
   tools: ToolInfo[]
@@ -25,7 +20,7 @@ interface ConfigResponse {
 }
 
 export interface DragNodeData {
-  nodeType: 'agent' | 'tool' | 'channel'
+  nodeType: string
   id: string
   name: string
   metadata: Record<string, unknown>
@@ -291,8 +286,19 @@ export function DraggablePalette() {
                 nodeType="tool"
                 data={{
                   nodeType: 'tool', id: `tool-${t.name}`, name: t.name,
-                  metadata: { node_type: 'tool', tool_name: t.name, description: t.description },
-                  ports: portsForNodeType('tool'),
+                  metadata: {
+                    node_type: 'tool', tool_name: t.name, description: t.description,
+                    tool_inputs: portsFromSchema(t.input_schema).length > 0
+                      ? portsFromSchema(t.input_schema)
+                      : (getDefinition('tool')?.inputs ?? []),
+                    tool_outputs: getDefinition('tool')?.outputs ?? [],
+                  },
+                  ports: [
+                    ...(portsFromSchema(t.input_schema).length > 0
+                      ? portsFromSchema(t.input_schema)
+                      : (getDefinition('tool')?.inputs ?? [])),
+                    ...(getDefinition('tool')?.outputs ?? []),
+                  ],
                 }}
               />
             ))}

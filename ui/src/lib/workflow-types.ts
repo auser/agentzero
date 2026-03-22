@@ -45,6 +45,47 @@ export interface NodeDefinition {
   outputs?: Port[]
 }
 
+// ---------------------------------------------------------------------------
+// Tool schema helpers
+// ---------------------------------------------------------------------------
+
+/** Tool info returned by GET /v1/tools */
+export interface ToolInfo {
+  name: string
+  description?: string
+  category?: string
+  input_schema?: {
+    type?: string
+    properties?: Record<string, { type?: string; description?: string }>
+    required?: string[]
+  }
+}
+
+/** JSON Schema type → port type mapping */
+function schemaTypeToPortType(schemaType?: string): string {
+  switch (schemaType) {
+    case 'string': return 'text'
+    case 'integer':
+    case 'number': return 'number'
+    case 'boolean': return 'boolean'
+    case 'array': return 'array'
+    case 'object': return 'json'
+    default: return 'text'
+  }
+}
+
+/** Derive typed input ports from a tool's JSON Schema. */
+export function portsFromSchema(schema?: ToolInfo['input_schema']): Port[] {
+  if (!schema?.properties) return []
+  const required = new Set(schema.required ?? [])
+  return Object.entries(schema.properties).map(([key, prop]) => ({
+    id: key,
+    label: required.has(key) ? key : `${key}?`,
+    direction: 'input' as PortDirection,
+    port_type: schemaTypeToPortType(prop.type),
+  }))
+}
+
 /** Port type → color mapping for handles and edges. */
 export function portTypeColor(portType: string): string {
   switch (portType) {
@@ -66,6 +107,12 @@ export function portTypeColor(portType: string): string {
       return '#3b82f6' // blue
     case 'config':
       return '#6b7280' // gray
+    case 'number':
+      return '#06b6d4' // cyan
+    case 'boolean':
+      return '#f43f5e' // rose
+    case 'array':
+      return '#d946ef' // fuchsia
     default:
       return '#9ca3af' // default gray
   }
