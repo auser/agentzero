@@ -11,7 +11,7 @@
  * - Output dot: #3B82F6 (blue), 8px
  */
 import { memo, useMemo, useCallback } from 'react'
-import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react'
+import { Handle, Position, NodeResizer, useReactFlow, type NodeProps } from '@xyflow/react'
 import { useQuery } from '@tanstack/react-query'
 import { modelsApi } from '@/lib/api/models'
 import type { AgentNodeData } from '@/components/workflows/AgentNode'
@@ -73,9 +73,19 @@ function ProviderNodeComponent({ id, data, selected }: NodeProps) {
   const provColor = PROVIDER_COLORS[providerName.toLowerCase()] ?? '#6b7280'
 
   return (
+    <>
+    <NodeResizer
+      isVisible={selected}
+      minWidth={160}
+      minHeight={60}
+      lineStyle={{ borderColor: `${provColor}40` }}
+      handleStyle={{ width: 6, height: 6, background: provColor, borderRadius: 2 }}
+    />
     <div
       style={{
-        width: 220,
+        minWidth: 160,
+        width: '100%',
+        height: '100%',
         background: '#171717',
         borderRadius: 14,
         border: selected ? `2px solid ${provColor}` : '1px solid rgba(255,255,255,0.06)',
@@ -179,6 +189,7 @@ function ProviderNodeComponent({ id, data, selected }: NodeProps) {
         }}
       />
     </div>
+    </>
   )
 }
 

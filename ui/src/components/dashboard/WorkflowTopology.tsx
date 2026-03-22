@@ -12,6 +12,8 @@ import {
   useNodesState,
   useEdgesState,
   ReactFlowProvider,
+  SelectionMode,
+  useReactFlow,
   type Node,
   type Edge,
 } from '@xyflow/react'
@@ -31,7 +33,10 @@ import { useWorkflowPersistence } from '@/components/dashboard/useWorkflowPersis
 import { useNodeActions } from '@/components/dashboard/useNodeActions'
 import { useUndoRedo } from '@/components/dashboard/useUndoRedo'
 import { RunWorkflowButton } from '@/components/workflows/RunWorkflowButton'
+import { TemplateGallery } from '@/components/workflows/TemplateGallery'
+import { EmptyCanvasState } from '@/components/workflows/EmptyCanvasState'
 import { getDefinition } from '@/lib/node-definitions'
+import type { WorkflowTemplate } from '@/lib/workflow-templates'
 
 interface WorkflowTopologyProps {
   fullHeight?: boolean
@@ -56,10 +61,12 @@ const edgeTypes = {
 }
 
 function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: WorkflowTopologyProps) {
+  const reactFlowInstance = useReactFlow()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   const [configPanelOpen, setConfigPanelOpen] = useState(false)
+  const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const cmdK = useCommandPalette()
@@ -88,12 +95,48 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
   } = useNodeActions(setNodes, setEdges, onNodesChange, onEdgesChange, persistWithHistory)
 
   const handleNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
+    // Groups handle their own double-click (rename)
+    if (node.type === 'group') return
     setSelectedNodeId(node.id)
   }, [])
 
   const handlePaneClick = useCallback(() => {
     setSelectedNodeId(null)
   }, [])
+
+  // Detach child node from group when dragged outside parent bounds
+  const handleNodeDragStop = useCallback((_: React.MouseEvent, node: Node) => {
+    if (!node.parentId) return
+    const parent = reactFlowInstance.getNode(node.parentId)
+    if (!parent) return
+
+    const pw = (parent.measured?.width ?? parent.width ?? parent.style?.width ?? 300) as number
+    const ph = (parent.measured?.height ?? parent.height ?? parent.style?.height ?? 200) as number
+
+    const outside =
+      node.position.x < -20 ||
+      node.position.y < -20 ||
+      node.position.x > pw + 20 ||
+      node.position.y > ph + 20
+
+    if (outside) {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === node.id
+            ? {
+                ...n,
+                parentId: undefined,
+                expandParent: undefined,
+                position: {
+                  x: node.position.x + parent.position.x,
+                  y: node.position.y + parent.position.y,
+                },
+              }
+            : n,
+        ),
+      )
+    }
+  }, [reactFlowInstance, setNodes])
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -138,6 +181,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
           return {
             ...n,
             parentId: groupId,
+            expandParent: true,
             position: {
               x: n.position.x - (minX - PADDING),
               y: n.position.y - (minY - PADDING),
@@ -172,6 +216,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
             return {
               ...n,
               parentId: undefined,
+              expandParent: undefined,
               position: {
                 x: n.position.x + gx,
                 y: n.position.y + gy,
@@ -184,6 +229,28 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     })
     persistWithHistory()
   }, [nodes, setNodes, persistWithHistory])
+
+  // ── Load a workflow template onto the canvas ──
+  const handleTemplateSelect = useCallback((template: WorkflowTemplate) => {
+    const templateNodes = template.nodes.map((n) => ({
+      id: n.id,
+      type: n.data.nodeType,
+      position: n.position,
+      data: n.data,
+    }))
+    const templateEdges = template.edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
+      data: e.data,
+    }))
+    setNodes(templateNodes)
+    setEdges(templateEdges)
+    setTemplateGalleryOpen(false)
+    persistWithHistory()
+  }, [setNodes, setEdges, persistWithHistory])
 
   // Keyboard shortcuts for group/ungroup
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -222,6 +289,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
         onConnectStart={readOnly ? undefined : onConnectStart}
         onConnectEnd={readOnly ? undefined : onConnectEnd}
         onNodeDoubleClick={readOnly ? undefined : handleNodeDoubleClick}
+        onNodeDragStop={readOnly ? undefined : handleNodeDragStop}
         onPaneClick={readOnly ? undefined : handlePaneClick}
         onDrop={readOnly ? undefined : handleDrop}
         onDragOver={readOnly ? undefined : handleDragOver}
@@ -233,6 +301,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
         nodesConnectable={!readOnly}
         nodesFocusable
         selectNodesOnDrag={false}
+        selectionMode={SelectionMode.Partial}
         panOnDrag={!readOnly}
         zoomOnScroll={!readOnly}
         className="bg-background"
@@ -280,6 +349,21 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
           />
         )}
       </ReactFlow>
+
+      {!readOnly && nodes.length === 0 && (
+        <EmptyCanvasState
+          onOpenGallery={() => setTemplateGalleryOpen(true)}
+          onStartScratch={() => cmdK.setOpen(true)}
+        />
+      )}
+
+      {!readOnly && (
+        <TemplateGallery
+          open={templateGalleryOpen}
+          onClose={() => setTemplateGalleryOpen(false)}
+          onSelect={handleTemplateSelect}
+        />
+      )}
 
       {!readOnly && <RunWorkflowButton />}
 

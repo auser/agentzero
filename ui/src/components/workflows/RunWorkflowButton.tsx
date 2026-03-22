@@ -12,6 +12,20 @@ interface RunResponse {
   status: string
   message?: string
   response_text?: string
+  node_statuses?: Record<string, string>
+  outputs?: Record<string, unknown>
+}
+
+/** Map workflow node status to canvas display status */
+function mapNodeStatus(wfStatus: string): string {
+  switch (wfStatus) {
+    case 'completed': return 'success'
+    case 'running': return 'running'
+    case 'failed': return 'failure'
+    case 'skipped': return 'stale'
+    case 'suspended': return 'queued'
+    default: return 'queued'
+  }
 }
 
 interface RunWorkflowButtonProps {
@@ -26,10 +40,37 @@ export function RunWorkflowButton({ workflowId, disabled }: RunWorkflowButtonPro
   const [error, setError] = useState<string | null>(null)
   const [runId, setRunId] = useState<string | null>(null)
 
+  // Update node statuses on the canvas from workflow run response
+  const updateNodeStatuses = useCallback((nodeStatuses: Record<string, string>) => {
+    reactFlow.setNodes((nodes) =>
+      nodes.map((n) => {
+        const wfStatus = nodeStatuses[n.id]
+        if (!wfStatus) return n
+        const displayStatus = mapNodeStatus(wfStatus)
+        if ((n.data as Record<string, unknown>).status === displayStatus) return n
+        return {
+          ...n,
+          data: { ...n.data, status: displayStatus },
+        }
+      }),
+    )
+  }, [reactFlow])
+
+  // Reset all nodes to queued status
+  const resetNodeStatuses = useCallback(() => {
+    reactFlow.setNodes((nodes) =>
+      nodes.map((n) => ({
+        ...n,
+        data: { ...n.data, status: 'queued' },
+      })),
+    )
+  }, [reactFlow])
+
   const handleRun = useCallback(async () => {
     setRunning(true)
     setOutput(null)
     setError(null)
+    resetNodeStatuses()
 
     try {
       if (workflowId) {
@@ -40,6 +81,11 @@ export function RunWorkflowButton({ workflowId, disabled }: RunWorkflowButtonPro
         )
         setRunId(result.run_id)
 
+        // Apply node statuses from the response
+        if (result.node_statuses) {
+          updateNodeStatuses(result.node_statuses)
+        }
+
         // Check if execution completed synchronously
         if (result.status === 'completed') {
           setOutput(result.response_text ?? result.message ?? 'Workflow completed')
@@ -47,11 +93,17 @@ export function RunWorkflowButton({ workflowId, disabled }: RunWorkflowButtonPro
           return
         }
 
-        // Poll for async completion
-        for (let i = 0; i < 60; i++) {
-          await new Promise((r) => setTimeout(r, 2000))
+        // Poll for async completion with live node status updates
+        for (let i = 0; i < 120; i++) {
+          await new Promise((r) => setTimeout(r, 1000))
           try {
             const status = await api.get<RunResponse>(`/v1/workflows/runs/${result.run_id}`)
+
+            // Update node statuses on every poll
+            if (status.node_statuses) {
+              updateNodeStatuses(status.node_statuses)
+            }
+
             if (status.status === 'completed' || status.status === 'success') {
               setOutput(status.response_text ?? status.message ?? 'Workflow completed')
               setRunning(false)
@@ -88,7 +140,7 @@ export function RunWorkflowButton({ workflowId, disabled }: RunWorkflowButtonPro
       setError(e instanceof Error ? e.message : 'Failed to execute workflow')
       setRunning(false)
     }
-  }, [reactFlow, workflowId])
+  }, [reactFlow, workflowId, updateNodeStatuses, resetNodeStatuses])
 
   return (
     <>

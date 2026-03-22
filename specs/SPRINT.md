@@ -2016,6 +2016,73 @@ Wire the Run button to the real execution endpoint and show live node status.
 
 ---
 
+## Sprint 71: Workflow Templates + Live Execution Visualization
+
+**Goal:** Make the workflow builder instantly useful with pre-built templates and visually compelling with live node status during execution.
+
+---
+
+### Phase A: Workflow Template Gallery (HIGH)
+
+Pre-built workflow graphs that users can load from a gallery, customize, and run.
+
+- [ ] **Template definitions** — `ui/src/lib/workflow-templates.ts`: JSON definitions for 4-5 starter workflows (Research Pipeline, Content Generator, Code Review, Customer Support, Data Analysis). Each has nodes, edges, and default field values.
+- [ ] **Template gallery UI** — `ui/src/components/workflows/TemplateGallery.tsx`: modal or sidebar showing template cards with name, description, node count, and "Use Template" button. Opens from empty canvas state or via Cmd+K.
+- [ ] **Load template** — clicking "Use Template" populates the canvas with the template's nodes/edges, creates a workflow via API, and enables editing
+- [ ] **Empty state** — when canvas has no nodes, show a centered CTA: "Start from scratch or choose a template"
+- [ ] **Template thumbnails** — small preview rendering of each template's graph layout
+
+### Phase B: Live Execution Visualization (HIGH)
+
+Nodes visually update during workflow execution — pulsing, color changes, output previews.
+
+- [ ] **Execution status polling** — after `POST /v1/workflows/:id/execute`, poll `GET /v1/workflows/runs/:run_id` every 1s and update node statuses in ReactFlow
+- [ ] **Node status styling** — Running: pulsing blue glow + spinner icon. Completed: green border + checkmark. Failed: red border + X icon. Skipped: dimmed gray. Pending: default.
+- [ ] **Output preview on nodes** — after a node completes, show a truncated preview of its output text below the node name (max 2 lines, expandable)
+- [ ] **Edge flow animation** — animate edges as data flows through them (CSS dash-offset animation on the active path)
+- [ ] **Execution timeline** — small bottom bar showing elapsed time and which nodes are currently executing
+
+### Phase C: Workflow Export/Import (MEDIUM)
+
+Save and share workflows as portable files.
+
+- [ ] **Export endpoint** — `GET /v1/workflows/:id/export` returns full workflow JSON (nodes, edges, metadata) as downloadable file
+- [ ] **Import endpoint** — `POST /v1/workflows/import` accepts workflow JSON and creates a new workflow
+- [ ] **UI export button** — download button in workflow toolbar, saves as `.agentzero-workflow.json`
+- [ ] **UI import button** — file upload or drag-drop onto canvas to load a workflow
+- [ ] **Conflict resolution** — when importing, remap node IDs to avoid collisions with existing nodes
+
+### Phase D: Real Channel Dispatch (MEDIUM)
+
+Wire `GatewayStepDispatcher::send_channel` to actual platform sends.
+
+- [ ] **Channel registry lookup** — resolve `channel_type` to the actual `Channel` impl from the gateway's channel registry
+- [ ] **Send message** — call `channel.send()` with the workflow step's output as the message content
+- [ ] **Channel trigger nodes** — wire inbound channel messages as workflow triggers (create a run when a message arrives matching a workflow's trigger channel)
+- [ ] **Delivery confirmation** — store send status in workflow run outputs
+
+### Phase E: Human-in-the-Loop Gate Nodes (HIGH)
+
+Real suspend/resume for approval workflows.
+
+- [ ] **Suspend mechanism** — when a Gate node is reached, persist `WorkflowRun` state and set node status to `Suspended`
+- [ ] **`POST /v1/workflows/runs/:run_id/resume`** — accepts `{ node_id, decision: "approved"|"denied" }`, resumes execution from the gate node
+- [ ] **Notification** — send approval request to a configured channel (Slack, Telegram, email) with approve/deny buttons
+- [ ] **Timeout** — configurable approval timeout (default 24h), auto-deny on expiry
+- [ ] **UI approval panel** — in-canvas overlay showing pending approvals with approve/deny buttons
+
+---
+
+### Acceptance Criteria (Sprint 71)
+
+- [ ] 4+ workflow templates available in the gallery
+- [ ] Empty canvas shows template CTA
+- [ ] Nodes visually update during execution (pulse, color, output preview)
+- [ ] Workflows exportable/importable as JSON files
+- [ ] 0 lint errors, all tests pass
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

@@ -57,9 +57,7 @@ const CHANNEL_DEFINITION: NodeDefinition = {
   icon: '📡',
   headerColor: '#ec4899',
   category: 'integration',
-  fields: [
-    { key: 'channel_type', type: 'select', label: 'Type', options: ['telegram', 'discord', 'slack', 'email', 'webhook', 'chat'] },
-  ],
+  fields: [],
   inputs: [
     { id: 'send', label: 'send', direction: 'input', port_type: 'text' },
   ],

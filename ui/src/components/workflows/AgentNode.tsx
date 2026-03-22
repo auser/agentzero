@@ -13,7 +13,7 @@
  * - Input bg: #0F0F11
  */
 import { memo, useState, useCallback, useMemo } from 'react'
-import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react'
+import { Handle, Position, NodeResizer, useReactFlow, type NodeProps } from '@xyflow/react'
 import { useQuery } from '@tanstack/react-query'
 import { getDefinition } from '@/lib/node-definitions'
 import { portTypeColor, statusColor } from '@/lib/workflow-types'
@@ -134,9 +134,19 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
     }
 
     return (
+      <>
+      <NodeResizer
+        isVisible={selected}
+        minWidth={180}
+        minHeight={80}
+        lineStyle={{ borderColor: '#a855f740' }}
+        handleStyle={{ width: 6, height: 6, background: '#a855f7', borderRadius: 2 }}
+      />
       <div
         style={{
-          width: 240,
+          minWidth: 180,
+          width: '100%',
+          height: '100%',
           background: '#1C1C1E',
           borderRadius: 16,
           border: selected ? '2px solid #a855f7' : '1px solid rgba(255,255,255,0.04)',
@@ -263,14 +273,25 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
           }}
         />
       </div>
+      </>
     )
   }
 
   // ── Full agent/tool/channel node layout ──
   return (
+    <>
+    <NodeResizer
+      isVisible={selected}
+      minWidth={180}
+      minHeight={80}
+      lineStyle={{ borderColor: `${sColor}40` }}
+      handleStyle={{ width: 6, height: 6, background: sColor, borderRadius: 2 }}
+    />
     <div
       style={{
-        width: 260,
+        minWidth: 180,
+        width: '100%',
+        height: '100%',
         background: '#1C1C1E',
         borderRadius: 14,
         border: selected ? `2px solid ${sColor}` : '1px solid rgba(255,255,255,0.04)',
@@ -513,6 +534,7 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
         </div>
       )}
     </div>
+    </>
   )
 }
 
