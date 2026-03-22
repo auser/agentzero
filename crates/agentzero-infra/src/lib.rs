@@ -9,6 +9,7 @@ pub mod audit;
 pub mod cost_tracker;
 pub mod mcp_server;
 pub mod runtime;
+pub mod sender_rate_limiter;
 #[cfg(feature = "telemetry")]
 pub mod telemetry;
 pub mod tool_selection;
@@ -17,4 +18,5 @@ pub mod tools;
 // Compatibility re-exports while crates are split out from infra.
 pub use agentzero_providers as provider;
 pub use agentzero_storage::memory;
+pub use sender_rate_limiter::SenderRateLimiter;
 pub use tool_selection::{AiToolSelector, AllToolSelector, KeywordToolSelector};

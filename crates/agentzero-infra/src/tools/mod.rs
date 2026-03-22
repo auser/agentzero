@@ -69,7 +69,7 @@ pub fn default_tools(
     router: Option<ModelRouter>,
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    default_tools_inner(policy, router, delegate_agents, None)
+    default_tools_inner(policy, router, delegate_agents, None, None)
 }
 
 /// Build the default tool set, optionally with an `AgentStore` for the
@@ -80,7 +80,22 @@ pub fn default_tools_with_store(
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
     agent_store: Option<Arc<dyn AgentStoreApi>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    default_tools_inner(policy, router, delegate_agents, agent_store)
+    default_tools_inner(policy, router, delegate_agents, agent_store, None)
+}
+
+/// Build the full default tool set with all optional stores.
+///
+/// This is the most complete variant — accepts both an `AgentStore` and a
+/// `CanvasStore` so the gateway (or any caller that has both) can register
+/// every available tool in a single call.
+pub fn default_tools_full(
+    policy: &ToolSecurityPolicy,
+    router: Option<ModelRouter>,
+    delegate_agents: Option<HashMap<String, DelegateConfig>>,
+    agent_store: Option<Arc<dyn AgentStoreApi>>,
+    canvas_store: Option<Arc<agentzero_core::CanvasStore>>,
+) -> anyhow::Result<Vec<Box<dyn Tool>>> {
+    default_tools_inner(policy, router, delegate_agents, agent_store, canvas_store)
 }
 
 fn default_tools_inner(
@@ -88,6 +103,7 @@ fn default_tools_inner(
     router: Option<ModelRouter>,
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
     agent_store: Option<Arc<dyn AgentStoreApi>>,
+    canvas_store: Option<Arc<agentzero_core::CanvasStore>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
     // ── Core tier tools (always compiled) ────────────────────────────
     let mut tools: Vec<Box<dyn Tool>> = vec![
@@ -188,10 +204,11 @@ fn default_tools_inner(
             tools.push(Box::new(A2aTool));
         }
 
-        // TODO: CanvasTool requires an Arc<CanvasStore> that is not available
-        // during default_tools() construction. The gateway will inject the
-        // CanvasTool directly when it has a CanvasStore instance.
-        // if policy.enable_canvas { tools.push(Box::new(CanvasTool::new(store))); }
+        if policy.enable_canvas {
+            if let Some(ref store) = canvas_store {
+                tools.push(Box::new(CanvasTool::new(Arc::clone(store))));
+            }
+        }
 
         if let Some(ref r) = router {
             tools.push(Box::new(ModelRoutingConfigTool::new(r.clone())));
@@ -326,7 +343,7 @@ fn default_tools_inner(
 
     // Suppress unused-variable warnings when tier features are disabled.
     #[cfg(not(feature = "tools-extended"))]
-    let _ = router;
+    let _ = (router, canvas_store);
     #[cfg(not(feature = "tools-full"))]
     let _ = agent_store;
 
@@ -351,7 +368,7 @@ pub fn default_tools_with_depth(
     depth: u8,
     depth_policy: &DepthPolicy,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    let all_tools = default_tools_inner(policy, router, delegate_agents, None)?;
+    let all_tools = default_tools_inner(policy, router, delegate_agents, None, None)?;
 
     if depth_policy.rules.is_empty() {
         return Ok(all_tools);

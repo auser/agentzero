@@ -5,7 +5,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { agentsApi } from '@/lib/api/agents'
 import { api } from '@/lib/api/client'
-import type { Port } from '@auser/workflow-graph-web'
+import type { Port } from '@/lib/workflow-types'
 import { Bot, Wrench, Radio, CalendarClock, ShieldCheck, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { type DragEvent, useState, useMemo } from 'react'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'

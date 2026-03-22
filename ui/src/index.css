@@ -33,6 +33,38 @@
 @layer base {
   * {
     border-color: hsl(var(--border));
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+  /* ReactFlow edge selection styling */
+  .react-flow__edge.selected .react-flow__edge-path {
+    stroke: #a855f7 !important;
+    stroke-width: 3px !important;
+  }
+  .react-flow__edge-path {
+    cursor: pointer;
+  }
+  /* Invalid connection target — dim handles that don't match */
+  .react-flow__handle.connectingto {
+    background: #22c55e !important;
+    box-shadow: 0 0 8px #22c55e;
+  }
+  .react-flow__handle.valid {
+    background: #22c55e !important;
   }
   body {
     background-color: hsl(var(--background));

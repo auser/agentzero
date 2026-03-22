@@ -1,392 +1,396 @@
 /**
- * Interactive workflow topology visualization powered by workflow-graph WASM.
- * Supports drag-drop from the DraggablePalette to add nodes.
- * Shows KeySelector when connecting ports with different types.
- * Persists full graph state via workflow-graph's getState/loadState API.
+ * Workflow topology visualization powered by ReactFlow.
+ * Supports drag-drop from palette, port-to-port connections,
+ * Cmd+K command palette, and localStorage persistence.
  */
-import { useRef, useCallback, useState, useEffect, type DragEvent } from 'react'
+import { useCallback, useState, useRef, useEffect, type DragEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
-// useNavigate removed — agent creation now uses inline dialog
 import {
-  WorkflowGraphComponent,
-  type WorkflowGraphHandle,
-  type Job,
-  darkTheme,
-} from '@auser/workflow-graph-react'
+  ReactFlow,
+  Background,
+  Controls,
+  MiniMap,
+  useNodesState,
+  useEdgesState,
+  useReactFlow,
+  addEdge,
+  ReactFlowProvider,
+  type Connection,
+  type Node,
+  type Edge,
+} from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
+
 import { topologyApi } from '@/lib/api/topology'
-import { topologyToWorkflow } from '@/components/workflows/WorkflowCanvas'
-import { ALL_NODE_DEFINITIONS } from '@/lib/node-definitions'
-import { Button } from '@/components/ui/button'
-import { Maximize2, RotateCcw, Network, Settings } from 'lucide-react'
+import { workflowsApi } from '@/lib/api/workflows'
+import { topologyToReactFlow } from '@/components/workflows/WorkflowCanvas'
+import { AgentNode } from '@/components/workflows/AgentNode'
+import { ProviderNode } from '@/components/workflows/ProviderNode'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
-import { KeySelector, type PendingConnection } from '@/components/workflows/KeySelector'
+// KeySelector removed — isValidConnection enforces port type matching
 import { CommandPalette, useCommandPalette } from '@/components/workflows/CommandPalette'
 import { CreateAgentDialog } from '@/components/workflows/CreateAgentDialog'
 import { ConfigPanel } from '@/components/workflows/ConfigPanel'
-import { OverlayLayer } from '@/components/workflows/OverlayLayer'
-import { useWorkflowStore } from '@/store/workflowStore'
+import { getDefinition, portsForType } from '@/lib/node-definitions'
+import { portTypeColor } from '@/lib/workflow-types'
 
 interface WorkflowTopologyProps {
   fullHeight?: boolean
 }
 
-const THEME = {
-  ...darkTheme,
-  layout: {
-    node_width: 220,
-    node_height: 100,
-    node_radius: 8,
-    h_gap: 80,
-    v_gap: 40,
-    header_height: 0,
-    padding: 30,
-    junction_dot_radius: 3.5,
-    status_icon_radius: 6,
-    status_icon_margin: 8,
-  },
+const DEFAULT_WORKFLOW_NAME = 'default'
+
+const nodeTypes = {
+  agent: AgentNode,
+  tool: AgentNode,
+  channel: AgentNode,
+  schedule: AgentNode,
+  gate: AgentNode,
+  subagent: AgentNode,
+  role: AgentNode,
+  provider: ProviderNode,
 }
 
-
-export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) {
-  const graphRef = useRef<WorkflowGraphHandle>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [dragOver, setDragOver] = useState(false)
-  const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
+function WorkflowTopologyInner({ fullHeight = false }: WorkflowTopologyProps) {
+  const reactFlowInstance = useReactFlow()
+  const [nodes, setNodes, onNodesChange] = useNodesState([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   const [configPanelOpen, setConfigPanelOpen] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const cmdK = useCommandPalette()
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const initializedRef = useRef(false)
+  const workflowIdRef = useRef<string | null>(null)
+  const lastKnownUpdatedAtRef = useRef<number>(0)
+  const isDirtyRef = useRef(false)
+  const isSyncingRef = useRef(false)
 
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: string } | null>(null)
-  const [renaming, setRenaming] = useState<{ nodeId: string; x: number; y: number; name: string } | null>(null)
-  const lastClickRef = useRef<{ nodeId: string; time: number } | null>(null)
-  const lastMouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
-
-  const { clear: storeClear } = useWorkflowStore()
-
+  // Topology API polling
   const { data: topology } = useQuery({
     queryKey: ['topology'],
     queryFn: () => topologyApi.get(),
     refetchInterval: 3_000,
   })
 
-  const nodes = topology?.nodes ?? []
-  const edges = topology?.edges ?? []
-  const workflow = topologyToWorkflow(nodes, edges)
-
-  // Persistence is handled by workflow-graph's built-in persist option
-  // No manual save/restore needed
-
-  // Look up port type for a given node+port from the current workflow
-  const getPortType = useCallback(
-    (nodeId: string, portId: string): string => {
-      const job = workflow.jobs.find((j) => j.id === nodeId)
-      if (!job?.ports) return ''
-      const port = job.ports.find((p) => p.id === portId)
-      return port?.port_type ?? ''
-    },
-    [workflow.jobs],
-  )
-
-  const handleNodeClick = useCallback((nodeId: string) => {
-    const now = Date.now()
-    const last = lastClickRef.current
-    if (last && last.nodeId === nodeId && now - last.time < 400) {
-      // Double-click — show inline rename at the click position
-      lastClickRef.current = null
-      const job = workflow.jobs.find(j => j.id === nodeId)
-      const { x, y } = lastMouseRef.current
-      setRenaming({ nodeId, x, y: y - 15, name: job?.name ?? nodeId })
-    } else {
-      lastClickRef.current = { nodeId, time: now }
-    }
-  }, [workflow.jobs])
-
-  // Save state after drag — the WASM onNodeDragEnd wrapper also calls autoPersist,
-  // but we double-save here to ensure persistence works even if the WASM callback fails.
-  const handleNodeDragEnd = useCallback(
-    () => {
-      graphRef.current?.getState().then((state) => {
-        if (state) {
-          localStorage.setItem('agentzero-workflow-graph', JSON.stringify(state))
-        }
-      }).catch(() => {})
-    },
-    [],
-  )
-
-  const handleConnect = useCallback(
-    (fromNodeId: string, fromPortId: string, toNodeId: string, toPortId: string) => {
-      const fromType = getPortType(fromNodeId, fromPortId)
-      const toType = getPortType(toNodeId, toPortId)
-
-      const needsTransform = fromType !== toType && fromType !== '' && toType !== ''
-
-      if (needsTransform) {
-        setPendingConnection({
-          fromNodeId, fromPortId, fromPortType: fromType,
-          toNodeId, toPortId, toPortType: toType,
-        })
-      } else if (fromType === '' || toType === '') {
-        setPendingConnection({
-          fromNodeId, fromPortId, fromPortType: fromType || 'unknown',
-          toNodeId, toPortId, toPortType: toType || 'unknown',
-        })
-      } else {
-        graphRef.current?.addEdge(fromNodeId, toNodeId, fromPortId, toPortId)
-          .catch(() => {})
-      }
-    },
-    [getPortType],
-  )
-
-  const handleConnectionConfirm = useCallback(
-    (conn: PendingConnection, keyPath: string | null) => {
-      const metadata = keyPath ? { transform: `$.${keyPath}` } : undefined
-      graphRef.current?.addEdge(
-        conn.fromNodeId, conn.toNodeId, conn.fromPortId, conn.toPortId, metadata,
-      ).catch(() => {})
-      setPendingConnection(null)
-    },
-    [],
-  )
-
-  const handleConnectionCancel = useCallback(() => {
-    setPendingConnection(null)
-  }, [])
-
-  // Ctrl+G / Cmd+G to group selected nodes
+  // Initialize: load from /v1/workflows API, or create from topology
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
-        e.preventDefault()
-        graphRef.current?.groupSelected('Group').catch(() => {})
+    if (initializedRef.current) return
+
+    const init = async () => {
+      try {
+        // Try loading existing workflows from the server
+        const list = await workflowsApi.list('layout')
+        const existing = list.data.find((w) => w.name === DEFAULT_WORKFLOW_NAME) ?? list.data[0]
+
+        if (existing?.layout?.nodes && (existing.layout.nodes as unknown[]).length > 0) {
+          setNodes(existing.layout.nodes as Node[])
+          setEdges((existing.layout.edges ?? []) as Edge[])
+          workflowIdRef.current = existing.workflow_id
+          lastKnownUpdatedAtRef.current = existing.updated_at
+          initializedRef.current = true
+          return
+        }
+
+        // No saved workflow — create from topology if available
+        if (topology?.nodes && topology.nodes.length > 0) {
+          const { nodes: rfNodes, edges: rfEdges } = topologyToReactFlow(
+            topology.nodes, topology.edges ?? [],
+          )
+          setNodes(rfNodes)
+          setEdges(rfEdges)
+
+          // Create a workflow on the server
+          try {
+            const created = await workflowsApi.create({
+              name: DEFAULT_WORKFLOW_NAME,
+              description: 'Default workflow layout',
+              layout: { nodes: rfNodes, edges: rfEdges },
+            })
+            workflowIdRef.current = created.workflow_id
+            lastKnownUpdatedAtRef.current = created.updated_at
+          } catch {
+            // Server might not be running — fall back to local-only
+          }
+          initializedRef.current = true
+        }
+      } catch {
+        // API not available — try localStorage fallback
+        try {
+          const raw = localStorage.getItem('agentzero-workflow-reactflow')
+          if (raw) {
+            const saved = JSON.parse(raw)
+            if (saved?.nodes?.length > 0) {
+              setNodes(saved.nodes)
+              setEdges(saved.edges ?? [])
+              initializedRef.current = true
+              return
+            }
+          }
+        } catch { /* ignore */ }
+
+        // Last resort: create from topology
+        if (topology?.nodes && topology.nodes.length > 0) {
+          const { nodes: rfNodes, edges: rfEdges } = topologyToReactFlow(
+            topology.nodes, topology.edges ?? [],
+          )
+          setNodes(rfNodes)
+          setEdges(rfEdges)
+          initializedRef.current = true
+        }
       }
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+
+    init()
+  }, [topology, setNodes, setEdges])
+
+  // Update node statuses from topology poll (without resetting positions)
+  useEffect(() => {
+    if (!initializedRef.current || !topology?.nodes) return
+    setNodes((prev) => {
+      const statusMap = new Map(topology.nodes.map((n) => [n.agent_id, n.status]))
+      return prev.map((node) => {
+        const newStatus = statusMap.get(node.id)
+        if (newStatus && (node.data as Record<string, unknown>).status !== newStatus) {
+          return { ...node, data: { ...node.data, status: newStatus } }
+        }
+        return node
+      })
+    })
+  }, [topology, setNodes])
+
+  // Debounced persistence — save to API, fallback to localStorage
+  const persistState = useCallback(() => {
+    isDirtyRef.current = true
+    clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(async () => {
+      const currentNodes = reactFlowInstance.getNodes()
+      const currentEdges = reactFlowInstance.getEdges()
+      const layout = { nodes: currentNodes, edges: currentEdges }
+
+      // Save to API if we have a workflow ID
+      if (workflowIdRef.current) {
+        try {
+          const updated = await workflowsApi.update(workflowIdRef.current, { layout })
+          lastKnownUpdatedAtRef.current = updated.updated_at
+          isDirtyRef.current = false
+        } catch {
+          // API failed — save to localStorage as fallback
+          try {
+            localStorage.setItem('agentzero-workflow-reactflow', JSON.stringify(layout))
+          } catch { /* full */ }
+        }
+      } else {
+        // No workflow ID — save to localStorage
+        try {
+          localStorage.setItem('agentzero-workflow-reactflow', JSON.stringify(layout))
+        } catch { /* full */ }
+      }
+    }, 800)
+  }, [reactFlowInstance])
+
+  // Save on node/edge changes
+  const handleNodesChange: typeof onNodesChange = useCallback((changes) => {
+    onNodesChange(changes)
+    persistState()
+  }, [onNodesChange, persistState])
+
+  const handleEdgesChange: typeof onEdgesChange = useCallback((changes) => {
+    onEdgesChange(changes)
+    persistState()
+  }, [onEdgesChange, persistState])
+
+  // Port-to-port connection with type checking
+  // Connection handler — only called for valid (type-matched) connections
+  // since isValidConnection blocks mismatched types
+  const handleConnect = useCallback((connection: Connection) => {
+    const sourceNode = reactFlowInstance.getNode(connection.source)
+    if (!sourceNode) return
+
+    const sourceData = sourceNode.data as Record<string, unknown>
+    const sourceDef = getDefinition((sourceData.nodeType as string) ?? '')
+    const sourcePort = sourceDef?.outputs?.find((p) => p.id === connection.sourceHandle)
+    const color = portTypeColor(sourcePort?.port_type ?? '')
+
+    setEdges((eds) => addEdge({
+      ...connection,
+      style: { stroke: color, strokeWidth: 2 },
+    }, eds))
+    persistState()
+  }, [reactFlowInstance, setEdges, persistState])
+
+  // (KeySelector removed — isValidConnection handles type enforcement)
+
+  // Drag-drop from palette
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
   }, [])
 
-  // Right-click context menu
+  const handleDrop = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      const data = e.dataTransfer.getData('application/workflow-node')
+      if (!data) return
+      try {
+        const nodeData: DragNodeData = JSON.parse(data)
+        const position = reactFlowInstance.screenToFlowPosition({
+          x: e.clientX,
+          y: e.clientY,
+        })
+        const ports = portsForType(nodeData.nodeType)
+        const newNode: Node = {
+          id: nodeData.id,
+          type: nodeData.nodeType,
+          position,
+          data: {
+            name: nodeData.name,
+            nodeType: nodeData.nodeType,
+            status: 'queued',
+            metadata: nodeData.metadata ?? {},
+          },
+        }
+        setNodes((nds) => [...nds, newNode])
+        persistState()
+      } catch (err) {
+        console.error('Failed to add dropped node:', err)
+      }
+    },
+    [reactFlowInstance, setNodes, persistState],
+  )
+
+  // Cmd+K node addition
+  const handleCmdKSelect = useCallback(
+    (data: DragNodeData) => {
+      const viewport = reactFlowInstance.getViewport()
+      const position = reactFlowInstance.screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      })
+      const newNode: Node = {
+        id: data.id,
+        type: data.nodeType,
+        position,
+        data: {
+          name: data.name,
+          nodeType: data.nodeType,
+          status: 'queued',
+          metadata: data.metadata ?? {},
+        },
+      }
+      setNodes((nds) => [...nds, newNode])
+      persistState()
+    },
+    [reactFlowInstance, setNodes, persistState],
+  )
+
+  // Clear all
+  const handleClear = useCallback(() => {
+    setNodes([])
+    setEdges([])
+    localStorage.removeItem('agentzero-workflow-reactflow')
+    if (workflowIdRef.current) {
+      workflowsApi.update(workflowIdRef.current, { layout: { nodes: [], edges: [] } }).catch(() => {})
+    }
+  }, [setNodes, setEdges])
+
+  // Context menu
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     setContextMenu({ x: e.clientX, y: e.clientY })
   }, [])
 
-  const closeContextMenu = useCallback(() => setContextMenu(null), [])
+  // Cross-browser sync: poll for remote changes
+  useEffect(() => {
+    const intervalId = setInterval(async () => {
+      if (!workflowIdRef.current || !initializedRef.current || isDirtyRef.current || isSyncingRef.current) return
 
-  const handleRenameSubmit = useCallback((newName: string) => {
-    if (renaming && newName.trim()) {
-      graphRef.current?.updateNode(renaming.nodeId, { name: newName.trim() }).catch(() => {})
-    }
-    setRenaming(null)
-  }, [renaming])
-
-  const handleGroup = useCallback(() => {
-    graphRef.current?.groupSelected('Group').catch(() => {})
-    setContextMenu(null)
-  }, [])
-
-  const handleUngroup = useCallback((nodeId: string) => {
-    graphRef.current?.ungroupNode(nodeId).catch(() => {})
-    setContextMenu(null)
-  }, [])
-
-  const handleToggleCollapse = useCallback((nodeId: string) => {
-    graphRef.current?.toggleCollapse(nodeId).catch(() => {})
-    setContextMenu(null)
-  }, [])
-
-  const handleCmdKSelect = useCallback(
-    (data: DragNodeData) => {
-      const newNode: Job = {
-        id: data.id, name: data.name, status: 'queued', command: '',
-        depends_on: [], metadata: data.metadata, ports: data.ports,
-      }
-      graphRef.current?.addNode(newNode).catch(() => {})
-    },
-    [],
-  )
-
-  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'copy'
-    setDragOver(true)
-  }, [])
-
-  const handleDragLeave = useCallback(() => setDragOver(false), [])
-
-  const handleDrop = useCallback(
-    (e: DragEvent<HTMLDivElement>) => {
-      e.preventDefault()
-      setDragOver(false)
-      const data = e.dataTransfer.getData('application/workflow-node')
-      if (!data) return
       try {
-        const nodeData: DragNodeData = JSON.parse(data)
-        const newNode: Job = {
-          id: nodeData.id, name: nodeData.name, status: 'queued', command: '',
-          depends_on: [], metadata: nodeData.metadata, ports: nodeData.ports,
+        const list = await workflowsApi.list()
+        const remote = list.data.find((w) => w.workflow_id === workflowIdRef.current)
+        if (!remote || remote.updated_at <= lastKnownUpdatedAtRef.current) return
+        if (isDirtyRef.current) return
+
+        isSyncingRef.current = true
+        try {
+          const full = await workflowsApi.get(workflowIdRef.current!, 'layout')
+          if (!isDirtyRef.current && full.layout?.nodes) {
+            setNodes(full.layout.nodes as Node[])
+            setEdges((full.layout.edges ?? []) as Edge[])
+            lastKnownUpdatedAtRef.current = full.updated_at
+          }
+        } finally {
+          isSyncingRef.current = false
         }
-        const canvas = (e.currentTarget as HTMLElement).querySelector('canvas')
-        let dropX: number | undefined
-        let dropY: number | undefined
-        if (canvas) {
-          const rect = canvas.getBoundingClientRect()
-          dropX = e.clientX - rect.left
-          dropY = e.clientY - rect.top
-        }
-        graphRef.current?.addNode(newNode, dropX, dropY)
-          .catch(() => {})
-      } catch (err) {
-        console.error('Failed to add dropped node:', err)
+      } catch {
+        // Network error — skip this cycle
       }
-    },
-    [],
-  )
+    }, 5_000)
 
-  const handleClear = useCallback(() => {
-    storeClear()
-    localStorage.removeItem('agentzero-workflow-graph')
-    window.location.reload()
-  }, [storeClear])
+    return () => clearInterval(intervalId)
+  }, [setNodes, setEdges])
 
-  const nodeCount = workflow.jobs.length
-  const isEmpty = nodes.length === 0
-
-  if (isEmpty) {
-    const emptyClasses = fullHeight
-      ? `transition-colors relative h-full flex flex-col ${dragOver ? 'bg-primary/5' : ''}`
-      : `rounded-lg border bg-card/80 backdrop-blur-sm transition-colors relative ${dragOver ? 'border-primary/50 bg-primary/5' : 'border-border/50'}`
-
-    return (
-      <div
-        className={emptyClasses}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        {!fullHeight && (
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
-            <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <Network className="h-3.5 w-3.5" />
-              Workflow Topology
-            </h3>
-          </div>
-        )}
-        <div className="flex flex-col items-center justify-center flex-1 py-16 text-muted-foreground">
-          <Network className="h-10 w-10 mb-3 opacity-20" />
-          <p className="text-sm">No agents configured</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">
-            Drag agents, tools, or channels from the palette to build your workflow
-          </p>
-        </div>
-      </div>
-    )
-  }
-
-  const containerClasses = fullHeight
-    ? `overflow-hidden transition-colors relative h-full flex flex-col ${dragOver ? 'border-primary/50' : ''}`
-    : `rounded-lg border bg-card/80 backdrop-blur-sm overflow-hidden transition-colors relative ${dragOver ? 'border-primary/50' : 'border-border/50'}`
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault()
+        cmdK.setOpen(true)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [cmdK])
 
   return (
     <div
-      ref={containerRef}
-      className={containerClasses}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      className={fullHeight ? 'h-full flex flex-col' : ''}
       onContextMenu={handleContextMenu}
-      onMouseDown={(e) => { lastMouseRef.current = { x: e.clientX, y: e.clientY } }}
     >
-      {/* Only show header bar in dashboard widget mode, not fullHeight (page has its own toolbar) */}
-      {!fullHeight && (
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
-          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-            <Network className="h-3.5 w-3.5" />
-            Workflow Topology
-            <span className="text-[10px] text-muted-foreground/60 normal-case tracking-normal font-normal">
-              {nodeCount} node{nodeCount !== 1 ? 's' : ''}
-            </span>
-          </h3>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={handleClear}
-              className="flex items-center gap-1 h-7 px-2 text-[10px] text-muted-foreground/40 hover:text-destructive bg-muted/20 hover:bg-destructive/10 rounded border border-border/30 transition-colors"
-              title="Clear saved layout"
-            >
-              Clear
-            </button>
-            <button
-              onClick={() => cmdK.setOpen(true)}
-              className="flex items-center gap-1.5 h-7 px-2 text-[10px] text-muted-foreground/50 hover:text-muted-foreground bg-muted/20 hover:bg-muted/40 rounded border border-border/30 transition-colors"
-            >
-              <span>Add node</span>
-              <kbd className="text-[9px] bg-muted/30 px-1 py-0.5 rounded">⌘K</kbd>
-            </button>
-            <button
-              onClick={() => setConfigPanelOpen((v) => !v)}
-              className={`flex items-center gap-1 h-7 px-2 text-[10px] rounded border border-border/30 transition-colors ${
-                configPanelOpen
-                  ? 'text-primary bg-primary/10 border-primary/30'
-                  : 'text-muted-foreground/50 hover:text-muted-foreground bg-muted/20 hover:bg-muted/40'
-              }`}
-              title="Quick config"
-            >
-              <Settings className="h-3 w-3" />
-            </button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-foreground"
-              onClick={() => graphRef.current?.resetLayout()}
-              title="Reset layout"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-foreground"
-              onClick={() => graphRef.current?.zoomToFit()}
-              title="Zoom to fit"
-            >
-              <Maximize2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-      )}
-      <WorkflowGraphComponent
-        ref={graphRef}
-        workflow={workflow}
-        className={`w-full bg-background ${fullHeight ? 'flex-1' : ''}`}
-        style={fullHeight ? undefined : { height: 320 }}
-        theme={THEME}
-        persist={{ key: 'agentzero-workflow-graph' }}
-        nodeTypes={ALL_NODE_DEFINITIONS}
-        autoResize
-        onNodeClick={handleNodeClick}
-        onNodeDragEnd={handleNodeDragEnd}
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        onNodesChange={handleNodesChange}
+        onEdgesChange={handleEdgesChange}
         onConnect={handleConnect}
-        onError={(err) => console.error('Workflow graph error:', err)}
-        loadingSkeleton={
-          <div className="flex items-center justify-center h-full text-muted-foreground/30 text-sm">
-            Loading graph...
-          </div>
-        }
-      />
-
-      {/* LangFlow-style field overlays positioned over canvas nodes */}
-      <OverlayLayer graphRef={graphRef} containerRef={containerRef} />
-
-      {pendingConnection && (
-        <KeySelector
-          connection={pendingConnection}
-          onConfirm={handleConnectionConfirm}
-          onCancel={handleConnectionCancel}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        fitView
+        deleteKeyCode={['Backspace', 'Delete']}
+        edgesReconnectable
+        elementsSelectable
+        selectNodesOnDrag={false}
+        className="bg-background"
+        colorMode="dark"
+        defaultEdgeOptions={{ style: { strokeWidth: 2 }, selectable: true, focusable: true }}
+        edgesFocusable
+        isValidConnection={(connection) => {
+          // Enforce port type matching
+          const src = reactFlowInstance.getNode(connection.source)
+          const tgt = reactFlowInstance.getNode(connection.target)
+          if (!src || !tgt) return false
+          const srcDef = getDefinition((src.data as Record<string, unknown>).nodeType as string)
+          const tgtDef = getDefinition((tgt.data as Record<string, unknown>).nodeType as string)
+          const srcPort = srcDef?.outputs?.find((p) => p.id === connection.sourceHandle)
+          const tgtPort = tgtDef?.inputs?.find((p) => p.id === connection.targetHandle)
+          if (!srcPort || !tgtPort) return true // allow unknown ports
+          return srcPort.port_type === tgtPort.port_type // only same type
+        }}
+        style={fullHeight ? { flex: 1 } : { height: 400 }}
+      >
+        <Background />
+        <Controls />
+        <MiniMap
+          nodeColor={(node) => {
+            const def = getDefinition((node.data as Record<string, unknown>).nodeType as string)
+            return def?.headerColor ?? '#4b5563'
+          }}
+          style={{ background: '#1a1a2e' }}
         />
-      )}
+      </ReactFlow>
 
-      {/* Config panel (anchored to toolbar) */}
+      {/* Config panel */}
       <ConfigPanel open={configPanelOpen} onClose={() => setConfigPanelOpen(false)} />
 
       {/* Cmd+K command palette */}
@@ -403,66 +407,14 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         onClose={() => setCreateAgentOpen(false)}
       />
 
-      {/* Inline rename input (double-click node) */}
-      {renaming && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => handleRenameSubmit(renaming.name)} />
-          <div
-            className="fixed z-50 rounded-md border border-border bg-zinc-900 p-1 shadow-xl shadow-black/50"
-            style={{ left: renaming.x - 100, top: renaming.y, transform: 'translateY(-50%)' }}
-          >
-            <input
-              autoFocus
-              className="w-[200px] bg-transparent text-sm text-foreground outline-none px-2 py-1"
-              defaultValue={renaming.name}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRenameSubmit((e.target as HTMLInputElement).value)
-                if (e.key === 'Escape') setRenaming(null)
-              }}
-              onBlur={(e) => handleRenameSubmit(e.target.value)}
-            />
-          </div>
-        </>
-      )}
-
-      {/* Right-click context menu */}
+      {/* Context menu */}
       {contextMenu && (
         <>
-          <div className="fixed inset-0 z-40" onClick={closeContextMenu} onContextMenu={(e) => { e.preventDefault(); closeContextMenu() }} />
+          <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null) }} />
           <div
             className="fixed z-50 min-w-[160px] rounded-md border border-border bg-zinc-900 p-1 shadow-xl shadow-black/50"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
-            <button
-              className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
-              onClick={handleGroup}
-            >
-              <span className="text-muted-foreground">⌘G</span>
-              Group Selected
-            </button>
-            <button
-              className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
-              onClick={() => {
-                // Ungroup whichever node is selected
-                const selected = workflow.jobs.find(j => j.children && j.children.length > 0)
-                if (selected) handleUngroup(selected.id)
-                else setContextMenu(null)
-              }}
-            >
-              Ungroup
-            </button>
-            <div className="my-1 h-px bg-border/50" />
-            <button
-              className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
-              onClick={() => {
-                const compound = workflow.jobs.find(j => j.children && j.children.length > 0)
-                if (compound) handleToggleCollapse(compound.id)
-                else setContextMenu(null)
-              }}
-            >
-              Toggle Collapse
-            </button>
-            <div className="my-1 h-px bg-border/50" />
             <button
               className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
               onClick={() => { cmdK.setOpen(true); setContextMenu(null) }}
@@ -470,6 +422,7 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
               <span className="text-muted-foreground">⌘K</span>
               Add Node
             </button>
+            <div className="my-1 h-px bg-border/50" />
             <button
               className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
               onClick={() => { handleClear(); setContextMenu(null) }}
@@ -483,4 +436,10 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
   )
 }
 
-/** Detects when the graph finishes initializing by polling for the canvas. */
+export function WorkflowTopology(props: WorkflowTopologyProps) {
+  return (
+    <ReactFlowProvider>
+      <WorkflowTopologyInner {...props} />
+    </ReactFlowProvider>
+  )
+}

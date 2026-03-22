@@ -44,6 +44,8 @@ pub struct AgentZeroConfig {
     pub autopilot: AutopilotConfig,
     #[serde(default)]
     pub a2a: A2aConfig,
+    #[serde(default)]
+    pub sop: SopConfig,
 }
 
 impl AgentZeroConfig {
@@ -2494,6 +2496,36 @@ fn default_autopilot_max_missions_agent() -> usize {
 
 fn default_autopilot_stale_threshold() -> u32 {
     30
+}
+
+// --- SOP (Standard Operating Procedure) configuration ---
+
+/// Configuration for SOP execution.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SopConfig {
+    /// Directory for SOP definitions.
+    pub sops_dir: String,
+    /// Default execution mode: "supervised" or "deterministic".
+    pub default_execution_mode: String,
+    /// Maximum concurrent SOP runs.
+    pub max_concurrent_total: u32,
+    /// Approval checkpoint timeout in seconds.
+    pub approval_timeout_secs: u64,
+    /// Maximum finished runs to retain.
+    pub max_finished_runs: u32,
+}
+
+impl Default for SopConfig {
+    fn default() -> Self {
+        Self {
+            sops_dir: "./sops".to_string(),
+            default_execution_mode: "supervised".to_string(),
+            max_concurrent_total: 4,
+            approval_timeout_secs: 300,
+            max_finished_runs: 100,
+        }
+    }
 }
 
 // --- A2A (Agent-to-Agent) protocol configuration ---

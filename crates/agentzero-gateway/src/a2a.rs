@@ -11,30 +11,84 @@ use axum::http::HeaderMap;
 use axum::Json;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// In-memory task store for A2A tasks.
-/// Production deployments should use the JobStore, but this provides
-/// a self-contained A2A implementation.
-#[derive(Clone, Default)]
+/// Persistent task store for A2A tasks with optional file-backed persistence.
+/// Falls back to in-memory only when no workspace root is configured.
+#[derive(Clone)]
 pub(crate) struct A2aTaskStore {
     tasks: Arc<Mutex<HashMap<String, Task>>>,
+    /// Path to persist tasks. None = in-memory only.
+    persist_path: Option<PathBuf>,
+    /// Maximum number of tasks to retain.
+    max_tasks: usize,
+}
+
+impl Default for A2aTaskStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl A2aTaskStore {
     pub(crate) fn new() -> Self {
         Self {
             tasks: Arc::new(Mutex::new(HashMap::new())),
+            persist_path: None,
+            max_tasks: 1000,
         }
     }
 
-    async fn get(&self, id: &str) -> Option<Task> {
+    #[allow(dead_code)]
+    pub(crate) fn with_persistence(mut self, workspace_root: &Path) -> Self {
+        self.persist_path = Some(workspace_root.join(".agentzero").join("a2a_tasks.json"));
+        self
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn load(&self) -> anyhow::Result<()> {
+        if let Some(ref path) = self.persist_path {
+            if path.exists() {
+                let data = tokio::fs::read_to_string(path).await?;
+                let tasks: HashMap<String, Task> = serde_json::from_str(&data)?;
+                *self.tasks.lock().await = tasks;
+            }
+        }
+        Ok(())
+    }
+
+    async fn persist(&self) {
+        if let Some(ref path) = self.persist_path {
+            let tasks = self.tasks.lock().await;
+            if let Ok(data) = serde_json::to_string_pretty(&*tasks) {
+                if let Some(parent) = path.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                let _ = tokio::fs::write(path, data).await;
+            }
+        }
+    }
+
+    pub(crate) async fn get(&self, id: &str) -> Option<Task> {
         self.tasks.lock().await.get(id).cloned()
     }
 
-    async fn upsert(&self, task: Task) {
-        self.tasks.lock().await.insert(task.id.clone(), task);
+    pub(crate) async fn upsert(&self, task: Task) {
+        {
+            let mut tasks = self.tasks.lock().await;
+            tasks.insert(task.id.clone(), task);
+            // Evict excess tasks inline to keep the store bounded.
+            if tasks.len() > self.max_tasks {
+                let excess = tasks.len() - self.max_tasks;
+                let keys_to_remove: Vec<String> = tasks.keys().take(excess).cloned().collect();
+                for key in keys_to_remove {
+                    tasks.remove(&key);
+                }
+            }
+        }
+        self.persist().await;
     }
 }
 
@@ -214,20 +268,28 @@ async fn handle_tasks_cancel(state: &GatewayState, params: &Value) -> Result<Val
         })
     })?;
 
-    let mut tasks = state.a2a_tasks.tasks.lock().await;
-    match tasks.get_mut(&cancel_params.id) {
-        Some(task) => {
-            task.status = TaskStatus {
-                state: TaskState::Canceled,
-                message: None,
-            };
-            Ok(serde_json::to_value(task.clone()).unwrap_or(json!({})))
+    let result = {
+        let mut tasks = state.a2a_tasks.tasks.lock().await;
+        match tasks.get_mut(&cancel_params.id) {
+            Some(task) => {
+                task.status = TaskStatus {
+                    state: TaskState::Canceled,
+                    message: None,
+                };
+                Ok(serde_json::to_value(task.clone()).unwrap_or(json!({})))
+            }
+            None => Err(json!({
+                "code": -32602,
+                "message": format!("task not found: {}", cancel_params.id),
+            })),
         }
-        None => Err(json!({
-            "code": -32602,
-            "message": format!("task not found: {}", cancel_params.id),
-        })),
+    };
+
+    if result.is_ok() {
+        state.a2a_tasks.persist().await;
     }
+
+    result
 }
 
 #[cfg(test)]
@@ -256,5 +318,77 @@ mod tests {
     async fn a2a_task_store_get_missing_returns_none() {
         let store = A2aTaskStore::new();
         assert!(store.get("nonexistent").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a2a_task_store_persist_and_load() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        static CTR: AtomicU64 = AtomicU64::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let seq = CTR.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "agentzero-a2a-persist-{}-{nanos}-{seq}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        // Create store with persistence and insert a task.
+        let store = A2aTaskStore::new().with_persistence(&dir);
+        let task = Task {
+            id: "persist-t1".to_string(),
+            status: TaskStatus {
+                state: TaskState::Completed,
+                message: None,
+            },
+            history: vec![],
+            artifacts: vec![],
+        };
+        store.upsert(task).await;
+
+        // Create a new store from the same path and load.
+        let store2 = A2aTaskStore::new().with_persistence(&dir);
+        store2.load().await.expect("load should succeed");
+        let retrieved = store2
+            .get("persist-t1")
+            .await
+            .expect("should find persisted task");
+        assert_eq!(retrieved.id, "persist-t1");
+        assert_eq!(retrieved.status.state, TaskState::Completed);
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn a2a_task_store_evict_on_upsert() {
+        let store = A2aTaskStore {
+            tasks: Arc::new(Mutex::new(HashMap::new())),
+            persist_path: None,
+            max_tasks: 3,
+        };
+
+        // Insert 8 tasks — eviction happens automatically on each upsert.
+        for i in 0..8 {
+            let task = Task {
+                id: format!("evict-{i}"),
+                status: TaskStatus {
+                    state: TaskState::Completed,
+                    message: None,
+                },
+                history: vec![],
+                artifacts: vec![],
+            };
+            store.upsert(task).await;
+        }
+
+        let remaining = store.tasks.lock().await.len();
+        assert!(
+            remaining <= 3,
+            "expected at most 3 tasks after eviction, got {remaining}"
+        );
     }
 }

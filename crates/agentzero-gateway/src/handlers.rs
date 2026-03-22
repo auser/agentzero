@@ -294,7 +294,7 @@ pub(crate) async fn api_chat(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Json(req): Json<ChatRequest>,
-) -> Result<Json<ChatResponse>, GatewayError> {
+) -> Result<Response, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
     if let Some(reason) = check_perplexity(&req.message, &state.effective_perplexity_filter()) {
@@ -320,7 +320,8 @@ pub(crate) async fn api_chat(
         return Ok(Json(ChatResponse {
             message: response,
             tokens_used_estimate: 0,
-        }));
+        })
+        .into_response());
     }
 
     // Fallback: single-agent execution (no swarm).
@@ -332,10 +333,23 @@ pub(crate) async fn api_chat(
         }
     })?;
 
-    Ok(Json(ChatResponse {
+    let mut response = Json(ChatResponse {
         message: output.response_text,
         tokens_used_estimate: 0,
-    }))
+    })
+    .into_response();
+
+    // Append fallback headers if a provider fallback occurred.
+    for (name, value) in fallback_response_headers() {
+        if let (Ok(header_name), Ok(header_value)) = (
+            axum::http::HeaderName::try_from(&name),
+            axum::http::HeaderValue::try_from(&value),
+        ) {
+            response.headers_mut().insert(header_name, header_value);
+        }
+    }
+
+    Ok(response)
 }
 
 pub(crate) async fn v1_chat_completions(
@@ -401,7 +415,7 @@ pub(crate) async fn v1_chat_completions(
         }
     })?;
 
-    Ok(Json(ChatCompletionsResponse {
+    let mut response = Json(ChatCompletionsResponse {
         id: format!("chatcmpl-{}", now_epoch_secs()),
         object: "chat.completion",
         choices: vec![CompletionChoice {
@@ -413,7 +427,19 @@ pub(crate) async fn v1_chat_completions(
             finish_reason: "stop",
         }],
     })
-    .into_response())
+    .into_response();
+
+    // Append fallback headers if a provider fallback occurred.
+    for (name, value) in fallback_response_headers() {
+        if let (Ok(header_name), Ok(header_value)) = (
+            axum::http::HeaderName::try_from(&name),
+            axum::http::HeaderValue::try_from(&value),
+        ) {
+            response.headers_mut().insert(header_name, header_value);
+        }
+    }
+
+    Ok(response)
 }
 
 /// SSE streaming variant of v1/chat/completions (OpenAI-compatible).
@@ -2799,4 +2825,24 @@ pub(crate) async fn mcp_message(
             Ok(Json(serde_json::json!({})))
         }
     }
+}
+
+/// Extract fallback headers from the task-local, if a provider fallback occurred.
+///
+/// Returns a list of `(header-name, value)` pairs that should be added to the
+/// HTTP response so API consumers can detect when a fallback provider served
+/// the request.
+pub(crate) fn fallback_response_headers() -> Vec<(String, String)> {
+    agentzero_providers::FALLBACK_INFO
+        .try_with(|cell| {
+            cell.borrow().as_ref().map(|fi| {
+                vec![
+                    ("X-Provider-Fallback".to_string(), "true".to_string()),
+                    ("X-Provider-Used".to_string(), fi.actual_provider.clone()),
+                ]
+            })
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_default()
 }

@@ -197,6 +197,27 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
                 chain.push((label, fb_provider));
             }
 
+            // Filter out providers whose model is incompatible with their
+            // provider kind (e.g. an OpenAI model routed to Anthropic).
+            let chain: Vec<_> = chain
+                .into_iter()
+                .filter(|(label, _)| {
+                    if let Some((kind, model)) = label.split_once(':') {
+                        let supported = agentzero_providers::provider_supports_model(kind, model);
+                        if !supported {
+                            tracing::warn!(
+                                provider = kind,
+                                model = model,
+                                "filtering incompatible model from fallback chain"
+                            );
+                        }
+                        supported
+                    } else {
+                        true // Primary provider or unknown format — allow
+                    }
+                })
+                .collect();
+
             tracing::info!(
                 chain_len = chain.len(),
                 "provider fallback chain configured"

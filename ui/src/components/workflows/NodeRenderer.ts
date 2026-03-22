@@ -2,7 +2,7 @@
  * Custom node renderer for workflow-graph.
  * Draws distinct visuals per node_type metadata field.
  */
-import type { Job } from '@auser/workflow-graph-web'
+import type { Job } from '@/lib/workflow-types'
 
 const NODE_TYPE_STYLES: Record<string, { bg: string; border: string; icon: string; label: string }> = {
   agent: { bg: '#1e293b', border: '#3b82f6', icon: '🤖', label: 'AGENT' },
