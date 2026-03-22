@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { agentsApi } from '@/lib/api/agents'
 import { api } from '@/lib/api/client'
 import type { Port } from '@/lib/workflow-types'
-import { Bot, Wrench, Radio, CalendarClock, ShieldCheck, ChevronDown, ChevronRight, Search } from 'lucide-react'
+import { Bot, Wrench, Radio, CalendarClock, ShieldCheck, Zap, GitFork, UserCircle, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { type DragEvent, useState, useMemo } from 'react'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
 import { getDefinition } from '@/lib/node-definitions'
@@ -209,6 +209,36 @@ export function DraggablePalette() {
     }]
   }, [filter])
 
+  // Role nodes
+  const filteredRoles: DragNodeData[] = useMemo(() => {
+    if (!('role'.includes(filter))) return []
+    return [{
+      nodeType: 'channel' as const, id: 'role-custom', name: 'custom role',
+      metadata: { node_type: 'role' },
+      ports: portsForNodeType('role'),
+    }]
+  }, [filter])
+
+  // Provider nodes
+  const filteredProviders: DragNodeData[] = useMemo(() => {
+    if (!('provider'.includes(filter) || 'model'.includes(filter) || 'llm'.includes(filter))) return []
+    return [{
+      nodeType: 'channel' as const, id: 'provider-custom', name: 'LLM provider',
+      metadata: { node_type: 'provider' },
+      ports: portsForNodeType('provider'),
+    }]
+  }, [filter])
+
+  // Sub-Agent nodes
+  const filteredSubAgents: DragNodeData[] = useMemo(() => {
+    if (!('subagent'.includes(filter) || 'sub-agent'.includes(filter) || 'delegate'.includes(filter))) return []
+    return [{
+      nodeType: 'channel' as const, id: 'subagent-delegate', name: 'sub-agent',
+      metadata: { node_type: 'subagent' },
+      ports: portsForNodeType('subagent'),
+    }]
+  }, [filter])
+
   return (
     <div className="rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden h-full flex flex-col">
       <div className="px-3 py-2.5 border-b border-border/50">
@@ -295,6 +325,33 @@ export function DraggablePalette() {
           <CollapsibleSection icon={<ShieldCheck className="h-3 w-3" />} label="Gates" count={filteredGates.length} color="#ef4444">
             {filteredGates.map((g) => (
               <NodeChip key={g.id} name={g.name} nodeType="channel" data={g} />
+            ))}
+          </CollapsibleSection>
+        )}
+
+        {/* Roles */}
+        {filteredRoles.length > 0 && (
+          <CollapsibleSection icon={<UserCircle className="h-3 w-3" />} label="Roles" count={filteredRoles.length} color="#a855f7">
+            {filteredRoles.map((r) => (
+              <NodeChip key={r.id} name={r.name} nodeType="channel" data={r} />
+            ))}
+          </CollapsibleSection>
+        )}
+
+        {/* Providers */}
+        {filteredProviders.length > 0 && (
+          <CollapsibleSection icon={<Zap className="h-3 w-3" />} label="Providers" count={filteredProviders.length} color="#6b7280">
+            {filteredProviders.map((p) => (
+              <NodeChip key={p.id} name={p.name} nodeType="channel" data={p} />
+            ))}
+          </CollapsibleSection>
+        )}
+
+        {/* Sub-Agents */}
+        {filteredSubAgents.length > 0 && (
+          <CollapsibleSection icon={<GitFork className="h-3 w-3" />} label="Sub-Agents" count={filteredSubAgents.length} color="#22c55e">
+            {filteredSubAgents.map((s) => (
+              <NodeChip key={s.id} name={s.name} nodeType="channel" data={s} />
             ))}
           </CollapsibleSection>
         )}

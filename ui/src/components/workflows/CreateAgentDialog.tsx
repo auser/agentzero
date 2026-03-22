@@ -42,9 +42,13 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
 
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on dialog open
       setName('')
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on dialog open
       setModel('')
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on dialog open
       setPrompt('')
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on dialog open
       setDescription('')
       setTimeout(() => nameRef.current?.focus(), 50)
     }

@@ -55,6 +55,7 @@ function CanvasPage() {
   }, [apiBase, token, selectedId])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch sets state in callback, not synchronously
     void fetchCanvases()
     const interval = setInterval(() => void fetchCanvases(), 5000)
     return () => clearInterval(interval)

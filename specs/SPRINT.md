@@ -1887,6 +1887,72 @@ All 28 channels benefit automatically — processing at the pipeline dispatch la
 
 ---
 
+## Sprint 69: Visual Workflow Builder Polish
+
+**Goal:** Fix all wiring gaps, add undo/redo, node detail panel, edge labels/conditions, and run-from-canvas capability to the visual workflow builder.
+
+---
+
+### Phase A: ProviderNode Select Wiring (LOW)
+
+The ProviderNode's `<select>` elements don't save changes — the `onChange` handlers are empty TODOs.
+
+- [x] **Wire ProviderNode selects** — `ui/src/components/workflows/ProviderNode.tsx`: add `useReactFlow` + `updateField` callback matching AgentNode pattern. Provider select updates `provider_name`, model select updates `model_name`. Model list filters by selected provider.
+- [x] **Persist on change** — call `persistState` after field updates (requires threading through props or using a context)
+
+### Phase B: Node Detail Panel (MEDIUM)
+
+Click a node to open a slide-out panel with full config editing.
+
+- [x] **`NodeDetailPanel` component** — `ui/src/components/workflows/NodeDetailPanel.tsx`: slides in from right on node selection. Shows all fields from `NodeDefinition`, plus expanded views for textarea fields (system_prompt). Includes port connection summary.
+- [x] **Selection tracking** — in `WorkflowTopology`: track `selectedNodeId` state, pass to detail panel. Close on background click or Escape.
+- [ ] **Agent API integration** — for agent nodes with `agent_id`, load full agent config from `GET /v1/agents/:id` and display/edit all fields
+- [ ] **Save changes** — PUT to agent API on field change, update ReactFlow node data
+
+### Phase C: Edge Labels and Conditions (MEDIUM)
+
+Edges should show port type labels and support conditional routing.
+
+- [x] **Custom edge component** — `ui/src/components/workflows/LabeledEdge.tsx`: renders port-type label centered on edge path, matching port color. Uses `getBezierPath` + `EdgeLabelRenderer` from ReactFlow.
+- [x] **Register custom edge** — in `WorkflowTopology`: add `edgeTypes={{ default: LabeledEdge }}` to ReactFlow
+- [ ] **Edge click to edit** — clicking an edge opens a small popover to add a condition expression (stored in `edge.data.condition`). Display as badge on the edge.
+- [ ] **Conditional routing visual** — edges with conditions show a diamond icon + condition text
+
+### Phase D: Undo/Redo (MEDIUM)
+
+Add history management for node/edge operations.
+
+- [x] **`useUndoRedo` hook** — `ui/src/components/dashboard/useUndoRedo.ts`: maintains a stack of `{ nodes, edges }` snapshots. `push(snapshot)` on every state change, `undo()` restores previous, `redo()` restores next. Max 50 entries.
+- [x] **Wire into WorkflowTopology** — call `push` in `handleNodesChange`, `handleEdgesChange`, `handleConnect`, `handleDrop`, `handleCmdKSelect`
+- [x] **Keyboard shortcuts** — Cmd+Z for undo, Cmd+Shift+Z for redo
+- [ ] **Toolbar buttons** — add undo/redo buttons to the ReactFlow Controls panel or a custom toolbar
+
+### Phase E: Run Workflow from Canvas (HIGH)
+
+- [x] **Run button** — top-right toolbar button "Run Workflow" that submits the current workflow graph to `POST /v1/runs` with the workflow definition serialized from ReactFlow state
+- [x] **Status overlay** — during execution, nodes update status in real-time via the existing topology polling (`refetchInterval: 3_000`). Running nodes pulse blue, completed nodes turn green, failed nodes turn red.
+- [x] **Output panel** — bottom slide-up panel showing the run output (streamed via WebSocket or polled from `/v1/runs/:id`)
+
+### Phase F: DraggablePalette Polish (LOW)
+
+- [x] **Role and Provider chips** — add Role and Provider node types to the palette (currently only Agent, Tool, Channel, Schedule, Gate are listed)
+- [x] **Sub-Agent chip** — add Sub-Agent to the palette
+- [ ] **Keyboard navigation** — arrow keys + Enter in the palette search results
+
+---
+
+### Acceptance Criteria (Sprint 69)
+
+- [ ] ProviderNode selects persist changes to node data
+- [ ] Clicking a node opens a detail panel with full editing
+- [ ] Edges show port-type labels and support conditions
+- [ ] Cmd+Z / Cmd+Shift+Z undo/redo works for all canvas operations
+- [ ] Run button executes workflow and shows live status on nodes
+- [ ] All node types available in the palette
+- [ ] 0 lint errors, all existing tests pass
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

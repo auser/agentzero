@@ -8,7 +8,6 @@ import { agentsApi } from '@/lib/api/agents'
 import { Plus } from 'lucide-react'
 import { api } from '@/lib/api/client'
 import { Bot, Wrench, Radio, Search } from 'lucide-react'
-import type { Port } from '@/lib/workflow-types'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
 import { getDefinition } from '@/lib/node-definitions'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
@@ -134,7 +133,7 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
     }
 
     return items
-  }, [agents, toolsData, configData])
+  }, [agents, toolsData, configData, onCreateAgent])
 
   // Fuzzy filter
   const filtered = useMemo(() => {
@@ -149,32 +148,17 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
   }, [allItems, query])
 
   // Reset selection when query changes
-  useEffect(() => {
-    setSelectedIndex(0)
-  }, [query])
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset derived from query
+  useEffect(() => { setSelectedIndex(0) }, [query])
 
   // Focus input when opened
   useEffect(() => {
     if (open) {
-      setQuery('')
+      setQuery('') // eslint-disable-line react-hooks/set-state-in-effect -- intentional reset on open
       setSelectedIndex(0)
       setTimeout(() => inputRef.current?.focus(), 50)
     }
   }, [open])
-
-  // Global keyboard shortcut
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        if (open) {
-          onClose()
-        }
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [open, onClose])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -198,7 +182,7 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
         onClose()
       }
     },
-    [filtered, selectedIndex, onSelect, onClose],
+    [filtered, selectedIndex, onSelect, onClose, onCreateAgent],
   )
 
   if (!open) return null
@@ -270,20 +254,3 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
   )
 }
 
-/** Hook to open the command palette with Cmd+K */
-export function useCommandPalette() {
-  const [open, setOpen] = useState(false)
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        setOpen((o) => !o)
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [])
-
-  return { open, setOpen, onClose: () => setOpen(false) }
-}
