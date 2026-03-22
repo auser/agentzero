@@ -12,6 +12,7 @@ pub mod group_reply;
 pub mod image_markers;
 pub mod interruption;
 pub mod leak_guard;
+pub mod media;
 pub mod outbound;
 pub mod pipeline;
 
@@ -46,6 +47,10 @@ pub struct ChannelMessage {
     /// Empty string means inherit the global privacy mode.
     #[serde(default)]
     pub privacy_boundary: String,
+    /// Media attachments (images, audio, video) on this message.
+    /// Populated by media-aware channels or by the media pipeline.
+    #[serde(default)]
+    pub attachments: Vec<crate::media::MediaAttachment>,
 }
 
 /// A message to send through a channel (outbound).
@@ -361,6 +366,7 @@ mod tests {
                 timestamp: 123,
                 thread_ts: None,
                 privacy_boundary: String::new(),
+                attachments: Vec::new(),
             })
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))
@@ -396,6 +402,7 @@ mod tests {
             timestamp: 999,
             thread_ts: Some("thread-1".into()),
             privacy_boundary: String::new(),
+            attachments: Vec::new(),
         };
 
         let json = serde_json::to_string(&msg).expect("serialize should succeed");
@@ -517,6 +524,7 @@ mod tests {
             timestamp: 0,
             thread_ts: None,
             privacy_boundary: "local_only".to_string(),
+            attachments: Vec::new(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ChannelMessage = serde_json::from_str(&json).unwrap();

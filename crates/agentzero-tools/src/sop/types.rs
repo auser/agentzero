@@ -13,7 +13,6 @@ pub enum SopExecutionMode {
     Deterministic,
 }
 
-
 /// Kind of step in an SOP.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -25,7 +24,6 @@ pub enum SopStepKind {
     /// Checkpoint requiring human approval before proceeding.
     Checkpoint,
 }
-
 
 /// JSON Schema fragment for step input/output validation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

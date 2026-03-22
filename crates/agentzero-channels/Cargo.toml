@@ -34,7 +34,9 @@ channel-telegram = ["reqwest"]
 channel-discord = ["reqwest", "tokio-tungstenite", "futures-util"]
 channel-slack = ["reqwest", "tokio-tungstenite", "futures-util"]
 channel-mattermost = ["reqwest"]
+channel-discord-history = ["reqwest", "tokio-tungstenite", "futures-util"]
 channel-email = []
+channel-gmail-push = ["reqwest"]
 channel-irc = []
 channel-webhook = []
 channel-matrix = ["reqwest"]
@@ -56,6 +58,7 @@ channel-transcription = []
 channel-whatsapp-web = []
 channel-nostr = ["tokio-tungstenite", "futures-util"]
 channel-sms = ["reqwest"]
+channel-voice-wake = []
 tls-rustls = ["reqwest?/rustls-tls", "tokio-tungstenite?/rustls-tls-native-roots"]
 tls-native = ["reqwest?/native-tls", "tokio-tungstenite?/native-tls"]
 channels-standard = [
@@ -76,9 +79,11 @@ all-channels = [
     "channel-cli",
     "channel-telegram",
     "channel-discord",
+    "channel-discord-history",
     "channel-slack",
     "channel-mattermost",
     "channel-email",
+    "channel-gmail-push",
     "channel-irc",
     "channel-webhook",
     "channel-matrix",
@@ -86,6 +91,7 @@ all-channels = [
     "channel-mqtt",
     "channel-transcription",
     "channel-whatsapp-web",
+    "channel-voice-wake",
     "channel-lark",
     "channel-feishu",
     "channel-dingtalk",

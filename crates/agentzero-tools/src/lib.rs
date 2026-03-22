@@ -107,6 +107,7 @@ pub fn tool_tier(name: &str) -> ToolTier {
         | "sop_approve"
         | "sop_execute"
         | "cli_discovery"
+        | "discord_search"
         | "proxy_config"
         | "model_routing_config"
         | "docx_read"
@@ -158,6 +159,8 @@ pub mod code_interpreter;
 pub mod cron_store;
 #[cfg(feature = "tools-extended")]
 pub mod cron_tools;
+#[cfg(feature = "tools-extended")]
+pub mod discord_search;
 #[cfg(all(feature = "tools-extended", feature = "document-tools"))]
 pub mod docx_read;
 #[cfg(feature = "tools-extended")]
@@ -253,6 +256,8 @@ pub use code_interpreter::{CodeInterpreterConfig, CodeInterpreterTool};
 pub use cron_tools::{
     CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool,
 };
+#[cfg(feature = "tools-extended")]
+pub use discord_search::DiscordSearchTool;
 #[cfg(all(feature = "tools-extended", feature = "document-tools"))]
 pub use docx_read::DocxReadTool;
 #[cfg(feature = "tools-extended")]
@@ -534,6 +539,7 @@ mod tests {
             "sop_approve",
             "sop_execute",
             "cli_discovery",
+            "discord_search",
             "proxy_config",
             "model_routing_config",
             "a2a",

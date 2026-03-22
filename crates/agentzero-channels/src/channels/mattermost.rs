@@ -174,6 +174,7 @@ mod impl_ {
                             timestamp: helpers::now_epoch_secs(),
                             thread_ts: root_id.map(String::from),
                             privacy_boundary: String::new(),
+                            attachments: Vec::new(),
                         };
 
                         if tx.send(channel_msg).await.is_err() {

@@ -34,10 +34,10 @@ pub use agentzero_tools::{
 #[cfg(feature = "tools-extended")]
 pub use agentzero_tools::{
     A2aTool, AgentsIpcTool, CanvasTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool,
-    CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, GitOperationsTool,
-    HttpRequestTool, ModelRoutingConfigTool, ProxyConfigTool, ScheduleTool, SopAdvanceTool,
-    SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, UrlValidationTool, WebFetchTool,
-    WebSearchTool,
+    CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, DiscordSearchTool,
+    GitOperationsTool, HttpRequestTool, ModelRoutingConfigTool, ProxyConfigTool, ScheduleTool,
+    SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, UrlValidationTool,
+    WebFetchTool, WebSearchTool,
 };
 #[cfg(all(feature = "tools-extended", feature = "document-tools"))]
 pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
@@ -122,6 +122,7 @@ fn default_tools_inner(
     #[cfg(feature = "tools-extended")]
     {
         tools.push(Box::new(CliDiscoveryTool));
+        tools.push(Box::new(DiscordSearchTool));
         tools.push(Box::new(ProxyConfigTool));
         tools.push(Box::new(SopListTool));
         tools.push(Box::new(SopStatusTool));

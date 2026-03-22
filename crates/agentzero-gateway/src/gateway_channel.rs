@@ -63,6 +63,7 @@ impl GatewayChannel {
             timestamp: now_epoch_secs(),
             thread_ts: None,
             privacy_boundary: String::new(),
+            attachments: Vec::new(),
         };
 
         self.inbound_tx

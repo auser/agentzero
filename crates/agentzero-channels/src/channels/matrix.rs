@@ -102,7 +102,7 @@ mod impl_ {
                                 if !helpers::is_user_allowed(sender, &self.allowed_users) { continue; }
                                 let body = event["content"]["body"].as_str().unwrap_or("");
                                 if body.is_empty() { continue; }
-                                let msg = ChannelMessage { id: helpers::new_message_id(), sender: sender.to_string(), reply_target: room_id.to_string(), content: body.to_string(), channel: "matrix".to_string(), timestamp: helpers::now_epoch_secs(), thread_ts: None, privacy_boundary: String::new() };
+                                let msg = ChannelMessage { id: helpers::new_message_id(), sender: sender.to_string(), reply_target: room_id.to_string(), content: body.to_string(), channel: "matrix".to_string(), timestamp: helpers::now_epoch_secs(), thread_ts: None, privacy_boundary: String::new(), attachments: Vec::new() };
                                 if tx.send(msg).await.is_err() { return Ok(()); }
                             }
                         }

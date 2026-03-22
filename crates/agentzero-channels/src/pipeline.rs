@@ -58,6 +58,8 @@ pub struct PipelineConfig {
     pub max_backoff_secs: u64,
     pub message_buffer_size: usize,
     pub perplexity_filter: PerplexityFilterSettings,
+    /// Optional media pipeline configuration for automatic media processing.
+    pub media_pipeline: Option<crate::media::MediaPipelineConfig>,
 }
 
 impl Default for PipelineConfig {
@@ -67,6 +69,7 @@ impl Default for PipelineConfig {
             max_backoff_secs: MAX_BACKOFF_SECS,
             message_buffer_size: 100,
             perplexity_filter: PerplexityFilterSettings::default(),
+            media_pipeline: None,
         }
     }
 }
@@ -121,6 +124,7 @@ pub async fn start_pipeline(
         handler,
         max_in_flight,
         Arc::new(config.perplexity_filter),
+        config.media_pipeline,
     )
     .await;
 
@@ -175,10 +179,11 @@ async fn run_dispatch_loop(
     handler: MessageHandler,
     max_in_flight: usize,
     perplexity_settings: Arc<PerplexityFilterSettings>,
+    media_config: Option<crate::media::MediaPipelineConfig>,
 ) {
     let semaphore = Arc::new(tokio::sync::Semaphore::new(max_in_flight));
 
-    while let Some(msg) = rx.recv().await {
+    while let Some(mut msg) = rx.recv().await {
         // Perplexity filter: check inbound message content before dispatching.
         if let Some(reason) = check_perplexity(&msg.content, &perplexity_settings) {
             tracing::warn!(
@@ -188,6 +193,13 @@ async fn run_dispatch_loop(
                 "inbound message blocked by perplexity filter"
             );
             continue;
+        }
+
+        // Media pipeline: process attachments and detect media URLs.
+        if let Some(ref media_cfg) = media_config {
+            if media_cfg.enabled {
+                crate::media::process_media(&mut msg.attachments, &msg.content, media_cfg).await;
+            }
         }
 
         let permit = match semaphore.clone().acquire_owned().await {
