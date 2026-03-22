@@ -287,6 +287,44 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     persistWithHistory()
   }, [setNodes, setEdges, persistWithHistory])
 
+  // Save current canvas as a downloadable template JSON
+  const handleSaveAsTemplate = useCallback(() => {
+    const currentNodes = reactFlowInstance.getNodes()
+    const currentEdges = reactFlowInstance.getEdges()
+    const name = window.prompt('Template name:') ?? 'My Workflow'
+    if (!name) return
+
+    const template = {
+      id: `custom-${Date.now()}`,
+      name,
+      description: `Custom template with ${currentNodes.length} nodes`,
+      category: 'custom',
+      nodeCount: currentNodes.length,
+      nodes: currentNodes.map((n) => ({
+        id: n.id,
+        type: n.type,
+        position: n.position,
+        data: n.data,
+      })),
+      edges: currentEdges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle ?? 'output',
+        targetHandle: e.targetHandle ?? 'input',
+        data: e.data,
+      })),
+    }
+
+    const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${name.toLowerCase().replace(/\s+/g, '-')}.agentzero-template.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [reactFlowInstance])
+
   // Keyboard shortcuts for group/ungroup
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (readOnly) return
@@ -402,30 +440,50 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
 
       {!readOnly && <RunWorkflowButton workflowId={workflowId} />}
 
-      {/* Templates toolbar button — always visible */}
+      {/* Top-left toolbar — templates, zoom-to-fit, save template */}
       {!readOnly && (
-        <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 20 }}>
+        <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 20, display: 'flex', gap: 6 }}>
           <button
             onClick={() => setTemplateGalleryOpen(true)}
+            title="Browse workflow templates"
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '8px 14px',
-              background: '#1C1C1E',
-              color: '#A3A3A3',
-              border: '1px solid rgba(255,255,255,0.06)',
-              borderRadius: 8,
-              fontSize: 12,
-              fontWeight: 500,
-              fontFamily: "'JetBrains Mono', monospace",
-              cursor: 'pointer',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '8px 14px', background: '#1C1C1E', color: '#A3A3A3',
+              border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8,
+              fontSize: 12, fontWeight: 500, fontFamily: "'JetBrains Mono', monospace",
+              cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
             }}
           >
             <span style={{ fontSize: 14 }}>&#x2B1A;</span>
             Templates
           </button>
+          <button
+            onClick={() => reactFlowInstance.fitView({ padding: 0.2, duration: 300 })}
+            title="Zoom to fit all nodes"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36, background: '#1C1C1E', color: '#A3A3A3',
+              border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8,
+              fontSize: 16, cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+            }}
+          >
+            &#x2922;
+          </button>
+          {nodes.length > 0 && (
+            <button
+              onClick={handleSaveAsTemplate}
+              title="Save current workflow as a template"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '8px 14px', background: '#1C1C1E', color: '#A3A3A3',
+                border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8,
+                fontSize: 12, fontWeight: 500, fontFamily: "'JetBrains Mono', monospace",
+                cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              }}
+            >
+              Save Template
+            </button>
+          )}
         </div>
       )}
 

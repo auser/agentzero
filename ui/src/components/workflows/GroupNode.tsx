@@ -177,18 +177,6 @@ function GroupNodeComponent({ id, data, selected }: NodeProps) {
               ? '1px solid rgba(255,255,255,0.04)' : 'none',
           }}
         >
-          <button
-            className="nodrag nopan"
-            onClick={toggleCollapse}
-            onDoubleClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 10, color: '#7C3AED', padding: '2px 4px',
-              lineHeight: 1, transform: 'rotate(-90deg)',
-            }}
-          >
-            ▼
-          </button>
           <span style={{ fontSize: 12, color: '#7C3AED' }}>⊞</span>
           <span
             style={{ fontSize: 13, fontWeight: 600, color: '#A78BFA', flex: 1 }}
@@ -214,6 +202,19 @@ function GroupNodeComponent({ id, data, selected }: NodeProps) {
           }}>
             {children.length}
           </span>
+          <button
+            className="nodrag nopan"
+            onClick={toggleCollapse}
+            onDoubleClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 10, color: '#525252', padding: '2px 4px',
+              lineHeight: 1, transform: 'rotate(-90deg)',
+              transition: 'transform 0.15s',
+            }}
+          >
+            ▼
+          </button>
         </div>
 
         {/* Aggregated ports */}
@@ -299,18 +300,6 @@ function GroupNodeComponent({ id, data, selected }: NodeProps) {
             gap: 6, padding: '6px 12px',
           }}
         >
-          <button
-            className="nodrag nopan"
-            onClick={toggleCollapse}
-            onDoubleClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 10, color: '#7C3AED', padding: '2px 4px',
-              lineHeight: 1, transition: 'transform 0.15s',
-            }}
-          >
-            ▼
-          </button>
           <span style={{ fontSize: 12, color: '#7C3AED' }}>⊞</span>
           {editing ? (
             <input
@@ -327,12 +316,24 @@ function GroupNodeComponent({ id, data, selected }: NodeProps) {
             />
           ) : (
             <span
-              style={{ fontSize: 12, fontWeight: 600, color: '#A78BFA' }}
+              style={{ fontSize: 12, fontWeight: 600, color: '#A78BFA', flex: 1 }}
               onDoubleClick={startEditing}
             >
               {nameValue}
             </span>
           )}
+          <button
+            className="nodrag nopan"
+            onClick={toggleCollapse}
+            onDoubleClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 10, color: '#525252', padding: '2px 4px',
+              lineHeight: 1, transition: 'transform 0.15s',
+            }}
+          >
+            ▼
+          </button>
         </div>
       </div>
     </>
