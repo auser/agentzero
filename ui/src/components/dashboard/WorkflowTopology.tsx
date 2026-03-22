@@ -42,6 +42,7 @@ import { getDefinition } from '@/lib/node-definitions'
 import { useNodeDefinitions } from '@/lib/hooks/useNodeDefinitions'
 import type { WorkflowTemplate } from '@/lib/workflow-templates'
 import { workflowsApi } from '@/lib/api/workflows'
+import { getKeyBindingActions, getShortcutActions, matchesKey, type CanvasAction } from '@/lib/canvas-actions'
 
 interface WorkflowTopologyProps {
   fullHeight?: boolean
@@ -318,27 +319,44 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     setSaveTemplateOpen(false)
   }, [reactFlowInstance, queryClient])
 
-  // Keyboard shortcuts for group/ungroup
+  // Action handlers — shared between keyboard shortcuts and context menu.
+  // Keys match the `id` field in canvas-actions.ts.
+  const actionHandlers: Record<string, () => void> = useMemo(() => ({
+    'command-palette': () => cmdK.setOpen(true),
+    'group': handleGroupSelected,
+    'ungroup': handleUngroupSelected,
+    'zoom-to-fit': () => reactFlowInstance.fitView({ padding: 0.2, duration: 300 }),
+    'shortcuts-panel': () => setShortcutsOpen((v) => !v),
+    'save-template': () => setSaveTemplateOpen(true),
+    'templates': () => setTemplateGalleryOpen(true),
+    'create-node-type': () => setCreateNodeTypeOpen(true),
+    'clear-all': handleClear,
+    'run-workflow': () => {
+      // Trigger the run button click programmatically
+      const btn = document.querySelector<HTMLButtonElement>('[data-run-workflow]')
+      btn?.click()
+    },
+  }), [cmdK, handleGroupSelected, handleUngroupSelected, reactFlowInstance, handleClear])
+
+  // Context menu handlers — same map, consumed by <CanvasContextMenu>
+  const contextMenuHandlers = actionHandlers
+
+  // Data-driven keyboard handler
+  const keyActions = useMemo(() => getKeyBindingActions(), [])
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (readOnly) return
-    const mod = e.metaKey || e.ctrlKey
-    if (mod && e.key === 'g' && !e.shiftKey) {
-      e.preventDefault()
-      handleGroupSelected()
-    } else if (mod && e.key === 'g' && e.shiftKey) {
-      e.preventDefault()
-      handleUngroupSelected()
-    } else if (mod && e.shiftKey && e.key === 'f') {
-      e.preventDefault()
-      reactFlowInstance.fitView({ padding: 0.2, duration: 300 })
-    } else if (mod && (e.key === '?' || (e.shiftKey && e.key === '/'))) {
-      e.preventDefault()
-      setShortcutsOpen((v) => !v)
-    } else if (e.key === 'Escape' && shortcutsOpen) {
-      e.preventDefault()
-      setShortcutsOpen(false)
+    // Escape always closes open panels
+    if (e.key === 'Escape') {
+      if (shortcutsOpen) { e.preventDefault(); setShortcutsOpen(false); return }
     }
-  }, [readOnly, handleGroupSelected, handleUngroupSelected, reactFlowInstance, shortcutsOpen])
+    for (const action of keyActions) {
+      if (matchesKey(action, e)) {
+        e.preventDefault()
+        actionHandlers[action.id]?.()
+        return
+      }
+    }
+  }, [readOnly, keyActions, actionHandlers, shortcutsOpen])
 
   // Keyboard listener for group/ungroup
   useEffect(() => {
@@ -511,9 +529,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
       {contextMenu && (
         <CanvasContextMenu
           position={contextMenu}
-          onAddNode={() => { cmdK.setOpen(true); setContextMenu(null) }}
-          onCreateNodeType={() => { setCreateNodeTypeOpen(true); setContextMenu(null) }}
-          onClearAll={() => { handleClear(); setContextMenu(null) }}
+          handlers={contextMenuHandlers}
           onClose={() => setContextMenu(null)}
         />
       )}
@@ -566,27 +582,17 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
               >&#x2715;</button>
             </div>
             <div style={{ padding: '12px 20px 20px' }}>
-              {[
-                ['Cmd + K', 'Command palette'],
-                ['Cmd + Z', 'Undo'],
-                ['Cmd + Shift + Z', 'Redo'],
-                ['Cmd + Shift + F', 'Zoom to fit'],
-                ['Cmd + G', 'Group selected nodes'],
-                ['Cmd + Shift + G', 'Ungroup'],
-                ['Cmd + ?', 'Toggle this panel'],
-                ['Backspace / Delete', 'Delete selected'],
-                ['Right-click', 'Context menu'],
-              ].map(([key, desc]) => (
-                <div key={key} style={{
+              {getShortcutActions().map((action: CanvasAction) => (
+                <div key={action.id} style={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                   padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.02)',
                 }}>
-                  <span style={{ fontSize: 12, color: '#A3A3A3' }}>{desc}</span>
+                  <span style={{ fontSize: 12, color: '#A3A3A3' }}>{action.label}</span>
                   <kbd style={{
                     fontSize: 11, color: '#E5E5E5', background: '#0F0F11',
                     padding: '3px 8px', borderRadius: 5,
                     border: '1px solid rgba(255,255,255,0.08)',
-                  }}>{key}</kbd>
+                  }}>{action.shortcut}</kbd>
                 </div>
               ))}
             </div>
