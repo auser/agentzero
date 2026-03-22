@@ -334,8 +334,11 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     } else if (mod && (e.key === '?' || (e.shiftKey && e.key === '/'))) {
       e.preventDefault()
       setShortcutsOpen((v) => !v)
+    } else if (e.key === 'Escape' && shortcutsOpen) {
+      e.preventDefault()
+      setShortcutsOpen(false)
     }
-  }, [readOnly, handleGroupSelected, handleUngroupSelected, reactFlowInstance])
+  }, [readOnly, handleGroupSelected, handleUngroupSelected, reactFlowInstance, shortcutsOpen])
 
   // Keyboard listener for group/ungroup
   useEffect(() => {
