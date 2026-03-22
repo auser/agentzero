@@ -1906,7 +1906,7 @@ Click a node to open a slide-out panel with full config editing.
 
 - [x] **`NodeDetailPanel` component** — `ui/src/components/workflows/NodeDetailPanel.tsx`: slides in from right on node selection. Shows all fields from `NodeDefinition`, plus expanded views for textarea fields (system_prompt). Includes port connection summary.
 - [x] **Selection tracking** — in `WorkflowTopology`: track `selectedNodeId` state, pass to detail panel. Close on background click or Escape.
-- [ ] **Agent API integration** — for agent nodes with `agent_id`, load full agent config from `GET /v1/agents/:id` and display/edit all fields
+- [x] **Agent API integration** — for agent nodes with `agent_id`, load full agent config from `GET /v1/agents/:id` and display/edit all fields
 - [ ] **Save changes** — PUT to agent API on field change, update ReactFlow node data
 
 ### Phase C: Edge Labels and Conditions (MEDIUM)
@@ -1915,7 +1915,7 @@ Edges should show port type labels and support conditional routing.
 
 - [x] **Custom edge component** — `ui/src/components/workflows/LabeledEdge.tsx`: renders port-type label centered on edge path, matching port color. Uses `getBezierPath` + `EdgeLabelRenderer` from ReactFlow.
 - [x] **Register custom edge** — in `WorkflowTopology`: add `edgeTypes={{ default: LabeledEdge }}` to ReactFlow
-- [ ] **Edge click to edit** — clicking an edge opens a small popover to add a condition expression (stored in `edge.data.condition`). Display as badge on the edge.
+- [x] **Edge click to edit** — clicking an edge opens a small popover to add a condition expression (stored in `edge.data.condition`). Display as badge on the edge.
 - [ ] **Conditional routing visual** — edges with conditions show a diamond icon + condition text
 
 ### Phase D: Undo/Redo (MEDIUM)
@@ -1925,7 +1925,7 @@ Add history management for node/edge operations.
 - [x] **`useUndoRedo` hook** — `ui/src/components/dashboard/useUndoRedo.ts`: maintains a stack of `{ nodes, edges }` snapshots. `push(snapshot)` on every state change, `undo()` restores previous, `redo()` restores next. Max 50 entries.
 - [x] **Wire into WorkflowTopology** — call `push` in `handleNodesChange`, `handleEdgesChange`, `handleConnect`, `handleDrop`, `handleCmdKSelect`
 - [x] **Keyboard shortcuts** — Cmd+Z for undo, Cmd+Shift+Z for redo
-- [ ] **Toolbar buttons** — add undo/redo buttons to the ReactFlow Controls panel or a custom toolbar
+- [x] **Toolbar buttons** — add undo/redo buttons to the ReactFlow Controls panel or a custom toolbar
 
 ### Phase E: Run Workflow from Canvas (HIGH)
 

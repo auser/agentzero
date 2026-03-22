@@ -28,39 +28,21 @@ export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
 
   const panelRef = useRef<HTMLDivElement>(null)
 
-  // Close on Escape
+  // Close on Escape or click outside
   useEffect(() => {
-    if (!nodeId) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onClick = (e: Event) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as HTMLElement)) onClose()
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [nodeId, onClose])
-
-  // Close on click outside panel — capture phase so ReactFlow can't swallow the event
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
-
-  useEffect(() => {
-    if (!nodeId) return
-
-    const handler = (e: Event) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as HTMLElement)) {
-        onCloseRef.current()
-      }
-    }
-
-    // Delay so the double-click that opened the panel doesn't immediately close it
-    const timer = setTimeout(() => {
-      document.addEventListener('pointerdown', handler, true)
-    }, 300)
-
+    window.addEventListener('keydown', onKey)
+    // Delay click-outside so the double-click that opened the panel doesn't immediately close it
+    const timer = setTimeout(() => document.addEventListener('pointerdown', onClick, true), 300)
     return () => {
+      window.removeEventListener('keydown', onKey)
       clearTimeout(timer)
-      document.removeEventListener('pointerdown', handler, true)
+      document.removeEventListener('pointerdown', onClick, true)
     }
-  }, [nodeId])
+  }, [onClose])
 
   const node = nodeId ? reactFlow.getNode(nodeId) : null
   const nodeData = node?.data as AgentNodeData | undefined
