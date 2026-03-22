@@ -13,13 +13,13 @@ const commands = [
 ];
 
 const features = [
-  { title: "Secure by Default", desc: "Allowlists, policy gates, encrypted storage, and audit logging are baseline." },
-  { title: "Trait-Driven Core", desc: "Providers, memory, tools, and channels are swappable through interfaces." },
-  { title: "No Lock-In", desc: "OpenAI-compatible providers, SQLite or Turso memory, pluggable everything." },
-  { title: "Lean Runtime", desc: "Single-process CLI with streaming output, minimal dependencies, and fast cold starts." },
-  { title: "Plugin Sandbox", desc: "WASM plugins run in a bounded sandbox with integrity verification." },
-  { title: "Deploy Anywhere", desc: "Native binary, no container required. Linux, macOS, Windows." },
-  { title: "Autopilot Mode", desc: "Agents propose, approve, and execute work autonomously with cap gates, triggers, and reaction matrices." },
+  { title: "ANY OS", desc: "Linux (x86, ARM, musl), macOS (Intel, Apple Silicon), Windows. CI-tested on all three. Docker multi-arch." },
+  { title: "ANY PLATFORM", desc: "Client SDKs for Python, TypeScript, Swift, and Kotlin talk to the gateway. OpenAI-compatible API works with any HTTP client." },
+  { title: "Swap Anything", desc: "LLM providers, storage backends, tools, and channels are all swappable through trait interfaces. No lock-in." },
+  { title: "Fully Autonomous", desc: "Three autonomy levels, autopilot with cap gates and reaction matrices, cron scheduling, multi-agent delegation." },
+  { title: "Small & Fast", desc: "4.5 MB embedded binary. Millisecond cold starts. Async Tokio runtime with streaming output." },
+  { title: "Secure by Default", desc: "Encrypted storage, allowlists, policy gates, audit logging, secret redaction. Fail-closed from day one." },
+  { title: "Plugin Sandbox", desc: "WASM plugins run in a bounded sandbox with integrity verification and resource limits." },
 ];
 
 const steps = [
@@ -30,29 +30,29 @@ const steps = [
 ];
 
 const metrics = [
-  { value: "<8MB", label: "Minimal Binary" },
-  { value: "~19ms", label: "Cold Start" },
-  { value: "37+", label: "LLM Providers" },
-  { value: "57+", label: "Built-in Tools" },
+  { value: "4.5MB", label: "Embedded Binary" },
+  { value: "8", label: "Platform Targets" },
+  { value: "4", label: "Client SDKs" },
+  { value: "58+", label: "Built-in Tools" },
 ];
 
 const differentiators = [
-  { title: "Single Binary", desc: "One static binary, zero runtime dependencies. Download and run — no containers, no interpreters, no package managers." },
+  { title: "Single Binary", desc: "One static binary, zero runtime dependencies. 4.5 MB embedded, 18 MB full. Download and run." },
   { title: "Rust Memory Safety", desc: "No GC pauses, no null pointers, no data races. Compile-time guarantees eliminate entire classes of bugs." },
-  { title: "Security First", desc: "TOTP approval, secret leak detection, syscall monitoring, and tool-level policy gates — all built in." },
-  { title: "WASM Plugin Sandbox", desc: "Third-party plugins run in a bounded WebAssembly sandbox with integrity verification and resource limits." },
-  { title: "FFI Bindings", desc: "Native bindings for Swift, Kotlin, Python, and Node.js. Embed the runtime in mobile apps and backend services." },
-  { title: "37+ Providers", desc: "OpenAI, Anthropic, Google, Ollama, and 30+ more. Swap providers with a config change, no code rewrites." },
-  { title: "8 Platform Targets", desc: "Linux (x86/ARM/musl), macOS (Intel/Apple Silicon), Windows, Raspberry Pi. One codebase, native everywhere." },
-  { title: "Self-Update", desc: "Built-in updater with SHA-256 integrity checks and automatic rollback. Stay current without manual steps." },
-  { title: "MCP Support", desc: "Model Context Protocol support for tool interoperability. Connect to any MCP-compatible tool server." },
-  { title: "Autonomous Companies", desc: "Three company templates (Content Agency, Dev Agency, SaaS Product) with autonomous agent loops, Supabase state, and dashboard control." },
+  { title: "Security First", desc: "TOTP approval, secret leak detection, encrypted storage, and tool-level policy gates — all built in." },
+  { title: "Client SDKs", desc: "Thin HTTP/WebSocket SDKs for Python, TypeScript, Swift, and Kotlin. Any platform that can make HTTP calls can control AgentZero." },
+  { title: "OpenAI-Compatible", desc: "Drop-in /v1/chat/completions endpoint. Existing OpenAI client libraries work out of the box." },
+  { title: "37+ Providers", desc: "OpenAI, Anthropic, Google, Ollama, local llama.cpp, and 30+ more. Swap providers with a config change." },
+  { title: "8 Platform Targets", desc: "Linux (x86/ARM/musl), macOS (Intel/Apple Silicon), Windows. CI-tested on all three OS families." },
+  { title: "Interactive API Docs", desc: "Every gateway ships Scalar API docs at /docs. Explore and test all 40+ endpoints from the browser." },
+  { title: "MCP + A2A", desc: "Model Context Protocol for tool interop. Google A2A for agent-to-agent communication. Standards-first." },
+  { title: "Autonomous Agents", desc: "Three autonomy levels, autopilot with cap gates and missions, cron scheduling, multi-agent delegation and swarm coordination." },
 ];
 
 const pillars = [
-  { title: "Interfaces", items: ["Provider trait", "MemoryStore trait", "Tool trait", "Channel trait"] },
-  { title: "Runtime Core", items: ["Agent orchestrator", "Config + policy", "Security + redaction", "Audit trail"] },
-  { title: "Pluggable Traits", items: ["WASM plugins", "MCP tools", "Multiple providers", "SQLite / Turso", "Autopilot engine"] },
+  { title: "Swap Anything", items: ["Provider trait (37+ LLMs)", "MemoryStore trait (SQLite, Turso)", "Tool trait (58+ built-in)", "Channel trait (25+ platforms)"] },
+  { title: "Deploy Anywhere", items: ["8 native binary targets", "Docker multi-arch", "Gateway + REST API", "Client SDKs (Py/TS/Swift/Kt)"] },
+  { title: "Fully Autonomous", items: ["3 autonomy levels", "Autopilot + cap gates", "Cron scheduling", "Multi-agent delegation", "WASM plugin sandbox"] },
 ];
 ---
 
@@ -60,8 +60,8 @@ const pillars = [
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AgentZero — Lightweight Rust Agent Runtime</title>
-    <meta name="description" content="A security-first agent runtime and CLI. 100% Rust. Trait-driven. Deploy anywhere." />
+    <title>AgentZero — Fast, Small, Fully Autonomous AI Agent Infrastructure</title>
+    <meta name="description" content="Fast, small, and fully autonomous AI personal assistant infrastructure. ANY OS, ANY PLATFORM — deploy anywhere, swap anything." />
     <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
   </head>
   <body class="az-page">
@@ -109,10 +109,10 @@ const pillars = [
       <section class="az-hero">
         <div class="az-hero-inner">
           <div class="az-hero-text">
-            <p class="az-eyebrow">AGENT RUNTIME &amp; CLI</p>
-            <h1>Lightweight. Secure.<br />Modular. <span class="az-accent">100% Rust.</span></h1>
-            <p class="az-lead">A security-first agent runtime with clean crate boundaries and test-driven delivery.</p>
-            <p class="az-sub">Deploy anywhere. Swap anything.</p>
+            <p class="az-eyebrow">AI PERSONAL ASSISTANT INFRASTRUCTURE</p>
+            <h1>Fast. Small.<br />Fully Autonomous. <span class="az-accent">100% Rust.</span></h1>
+            <p class="az-lead">ANY OS, ANY PLATFORM — deploy anywhere, swap anything.</p>
+            <p class="az-sub">Single binary. 4.5 MB embedded. 8 platform targets. Client SDKs for every language.</p>
             <div class="az-hero-actions">
               <a href={`${base}overview/`} class="az-btn az-btn-primary">Read the docs</a>
               <a href="https://github.com/auser/agentzero" class="az-btn az-btn-secondary" target="_blank" rel="noopener">GitHub</a>
@@ -218,8 +218,8 @@ const pillars = [
 
       <!-- CTA -->
       <section class="az-cta">
-        <h2>Take control of your AI agents</h2>
-        <p>Secure. Modular. Yours to extend.</p>
+        <h2>Deploy anywhere. Swap anything.</h2>
+        <p>Fast, small, and fully autonomous. Yours to extend.</p>
         <div class="az-cta-actions">
           <a href={`${base}overview/`} class="az-btn az-btn-primary">Get started</a>
           <a href="https://github.com/auser/agentzero" class="az-btn az-btn-secondary" target="_blank" rel="noopener">View on GitHub</a>

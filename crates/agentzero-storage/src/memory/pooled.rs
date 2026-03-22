@@ -247,6 +247,58 @@ impl MemoryStore for PooledMemoryStore {
         Ok(deleted as u64)
     }
 
+    async fn recent_for_timerange(
+        &self,
+        since: Option<i64>,
+        until: Option<i64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let conn = self.pool.get().context("pool: failed to get connection")?;
+        let sql = format!(
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
+             FROM memory
+             WHERE (expires_at IS NULL OR expires_at > unixepoch())
+               {}
+               {}
+             ORDER BY id DESC
+             LIMIT ?1",
+            if since.is_some() { "AND created_at >= ?2" } else { "" },
+            if until.is_some() { if since.is_some() { "AND created_at <= ?3" } else { "AND created_at <= ?2" } } else { "" },
+        );
+        let mut stmt = conn.prepare(&sql)?;
+
+        let mut out = Vec::new();
+        match (since, until) {
+            (Some(s), Some(u)) => {
+                let rows = stmt.query_map(params![limit as i64, s, u], row_to_entry)?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+            (Some(s), None) => {
+                let rows = stmt.query_map(params![limit as i64, s], row_to_entry)?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+            (None, Some(u)) => {
+                let rows = stmt.query_map(params![limit as i64, u], row_to_entry)?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+            (None, None) => {
+                let rows = stmt.query_map(params![limit as i64], row_to_entry)?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+        }
+        out.reverse();
+        Ok(out)
+    }
+
     async fn list_conversations(&self) -> anyhow::Result<Vec<String>> {
         let conn = self.pool.get().context("pool: failed to get connection")?;
         let mut stmt = conn.prepare(

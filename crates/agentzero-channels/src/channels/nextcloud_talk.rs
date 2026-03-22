@@ -43,6 +43,11 @@ mod impl_ {
             }
         }
 
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         fn api_url(&self, path: &str) -> String {
             format!(
                 "{}/ocs/v2.php/apps/spreed/api/v1{}",

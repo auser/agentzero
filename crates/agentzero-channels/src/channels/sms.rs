@@ -45,6 +45,11 @@ mod impl_ {
             }
         }
 
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         fn messages_url(&self) -> String {
             format!(
                 "https://api.twilio.com/2010-04-01/Accounts/{}/Messages.json",

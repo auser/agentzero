@@ -40,6 +40,11 @@ mod impl_ {
             }
         }
 
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         /// Get the bot's own user ID via auth.test.
         async fn get_bot_user_id(&self) -> anyhow::Result<String> {
             let resp = self

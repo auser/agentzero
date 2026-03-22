@@ -36,6 +36,11 @@ mod impl_ {
                 client,
             }
         }
+
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
     }
 
     #[async_trait]

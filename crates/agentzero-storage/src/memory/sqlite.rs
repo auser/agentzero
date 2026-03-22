@@ -590,6 +590,58 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(out)
     }
 
+    async fn recent_for_timerange(
+        &self,
+        since: Option<i64>,
+        until: Option<i64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let sql = format!(
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
+             FROM memory
+             WHERE (expires_at IS NULL OR expires_at > unixepoch())
+               {}
+               {}
+             ORDER BY id DESC
+             LIMIT ?1",
+            if since.is_some() { "AND created_at >= ?2" } else { "" },
+            if until.is_some() { if since.is_some() { "AND created_at <= ?3" } else { "AND created_at <= ?2" } } else { "" },
+        );
+        let mut stmt = conn.prepare(&sql)?;
+
+        let mut out = Vec::new();
+        match (since, until) {
+            (Some(s), Some(u)) => {
+                let rows = stmt.query_map(params![limit as i64, s, u], row_to_entry)?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+            (Some(s), None) => {
+                let rows = stmt.query_map(params![limit as i64, s], row_to_entry)?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+            (None, Some(u)) => {
+                let rows = stmt.query_map(params![limit as i64, u], row_to_entry)?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+            (None, None) => {
+                let rows = stmt.query_map(params![limit as i64], row_to_entry)?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+        }
+        out.reverse();
+        Ok(out)
+    }
+
     async fn append_with_embedding(
         &self,
         entry: MemoryEntry,
@@ -1677,6 +1729,69 @@ mod tests {
 
         let b_convs = store.list_conversations_for_agent("agent-b").await.unwrap();
         assert_eq!(b_convs, vec!["conv-2"]);
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn timerange_filters_entries() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("store should open");
+
+        // Insert entries and manually set their created_at via raw SQL.
+        {
+            let conn_guard = store.conn.lock().expect("lock");
+            conn_guard
+                .execute(
+                    "INSERT INTO memory(role, content, created_at) VALUES('user', 'old', 1700000000)",
+                    [],
+                )
+                .unwrap();
+            conn_guard
+                .execute(
+                    "INSERT INTO memory(role, content, created_at) VALUES('user', 'mid', 1720000000)",
+                    [],
+                )
+                .unwrap();
+            conn_guard
+                .execute(
+                    "INSERT INTO memory(role, content, created_at) VALUES('user', 'new', 1740000000)",
+                    [],
+                )
+                .unwrap();
+        }
+
+        // since only
+        let entries = store
+            .recent_for_timerange(Some(1710000000), None, 10)
+            .await
+            .expect("since query");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].content, "mid");
+        assert_eq!(entries[1].content, "new");
+
+        // until only
+        let entries = store
+            .recent_for_timerange(None, Some(1710000000), 10)
+            .await
+            .expect("until query");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].content, "old");
+
+        // both
+        let entries = store
+            .recent_for_timerange(Some(1710000000), Some(1730000000), 10)
+            .await
+            .expect("range query");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].content, "mid");
+
+        // neither (returns all)
+        let entries = store
+            .recent_for_timerange(None, None, 10)
+            .await
+            .expect("no-bound query");
+        assert_eq!(entries.len(), 3);
 
         fs::remove_file(db_path).ok();
     }

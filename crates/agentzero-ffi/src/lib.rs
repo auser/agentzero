@@ -1,5 +1,9 @@
 //! AgentZero FFI — Foreign function interface for Swift, Kotlin, Python, and TypeScript.
 //!
+//! **DEPRECATED**: Prefer the thin HTTP/WebSocket client SDKs in `sdks/` which talk to
+//! the gateway server. They are lighter, easier to maintain, and work on any platform
+//! with an HTTP client. See `sdks/python/`, `sdks/typescript/`, `sdks/swift/`, `sdks/kotlin/`.
+//!
 //! This crate exposes the AgentZero agent runtime to non-Rust languages via:
 //! - **UniFFI** (default feature) — generates Swift, Kotlin, and Python bindings
 //! - **napi-rs** (`node` feature) — generates a native Node.js addon with TypeScript types

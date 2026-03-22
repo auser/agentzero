@@ -4,13 +4,14 @@
  * Shows KeySelector when connecting ports with different types.
  * Persists full graph state via workflow-graph's getState/loadState API.
  */
-import { useRef, useCallback, useState, type DragEvent } from 'react'
+import { useRef, useCallback, useState, useEffect, type DragEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 // useNavigate removed — agent creation now uses inline dialog
 import {
   WorkflowGraphComponent,
   type WorkflowGraphHandle,
   type Job,
+  type NodeDefinition,
   darkTheme,
 } from '@auser/workflow-graph-react'
 import { topologyApi } from '@/lib/api/topology'
@@ -44,6 +45,66 @@ const THEME = {
   },
 }
 
+const NODE_TYPES: NodeDefinition[] = [
+  {
+    type: 'agent',
+    label: 'Agent',
+    icon: '🤖',
+    headerColor: '#3b82f6',
+    category: 'core',
+    fields: [
+      { key: 'model', type: 'select', label: 'Model', options: ['claude-3', 'gpt-4', 'llama-3'] },
+      { key: 'system_prompt', type: 'textarea', label: 'System Prompt' },
+    ],
+  },
+  {
+    type: 'tool',
+    label: 'Tool',
+    icon: '🔧',
+    headerColor: '#8b5cf6',
+    category: 'core',
+    fields: [
+      { key: 'tool_name', type: 'text', label: 'Tool' },
+    ],
+  },
+  {
+    type: 'subagent',
+    label: 'Sub-Agent',
+    icon: '🔀',
+    headerColor: '#22c55e',
+    category: 'core',
+    fields: [],
+  },
+  {
+    type: 'channel',
+    label: 'Channel',
+    icon: '📡',
+    headerColor: '#ec4899',
+    category: 'integration',
+    fields: [
+      { key: 'channel_type', type: 'select', label: 'Type', options: ['telegram', 'discord', 'slack', 'email', 'webhook'] },
+    ],
+  },
+  {
+    type: 'schedule',
+    label: 'Schedule',
+    icon: '⏰',
+    headerColor: '#eab308',
+    category: 'trigger',
+    fields: [
+      { key: 'cron', type: 'text', label: 'Cron' },
+    ],
+  },
+  {
+    type: 'gate',
+    label: 'Approval',
+    icon: '🛡️',
+    headerColor: '#ef4444',
+    category: 'control',
+    fields: [],
+  },
+]
+
 export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) {
   const graphRef = useRef<WorkflowGraphHandle>(null)
   const [dragOver, setDragOver] = useState(false)
@@ -51,6 +112,11 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   const [configPanelOpen, setConfigPanelOpen] = useState(false)
   const cmdK = useCommandPalette()
+
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: string } | null>(null)
+  const [renaming, setRenaming] = useState<{ nodeId: string; x: number; y: number; name: string } | null>(null)
+  const lastClickRef = useRef<{ nodeId: string; time: number } | null>(null)
+  const lastMouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
   const { clear: storeClear } = useWorkflowStore()
 
@@ -78,7 +144,19 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
     [workflow.jobs],
   )
 
-  const handleNodeClick = useCallback(() => {}, [])
+  const handleNodeClick = useCallback((nodeId: string) => {
+    const now = Date.now()
+    const last = lastClickRef.current
+    if (last && last.nodeId === nodeId && now - last.time < 400) {
+      // Double-click — show inline rename at the click position
+      lastClickRef.current = null
+      const job = workflow.jobs.find(j => j.id === nodeId)
+      const { x, y } = lastMouseRef.current
+      setRenaming({ nodeId, x, y: y - 15, name: job?.name ?? nodeId })
+    } else {
+      lastClickRef.current = { nodeId, time: now }
+    }
+  }, [workflow.jobs])
 
   // Drag end is auto-persisted by workflow-graph's persist option
   const handleNodeDragEnd = useCallback(
@@ -126,6 +204,48 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
 
   const handleConnectionCancel = useCallback(() => {
     setPendingConnection(null)
+  }, [])
+
+  // Ctrl+G / Cmd+G to group selected nodes
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
+        e.preventDefault()
+        graphRef.current?.groupSelected('Group').catch(() => {})
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  // Right-click context menu
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY })
+  }, [])
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), [])
+
+  const handleRenameSubmit = useCallback((newName: string) => {
+    if (renaming && newName.trim()) {
+      graphRef.current?.updateNode(renaming.nodeId, { name: newName.trim() }).catch(() => {})
+    }
+    setRenaming(null)
+  }, [renaming])
+
+  const handleGroup = useCallback(() => {
+    graphRef.current?.groupSelected('Group').catch(() => {})
+    setContextMenu(null)
+  }, [])
+
+  const handleUngroup = useCallback((nodeId: string) => {
+    graphRef.current?.ungroupNode(nodeId).catch(() => {})
+    setContextMenu(null)
+  }, [])
+
+  const handleToggleCollapse = useCallback((nodeId: string) => {
+    graphRef.current?.toggleCollapse(nodeId).catch(() => {})
+    setContextMenu(null)
   }, [])
 
   const handleCmdKSelect = useCallback(
@@ -186,22 +306,26 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
   const isEmpty = nodes.length === 0
 
   if (isEmpty) {
+    const emptyClasses = fullHeight
+      ? `transition-colors relative h-full flex flex-col ${dragOver ? 'bg-primary/5' : ''}`
+      : `rounded-lg border bg-card/80 backdrop-blur-sm transition-colors relative ${dragOver ? 'border-primary/50 bg-primary/5' : 'border-border/50'}`
+
     return (
       <div
-        className={`rounded-lg border bg-card/80 backdrop-blur-sm transition-colors relative ${fullHeight ? 'h-full flex flex-col' : ''} ${
-          dragOver ? 'border-primary/50 bg-primary/5' : 'border-border/50'
-        }`}
+        className={emptyClasses}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
-          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-            <Network className="h-3.5 w-3.5" />
-            Workflow Topology
-          </h3>
-        </div>
-        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+        {!fullHeight && (
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
+            <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <Network className="h-3.5 w-3.5" />
+              Workflow Topology
+            </h3>
+          </div>
+        )}
+        <div className="flex flex-col items-center justify-center flex-1 py-16 text-muted-foreground">
           <Network className="h-10 w-10 mb-3 opacity-20" />
           <p className="text-sm">No agents configured</p>
           <p className="text-xs text-muted-foreground/60 mt-1">
@@ -212,76 +336,84 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
     )
   }
 
+  const containerClasses = fullHeight
+    ? `overflow-hidden transition-colors relative h-full flex flex-col ${dragOver ? 'border-primary/50' : ''}`
+    : `rounded-lg border bg-card/80 backdrop-blur-sm overflow-hidden transition-colors relative ${dragOver ? 'border-primary/50' : 'border-border/50'}`
+
   return (
     <div
-      className={`rounded-lg border bg-card/80 backdrop-blur-sm overflow-hidden transition-colors relative ${fullHeight ? 'h-full flex flex-col' : ''} ${
-        dragOver ? 'border-primary/50' : 'border-border/50'
-      }`}
+      className={containerClasses}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onContextMenu={handleContextMenu}
+      onMouseDown={(e) => { lastMouseRef.current = { x: e.clientX, y: e.clientY } }}
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
-        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-          <Network className="h-3.5 w-3.5" />
-          Workflow Topology
-          <span className="text-[10px] text-muted-foreground/60 normal-case tracking-normal font-normal">
-            {nodeCount} node{nodeCount !== 1 ? 's' : ''}
-          </span>
-        </h3>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={handleClear}
-            className="flex items-center gap-1 h-7 px-2 text-[10px] text-muted-foreground/40 hover:text-destructive bg-muted/20 hover:bg-destructive/10 rounded border border-border/30 transition-colors"
-            title="Clear saved layout"
-          >
-            Clear
-          </button>
-          <button
-            onClick={() => cmdK.setOpen(true)}
-            className="flex items-center gap-1.5 h-7 px-2 text-[10px] text-muted-foreground/50 hover:text-muted-foreground bg-muted/20 hover:bg-muted/40 rounded border border-border/30 transition-colors"
-          >
-            <span>Add node</span>
-            <kbd className="text-[9px] bg-muted/30 px-1 py-0.5 rounded">⌘K</kbd>
-          </button>
-          <button
-            onClick={() => setConfigPanelOpen((v) => !v)}
-            className={`flex items-center gap-1 h-7 px-2 text-[10px] rounded border border-border/30 transition-colors ${
-              configPanelOpen
-                ? 'text-primary bg-primary/10 border-primary/30'
-                : 'text-muted-foreground/50 hover:text-muted-foreground bg-muted/20 hover:bg-muted/40'
-            }`}
-            title="Quick config"
-          >
-            <Settings className="h-3 w-3" />
-          </button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-            onClick={() => graphRef.current?.resetLayout()}
-            title="Reset layout"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-            onClick={() => graphRef.current?.zoomToFit()}
-            title="Zoom to fit"
-          >
-            <Maximize2 className="h-3.5 w-3.5" />
-          </Button>
+      {/* Only show header bar in dashboard widget mode, not fullHeight (page has its own toolbar) */}
+      {!fullHeight && (
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
+          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <Network className="h-3.5 w-3.5" />
+            Workflow Topology
+            <span className="text-[10px] text-muted-foreground/60 normal-case tracking-normal font-normal">
+              {nodeCount} node{nodeCount !== 1 ? 's' : ''}
+            </span>
+          </h3>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleClear}
+              className="flex items-center gap-1 h-7 px-2 text-[10px] text-muted-foreground/40 hover:text-destructive bg-muted/20 hover:bg-destructive/10 rounded border border-border/30 transition-colors"
+              title="Clear saved layout"
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => cmdK.setOpen(true)}
+              className="flex items-center gap-1.5 h-7 px-2 text-[10px] text-muted-foreground/50 hover:text-muted-foreground bg-muted/20 hover:bg-muted/40 rounded border border-border/30 transition-colors"
+            >
+              <span>Add node</span>
+              <kbd className="text-[9px] bg-muted/30 px-1 py-0.5 rounded">⌘K</kbd>
+            </button>
+            <button
+              onClick={() => setConfigPanelOpen((v) => !v)}
+              className={`flex items-center gap-1 h-7 px-2 text-[10px] rounded border border-border/30 transition-colors ${
+                configPanelOpen
+                  ? 'text-primary bg-primary/10 border-primary/30'
+                  : 'text-muted-foreground/50 hover:text-muted-foreground bg-muted/20 hover:bg-muted/40'
+              }`}
+              title="Quick config"
+            >
+              <Settings className="h-3 w-3" />
+            </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground"
+              onClick={() => graphRef.current?.resetLayout()}
+              title="Reset layout"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground"
+              onClick={() => graphRef.current?.zoomToFit()}
+              title="Zoom to fit"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
       <WorkflowGraphComponent
         ref={graphRef}
         workflow={workflow}
         className={`w-full bg-background ${fullHeight ? 'flex-1' : ''}`}
-        style={fullHeight ? { width: '100%', height: '100%' } : { height: 320, width: '100%' }}
+        style={fullHeight ? undefined : { height: 320 }}
         theme={THEME}
         persist={{ key: 'agentzero-workflow-graph' }}
+        nodeTypes={NODE_TYPES}
         autoResize
         onNodeClick={handleNodeClick}
         onNodeDragEnd={handleNodeDragEnd}
@@ -319,6 +451,83 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         open={createAgentOpen}
         onClose={() => setCreateAgentOpen(false)}
       />
+
+      {/* Inline rename input (double-click node) */}
+      {renaming && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => handleRenameSubmit(renaming.name)} />
+          <div
+            className="fixed z-50 rounded-md border border-border bg-zinc-900 p-1 shadow-xl shadow-black/50"
+            style={{ left: renaming.x - 100, top: renaming.y, transform: 'translateY(-50%)' }}
+          >
+            <input
+              autoFocus
+              className="w-[200px] bg-transparent text-sm text-foreground outline-none px-2 py-1"
+              defaultValue={renaming.name}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRenameSubmit((e.target as HTMLInputElement).value)
+                if (e.key === 'Escape') setRenaming(null)
+              }}
+              onBlur={(e) => handleRenameSubmit(e.target.value)}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={closeContextMenu} onContextMenu={(e) => { e.preventDefault(); closeContextMenu() }} />
+          <div
+            className="fixed z-50 min-w-[160px] rounded-md border border-border bg-zinc-900 p-1 shadow-xl shadow-black/50"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
+              onClick={handleGroup}
+            >
+              <span className="text-muted-foreground">⌘G</span>
+              Group Selected
+            </button>
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
+              onClick={() => {
+                // Ungroup whichever node is selected
+                const selected = workflow.jobs.find(j => j.children && j.children.length > 0)
+                if (selected) handleUngroup(selected.id)
+                else setContextMenu(null)
+              }}
+            >
+              Ungroup
+            </button>
+            <div className="my-1 h-px bg-border/50" />
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
+              onClick={() => {
+                const compound = workflow.jobs.find(j => j.children && j.children.length > 0)
+                if (compound) handleToggleCollapse(compound.id)
+                else setContextMenu(null)
+              }}
+            >
+              Toggle Collapse
+            </button>
+            <div className="my-1 h-px bg-border/50" />
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs text-foreground hover:bg-accent transition-colors"
+              onClick={() => { cmdK.setOpen(true); setContextMenu(null) }}
+            >
+              <span className="text-muted-foreground">⌘K</span>
+              Add Node
+            </button>
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
+              onClick={() => { handleClear(); setContextMenu(null) }}
+            >
+              Clear All
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }

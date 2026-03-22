@@ -3,6 +3,10 @@ title: FFI Bindings
 description: Use AgentZero from Swift, Kotlin, Python, or TypeScript via the agentzero-ffi crate.
 ---
 
+:::caution[Deprecated]
+The FFI crate is deprecated in favor of the **thin HTTP/WebSocket client SDKs** in `sdks/`. The new SDKs talk to the gateway server over HTTP — no native compilation needed. See the [Client SDKs guide](/guides/sdks/) for details.
+:::
+
 The `agentzero-ffi` crate exposes the AgentZero agent runtime to non-Rust
 languages through a single unified crate with feature-gated backends:
 

@@ -947,6 +947,52 @@ pub trait Provider: Send + Sync {
     }
 }
 
+/// Parse an ISO-8601 datetime string (as returned by SQLite's `datetime()`)
+/// into a unix epoch timestamp in seconds. Supports `YYYY-MM-DD HH:MM:SS` format.
+fn parse_iso_to_epoch(s: &str) -> Option<i64> {
+    // SQLite's datetime(created_at, 'unixepoch') produces "YYYY-MM-DD HH:MM:SS"
+    let mut parts = s.split(' ');
+    let date = parts.next()?;
+    let time = parts.next()?;
+    let mut d = date.splitn(3, '-');
+    let year: i64 = d.next()?.parse().ok()?;
+    let month: i64 = d.next()?.parse().ok()?;
+    let day: i64 = d.next()?.parse().ok()?;
+    let mut t = time.splitn(3, ':');
+    let hour: i64 = t.next()?.parse().ok()?;
+    let min: i64 = t.next()?.parse().ok()?;
+    let sec: i64 = t.next()?.parse().ok()?;
+
+    // Days from year 1970 using a simplified calculation (no leap-second accuracy needed).
+    let mut days: i64 = 0;
+    for y in 1970..year {
+        days += if is_leap(y) { 366 } else { 365 };
+    }
+    let month_days = [
+        31,
+        if is_leap(year) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    for m in 0..(month - 1) as usize {
+        days += month_days.get(m).copied().unwrap_or(30) as i64;
+    }
+    days += day - 1;
+    Some(days * 86400 + hour * 3600 + min * 60 + sec)
+}
+
+fn is_leap(y: i64) -> bool {
+    y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+}
+
 #[async_trait]
 pub trait MemoryStore: Send + Sync {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()>;
@@ -1065,6 +1111,33 @@ pub trait MemoryStore: Send + Sync {
     /// List conversations belonging to a specific agent.
     async fn list_conversations_for_agent(&self, _agent_id: &str) -> anyhow::Result<Vec<String>> {
         Ok(Vec::new())
+    }
+
+    /// Query recent entries within a time range (unix seconds).
+    ///
+    /// Both `since` and `until` are optional — omit either to leave that bound open.
+    /// Default implementation over-fetches via `recent()` and filters in-memory
+    /// by parsing the ISO-8601 `created_at` field; backends should override with
+    /// an optimized SQL query.
+    async fn recent_for_timerange(
+        &self,
+        since: Option<i64>,
+        until: Option<i64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let all = self.recent(limit * 4).await?;
+        Ok(all
+            .into_iter()
+            .filter(|e| {
+                let ts = e.created_at.as_deref().and_then(parse_iso_to_epoch);
+                match ts {
+                    Some(t) => since.map_or(true, |s| t >= s) && until.map_or(true, |u| t <= u),
+                    // Entries without timestamps pass if no bounds are set.
+                    None => since.is_none() && until.is_none(),
+                }
+            })
+            .take(limit)
+            .collect())
     }
 
     /// Append a memory entry with an associated embedding vector.

@@ -1352,20 +1352,37 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 - [x] **initialPositions prop** — positions flow as a prop to WorkflowGraphComponent, applied after setWorkflow and every topology poll. No timers. Published in workflow-graph v1.0.1.
 
 **Known Bugs (must fix next):**
-- [ ] **BUG: Dropped nodes don't persist** — nodes from palette/Cmd+K disappear on refresh. Root cause: `getState()` returns null because `WorkflowGraph.initialized` stays false when `setWorkflow` fails silently (theme parse error). Need to either fix WASM lifecycle or manage all state in React.
-- [ ] **BUG: Connections don't persist** — port-to-port edges disappear on refresh. Same root cause as above.
+- [x] **BUG: Dropped nodes don't persist** — nodes from palette/Cmd+K disappear on refresh. **Root cause found:** `persist` prop was destructured in React wrapper but never forwarded to `GraphOptions`, so `persistKey` stayed null and `autoPersist()` was a no-op. **Fix:** add `persist` to options object in `packages/react/src/index.tsx`. Full state (nodes, edges, positions, zoom) now persists via `loadState`/`getState`.
+- [x] **BUG: Connections don't persist** — port-to-port edges disappear on refresh. Same root cause + fix as above.
+- [x] **BUG: Canvas sizing** — graph renders inside a card container instead of filling the parent. **Fix:** React wrapper now defaults to `width: 100%; height: 100%`; consumer strips card styling in fullHeight mode.
 - [ ] **BUG: Node positions flicker** — topology poll resets layout, `initialPositions` counteracts but causes a visual flash.
 
+**Done — Production Node Design (workflow-graph v1.2.0):**
+- [x] **NodeDefinition API** — `NodeDefinition`, `FieldDef` types in shared Rust crate + TS exports. `registerNodeType()` / `registerNodeTypes()` API. `nodeTypes` prop on React wrapper. Consumer-defined node types with header color, icon, label, category, fields.
+- [x] **Production node rendering (WASM)** — colored header bar (28px), dynamic node height, inline field rendering (label + value), status dot (top-right), node shadow, 10px rounded corners. Three-layer customization: per-type (NodeDefinition), global (ThemeConfig), per-node (job.metadata overrides). Falls back to default style for unregistered types.
+- [x] **Type-colored edges** — edge stroke color = source port type color, width 2.5px. Auto-applied when no explicit edge style override.
+- [x] **Drag-select box** — Shift+drag on empty space draws rubber-band selection rectangle. Selects nodes whose center falls inside. Dashed blue border with transparent fill.
+- [x] **Compound node rendering** — collapsed shows stacked-card visual (offset rectangles) with child count badge + expand chevron. Expanded shows dashed border around group area with label + collapse chevron.
+- [x] **onFieldClick callback + canvasToScreen() API** — `onFieldClick(nodeId, fieldKey, screenX, screenY)` callback in GraphOptions. `canvasToScreen(x, y)` method for overlay coordinate conversion.
+- [x] **Consumer: nodeTypes registered** — 6 node types (agent, tool, subagent, channel, schedule, gate) with fields registered via `nodeTypes` prop. Card styling stripped in fullHeight mode.
+
+**Done — Consumer Integration:**
+- [x] **Ctrl+G / Cmd+G keyboard shortcut** — groups selected nodes into a compound node.
+- [x] **Right-click context menu** — Group Selected, Ungroup, Toggle Collapse, Add Node (Cmd+K), Clear All.
+- [x] **Published to npm** — `@auser/workflow-graph-web@1.2.1` and `@auser/workflow-graph-react@1.2.1`. `just release` now also bumps npm package.json versions.
+
+**Remaining — Production Node Design:**
+- [ ] **NodeFieldOverlay (consumer)** — React portal for inline field editing (input, textarea, select, slider). Positioned via `canvasToScreen()`.
+- [ ] **Remove NodeRenderer.ts** — dead code, no longer imported. Library handles all rendering.
+
 **Remaining Features:**
-- [ ] **Drag-select box** — rubber-band selection for multi-select.
-- [ ] **Compound node rendering** — collapsed single-node view, expanded with dashed border.
 - [ ] **Server-side persistence** — `PUT/GET /v1/workflows` API to store graph in SQLite.
 - [ ] **NodePopover** — Click node → inline popover with editable fields.
 - [ ] **NodeInspector** — Double-click → right-side sheet with full property form.
 - [ ] **WorkflowToolbar** — Save, Deploy, Export TOML, Import, Auto-layout, Zoom.
 - [ ] **QuickCreateWizard** — 6-step wizard: name → agent → tools → channel → schedule → review.
 - [ ] **Serialization** — Builder ↔ SwarmConfig round-trip.
-- [ ] **Production node design** — chaiNNer/LangChain-style (`specs/plans/27`, `specs/plans/28`).
+- [ ] **`--ui` flag for gateway** — UI should only launch when `agentzero gateway --ui` is passed or via an explicit `agentzero ui` command. Gateway should not start the UI by default.
 
 ---
 
@@ -1383,12 +1400,18 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 - [x] All tools/CLI use user config (not hardcoded defaults)
 - [x] Create Agent dialog and Config toggles panel
 - [x] Channels, schedules, gates in palette
-- [ ] **Dropped nodes and connections persist across refresh**
-- [ ] Drag-select box for multi-select
-- [ ] Compound node rendering (collapsed/expanded)
+- [x] **Dropped nodes and connections persist across refresh** (persist prop fix in workflow-graph v1.1.1)
+- [x] **Canvas fills parent container** (library defaults + consumer card styling stripped)
+- [x] `NodeDefinition` API in workflow-graph library (types, registry, `registerNodeType()`) — v1.2.0
+- [x] LangFlow-style node cards: colored header, inline fields, port type labels, status dots (WASM render.rs) — v1.2.0
+- [x] Type-colored connection lines (2.5px, source port color) — v1.2.0
+- [x] Drag-select box for multi-select (Shift+drag rubber-band selection) — v1.2.0
+- [x] Compound node rendering (collapsed stacked-card / expanded dashed border) — v1.2.0
+- [x] `onFieldClick` callback + `canvasToScreen()` API in workflow-graph — v1.2.0
+- [ ] React overlay system for inline field editing (model selector, prompt textarea, tool picker)
 - [ ] Server-side workflow persistence API
-- [ ] Production node design (specs/plans/27, 28)
 - [ ] Round-trip: load SwarmConfig → edit → deploy → reload → no data loss
+- [ ] Template gallery with card grid, category badges, and one-click deploy
 - [x] `cargo clippy` — 0 warnings
 - [x] All existing tests pass (51 in workflow-graph, 210+ in agentzero)
 
@@ -1421,6 +1444,65 @@ Global floating chat widget available across the entire UI (not just workflows).
 - [ ] **Workflow graph integration** — auto-creates nodes and connections in the visual builder.
 - [ ] **Iterative refinement** — user can refine the agent through conversation.
 
+### Phase 6: LangFlow-Style Node Design & Node API (HIGH)
+
+Redesign nodes to match LangFlow/Langflow visual language: rich inline fields, typed port labels, provider badges, live status, and a declarative node definition API so new node types can be added by defining a schema (not writing render code).
+
+**Design references:** LangFlow node cards (Prompt field, Model selector, Role dropdown, Tools badge, Response port), template gallery cards, provider chips.
+
+**Plan:** `specs/plans/29-langflow-node-design.md` (supersedes `specs/plans/27`, `specs/plans/28`)
+
+#### 6A: Declarative Node Definition API
+
+Define each node type as a schema (like LangFlow's component API) rather than hardcoded render logic. Every node type declares its fields, ports, and appearance — the renderer handles the rest.
+
+- [ ] **`NodeDefinition` schema** — TypeScript interface: `{ type, label, icon, headerColor, category, fields: FieldDef[], inputs: PortDef[], outputs: PortDef[] }`. Defines everything about a node type declaratively.
+- [ ] **`FieldDef` types** — `text` (single line), `textarea` (multi-line, e.g. Prompt), `select` (dropdown, e.g. Model/Role), `toggle` (boolean), `badge` (read-only count, e.g. "2 added"), `slider` (numeric range), `code` (syntax-highlighted block).
+- [ ] **`PortDef` schema** — `{ name, type, label, color, required }`. Port types: `text`, `json`, `event`, `config`, `tool_call`, `image`, `audio`, `embedding`. Type labels displayed on ports (LangFlow-style).
+- [ ] **Registry** — `NodeRegistry` singleton mapping `type → NodeDefinition`. Ship default definitions for Agent, Tool, Channel, Schedule, Gate, Subagent. Custom definitions loadable from JSON/TOML.
+- [ ] **Migrate existing node types** — Convert all hardcoded node configs in `WorkflowCanvas.ts` to `NodeDefinition` schemas. Zero behavior change, same ports/colors.
+
+#### 6B: Rich Node Card Rendering (LangFlow Visual Style)
+
+Replace the current flat canvas rectangles with LangFlow-style card nodes: colored header bar, inline fields, port labels with type indicators, status badges.
+
+- [ ] **Colored header bar** — 28px header with node type icon (Lucide), label, and kebab menu (⋮). Colors per type matching existing theme.
+- [ ] **Inline fields** — Render `FieldDef` entries inside the node body: editable text inputs, dropdowns (Model selector with provider logo), textarea (Prompt field), badges ("2 added" for Tools).
+- [ ] **Port labels with types** — Each port shows label + type indicator (colored dot + type name). Input ports left-aligned, output ports right-aligned. Type-colored connection lines.
+- [ ] **Status indicator** — Top-right dot: green (running), blue (idle), red (error), yellow (pending). "Responding..." animation overlay during active runs.
+- [ ] **Dynamic node height** — Node height grows based on field content (expanded prompt text, multiple ports). Minimum height per type.
+- [ ] **Provider badges** — Model fields show provider logo chips (Anthropic, OpenAI, NVIDIA, Ollama) inline, matching LangFlow's model selector style.
+
+#### 6C: React Overlay System for Inline Editing
+
+Nodes render on WASM canvas but interactive fields use React overlays positioned over the canvas. This gives us native form controls without reimplementing them in WASM.
+
+- [ ] **Overlay positioning** — React portal layer that tracks canvas node positions (pan/zoom-aware). Each overlay anchored to a specific node + field.
+- [ ] **Field editors** — Click a field → React overlay appears with: `<input>` for text, `<select>` for dropdowns, `<textarea>` for prompts, `<Slider>` for numeric. Changes propagate back to node data via callback.
+- [ ] **Model selector** — Dropdown populated from `/v1/models` API. Shows provider icon + model name. Grouped by provider. Matches LangFlow's Model field.
+- [ ] **Role/persona dropdown** — Select from predefined roles or type custom. Maps to agent system prompt template.
+- [ ] **Tools picker** — Click "2 added" badge → popover with tool checkboxes. Shows count badge when collapsed.
+- [ ] **Response preview** — Output port shows truncated last response text inline (like LangFlow's Researcher response bubble).
+
+#### 6D: Template Gallery
+
+Card-based template gallery for pre-built workflows (matching LangFlow's "Limitless Control" grid).
+
+- [ ] **Template cards** — Grid of cards: title, 3-line description, category badge (AGENTS, PROMPTING, TOOLS, etc.), provider chips. Dark card styling matching current theme.
+- [ ] **Built-in templates** — Content Search, Code Debugger, Basic Prompting, API Integration, Doc Assistant, Basic Agent, Research Pipeline, Multi-Agent Team (from existing examples).
+- [ ] **One-click deploy** — Click card → loads pre-built workflow into canvas with all nodes, connections, and configs. Optionally creates agents via `/v1/agents` API.
+- [ ] **Template API** — `GET /v1/templates` returns available templates. Templates stored as JSON workflow definitions (nodes + edges + field values).
+- [ ] **Category/provider filtering** — Filter gallery by category badge or provider chip. Search bar for fuzzy match.
+
+#### 6E: Connection Line Polish
+
+Upgrade edge rendering to match LangFlow's clean connection style.
+
+- [ ] **Type-colored edges** — Edge color matches source port type (text=yellow, json=purple, event=green). 2.5px bezier curves.
+- [ ] **Animated data flow** — Dashed-line animation along edges during active runs (particles flowing from output → input).
+- [ ] **Connection validation UI** — Invalid port connections show red flash + tooltip explaining type mismatch. Valid connections show green flash.
+- [ ] **Edge labels** — Optional label on edge midpoint showing transformation (e.g. ".content" for JSON→text key extraction).
+
 ---
 
 ### Future: AI Chat Bubble for Agent Creation (HIGH)
@@ -1446,19 +1528,365 @@ Floating chat bubble (powered by a local model) that lets the user describe the 
 
 ---
 
+## Sprint: Platform Expansion — Memory Time-Range, Per-Channel Proxies, Claude Code Delegation, Migration CLI
+
+**Goal:** Ship four platform features that close gaps with competing Rust AI assistants: time-range memory queries, per-channel proxy configuration, Claude Code two-tier delegation, and a migration CLI for importing from other tools.
+
+**Baseline:** Sprint 39+ complete. 16-crate architecture, 2,163+ tests, 0 clippy warnings.
+
+---
+
+### Phase A: Memory Time-Range Filtering (MEDIUM)
+
+Add `since`/`until` (unix seconds) parameters to memory queries. The `created_at` column already exists but has no time-range query path.
+
+- [x] **`recent_for_timerange()` trait method** — Added to `MemoryStore` trait in `agentzero-core/src/types.rs` with default in-memory-filtering impl via `parse_iso_to_epoch()` helper. Signature: `recent_for_timerange(since: Option<i64>, until: Option<i64>, limit: usize) -> Result<Vec<MemoryEntry>>`. Follows `recent_for_org()`/`recent_for_agent()` pattern.
+- [x] **SQLite optimized override** — `WHERE created_at >= ?2 AND created_at <= ?3` in `agentzero-storage/src/memory/sqlite.rs`. Both params optional (conditionally included in SQL via dynamic format).
+- [x] **Turso optimized override** — Same SQL pattern in `agentzero-storage/src/memory/turso.rs` using `libsql::params!`.
+- [x] **Pooled backend override** — Same SQL pattern in `agentzero-storage/src/memory/pooled.rs`.
+- [x] **Tool integration** — New `ConversationTimeRangeTool` in `agentzero-tools/src/conversation_timerange.rs` (takes `Arc<dyn MemoryStore>`). Accepts `since`, `until`, `limit` params. Classified as `ToolTier::Core`.
+- [x] **Tests** — 1 SQLite backend test (since-only, until-only, range, no-bounds) + 5 tool tests (filter-by-since, filter-by-until, filter-by-range, requires-at-least-one-bound, empty-result). 6 tests total.
+
+### Phase B: Per-Channel Proxy Configuration (MEDIUM)
+
+Each channel instance can specify its own HTTP/SOCKS5 proxy, falling back to global proxy if not set.
+
+- [x] **Proxy fields on `ChannelInstanceConfig`** — Added `http_proxy: Option<String>`, `https_proxy: Option<String>`, `socks_proxy: Option<String>`, `no_proxy: Vec<String>` to `ChannelInstanceConfig` in `agentzero-channels/src/channels/channel_setup.rs`. All `#[serde(default)]` for backward compat.
+- [x] **`ProxySettings` pub + merge** — Made `ProxySettings` pub in `agentzero-tools/src/proxy_config.rs`. Added `ProxySettings::merge(channel, global)` cascade and `is_configured()` helper. Re-exported as `agentzero_tools::ProxySettings`.
+- [x] **`build_channel_client()` helper** — `build_channel_client(config, timeout_secs)` in `channel_setup.rs` builds a `reqwest::Client` with proxy settings. Disables system proxy, applies SOCKS/HTTP/HTTPS proxies with `no_proxy` bypass via `Proxy::no_proxy()`. Feature-gated to compile only when any HTTP channel is enabled.
+- [x] **Channel wiring** — All HTTP channels gained `with_client(client)` builder method (18 channels). `register_one()` and `build_channel_instance()` now call `build_channel_client()` when `config.has_proxy()` is true for Telegram (40s), Discord (30s), Slack (30s), Mattermost (30s), Matrix (40s), WhatsApp (30s), SMS (30s).
+- [x] **Tests** — 4 proxy merge tests (channel overrides global, no_proxy override, None channel fallback, is_configured). 3 channel config tests (defaults None, with proxy, JSON deserialization). 7 tests total.
+
+### Phase C: Claude Code Delegation Tool (HIGH)
+
+New `ClaudeCodeTool` that invokes `claude` CLI as a subprocess for two-tier agent delegation.
+
+- [x] **`ClaudeCodeTool` implementation** — Created `agentzero-tools/src/claude_code.rs`. Uses `tokio::process::Command` to run `claude --print --output-format text`. Input: `task`, optional `model`, `max_turns`, `allowed_tools`. Configurable timeout (default 300s), max output (128 KiB), workspace_root override. Child process auto-killed on timeout via drop.
+- [x] **Tool registration** — Added `pub mod claude_code` under `#[cfg(feature = "tools-full")]` in `agentzero-tools/src/lib.rs`. Added `enable_claude_code: bool` (default `false`) to `ToolSecurityPolicy`. Wired config through `AgentSettings.enable_claude_code` in model.rs → policy.rs. Registered in `agentzero-infra/src/tools/mod.rs` gated by `policy.enable_claude_code`.
+- [x] **CLI detection** — `which_claude()` async helper checks PATH, returns clear error with install URL if not found.
+- [x] **Tests** — Input schema validation, empty task error, invalid JSON error, truncation logic, default config values. 6 tests.
+
+### Phase D: Migration CLI — `agentzero migrate` (HIGH)
+
+CLI subcommand to import workspace, memory, and configuration from other AI assistant tools. Start with OpenClaw as the first migration source.
+
+- [x] **`MigrateCommands` extension** — Added `Openclaw` variant to `MigrateCommands` enum in `agentzero-cli/src/cli.rs`. Flags: `--source <path>`, `--dry-run`, `--skip-memory`, `--skip-config`.
+- [x] **OpenClaw migration module** — Created `agentzero-cli/src/update/migrate_openclaw.rs`. Auto-discovers `~/.openclaw/` and `~/.config/openclaw/`. Parses JSON config → maps provider/model/temperature/max_tokens/system_prompt/allowed_commands → serializes as AgentZero TOML. Copies memory.json for import. Warns on API keys in config and unmappable fields.
+- [x] **CLI wiring** — Added `pub mod migrate_openclaw` in `update/mod.rs`. Match arm in `commands/update.rs` with progress output for config conversion, memory import, and warnings.
+- [x] **Dry-run mode** — Full dry-run support: reports what would be imported without writing files.
+- [x] **Tests** — Config conversion (basic fields + API key warning), discovery, dry-run (no files written), full migration (files written + TOML verified), missing source error, skip-config flag, provider name mapping. 8 tests.
+
+---
+
+## Sprint 61: Defensible Tagline — Binary Size, Cross-Platform CI, Client SDKs, API Docs
+
+**Goal:** Close the three gaps that prevent the tagline from being fully defensible: binary size budgets, cross-platform CI testing, and thin client SDKs that replace heavy FFI bindings. Add Scalar API docs UI to every gateway deployment.
+
+**Baseline:** Sprint 60 complete. Visual workflow builder shipped. Release builds 8 targets but CI only tests Linux. Embedded binary at 10.1MB vs 8MB target. FFI crate exists but thin HTTP SDKs are the right approach.
+
+**Plan:** `specs/plans/30-defensible-tagline.md`
+
+---
+
+### Phase A: Binary Size (HIGH)
+
+- [x] **Align CI/release budgets** — release.yml embedded from 10MB to 8MB, ci.yml default from 30MB to 25MB
+- [x] **Fix minimal feature** — `minimal` uses `memory-sqlite-plain` instead of `memory-sqlite` (saves 3-5MB SQLCipher)
+- [x] **release-min profile** — confirm `codegen-units = 1`, add `[profile.release-min.package."*"] opt-level = "z"`
+- [x] **Binary size summary** — CI step writes markdown table to `$GITHUB_STEP_SUMMARY`
+
+### Phase B: Cross-Platform CI (HIGH)
+
+- [x] **OS matrix** — ci.yml runs on `[ubuntu-latest, macos-latest, windows-latest]`
+- [x] **Gate platform-specific steps** — size checks and latency bench on ubuntu-latest only
+- [x] **Optional ARM cross-test** — `workflow_dispatch` job with `cross build` + `cross test --target aarch64-unknown-linux-gnu`. Only runs on manual dispatch.
+
+### Phase C: Thin Client SDKs + API Docs (HIGH)
+
+- [x] **Enrich OpenAPI spec** — add all missing endpoints to openapi.rs (agent CRUD, tools, memory, cron, MCP, A2A, topology, config, approvals, events). 40+ endpoints, 16 tags, 15 schemas. `#![recursion_limit = "512"]` added to gateway crate.
+- [x] **Scalar API docs UI** — `GET /docs` serves inline HTML with Scalar CDN, points at `/v1/openapi.json`. `api_docs.html` + `api_docs_handler()` in router.rs.
+- [x] **Python SDK** — `sdks/python/` with httpx + websockets + pydantic. Full API surface: pairing, chat, streaming, runs, agent CRUD, tools, memory, cron, config, topology, WebSocket.
+- [x] **TypeScript SDK** — `sdks/typescript/` with native fetch + ws. Full API surface with TypeScript types.
+- [x] **Swift SDK** — `sdks/swift/` with pure Foundation (URLSession), SPM package, zero deps. Actor-based async API.
+- [x] **Kotlin SDK** — `sdks/kotlin/` with okhttp3 + kotlinx-serialization. Coroutine-based async API.
+- [x] **Deprecate FFI crate** — marked deprecated in Cargo.toml description and lib.rs doc comment. Site docs updated with deprecation notice pointing to thin SDKs.
+
+### Phase D: Verification & Documentation (MEDIUM)
+
+- [x] **SDK integration tests** — `sdks/tests/run-sdk-tests.sh` starts gateway, runs each SDK's tests
+- [x] **SDK CI workflow** — `.github/workflows/sdks.yml` triggers on `sdks/**` or gateway changes. Per-language jobs: Python import check, TypeScript build, Swift build, Kotlin build.
+- [x] **Site docs** — `site/src/content/docs/guides/sdks.md` with SDK quickstart for all 4 languages, platform support matrix, OpenAI compat note, API reference summary.
+- [x] **Gateway benchmarks** — `scripts/bench-gateway.sh` measures req/s for `/health`, `/health/live`, `/health/ready`, `/v1/ping`, `/v1/openapi.json`, `/docs`. Justfile recipe: `just bench-gateway`.
+
+---
+
+### Acceptance Criteria (Sprint 61)
+
+- [ ] Embedded binary ≤ 8MB, minimal ≤ 8MB, default ≤ 25MB
+- [ ] CI green on ubuntu, macos, windows
+- [x] `GET /docs` on any gateway shows interactive Scalar API docs
+- [x] OpenAPI spec covers all 40+ router.rs endpoints
+- [x] Python SDK: full API surface implemented
+- [x] TypeScript SDK: full API surface implemented
+- [x] Swift SDK: builds via SPM, full API surface
+- [x] Kotlin SDK: builds via Gradle, full API surface
+- [x] Platform support matrix published on site
+- [x] FFI crate marked deprecated
+- [x] `cargo clippy --workspace --lib` — 0 warnings
+- [x] `cargo test -p agentzero-gateway` — 211 tests pass
+
+---
+
+## Sprint 62: Upstream Quick Wins — CLI Harness, Provider Resilience, A2A Tool, Streaming, Rate Limiting
+
+**Goal:** Integrate 6 quick-win features from upstream PRs. All items are independent and can be implemented in parallel.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 1)
+
+---
+
+### Phase A: CLI Harness Tools (MEDIUM)
+
+Add `CodexCliTool`, `GeminiCliTool`, and `OpenCodeCliTool` — shell out to external CLI agent binaries with env sanitization, timeout/kill-on-drop, and output truncation. Full tier, disabled by default.
+
+- [ ] **Shared env sanitization helper** — strip `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY` etc. before spawning
+- [ ] **`CodexCliTool`** — `crates/agentzero-tools/src/codex_cli.rs`, spawns `codex -q "{prompt}"`, `kill_on_drop(true)`, configurable timeout/max output
+- [ ] **`GeminiCliTool`** — `crates/agentzero-tools/src/gemini_cli.rs`, spawns `gemini -p "{prompt}"`, same pattern
+- [ ] **`OpenCodeCliTool`** — `crates/agentzero-tools/src/opencode_cli.rs`, spawns `opencode "{prompt}"`, same pattern
+- [ ] **Registration** — add modules/re-exports in `lib.rs` under `tools-full`, add `enable_cli_harness: bool` to `ToolSecurityPolicy`, register in `default_tools_inner()`
+- [ ] **Config** — `CliHarnessConfig` in `model.rs`: `enabled`, per-binary toggles, `timeout_secs` (default 300), `max_output_bytes` (default 64KB)
+- [ ] **Tests** — tool metadata, env sanitization, timeout enforcement, output truncation
+
+### Phase B: Provider 429 Cooldown + Model Compatibility Filtering (MEDIUM)
+
+- [ ] **`CooldownState` struct** — in `transport.rs` alongside `CircuitBreaker`: `Mutex<Option<Instant>>` cooldown expiry, `enter_cooldown(duration)`, `is_cooled_down()`, `clear()`
+- [ ] **Wire into `FallbackProvider`** — add `cooldowns: Vec<CooldownState>` parallel to providers; skip cooled-down providers before attempting; activate on 429 with `parse_retry_after()` (default 10s)
+- [ ] **Model compatibility filtering** — in `FallbackProvider`, check `find_models_for_provider(label)` before attempting; skip incompatible provider-model pairs
+- [ ] **`provider_supports_model()` convenience fn** — in `models.rs`
+- [ ] **Tests** — cooldown activation/expiry, model filtering skip, Retry-After parsing
+
+### Phase C: A2A Tool Interface + Spec Alignment (MEDIUM)
+
+- [ ] **`A2aTool`** — `crates/agentzero-tools/src/a2a.rs` with actions: `discover`, `send`, `status`, `cancel`. URL scheme validation (reject non-HTTP(S))
+- [ ] **Spec alignment** — update `a2a_types.rs`: Part discriminator `"type"` → `"kind"` with `#[serde(alias = "type")]` compat; accept `"message/send"` alongside `"tasks/send"` in gateway
+- [ ] **A2A client extensions** — add `check_status()` and `cancel_task()` to `A2aAgentEndpoint`
+- [ ] **Agent Card fix** — populate `url` field from gateway config (currently empty string)
+- [ ] **`A2aTaskStore` mutex** — replace `std::sync::Mutex` → `tokio::sync::Mutex`
+- [ ] **Inbound auth** — add `bearer_token: Option<String>` to `A2aConfig`
+- [ ] **Registration** — `enable_a2a_tool: bool` on policy, register in `default_tools_inner()`
+- [ ] **Tests** — tool actions, URL validation, spec wire format
+
+### Phase D: Provider Streaming Wiring (MEDIUM)
+
+- [ ] **`StreamToolCallAccumulator`** — extract duplicated `ToolCallAccum` from `anthropic.rs` and `openai.rs` into shared struct in `agentzero-core/types.rs`
+- [ ] **`supports_streaming()`** — add to `Provider` trait (default `false`), impl `true` on Anthropic + OpenAI providers, delegate in `FallbackProvider`
+- [ ] **Draft consumer task** — in channel handler path: spawn task that reads `StreamChunk` from receiver, calls `DraftTracker::update()` on each chunk, `finalize()` on done
+- [ ] **Tests** — mock streaming provider → verify draft updates arrive token-by-token
+
+### Phase E: Per-Sender Rate Limiting (SMALL)
+
+- [ ] **`sender_id` on `ToolContext`** — add `pub sender_id: Option<String>` field
+- [ ] **Channel propagation** — set `sender_id = Some(msg.sender.clone())` when building ToolContext from ChannelMessage
+- [ ] **`SenderRateLimiter`** — `DashMap<String, WindowCounter>` pattern, check before tool execution
+- [ ] **Config** — `max_actions_per_sender_per_hour: Option<u32>` in `AutonomyConfig`
+- [ ] **Tests** — per-sender bucketing, fallback to global limit
+
+### Phase F: Fallback Notification (SMALL)
+
+- [ ] **`FallbackInfo` task-local** — `tokio::task_local!` in `fallback.rs` with `original_provider`, `actual_provider`, `actual_model`
+- [ ] **Channel footer** — append "Response from {actual_provider} ({actual_model}) — primary provider unavailable" when fallback occurred
+- [ ] **API headers** — `X-Provider-Fallback: true` + `X-Provider-Used: {actual}` on gateway responses
+- [ ] **Tests** — task-local lifecycle, footer formatting, header emission
+
+---
+
+### Acceptance Criteria (Sprint 62)
+
+- [ ] 3 CLI harness tools registered, gated by `enable_cli_harness`
+- [ ] Provider 429 → immediate cooldown skip (not 5-failure circuit breaker)
+- [ ] Model compatibility checked before fallback attempt
+- [ ] `A2aTool` with discover/send/status/cancel actions
+- [ ] A2A spec methods accept `message/send` + `tasks/send`
+- [ ] `StreamSink` → `DraftTracker` wired for channel draft updates
+- [ ] Per-sender rate limiting with task-local sender propagation
+- [ ] Fallback notification in channel footers + API headers
+- [ ] `cargo clippy --workspace --lib` — 0 warnings
+- [ ] All existing tests pass + new tests for each item
+
+---
+
+## Sprint 63: A2UI Live Canvas — Rich Visual Agent Output
+
+**Goal:** Enable agents to push rich visual content (HTML, SVG, Markdown) to a web-visible canvas in real time via WebSocket. REST + WebSocket endpoints. Sandboxed iframe viewer.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 2)
+
+---
+
+- [ ] **`CanvasStore`** — `crates/agentzero-core/src/canvas.rs`: `Arc<RwLock<HashMap<String, Canvas>>>`, EventBus integration, run-scoped IDs, 256KB content limit, 100 history frames, content-type allowlist
+- [ ] **`CanvasTool`** — `crates/agentzero-tools/src/canvas.rs`: `render`, `snapshot`, `clear` actions (skip `eval`). Extended tier, gated by `enable_canvas`
+- [ ] **Canvas REST handlers** — `crates/agentzero-gateway/src/canvas.rs`: `GET/POST/DELETE /api/canvas/:id`, `GET /api/canvas`, `GET /api/canvas/:id/history`
+- [ ] **Canvas WebSocket** — `WS /ws/canvas/:id`: real-time frame delivery, auth via `authorize_with_scope()`, snapshot on connect
+- [ ] **Gateway wiring** — `canvas_store: Option<Arc<CanvasStore>>` on `GatewayState`, routes in router, `mod canvas` in gateway lib
+- [ ] **Config** — `[tools.canvas]` section: `enabled`, `max_content_bytes`, `max_history_frames`
+- [ ] **Canvas viewer** — `ui/src/pages/Canvas.tsx`: WebSocket connection with reconnect, sandboxed iframe, canvas switcher, frame history panel
+- [ ] **UI routing** — add `/canvas` route in `App.tsx`, sidebar navigation entry
+- [ ] **Security hardening** — iframe `sandbox` WITHOUT `allow-same-origin`, CSP headers (`default-src 'none'`), server-side HTML sanitization, rate limiting on render
+- [ ] **Feature gate** — `canvas` feature flag on gateway crate
+- [ ] **Tests** — tool actions, store CRUD, WebSocket auth, content-type validation, size limits, history truncation
+
+---
+
+### Acceptance Criteria (Sprint 63)
+
+- [ ] `CanvasTool` renders HTML/SVG/Markdown to web viewer in real time
+- [ ] WebSocket delivers frames with auth + reconnect
+- [ ] Sandboxed iframe prevents XSS and parent frame access
+- [ ] Canvas scoped to run ID, cleaned up on run completion
+- [ ] Feature-gated, excluded from embedded builds
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
+## Sprint 64: Background & Parallel Delegation — Non-Blocking Sub-Agents
+
+**Goal:** Extend `DelegateTool` with background mode (fire-and-forget), parallel mode (fan-out), and task lifecycle management (check/list/cancel). CancellationToken cascade for orphan prevention.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 3)
+
+---
+
+- [ ] **`TaskManager`** — `crates/agentzero-tools/src/task_manager.rs`: `spawn_background()`, `check_result()`, `list_results()`, `cancel_task()`, `cancel_all()`. Result persistence to `{workspace}/delegate_results/{task_id}.json`
+- [ ] **`CancellationToken` on `ToolContext`** — add `cancellation_token: Option<CancellationToken>` alongside `AtomicBool` for backward compat; add `task_id: Option<String>`
+- [ ] **Delegate tool extensions** — `action` enum (Delegate/CheckResult/ListResults/CancelTask), `background: Option<bool>`, `agents: Option<Vec<String>>` for parallel mode
+- [ ] **Background spawning** — `tokio::spawn` via `TaskManager`, return task_id immediately. Budget pre-allocation. `OutputScanner` forwarding.
+- [ ] **Parallel mode** — `tokio::JoinSet` over agents, respect existing `Semaphore` (max 4)
+- [ ] **Session teardown** — wire `TaskManager` per-session in runtime, `cancel_all()` on teardown for cascade orphan prevention
+- [ ] **Deprecate `DelegateCoordinationStatusTool`** — wire to read from `TaskManager` for backward compat
+- [ ] **`tokio-util` dep** — add with `sync` feature to tools crate Cargo.toml
+- [ ] **Tests** — background spawn + check_result, parallel fan-out, cancel_task, session teardown cascade, budget pre-allocation, depth limit enforcement
+
+---
+
+### Acceptance Criteria (Sprint 64)
+
+- [ ] Background delegation returns task_id immediately, results pollable
+- [ ] Parallel delegation runs multiple agents concurrently
+- [ ] Session teardown cascades cancel to all background tasks
+- [ ] Budget tracking works across background tasks
+- [ ] Depth + security policy enforced on background tasks
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
+## Sprint 65: Deterministic SOP Engine — Typed Steps, Checkpoints, Cost Tracking
+
+**Goal:** Replace flat JSON SOP store with a proper engine. Deterministic mode bypasses LLM for step transitions. Typed steps with I/O schemas. Approval checkpoints with timeout. State persistence + resume. Cost tracking.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 4)
+
+---
+
+- [ ] **SOP types** — `crates/agentzero-tools/src/sop/types.rs`: `SopExecutionMode` (Supervised/Deterministic), `SopStepKind` (Execute/Checkpoint), `StepSchema`, `SopRunStatus`, `SopRunAction`, `DeterministicRunState`, `DeterministicSavings`
+- [ ] **SOP engine** — `sop/engine.rs`: `start_deterministic_run()`, `advance_deterministic_step()` (pipe output N → input N+1), `resume_deterministic_run()`, state persistence to workspace
+- [ ] **Dispatch** — `sop/dispatch.rs`: route `DeterministicStep` (pipe, no LLM), `CheckpointWait` (pause for approval), `SupervisedStep` (existing LLM path)
+- [ ] **Audit** — `sop/audit.rs`: step transition logging, checkpoint decisions
+- [ ] **Metrics** — `sop/metrics.rs`: `DeterministicSavings` tracking (`llm_calls_saved`), run duration
+- [ ] **Extend `SopStep`** — add `kind: SopStepKind`, `input_schema`, `output_schema`, `output: Option<Value>`
+- [ ] **Update 5 SOP tools** — `SopExecuteTool` accepts `deterministic: bool`; `SopAdvanceTool` handles piped outputs; `SopApproveTool` adds timeout; `SopStatusTool` shows savings; `SopListTool` shows execution mode
+- [ ] **`SopConfig`** — `sops_dir`, `default_execution_mode`, `max_concurrent_total` (4), `approval_timeout_secs` (300), `max_finished_runs` (100)
+- [ ] **Tests** — engine lifecycle, checkpoint pause/approve/timeout, state persist/resume, savings counting, schema validation, dispatch routing
+
+---
+
+### Acceptance Criteria (Sprint 65)
+
+- [ ] Deterministic SOPs execute without LLM round-trips between steps
+- [ ] Checkpoint steps pause and require human approval within timeout
+- [ ] Interrupted runs resume from persisted state
+- [ ] `DeterministicSavings` tracks LLM calls saved per run
+- [ ] Existing supervised SOPs continue working unchanged
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
+## Sprint 66: Channel Enhancements I — Universal Media Pipeline + Discord History
+
+**Goal:** Add automatic media understanding to all channels via pipeline-layer processing, plus persistent Discord history with search.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 5A + 5B)
+
+---
+
+### Phase A: Universal Media Pipeline (MEDIUM)
+
+All 28 channels benefit automatically — processing at the pipeline dispatch layer, not per-channel.
+
+- [ ] **`MediaAttachment` type** — in `channels/lib.rs`: `mime_type`, `url`, `data`, `transcript`, `description`. Add `#[serde(default)] pub attachments: Vec<MediaAttachment>` to `ChannelMessage`
+- [ ] **`MediaPipeline`** — `crates/agentzero-channels/src/media.rs`: `process(msg, config)` routes by MIME type. Audio → Whisper transcription. Image → vision API description. URL detection in `msg.content` for media links. All fallible (log + skip on error)
+- [ ] **Pipeline integration** — in `run_dispatch_loop()` after perplexity filter (~line 191): `media::process(&mut msg, media_cfg).await`
+- [ ] **Config** — `[channels.media_pipeline]` with `enabled: false` default, `transcription_api_url`, `vision_model`
+- [ ] **Optional native media** — Telegram, Discord, Slack, WhatsApp, Email can populate `attachments` from platform APIs for richer metadata (enhancement, not required)
+- [ ] **Tests** — pipeline MIME routing, transcript injection, URL detection, graceful fallback on failure
+
+### Phase B: Discord History + Search (MEDIUM)
+
+- [ ] **`DiscordHistoryChannel`** — shadow listener that logs messages without responding, feature-gated `channel-discord-history`
+- [ ] **SQLite schema** — `discord_messages` table + `discord_name_cache` table (24h TTL refresh) in `agentzero-storage`
+- [ ] **`DiscordSearchTool`** — keyword search over logged history with human-readable name resolution
+- [ ] **Registration** — add to `channel_catalog!`, register search tool in `default_tools_inner()`
+- [ ] **Tests** — message logging, name resolution, search queries, TTL cache refresh
+
+---
+
+### Acceptance Criteria (Sprint 66)
+
+- [ ] Media pipeline processes audio/images from any channel automatically
+- [ ] Channels without native media support benefit via URL detection
+- [ ] Discord history persists to SQLite with searchable keyword index
+- [ ] Name cache resolves opaque snowflake IDs to human-readable names
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
+## Sprint 67: Channel Enhancements II — Voice Wake Word + Gmail Push
+
+**Goal:** Add voice-activated wake word detection channel and push-based Gmail channel.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 5C + 5D)
+
+---
+
+### Phase A: Voice Wake Word Channel (MEDIUM)
+
+- [ ] **`VoiceWakeChannel`** — `crates/agentzero-channels/src/channels/voice_wake.rs`: `cpal` audio capture, energy-based VAD, state machine (Listening → Triggered → Capturing → Processing), WAV encoding, Whisper transcription, wake word matching
+- [ ] **Feature gate** — `channel-voice-wake`, strictly excluded from embedded builds
+- [ ] **Config** — `[channels.voice_wake]`: `wake_words`, `energy_threshold`, `capture_timeout_secs`
+- [ ] **Registration** — add to `channel_catalog!`
+- [ ] **Tests** — VAD state machine transitions, wake word matching, capture timeout
+
+### Phase B: Gmail Push Notifications (MEDIUM)
+
+- [ ] **`GmailPushChannel`** — `crates/agentzero-channels/src/channels/gmail_push.rs`: Google Pub/Sub webhook, Gmail History API, 6-day subscription renewal, sender allowlist, HTML stripping, RFC 2822 reply
+- [ ] **Webhook endpoint** — `crates/agentzero-gateway/src/gmail_webhook.rs` + route in router
+- [ ] **Feature gate** — `channel-gmail-push`
+- [ ] **Config** — `[channels.gmail_push]`: OAuth credentials, subscription topic, allowed senders
+- [ ] **Auth integration** — OAuth token management via `agentzero-auth`
+- [ ] **Registration** — add to `channel_catalog!`
+- [ ] **Tests** — webhook parsing, subscription renewal, sender filtering, HTML stripping
+
+---
+
+### Acceptance Criteria (Sprint 67)
+
+- [ ] Voice wake word activates on configured phrases, transcribes and processes
+- [ ] Gmail push delivers messages in real time via Pub/Sub webhook
+- [ ] Both channels feature-gated, no impact on default binary
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
 ## Backlog
-
-### Embedded Binary Size Reduction (HIGH)
-
-Reduce the `embedded` profile binary for resource-constrained devices. Currently 10.1MB (budget temporarily at 11MB), target 5-8MB. Phased approach: feature-gate tools into tiers, add plain SQLite option (no sqlcipher), minimize reqwest features, audit with cargo-bloat.
-
-**Plan:** `specs/plans/21-embedded-binary-size-reduction.md`
-
-- [x] **Phase 1: Tool tiering** — Split into `core` (~20 tools), `extended` (~17 tools), `full` (~9 tools). Feature flags: `tools-core`/`tools-extended`/`tools-full`. ToolTier enum with classifier. agentzero-lite uses `tools-extended`. 3 tests.
-- [x] **Phase 2: Optional WASM** — `embedded-minimal` feature excludes WASM plugin runtime. WASM tools gated behind `#[cfg(feature = "wasm-plugins")]` (already existed in infra, wired through to CLI/binary Cargo.toml).
-- [x] **Phase 3: HTTP client minimization** — Workspace reqwest reduced to `["json"]` only. `stream` added only to providers + CLI (SSE). `multipart` only to infra (Whisper audio). Removed unused cookies/gzip/brotli/deflate/trust-dns.
-
-*Plain SQLite removed — all storage must be encrypted (sqlcipher). cargo-bloat and UPX moved to `specs/BACKLOG-EXTERNAL.md`.*
 
 ### TUI Dashboard Enhancement (MEDIUM)
 

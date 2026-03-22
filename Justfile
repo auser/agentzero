@@ -317,6 +317,12 @@ release VERSION:
     git push origin "v{{VERSION}}"
     echo "==> Tag v{{VERSION}} pushed. Release workflow will build and publish."
 
+# ── Benchmarks ──────────────────────────────────────────────────────
+
+# Benchmark gateway HTTP endpoints (requires running gateway)
+bench-gateway url="http://localhost:42617" iterations="100":
+    scripts/bench-gateway.sh "{{url}}" "{{iterations}}"
+
 # ── E2E Ollama Testing ──────────────────────────────────────────────
 
 # Build with OpenTelemetry tracing support

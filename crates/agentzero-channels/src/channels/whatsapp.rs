@@ -26,6 +26,11 @@ mod impl_ {
             Self { access_token, phone_number_id, verify_token, allowed_users, client }
         }
 
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         fn api_url(&self, path: &str) -> String {
             format!("https://graph.facebook.com/v18.0/{}{}", self.phone_number_id, path)
         }

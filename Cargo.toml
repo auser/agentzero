@@ -97,3 +97,6 @@ strip = "symbols"
 inherits = "release"
 lto = "fat"
 opt-level = "z"
+
+[profile.release-min.package."*"]
+opt-level = "z"

@@ -37,6 +37,11 @@ mod impl_ {
             }
         }
 
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         fn webhook_url(&self) -> String {
             format!(
                 "https://oapi.dingtalk.com/robot/send?access_token={}",

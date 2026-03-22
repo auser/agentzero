@@ -82,7 +82,9 @@ pub fn tool_tier(name: &str) -> ToolTier {
         | "process"
         | "image_info"
         | "pdf_read"
-        | "screenshot" => ToolTier::Core,
+        | "screenshot"
+        | "conversation_timerange"
+        | "semantic_recall" => ToolTier::Core,
 
         // --- Extended tier: networking, git, cron, approval, IPC ---
         "web_search"
@@ -119,6 +121,7 @@ pub fn tool_tier(name: &str) -> ToolTier {
 pub mod apply_patch;
 pub mod autonomy;
 pub mod content_search;
+pub mod conversation_timerange;
 pub mod converse;
 pub mod delegate;
 pub mod delegate_coordination_status;
@@ -180,15 +183,23 @@ pub mod browser;
 #[cfg(feature = "tools-full")]
 pub mod browser_open;
 #[cfg(feature = "tools-full")]
+pub mod claude_code;
+#[cfg(feature = "tools-full")]
+pub mod codex_cli;
+#[cfg(feature = "tools-full")]
 pub mod composio;
 #[cfg(feature = "tools-full")]
 pub mod domain;
+#[cfg(feature = "tools-full")]
+pub mod gemini_cli;
 #[cfg(feature = "tools-full")]
 pub mod hardware;
 #[cfg(feature = "tools-full")]
 pub mod hardware_tools;
 #[cfg(feature = "tools-full")]
 pub mod media_gen;
+#[cfg(feature = "tools-full")]
+pub mod opencode_cli;
 #[cfg(feature = "tools-full")]
 pub mod pushover;
 #[cfg(feature = "tools-full")]
@@ -239,7 +250,7 @@ pub use http_request::HttpRequestTool;
 #[cfg(feature = "tools-extended")]
 pub use model_routing_config::ModelRoutingConfigTool;
 #[cfg(feature = "tools-extended")]
-pub use proxy_config::ProxyConfigTool;
+pub use proxy_config::{ProxyConfigTool, ProxySettings};
 #[cfg(feature = "tools-extended")]
 pub use schedule::ScheduleTool;
 #[cfg(feature = "tools-extended")]
@@ -282,6 +293,8 @@ pub use browser::BrowserTool;
 #[cfg(feature = "tools-full")]
 pub use browser_open::BrowserOpenTool;
 #[cfg(feature = "tools-full")]
+pub use codex_cli::CodexCliTool;
+#[cfg(feature = "tools-full")]
 pub use composio::ComposioTool;
 #[cfg(feature = "tools-full")]
 pub use domain::{
@@ -289,9 +302,13 @@ pub use domain::{
     DomainSearchTool, DomainUpdateTool, DomainVerifyTool, DomainWorkflowTool,
 };
 #[cfg(feature = "tools-full")]
+pub use gemini_cli::GeminiCliTool;
+#[cfg(feature = "tools-full")]
 pub use hardware_tools::{HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool};
 #[cfg(feature = "tools-full")]
 pub use media_gen::{ImageGenTool, TtsTool, VideoGenTool};
+#[cfg(feature = "tools-full")]
+pub use opencode_cli::OpenCodeCliTool;
 #[cfg(feature = "tools-full")]
 pub use pushover::PushoverTool;
 #[cfg(feature = "tools-full")]
@@ -343,6 +360,10 @@ pub struct ToolSecurityPolicy {
     pub wasm_global_plugin_dir: Option<PathBuf>,
     pub wasm_project_plugin_dir: Option<PathBuf>,
     pub wasm_dev_plugin_dir: Option<PathBuf>,
+    /// Enable Claude Code delegation tool (spawns `claude` CLI as subprocess).
+    pub enable_claude_code: bool,
+    /// Enable CLI harness tools (Codex, Gemini, OpenCode CLI delegation).
+    pub enable_cli_harness: bool,
 }
 
 impl ToolSecurityPolicy {
@@ -417,6 +438,8 @@ impl ToolSecurityPolicy {
             wasm_global_plugin_dir: None,
             wasm_project_plugin_dir: None,
             wasm_dev_plugin_dir: None,
+            enable_claude_code: false,
+            enable_cli_harness: false,
         }
     }
 }
@@ -456,6 +479,8 @@ mod tests {
             "image_info",
             "pdf_read",
             "screenshot",
+            "conversation_timerange",
+            "semantic_recall",
         ];
         for name in &core_tools {
             assert_eq!(

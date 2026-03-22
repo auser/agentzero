@@ -84,6 +84,17 @@ For detailed instructions on specific platforms:
 - **[Android](/agentzero/guides/android/)** — Running in Termux, cross-compilation with Android NDK
 - **[Raspberry Pi](/agentzero/guides/raspberry-pi/)** — Pre-built ARM binaries, building on-device, systemd service setup
 
+### Client SDKs
+
+Don't need the binary? Thin HTTP/WebSocket client SDKs let any platform control a running AgentZero gateway:
+
+- **Python** — `pip install agentzero` (httpx + websockets)
+- **TypeScript/Node** — `npm install @agentzero/sdk` (native fetch + ws)
+- **Swift** — SPM package, pure Foundation, zero deps
+- **Kotlin** — Gradle package with OkHttp
+
+The gateway is also OpenAI-compatible — existing OpenAI client libraries work for basic chat. See the [Client SDKs guide](/agentzero/guides/sdks/) for details.
+
 ## Install via Cargo
 
 If you have Rust installed, you can install directly from crates.io:

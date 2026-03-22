@@ -1120,6 +1120,21 @@ pub enum MigrateCommands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Import config, memory, and workspace from an OpenClaw installation.
+    Openclaw {
+        /// Override auto-discovery with an explicit source path.
+        #[arg(long)]
+        source: Option<String>,
+        /// Preview what would be imported without writing files.
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip memory import (only convert config).
+        #[arg(long)]
+        skip_memory: bool,
+        /// Skip config import (only import memory).
+        #[arg(long)]
+        skip_config: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

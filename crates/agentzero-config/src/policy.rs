@@ -104,6 +104,8 @@ pub fn load_tool_security_policy(
         wasm_global_plugin_dir: config.security.plugin.global_plugin_dir.map(PathBuf::from),
         wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),
         wasm_dev_plugin_dir: config.security.plugin.dev_plugin_dir.map(PathBuf::from),
+        enable_claude_code: config.agent.enable_claude_code,
+        enable_cli_harness: config.agent.enable_cli_harness,
     };
 
     // Privacy enforcement: "private" and "local_only" modes disable outbound

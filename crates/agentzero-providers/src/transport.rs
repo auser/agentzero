@@ -200,6 +200,52 @@ impl CircuitBreaker {
 }
 
 // ---------------------------------------------------------------------------
+// 429-specific cooldown
+// ---------------------------------------------------------------------------
+
+/// Lightweight 429-specific cooldown. Activates on a single HTTP 429 response
+/// and skips the provider for the `Retry-After` duration (or a default of 10 seconds).
+/// This complements the `CircuitBreaker` which handles persistent failures.
+pub struct CooldownState {
+    cooldown_until: std::sync::Mutex<Option<Instant>>,
+}
+
+impl CooldownState {
+    pub fn new() -> Self {
+        Self {
+            cooldown_until: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Enter cooldown for the given duration.
+    pub fn enter_cooldown(&self, duration: Duration) {
+        let mut guard = self.cooldown_until.lock().expect("cooldown lock poisoned");
+        *guard = Some(Instant::now() + duration);
+    }
+
+    /// Check if still in cooldown period.
+    pub fn is_cooled_down(&self) -> bool {
+        let guard = self.cooldown_until.lock().expect("cooldown lock poisoned");
+        match *guard {
+            Some(until) => Instant::now() < until,
+            None => false,
+        }
+    }
+
+    /// Clear the cooldown state (e.g., after a successful request).
+    pub fn clear(&self) {
+        let mut guard = self.cooldown_until.lock().expect("cooldown lock poisoned");
+        *guard = None;
+    }
+}
+
+impl Default for CooldownState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Transport error types
 // ---------------------------------------------------------------------------
 
@@ -768,5 +814,29 @@ mod tests {
         let builder = client.post("http://localhost:1/test");
         let _builder = apply_traceparent(builder);
         // No panic = success.
+    }
+
+    // --- CooldownState tests ---
+
+    #[test]
+    fn cooldown_state_initially_not_cooled() {
+        let state = CooldownState::new();
+        assert!(!state.is_cooled_down());
+    }
+
+    #[test]
+    fn cooldown_state_active_during_period() {
+        let state = CooldownState::new();
+        state.enter_cooldown(Duration::from_secs(1));
+        assert!(state.is_cooled_down());
+    }
+
+    #[test]
+    fn cooldown_clear_resets() {
+        let state = CooldownState::new();
+        state.enter_cooldown(Duration::from_secs(60));
+        assert!(state.is_cooled_down());
+        state.clear();
+        assert!(!state.is_cooled_down());
     }
 }

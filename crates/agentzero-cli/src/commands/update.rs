@@ -1,5 +1,6 @@
 use crate::cli::{MigrateCommands, UpdateCommands};
 use crate::command_core::{AgentZeroCommand, CommandContext};
+use crate::update::migrate_openclaw;
 use crate::update::migration::{import_from_source, inspect_source};
 use crate::update::updater::{
     check_for_updates, download_and_install, fetch_latest_version, load_state, restore_backup,
@@ -41,6 +42,42 @@ impl AgentZeroCommand for MigrateCommand {
                 println!("  copied: {}", result.copied_files.join(", "));
                 if !result.skipped_files.is_empty() {
                     println!("  skipped: {}", result.skipped_files.join(", "));
+                }
+            }
+            MigrateCommands::Openclaw {
+                source,
+                dry_run,
+                skip_memory,
+                skip_config,
+            } => {
+                let result = migrate_openclaw::migrate(
+                    source.as_deref(),
+                    &ctx.data_dir,
+                    dry_run,
+                    skip_memory,
+                    skip_config,
+                )?;
+                let mode = if dry_run { "DRY RUN" } else { "APPLY" };
+                println!("OpenClaw migration [{mode}]");
+                println!("  source: {}", result.source.display());
+
+                if result.config_converted {
+                    println!("  config: converted to TOML");
+                } else if result.config_skipped {
+                    println!("  config: skipped");
+                }
+
+                if result.memory_entries_imported > 0 {
+                    println!(
+                        "  memory: {} entries imported",
+                        result.memory_entries_imported
+                    );
+                } else if result.memory_skipped {
+                    println!("  memory: skipped");
+                }
+
+                for warning in &result.warnings {
+                    println!("  warning: {warning}");
                 }
             }
         }

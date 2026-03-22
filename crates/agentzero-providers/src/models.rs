@@ -180,6 +180,16 @@ pub fn model_capabilities(provider: &str, model: &str) -> Option<ModelCapabiliti
         .map(|m| m.capabilities)
 }
 
+/// Check if a provider is known to support a given model.
+/// Returns `true` if the provider is unknown (permissive for custom providers)
+/// or if the model is found in the provider's catalog.
+pub fn provider_supports_model(provider: &str, model: &str) -> bool {
+    match find_models_for_provider(provider) {
+        Some((_, models)) => models.iter().any(|m| m.id == model),
+        None => true, // Unknown provider -- allow any model
+    }
+}
+
 /// Compute a lightweight fingerprint of provider config for cache invalidation.
 /// When the fingerprint changes, any cached model list should be refreshed.
 pub fn provider_config_fingerprint(kind: &str, base_url: &str, model: &str) -> u64 {
@@ -196,7 +206,7 @@ pub fn provider_config_fingerprint(kind: &str, base_url: &str, model: &str) -> u
 mod tests {
     use super::{
         find_models_for_provider, model_capabilities, provider_config_fingerprint,
-        ModelCapabilities,
+        provider_supports_model, ModelCapabilities,
     };
 
     #[test]
@@ -293,6 +303,26 @@ mod tests {
         let fp1 = provider_config_fingerprint("openai", "https://api.openai.com", "gpt-4o-mini");
         let fp2 = provider_config_fingerprint("openai", "https://api.openai.com", "gpt-4.1");
         assert_ne!(fp1, fp2);
+    }
+
+    // --- provider_supports_model ---
+
+    #[test]
+    fn provider_supports_model_known_model() {
+        assert!(provider_supports_model(
+            "anthropic",
+            "claude-sonnet-4-20250514"
+        ));
+    }
+
+    #[test]
+    fn provider_supports_model_unknown_model_on_known_provider() {
+        assert!(!provider_supports_model("anthropic", "nonexistent-model"));
+    }
+
+    #[test]
+    fn provider_supports_model_unknown_provider_is_permissive() {
+        assert!(provider_supports_model("my-custom-provider", "any-model"));
     }
 
     #[test]

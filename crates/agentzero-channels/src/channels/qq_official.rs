@@ -40,6 +40,11 @@ mod impl_ {
             }
         }
 
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         fn api_base(&self) -> &str {
             if self.sandbox {
                 "https://sandbox.api.sgroup.qq.com"

@@ -31,6 +31,11 @@ mod impl_ {
             }
         }
 
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         fn api_url(&self, method: &str) -> String {
             format!("{}{}/{}", API_BASE, self.bot_token, method)
         }

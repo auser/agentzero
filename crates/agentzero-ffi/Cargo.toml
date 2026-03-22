@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Foreign function interface for AgentZero — Swift, Kotlin, Python, TypeScript bindings"
+description = "DEPRECATED: Use the thin HTTP SDKs in sdks/ instead. Foreign function interface for AgentZero — Swift, Kotlin, Python, TypeScript bindings"
 repository.workspace = true
 publish = false
 

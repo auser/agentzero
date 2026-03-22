@@ -3,6 +3,8 @@
 //! Exposes the agent loop over HTTP and WebSocket endpoints with
 //! pairing-based authentication, streaming responses, and node control.
 
+#![recursion_limit = "512"]
+
 pub(crate) mod a2a;
 pub mod api_keys;
 mod audit;

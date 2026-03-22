@@ -46,10 +46,11 @@ pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
 pub use agent_manage::AgentManageTool;
 #[cfg(feature = "tools-full")]
 pub use agentzero_tools::{
-    BrowserOpenTool, BrowserTool, ComposioTool, DomainCreateTool, DomainInfoTool, DomainLearnTool,
-    DomainLessonsTool, DomainListTool, DomainSearchTool, DomainUpdateTool, DomainVerifyTool,
-    DomainWorkflowTool, HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool,
-    ImageGenTool, PushoverTool, TtsTool, VideoGenTool, WasmModuleTool, WasmToolExecTool,
+    BrowserOpenTool, BrowserTool, CodexCliTool, ComposioTool, DomainCreateTool, DomainInfoTool,
+    DomainLearnTool, DomainLessonsTool, DomainListTool, DomainSearchTool, DomainUpdateTool,
+    DomainVerifyTool, DomainWorkflowTool, GeminiCliTool, HardwareBoardInfoTool,
+    HardwareMemoryMapTool, HardwareMemoryReadTool, ImageGenTool, OpenCodeCliTool, PushoverTool,
+    TtsTool, VideoGenTool, WasmModuleTool, WasmToolExecTool,
 };
 #[cfg(feature = "tools-full")]
 pub use config_manage::ConfigManageTool;
@@ -258,6 +259,18 @@ fn default_tools_inner(
             tools.push(Box::new(ConfigManageTool));
             tools.push(Box::new(SkillManageTool));
             tools.push(Box::new(PluginScaffoldTool));
+        }
+
+        if policy.enable_claude_code {
+            tools.push(Box::new(
+                agentzero_tools::claude_code::ClaudeCodeTool::default(),
+            ));
+        }
+
+        if policy.enable_cli_harness {
+            tools.push(Box::new(CodexCliTool::default()));
+            tools.push(Box::new(GeminiCliTool::default()));
+            tools.push(Box::new(OpenCodeCliTool::default()));
         }
     }
 

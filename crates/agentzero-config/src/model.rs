@@ -581,6 +581,12 @@ pub struct AgentSettings {
     /// Enable self-configuration tools (config_manage, skill_manage, plugin_scaffold).
     #[serde(default)]
     pub enable_self_config: bool,
+    /// Enable the Claude Code delegation tool (spawns `claude` CLI as subprocess).
+    #[serde(default)]
+    pub enable_claude_code: bool,
+    /// Enable CLI harness tools (Codex, Gemini, OpenCode CLI delegation).
+    #[serde(default)]
+    pub enable_cli_harness: bool,
 }
 
 fn default_tool_timeout_ms() -> u64 {
@@ -612,6 +618,8 @@ impl Default for AgentSettings {
             enable_agent_manage: false,
             enable_domain_tools: false,
             enable_self_config: false,
+            enable_claude_code: false,
+            enable_cli_harness: false,
         }
     }
 }

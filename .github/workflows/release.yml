@@ -232,7 +232,7 @@ jobs:
         if: matrix.target_name == 'linux-x86_64'
         env:
           EMBEDDED_BIN: target/${{ matrix.rust_target }}/release-min/agentzero${{ matrix.ext }}
-        run: scripts/check-binary-size.sh --binary "$EMBEDDED_BIN" --max-bytes 10000000
+        run: scripts/check-binary-size.sh --binary "$EMBEDDED_BIN" --max-bytes 8000000
       - name: Package artifact (unix)
         if: matrix.os != 'windows-latest'
         env:

@@ -69,6 +69,7 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/memory/forget", post(forget_memory))
         .route("/v1/approvals", get(list_approvals))
         .route("/v1/openapi.json", get(openapi_spec))
+        .route("/docs", get(api_docs_handler))
         .route("/ws/chat", get(ws_chat))
         .route("/ws/runs/:run_id", get(ws_run_subscribe))
         .route("/api/*path", get(api_fallback));
@@ -157,6 +158,14 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
     }
 
     router.with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// Interactive API documentation (Scalar)
+// ---------------------------------------------------------------------------
+
+async fn api_docs_handler() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("api_docs.html"))
 }
 
 // ---------------------------------------------------------------------------
