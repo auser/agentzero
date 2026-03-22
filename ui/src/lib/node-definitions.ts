@@ -238,8 +238,9 @@ const ROLE_DEFINITION: NodeDefinition = {
 
 // ── Registry ─────────────────────────────────────────────────────────────────
 
-/** All built-in node type definitions. */
-export const ALL_NODE_DEFINITIONS: NodeDefinition[] = [
+// ── Registry ─────────────────────────────────────────────────────────────────
+
+const BUILT_IN_DEFINITIONS: NodeDefinition[] = [
   AGENT_DEFINITION,
   TOOL_DEFINITION,
   CHANNEL_DEFINITION,
@@ -254,18 +255,79 @@ export const ALL_NODE_DEFINITIONS: NodeDefinition[] = [
   PROVIDER_DEFINITION,
 ]
 
-const DEFINITIONS_MAP = new Map<string, NodeDefinition>(
-  ALL_NODE_DEFINITIONS.map((d) => [d.type, d]),
-)
+const CUSTOM_STORAGE_KEY = 'agentzero-custom-node-definitions'
+
+/** Load user-created node definitions from localStorage. */
+function loadCustomDefinitions(): NodeDefinition[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(CUSTOM_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+/** Save user-created node definitions to localStorage. */
+function saveCustomDefinitions(defs: NodeDefinition[]) {
+  try { localStorage.setItem(CUSTOM_STORAGE_KEY, JSON.stringify(defs)) } catch { /* full */ }
+}
+
+// Mutable registry — built-ins + user-created
+let _customDefinitions = loadCustomDefinitions()
+let _allDefinitions = [...BUILT_IN_DEFINITIONS, ..._customDefinitions]
+let _definitionsMap = new Map<string, NodeDefinition>(_allDefinitions.map((d) => [d.type, d]))
+
+// Change listeners for React re-renders
+type DefinitionListener = () => void
+const _listeners = new Set<DefinitionListener>()
+
+function _rebuild() {
+  _allDefinitions = [...BUILT_IN_DEFINITIONS, ..._customDefinitions]
+  _definitionsMap = new Map(_allDefinitions.map((d) => [d.type, d]))
+  _listeners.forEach((fn) => fn())
+}
+
+/** All node type definitions (built-in + user-created). */
+export function getAllDefinitions(): NodeDefinition[] {
+  return _allDefinitions
+}
+
+/** Subscribe to definition changes — returns unsubscribe function. */
+export function onDefinitionsChange(fn: DefinitionListener): () => void {
+  _listeners.add(fn)
+  return () => _listeners.delete(fn)
+}
+
+/** Register a custom node definition. Persists to localStorage. */
+export function registerNodeDefinition(def: NodeDefinition) {
+  _customDefinitions = _customDefinitions.filter((d) => d.type !== def.type)
+  _customDefinitions.push(def)
+  saveCustomDefinitions(_customDefinitions)
+  _rebuild()
+}
+
+/** Remove a custom node definition. */
+export function unregisterNodeDefinition(type: string) {
+  _customDefinitions = _customDefinitions.filter((d) => d.type !== type)
+  saveCustomDefinitions(_customDefinitions)
+  _rebuild()
+}
+
+/** Check if a node type is user-created (not built-in). */
+export function isCustomDefinition(type: string): boolean {
+  return _customDefinitions.some((d) => d.type === type)
+}
+
+// Backwards-compatible — static snapshot (use getAllDefinitions() for live data)
+export const ALL_NODE_DEFINITIONS = _allDefinitions
 
 /** Look up a node definition by type key. */
 export function getDefinition(type: string): NodeDefinition | undefined {
-  return DEFINITIONS_MAP.get(type)
+  return _definitionsMap.get(type)
 }
 
 /** Get ports for a node type from its definition. */
 export function portsForType(type: string): Port[] {
-  const def = DEFINITIONS_MAP.get(type)
+  const def = _definitionsMap.get(type)
   if (!def) return []
   return [...(def.inputs ?? []), ...(def.outputs ?? [])]
 }

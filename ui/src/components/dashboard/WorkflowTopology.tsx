@@ -3,7 +3,8 @@
  * Supports drag-drop from palette, port-to-port connections,
  * Cmd+K command palette, and localStorage persistence.
  */
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   ReactFlow,
   Background,
@@ -34,8 +35,11 @@ import { useNodeActions } from '@/components/dashboard/useNodeActions'
 import { useUndoRedo } from '@/components/dashboard/useUndoRedo'
 import { RunWorkflowButton } from '@/components/workflows/RunWorkflowButton'
 import { TemplateGallery } from '@/components/workflows/TemplateGallery'
+import { SaveTemplateDialog } from '@/components/workflows/SaveTemplateDialog'
+import { CreateNodeTypeDialog } from '@/components/workflows/CreateNodeTypeDialog'
 import { EmptyCanvasState } from '@/components/workflows/EmptyCanvasState'
-import { getDefinition, ALL_NODE_DEFINITIONS } from '@/lib/node-definitions'
+import { getDefinition } from '@/lib/node-definitions'
+import { useNodeDefinitions } from '@/lib/hooks/useNodeDefinitions'
 import type { WorkflowTemplate } from '@/lib/workflow-templates'
 import { workflowsApi } from '@/lib/api/workflows'
 
@@ -44,26 +48,27 @@ interface WorkflowTopologyProps {
   readOnly?: boolean
 }
 
-// Auto-register all node definitions as AgentNode, with overrides for special types
-const nodeTypes: Record<string, typeof AgentNode | typeof ProviderNode | typeof GroupNode> = {
-  ...Object.fromEntries(ALL_NODE_DEFINITIONS.map((d) => [d.type, AgentNode])),
-  provider: ProviderNode,
-  group: GroupNode,
-}
-
 const edgeTypes = {
   default: LabeledEdge,
 }
 
 function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: WorkflowTopologyProps) {
+  // Dynamic nodeTypes — rebuilds when custom definitions are added/removed
+  const definitions = useNodeDefinitions()
+  const nodeTypes = useMemo(() => ({
+    ...Object.fromEntries(definitions.map((d) => [d.type, AgentNode])),
+    provider: ProviderNode,
+    group: GroupNode,
+  }), [definitions])
   const reactFlowInstance = useReactFlow()
+  const queryClient = useQueryClient()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   const [configPanelOpen, setConfigPanelOpen] = useState(false)
   const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false)
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
-  const [templateName, setTemplateName] = useState('')
+  const [createNodeTypeOpen, setCreateNodeTypeOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -286,15 +291,14 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
   }, [setNodes, setEdges, persistWithHistory])
 
   // Save current canvas as a template to the server
-  const handleSaveAsTemplate = useCallback(async (name: string) => {
-    if (!name.trim()) return
+  const handleSaveAsTemplate = useCallback(async (name: string, description: string) => {
     const currentNodes = reactFlowInstance.getNodes()
     const currentEdges = reactFlowInstance.getEdges()
 
     try {
       await workflowsApi.create({
-        name: name.trim(),
-        description: `Custom template with ${currentNodes.length} nodes`,
+        name,
+        description: description || `Custom template with ${currentNodes.length} nodes`,
         layout: {
           nodes: currentNodes.map((n) => ({
             id: n.id, type: n.type, position: n.position, data: n.data,
@@ -307,12 +311,12 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
           })),
         },
       })
+      void queryClient.invalidateQueries({ queryKey: ['workflows', 'templates'] })
     } catch {
-      // Server may not be running — that's OK
+      // Server may not be running
     }
     setSaveTemplateOpen(false)
-    setTemplateName('')
-  }, [reactFlowInstance])
+  }, [reactFlowInstance, queryClient])
 
   // Keyboard shortcuts for group/ungroup
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -327,7 +331,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     } else if (mod && e.shiftKey && e.key === 'f') {
       e.preventDefault()
       reactFlowInstance.fitView({ padding: 0.2, duration: 300 })
-    } else if (mod && e.shiftKey && e.key === '?') {
+    } else if (mod && (e.key === '?' || (e.shiftKey && e.key === '/'))) {
       e.preventDefault()
       setShortcutsOpen((v) => !v)
     }
@@ -479,51 +483,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
               Save Template
             </button>
           )}
-          {saveTemplateOpen && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              background: '#1C1C1E', border: '1px solid rgba(255,255,255,0.06)',
-              borderRadius: 8, padding: '4px 6px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-            }}>
-              <input
-                autoFocus
-                type="text"
-                value={templateName}
-                onChange={(e) => setTemplateName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && templateName.trim()) handleSaveAsTemplate(templateName)
-                  if (e.key === 'Escape') { setSaveTemplateOpen(false); setTemplateName('') }
-                }}
-                placeholder="Template name..."
-                style={{
-                  width: 160, background: '#0F0F11', border: 'none', borderRadius: 6,
-                  padding: '6px 10px', fontSize: 12, color: '#E5E5E5', outline: 'none',
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              />
-              <button
-                onClick={() => { if (templateName.trim()) handleSaveAsTemplate(templateName) }}
-                disabled={!templateName.trim()}
-                style={{
-                  padding: '6px 10px', background: templateName.trim() ? '#22c55e' : '#374151',
-                  color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                  fontFamily: "'JetBrains Mono', monospace", cursor: templateName.trim() ? 'pointer' : 'not-allowed',
-                }}
-              >
-                Save
-              </button>
-              <button
-                onClick={() => { setSaveTemplateOpen(false); setTemplateName('') }}
-                style={{
-                  padding: '6px 8px', background: 'transparent', color: '#737373',
-                  border: 'none', cursor: 'pointer', fontSize: 14,
-                }}
-              >
-                &#x2715;
-              </button>
-            </div>
-          )}
+          {saveTemplateOpen && null /* modal rendered below */}
         </div>
       )}
 
@@ -549,6 +509,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
         <CanvasContextMenu
           position={contextMenu}
           onAddNode={() => { cmdK.setOpen(true); setContextMenu(null) }}
+          onCreateNodeType={() => { setCreateNodeTypeOpen(true); setContextMenu(null) }}
           onClearAll={() => { handleClear(); setContextMenu(null) }}
           onClose={() => setContextMenu(null)}
         />
@@ -557,6 +518,18 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
       <NodeDetailPanel
         nodeId={selectedNodeId}
         onClose={handlePaneClick}
+      />
+
+      <SaveTemplateDialog
+        open={saveTemplateOpen}
+        nodeCount={nodes.length}
+        onSave={handleSaveAsTemplate}
+        onClose={() => setSaveTemplateOpen(false)}
+      />
+
+      <CreateNodeTypeDialog
+        open={createNodeTypeOpen}
+        onClose={() => setCreateNodeTypeOpen(false)}
       />
 
       {/* Keyboard shortcuts panel */}
@@ -597,7 +570,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
                 ['Cmd + Shift + F', 'Zoom to fit'],
                 ['Cmd + G', 'Group selected nodes'],
                 ['Cmd + Shift + G', 'Ungroup'],
-                ['Cmd + Shift + ?', 'Toggle this panel'],
+                ['Cmd + ?', 'Toggle this panel'],
                 ['Backspace / Delete', 'Delete selected'],
                 ['Right-click', 'Context menu'],
               ].map(([key, desc]) => (

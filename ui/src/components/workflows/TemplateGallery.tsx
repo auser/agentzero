@@ -1,11 +1,12 @@
 /**
  * Template gallery modal for the workflow canvas.
- * Displays pre-built workflow templates in a searchable grid.
- * Users can preview and select a template to populate the canvas.
+ * Shows both built-in templates and user-saved workflows from the API.
  */
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ALL_TEMPLATES, type WorkflowTemplate } from '@/lib/workflow-templates'
-import { X, Layout, Search } from 'lucide-react'
+import { workflowsApi } from '@/lib/api/workflows'
+import { X, Layout, Search, Trash2 } from 'lucide-react'
 
 interface TemplateGalleryProps {
   open: boolean
@@ -19,6 +20,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   engineering: '#f97316',
   support: '#ec4899',
   analytics: '#22c55e',
+  custom: '#f59e0b',
 }
 
 function categoryColor(category: string): string {
@@ -28,35 +30,79 @@ function categoryColor(category: string): string {
 export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProps) {
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const queryClient = useQueryClient()
 
-  // Reset search and focus input when opened
+  // Fetch saved workflows from API — refetch every time the gallery opens
+  const { data: savedWorkflows, refetch } = useQuery({
+    queryKey: ['workflows', 'templates'],
+    queryFn: () => workflowsApi.list('layout'),
+    enabled: open,
+    staleTime: 0,
+  })
+
   useEffect(() => {
     if (open) {
       setQuery('') // eslint-disable-line react-hooks/set-state-in-effect -- reset on open
       setTimeout(() => inputRef.current?.focus(), 50)
+      void refetch()
     }
-  }, [open])
+  }, [open, refetch])
 
-  // Close on Escape
   useEffect(() => {
     if (!open) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [open, onClose])
 
+  // Merge built-in templates with saved workflows
+  const allTemplates = useMemo(() => {
+    const templates: (WorkflowTemplate & { saved?: boolean; workflowId?: string })[] = [
+      ...ALL_TEMPLATES,
+    ]
+
+    for (const w of savedWorkflows?.data ?? []) {
+      // Skip the "default" active workflow — it's not a template
+      if (w.name === 'default') continue
+      const nodeCount = (w.layout?.nodes as unknown[])?.length ?? 0
+      if (nodeCount === 0) continue
+
+      templates.push({
+        id: w.workflow_id,
+        name: w.name,
+        description: w.description || `${nodeCount} nodes`,
+        category: 'custom',
+        nodeCount,
+        nodes: (w.layout?.nodes ?? []) as WorkflowTemplate['nodes'],
+        edges: (w.layout?.edges ?? []) as WorkflowTemplate['edges'],
+        saved: true,
+        workflowId: w.workflow_id,
+      })
+    }
+
+    return templates
+  }, [savedWorkflows])
+
   const filtered = useMemo(() => {
-    if (!query) return ALL_TEMPLATES
+    if (!query) return allTemplates
     const q = query.toLowerCase()
-    return ALL_TEMPLATES.filter(
+    return allTemplates.filter(
       (t) =>
         t.name.toLowerCase().includes(q) ||
         t.description.toLowerCase().includes(q) ||
         t.category.toLowerCase().includes(q),
     )
-  }, [query])
+  }, [allTemplates, query])
+
+  const handleDelete = async (workflowId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await workflowsApi.delete(workflowId)
+      void queryClient.invalidateQueries({ queryKey: ['workflows', 'templates'] })
+    } catch {
+      // Server may not be running
+    }
+  }
 
   if (!open) return null
 
@@ -83,6 +129,9 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
           <div className="flex items-center gap-2">
             <Layout className="h-4 w-4 text-green-400" />
             <h2 className="text-sm font-semibold text-white">Workflow Templates</h2>
+            <span className="text-[10px] text-neutral-500">
+              {allTemplates.length} templates
+            </span>
           </div>
           <button
             onClick={onClose}
@@ -118,6 +167,7 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
             <div className="grid grid-cols-2 gap-3">
               {filtered.map((template) => {
                 const color = categoryColor(template.category)
+                const isSaved = 'saved' in template && template.saved
                 return (
                   <div
                     key={template.id}
@@ -136,9 +186,20 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
                       >
                         {template.category}
                       </span>
-                      <span className="text-[10px] text-neutral-500">
-                        {template.nodeCount} nodes
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-neutral-500">
+                          {template.nodeCount} nodes
+                        </span>
+                        {isSaved && 'workflowId' in template && (
+                          <button
+                            onClick={(e) => handleDelete(template.workflowId as string, e)}
+                            className="text-neutral-600 hover:text-red-400 transition-colors"
+                            title="Delete template"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Name */}
