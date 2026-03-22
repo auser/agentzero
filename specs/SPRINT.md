@@ -1372,18 +1372,29 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 - [x] **Right-click context menu** — Group Selected, Ungroup, Toggle Collapse, Add Node (Cmd+K), Clear All.
 - [x] **Published to npm** — `@auser/workflow-graph-web@1.2.1` and `@auser/workflow-graph-react@1.2.1`. `just release` now also bumps npm package.json versions.
 
-**Remaining — Production Node Design:**
-- [ ] **NodeFieldOverlay (consumer)** — React portal for inline field editing (input, textarea, select, slider). Positioned via `canvasToScreen()`.
-- [ ] **Remove NodeRenderer.ts** — dead code, no longer imported. Library handles all rendering.
+**Done — ReactFlow Migration (replaced WASM workflow-graph):**
+- [x] **ReactFlow v12** — Replaced custom WASM canvas renderer with `@xyflow/react`. Full DOM-based nodes, native drag/drop, selection, keyboard shortcuts. Eliminated all WASM lifecycle bugs (ResizeObserver, getBoundingClientRect, memory access errors).
+- [x] **AgentNode component** — LangFlow-style cards matching Pencil designs. Collapsible (click header), controlled provider/model dropdowns populated from live API, prompt field saves to agent API. JetBrains Mono, dark theme (#1C1C1E).
+- [x] **ProviderNode** — Compact chip-style node with provider selection, filtered model dropdown, brand-colored status dots.
+- [x] **GroupNode (compound)** — Resizable dashed container. Ctrl+G to group, Ctrl+Shift+G to ungroup. Collapsed view shows aggregated ports (entry inputs + exit outputs). Proportional child resize. Inline rename on double-click. Drag-into/drag-out of groups.
+- [x] **Connection validation** — `isValidConnection` enforces port type matching. During drag: compatible handles glow with CSS animation, incompatible handles dim to 12% opacity + `pointer-events: none`. Entire nodes without compatible handles fade.
+- [x] **Bezier edges** — Colored by source port type. Selectable + deletable (Backspace/Delete).
+- [x] **Dashboard read-only snapshot** — `readOnly` prop on WorkflowTopology shows static preview with "Open Editor" link. No controls, no drag, no context menu. Collapse toggle still works.
+- [x] **localStorage persistence** — Key renamed to `agentzero-workflow` with auto-migration from old key. Saves nodes, edges on every change.
+- [x] **Undo/redo** — History stack with Cmd+Z / Cmd+Shift+Z. Undo/redo buttons in Controls panel.
+- [x] **Templates** — Template gallery, save-as-template, load from sessionStorage.
+- [x] **Keyboard shortcuts panel** — `?` key shows all shortcuts.
+- [x] **Empty canvas state** — Welcome screen with "Browse Templates" and "Start from Scratch" buttons.
+- [x] **Data-driven actions** — `canvas-actions.ts` defines all shortcuts + context menu items.
 
 **Remaining Features:**
-- [ ] **Server-side persistence** — `PUT/GET /v1/workflows` API to store graph in SQLite.
-- [ ] **NodePopover** — Click node → inline popover with editable fields.
+- [ ] **Server-side persistence** — `PUT/GET /v1/workflows` API to store graph in SQLite. Backend store + handlers written, needs gateway route registration on this branch.
+- [ ] **Execution highlighting** — Node glow when running, edge color changes with status.
 - [ ] **NodeInspector** — Double-click → right-side sheet with full property form.
-- [ ] **WorkflowToolbar** — Save, Deploy, Export TOML, Import, Auto-layout, Zoom.
+- [ ] **WorkflowToolbar** — Deploy, Export TOML, Import, Auto-layout.
 - [ ] **QuickCreateWizard** — 6-step wizard: name → agent → tools → channel → schedule → review.
 - [ ] **Serialization** — Builder ↔ SwarmConfig round-trip.
-- [ ] **`--ui` flag for gateway** — UI should only launch when `agentzero gateway --ui` is passed or via an explicit `agentzero ui` command. Gateway should not start the UI by default.
+- [ ] **`--ui` flag for gateway** — UI should only launch when `agentzero gateway --ui` is passed or via an explicit `agentzero ui` command.
 
 ---
 

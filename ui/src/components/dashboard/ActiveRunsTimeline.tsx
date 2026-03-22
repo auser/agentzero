@@ -72,7 +72,12 @@ export function ActiveRunsTimeline() {
                     className="text-[11px] text-muted-foreground/70"
                   />
                   <span className="text-[10px] text-muted-foreground/50 w-16 text-right">
-                    {formatDistanceToNow(new Date(run.accepted_at), { addSuffix: true })}
+                    {run.accepted_at
+                      ? formatDistanceToNow(
+                          new Date(run.accepted_at < 1e12 ? run.accepted_at * 1000 : run.accepted_at),
+                          { addSuffix: true },
+                        )
+                      : '—'}
                   </span>
                 </div>
               </div>

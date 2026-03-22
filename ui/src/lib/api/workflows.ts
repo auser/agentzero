@@ -53,7 +53,7 @@ export const workflowsApi = {
     api.post<WorkflowRecord>('/v1/workflows', payload),
 
   update: (id: string, payload: UpdateWorkflowPayload) =>
-    api.put<WorkflowRecord>(`/v1/workflows/${id}`, payload),
+    api.patch<WorkflowRecord>(`/v1/workflows/${id}`, payload),
 
   delete: (id: string) =>
     api.delete<{ workflow_id: string; deleted: boolean }>(`/v1/workflows/${id}`),
