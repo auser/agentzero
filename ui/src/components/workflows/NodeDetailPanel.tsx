@@ -9,11 +9,11 @@
  * - Labels: #737373, text: #E5E5E5
  * - Width: 320px
  */
-import { useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useReactFlow } from '@xyflow/react'
 import { useQuery } from '@tanstack/react-query'
 import { getDefinition } from '@/lib/node-definitions'
-import { portTypeColor } from '@/lib/workflow-types'
+import { portTypeColor, type Port } from '@/lib/workflow-types'
 import { modelsApi } from '@/lib/api/models'
 import type { AgentNodeData } from '@/components/workflows/AgentNode'
 
@@ -25,6 +25,8 @@ interface NodeDetailPanelProps {
 export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
   const reactFlow = useReactFlow()
 
+  const panelRef = useRef<HTMLDivElement>(null)
+
   // Close on Escape
   useEffect(() => {
     if (!nodeId) return
@@ -33,6 +35,24 @@ export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
+  }, [nodeId, onClose])
+
+  // Close on click outside panel
+  useEffect(() => {
+    if (!nodeId) return
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as HTMLElement)) {
+        onClose()
+      }
+    }
+    // Use setTimeout so the double-click that opened the panel doesn't immediately close it
+    const timer = setTimeout(() => {
+      window.addEventListener('mousedown', handler)
+    }, 100)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('mousedown', handler)
+    }
   }, [nodeId, onClose])
 
   const node = nodeId ? reactFlow.getNode(nodeId) : null
@@ -86,31 +106,80 @@ export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
     )
   }, [reactFlow, nodeId])
 
-  const inputs = def?.inputs ?? []
-  const outputs = def?.outputs ?? []
+  // Use custom ports from metadata if available, otherwise fall back to definition
+  const inputs: Port[] = (nodeData?.metadata?.tool_inputs as Port[]) ?? def?.inputs ?? []
+  const outputs: Port[] = (nodeData?.metadata?.tool_outputs as Port[]) ?? def?.outputs ?? []
   const fields = def?.fields ?? []
   const hasAgentId = !!(nodeData?.metadata?.agent_id)
+  const isToolNode = nodeData?.nodeType === 'tool'
+  const isCustomNode = nodeData?.nodeType === 'human_input'
+  const canEditPorts = isToolNode || isCustomNode
+  const [editingPorts, setEditingPorts] = useState(false)
+
+  const PORT_TYPES = ['text', 'json', 'number', 'boolean', 'array', 'event', 'config']
+
+  const updatePorts = useCallback((direction: 'input' | 'output', newPorts: Port[]) => {
+    if (!nodeId) return
+    const metaKey = direction === 'input' ? 'tool_inputs' : 'tool_outputs'
+    reactFlow.setNodes((nodes) =>
+      nodes.map((n) =>
+        n.id === nodeId
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                metadata: { ...(n.data as AgentNodeData).metadata, [metaKey]: newPorts },
+              },
+            }
+          : n,
+      ),
+    )
+  }, [reactFlow, nodeId])
+
+  const addPort = useCallback((direction: 'input' | 'output') => {
+    const current = direction === 'input' ? inputs : outputs
+    const newPort: Port = {
+      id: `${direction}_${Date.now()}`,
+      label: `new_${direction}`,
+      direction,
+      port_type: 'text',
+    }
+    updatePorts(direction, [...current, newPort])
+  }, [inputs, outputs, updatePorts])
+
+  const removePort = useCallback((direction: 'input' | 'output', portId: string) => {
+    const current = direction === 'input' ? inputs : outputs
+    updatePorts(direction, current.filter((p) => p.id !== portId))
+  }, [inputs, outputs, updatePorts])
+
+  const updatePort = useCallback((direction: 'input' | 'output', portId: string, updates: Partial<Port>) => {
+    const current = direction === 'input' ? inputs : outputs
+    updatePorts(direction, current.map((p) =>
+      p.id === portId ? { ...p, ...updates } : p,
+    ))
+  }, [inputs, outputs, updatePorts])
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        bottom: 0,
-        width: 320,
-        background: '#1C1C1E',
-        borderLeft: '1px solid rgba(255,255,255,0.06)',
-        fontFamily: "'JetBrains Mono', monospace",
-        zIndex: 50,
-        display: 'flex',
-        flexDirection: 'column',
-        transform: nodeId ? 'translateX(0)' : 'translateX(100%)',
-        transition: 'transform 200ms ease-in-out',
-        pointerEvents: nodeId ? 'auto' : 'none',
-        boxShadow: nodeId ? '-4px 0 16px rgba(0,0,0,0.4)' : 'none',
-      }}
-    >
+      <div
+        ref={panelRef}
+        style={{
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: 320,
+          background: '#1C1C1E',
+          borderLeft: '1px solid rgba(255,255,255,0.06)',
+          fontFamily: "'JetBrains Mono', monospace",
+          zIndex: 50,
+          display: 'flex',
+          flexDirection: 'column',
+          transform: nodeId ? 'translateX(0)' : 'translateX(100%)',
+          transition: 'transform 200ms ease-in-out',
+          pointerEvents: nodeId ? 'auto' : 'none',
+          boxShadow: nodeId ? '-4px 0 16px rgba(0,0,0,0.4)' : 'none',
+        }}
+      >
       {/* Header */}
       <div
         style={{
@@ -307,22 +376,49 @@ export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
               return null
             })}
 
-            {/* Port connections summary */}
-            {(inputs.length > 0 || outputs.length > 0) && (
+            {/* Port connections summary + editor */}
+            {(inputs.length > 0 || outputs.length > 0 || canEditPorts) && (
               <div style={{ marginTop: 16 }}>
                 <div
                   style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#737373',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
                     marginBottom: 8,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
                   }}
                 >
-                  Ports
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#737373',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                    }}
+                  >
+                    Ports
+                  </div>
+                  {canEditPorts && (
+                    <button
+                      onClick={() => setEditingPorts((e) => !e)}
+                      style={{
+                        fontSize: 10,
+                        color: editingPorts ? '#f59e0b' : '#525252',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    >
+                      {editingPorts ? 'Done' : 'Edit'}
+                    </button>
+                  )}
                 </div>
 
+                {/* Inputs */}
+                {inputs.length > 0 && (
+                  <div style={{ fontSize: 10, color: '#525252', marginBottom: 4 }}>Inputs</div>
+                )}
                 {inputs.map((port) => {
                   const connected = connectedEdges.filter(
                     (e) => e.target === nodeId && e.targetHandle === port.id,
@@ -333,39 +429,108 @@ export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'space-between',
+                        gap: 6,
                         padding: '4px 0',
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: portTypeColor(port.port_type ?? ''),
-                          }}
-                        />
-                        <span style={{ fontSize: 11, color: '#A3A3A3' }}>{port.label}</span>
-                        <span
-                          style={{
-                            fontSize: 8,
-                            color: '#525252',
-                            background: 'rgba(255,255,255,0.04)',
-                            borderRadius: 3,
-                            padding: '1px 4px',
-                          }}
-                        >
-                          in
-                        </span>
-                      </div>
-                      <span style={{ fontSize: 10, color: connected.length > 0 ? '#22c55e' : '#525252' }}>
-                        {connected.length > 0 ? `${connected.length} connected` : 'none'}
-                      </span>
+                      <div
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: portTypeColor(port.port_type ?? ''),
+                          flexShrink: 0,
+                        }}
+                      />
+                      {editingPorts ? (
+                        <>
+                          <input
+                            type="text"
+                            value={port.label}
+                            onChange={(e) => updatePort('input', port.id, { id: e.target.value, label: e.target.value })}
+                            style={{
+                              flex: 1,
+                              background: '#0F0F11',
+                              borderRadius: 4,
+                              padding: '4px 6px',
+                              fontSize: 11,
+                              color: '#E5E5E5',
+                              border: 'none',
+                              outline: 'none',
+                              fontFamily: "'JetBrains Mono', monospace",
+                              minWidth: 0,
+                            }}
+                          />
+                          <select
+                            value={port.port_type ?? 'text'}
+                            onChange={(e) => updatePort('input', port.id, { port_type: e.target.value })}
+                            style={{
+                              background: '#0F0F11',
+                              borderRadius: 4,
+                              padding: '4px 4px',
+                              fontSize: 10,
+                              color: portTypeColor(port.port_type ?? ''),
+                              border: 'none',
+                              outline: 'none',
+                              fontFamily: "'JetBrains Mono', monospace",
+                              appearance: 'none',
+                              width: 55,
+                            }}
+                          >
+                            {PORT_TYPES.map((t) => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => removePort('input', port.id)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              fontSize: 14,
+                              lineHeight: 1,
+                              padding: 0,
+                            }}
+                          >
+                            ×
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ fontSize: 11, color: '#A3A3A3', flex: 1 }}>{port.label}</span>
+                          <span style={{ fontSize: 9, color: portTypeColor(port.port_type ?? ''), opacity: 0.7 }}>
+                            {port.port_type}
+                          </span>
+                          <span style={{ fontSize: 10, color: connected.length > 0 ? '#22c55e' : '#525252' }}>
+                            {connected.length > 0 ? `${connected.length}` : '·'}
+                          </span>
+                        </>
+                      )}
                     </div>
                   )
                 })}
+                {editingPorts && (
+                  <button
+                    onClick={() => addPort('input')}
+                    style={{
+                      fontSize: 10,
+                      color: '#3b82f6',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '4px 0',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    + Add input
+                  </button>
+                )}
 
+                {/* Outputs */}
+                {outputs.length > 0 && (
+                  <div style={{ fontSize: 10, color: '#525252', marginTop: 8, marginBottom: 4 }}>Outputs</div>
+                )}
                 {outputs.map((port) => {
                   const connected = connectedEdges.filter(
                     (e) => e.source === nodeId && e.sourceHandle === port.id,
@@ -376,38 +541,103 @@ export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'space-between',
+                        gap: 6,
                         padding: '4px 0',
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: portTypeColor(port.port_type ?? ''),
-                          }}
-                        />
-                        <span style={{ fontSize: 11, color: '#A3A3A3' }}>{port.label}</span>
-                        <span
-                          style={{
-                            fontSize: 8,
-                            color: '#525252',
-                            background: 'rgba(255,255,255,0.04)',
-                            borderRadius: 3,
-                            padding: '1px 4px',
-                          }}
-                        >
-                          out
-                        </span>
-                      </div>
-                      <span style={{ fontSize: 10, color: connected.length > 0 ? '#22c55e' : '#525252' }}>
-                        {connected.length > 0 ? `${connected.length} connected` : 'none'}
-                      </span>
+                      <div
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: portTypeColor(port.port_type ?? ''),
+                          flexShrink: 0,
+                        }}
+                      />
+                      {editingPorts ? (
+                        <>
+                          <input
+                            type="text"
+                            value={port.label}
+                            onChange={(e) => updatePort('output', port.id, { id: e.target.value, label: e.target.value })}
+                            style={{
+                              flex: 1,
+                              background: '#0F0F11',
+                              borderRadius: 4,
+                              padding: '4px 6px',
+                              fontSize: 11,
+                              color: '#E5E5E5',
+                              border: 'none',
+                              outline: 'none',
+                              fontFamily: "'JetBrains Mono', monospace",
+                              minWidth: 0,
+                            }}
+                          />
+                          <select
+                            value={port.port_type ?? 'text'}
+                            onChange={(e) => updatePort('output', port.id, { port_type: e.target.value })}
+                            style={{
+                              background: '#0F0F11',
+                              borderRadius: 4,
+                              padding: '4px 4px',
+                              fontSize: 10,
+                              color: portTypeColor(port.port_type ?? ''),
+                              border: 'none',
+                              outline: 'none',
+                              fontFamily: "'JetBrains Mono', monospace",
+                              appearance: 'none',
+                              width: 55,
+                            }}
+                          >
+                            {PORT_TYPES.map((t) => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => removePort('output', port.id)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              fontSize: 14,
+                              lineHeight: 1,
+                              padding: 0,
+                            }}
+                          >
+                            ×
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ fontSize: 11, color: '#A3A3A3', flex: 1 }}>{port.label}</span>
+                          <span style={{ fontSize: 9, color: portTypeColor(port.port_type ?? ''), opacity: 0.7 }}>
+                            {port.port_type}
+                          </span>
+                          <span style={{ fontSize: 10, color: connected.length > 0 ? '#22c55e' : '#525252' }}>
+                            {connected.length > 0 ? `${connected.length}` : '·'}
+                          </span>
+                        </>
+                      )}
                     </div>
                   )
                 })}
+                {editingPorts && (
+                  <button
+                    onClick={() => addPort('output')}
+                    style={{
+                      fontSize: 10,
+                      color: '#22c55e',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '4px 0',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    + Add output
+                  </button>
+                )}
               </div>
             )}
           </>

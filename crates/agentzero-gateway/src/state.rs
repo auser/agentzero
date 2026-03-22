@@ -6,7 +6,7 @@ use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
 use agentzero_core::canvas::CanvasStore;
 use agentzero_core::{EventBus, MemoryStore};
-use agentzero_orchestrator::{AgentStore, JobStore, PresenceStore};
+use agentzero_orchestrator::{AgentStore, JobStore, PresenceStore, WorkflowStore};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
     collections::{HashMap, HashSet},
@@ -82,6 +82,8 @@ pub(crate) struct GatewayState {
     pub(crate) a2a_tasks: crate::a2a::A2aTaskStore,
     /// Canvas store for live canvas rendering.
     pub(crate) canvas_store: Option<Arc<CanvasStore>>,
+    /// Workflow store for visual workflow definitions.
+    pub(crate) workflow_store: Option<Arc<WorkflowStore>>,
 }
 
 impl GatewayState {
@@ -134,6 +136,7 @@ impl GatewayState {
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
             canvas_store: None,
+            workflow_store: None,
         }
     }
 
@@ -141,6 +144,13 @@ impl GatewayState {
     #[allow(dead_code)]
     pub(crate) fn with_canvas_store(mut self, store: Arc<CanvasStore>) -> Self {
         self.canvas_store = Some(store);
+        self
+    }
+
+    /// Set the workflow store for visual workflow definitions.
+    #[allow(dead_code)]
+    pub(crate) fn with_workflow_store(mut self, store: Arc<WorkflowStore>) -> Self {
+        self.workflow_store = Some(store);
         self
     }
 
@@ -358,6 +368,7 @@ impl GatewayState {
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
             canvas_store: None,
+            workflow_store: None,
         }
     }
 
@@ -404,6 +415,7 @@ impl GatewayState {
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
             canvas_store: None,
+            workflow_store: None,
         }
     }
 }

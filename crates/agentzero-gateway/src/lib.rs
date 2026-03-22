@@ -33,6 +33,7 @@ mod state;
 mod tests;
 mod token_store;
 mod util;
+mod workflow_dispatch;
 
 use agentzero_config::watcher::ConfigWatcher;
 use anyhow::Context;
@@ -167,6 +168,17 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
             }
             Err(e) => {
                 tracing::warn!(error = %e, "failed to open persistent agent store");
+            }
+        }
+
+        match agentzero_orchestrator::WorkflowStore::persistent(data_dir) {
+            Ok(store) => {
+                let count = store.count();
+                tracing::info!(workflows = count, "loaded persistent workflow store");
+                state = state.with_workflow_store(Arc::new(store));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to open persistent workflow store");
             }
         }
     }

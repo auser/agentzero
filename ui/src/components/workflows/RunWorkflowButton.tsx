@@ -15,10 +15,11 @@ interface RunResponse {
 }
 
 interface RunWorkflowButtonProps {
+  workflowId?: string | null
   disabled?: boolean
 }
 
-export function RunWorkflowButton({ disabled }: RunWorkflowButtonProps) {
+export function RunWorkflowButton({ workflowId, disabled }: RunWorkflowButtonProps) {
   const reactFlow = useReactFlow()
   const [running, setRunning] = useState(false)
   const [output, setOutput] = useState<string | null>(null)
@@ -30,49 +31,34 @@ export function RunWorkflowButton({ disabled }: RunWorkflowButtonProps) {
     setOutput(null)
     setError(null)
 
-    const nodes = reactFlow.getNodes()
-    const edges = reactFlow.getEdges()
-
-    // Build a summary message describing the workflow for the agent
-    const agentNodes = nodes.filter((n) =>
-      (n.data as Record<string, unknown>).nodeType === 'agent',
-    )
-    const channelNodes = nodes.filter((n) =>
-      (n.data as Record<string, unknown>).nodeType === 'channel',
-    )
-
-    const summary = [
-      `Execute workflow with ${nodes.length} nodes and ${edges.length} connections.`,
-      agentNodes.length > 0
-        ? `Agents: ${agentNodes.map((n) => (n.data as Record<string, unknown>).name).join(', ')}`
-        : null,
-      channelNodes.length > 0
-        ? `Channels: ${channelNodes.map((n) => (n.data as Record<string, unknown>).name).join(', ')}`
-        : null,
-    ]
-      .filter(Boolean)
-      .join(' ')
-
     try {
-      const result = await api.post<RunResponse>('/v1/runs', {
-        message: summary,
-        mode: 'steer',
-      })
-      setRunId(result.run_id)
+      if (workflowId) {
+        // Use the workflow execution engine
+        const result = await api.post<RunResponse>(
+          `/v1/workflows/${workflowId}/execute`,
+          { input: { message: 'Execute workflow' } },
+        )
+        setRunId(result.run_id)
 
-      // Poll for completion
-      const poll = async () => {
+        // Check if execution completed synchronously
+        if (result.status === 'completed') {
+          setOutput(result.response_text ?? result.message ?? 'Workflow completed')
+          setRunning(false)
+          return
+        }
+
+        // Poll for async completion
         for (let i = 0; i < 60; i++) {
           await new Promise((r) => setTimeout(r, 2000))
           try {
-            const status = await api.get<RunResponse>(`/v1/runs/${result.run_id}`)
+            const status = await api.get<RunResponse>(`/v1/workflows/runs/${result.run_id}`)
             if (status.status === 'completed' || status.status === 'success') {
-              setOutput(status.response_text ?? status.message ?? 'Completed')
+              setOutput(status.response_text ?? status.message ?? 'Workflow completed')
               setRunning(false)
               return
             }
             if (status.status === 'failed' || status.status === 'error') {
-              setError(status.message ?? 'Run failed')
+              setError(status.message ?? 'Workflow failed')
               setRunning(false)
               return
             }
@@ -80,15 +66,29 @@ export function RunWorkflowButton({ disabled }: RunWorkflowButtonProps) {
             // Network error — keep polling
           }
         }
-        setError('Run timed out after 2 minutes')
+        setError('Workflow timed out after 2 minutes')
+        setRunning(false)
+      } else {
+        // Fallback: submit as a plain run with workflow summary
+        const nodes = reactFlow.getNodes()
+        const agentNames = nodes
+          .filter((n) => (n.data as Record<string, unknown>).nodeType === 'agent')
+          .map((n) => (n.data as Record<string, unknown>).name)
+          .join(', ')
+
+        const result = await api.post<RunResponse>('/v1/runs', {
+          message: `Execute workflow with agents: ${agentNames || 'none'}`,
+          mode: 'steer',
+        })
+        setRunId(result.run_id)
+        setOutput(result.response_text ?? result.message ?? 'Run submitted')
         setRunning(false)
       }
-      poll()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to submit run')
+      setError(e instanceof Error ? e.message : 'Failed to execute workflow')
       setRunning(false)
     }
-  }, [reactFlow])
+  }, [reactFlow, workflowId])
 
   return (
     <>

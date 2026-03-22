@@ -17,6 +17,7 @@ pub mod loop_detection;
 pub mod presence;
 pub mod swarm;
 pub mod workflow_executor;
+pub mod workflow_store;
 
 pub use agent_router::{AgentDescriptor, AgentRouter};
 pub use agent_store::{AgentChannelConfig, AgentRecord, AgentStatus, AgentStore, AgentUpdate};
@@ -33,5 +34,7 @@ pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use presence::{PresenceRecord, PresenceStatus, PresenceStore};
 pub use swarm::{build_event_bus, build_swarm, build_swarm_with_presence};
 pub use workflow_executor::{
-    compile as compile_workflow, ExecutionPlan, ExecutionStep, NodeStatus, NodeType, WorkflowRun,
+    compile as compile_workflow, ExecutionPlan, ExecutionStep, NodeStatus, NodeType,
+    StepDispatcher, WorkflowRun,
 };
+pub use workflow_store::{WorkflowRecord, WorkflowStore, WorkflowUpdate};

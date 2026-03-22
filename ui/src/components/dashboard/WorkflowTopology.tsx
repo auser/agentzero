@@ -208,7 +208,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
 
   return (
     <div
-      className={fullHeight ? 'h-full flex flex-col' : readOnly ? 'h-full' : ''}
+      className={fullHeight ? 'h-full flex flex-col relative' : readOnly ? 'h-full relative' : 'relative'}
       onContextMenu={readOnly ? undefined : handleContextMenu}
     >
       <ReactFlow
@@ -240,6 +240,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
         defaultEdgeOptions={{ style: { strokeWidth: 2 }, selectable: !readOnly, focusable: !readOnly }}
         edgesFocusable={!readOnly}
         isValidConnection={isValidConnection}
+        proOptions={{ hideAttribution: true }}
         style={fullHeight ? { flex: 1 } : { height: readOnly ? '100%' : 400 }}
       >
         <Background />

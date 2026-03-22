@@ -2827,6 +2827,253 @@ pub(crate) async fn mcp_message(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Workflow CRUD + Execution: /v1/workflows
+// ---------------------------------------------------------------------------
+
+/// POST /v1/workflows — create a new workflow definition.
+pub(crate) async fn create_workflow(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(req): Json<Value>,
+) -> Result<(axum::http::StatusCode, Json<Value>), GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
+
+    let store = state
+        .workflow_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let name = req["name"]
+        .as_str()
+        .unwrap_or("Untitled Workflow")
+        .to_string();
+    let description = req["description"].as_str().unwrap_or("").to_string();
+    let nodes: Vec<Value> = req["nodes"].as_array().cloned().unwrap_or_default();
+    let edges: Vec<Value> = req["edges"].as_array().cloned().unwrap_or_default();
+
+    let record = agentzero_orchestrator::WorkflowRecord {
+        workflow_id: String::new(),
+        name,
+        description,
+        nodes,
+        edges,
+        created_at: 0,
+        updated_at: 0,
+    };
+
+    let created = store.create(record).map_err(|e| GatewayError::BadRequest {
+        message: e.to_string(),
+    })?;
+
+    Ok((
+        axum::http::StatusCode::CREATED,
+        Json(json!({
+            "workflow_id": created.workflow_id,
+            "name": created.name,
+            "description": created.description,
+            "nodes": created.nodes,
+            "edges": created.edges,
+            "created_at": created.created_at,
+            "updated_at": created.updated_at,
+        })),
+    ))
+}
+
+/// GET /v1/workflows — list all workflow definitions.
+pub(crate) async fn list_workflows(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let store = state
+        .workflow_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let workflows: Vec<Value> = store
+        .list()
+        .into_iter()
+        .map(|w| {
+            json!({
+                "workflow_id": w.workflow_id,
+                "name": w.name,
+                "description": w.description,
+                "node_count": w.nodes.len(),
+                "edge_count": w.edges.len(),
+                "created_at": w.created_at,
+                "updated_at": w.updated_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "workflows": workflows })))
+}
+
+/// GET /v1/workflows/:id — get a workflow definition.
+pub(crate) async fn get_workflow(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let store = state
+        .workflow_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let workflow = store.get(&id).ok_or(GatewayError::NotFound {
+        resource: format!("workflow/{id}"),
+    })?;
+
+    Ok(Json(json!({
+        "workflow_id": workflow.workflow_id,
+        "name": workflow.name,
+        "description": workflow.description,
+        "nodes": workflow.nodes,
+        "edges": workflow.edges,
+        "created_at": workflow.created_at,
+        "updated_at": workflow.updated_at,
+    })))
+}
+
+/// PATCH /v1/workflows/:id — update a workflow definition.
+pub(crate) async fn update_workflow(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
+
+    let store = state
+        .workflow_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let update = agentzero_orchestrator::WorkflowUpdate {
+        name: req["name"].as_str().map(String::from),
+        description: req["description"].as_str().map(String::from),
+        nodes: req["nodes"].as_array().cloned(),
+        edges: req["edges"].as_array().cloned(),
+    };
+
+    let updated = store
+        .update(&id, update)
+        .map_err(|e| GatewayError::BadRequest {
+            message: e.to_string(),
+        })?
+        .ok_or(GatewayError::NotFound {
+            resource: format!("workflow/{id}"),
+        })?;
+
+    Ok(Json(json!({
+        "workflow_id": updated.workflow_id,
+        "name": updated.name,
+        "description": updated.description,
+        "nodes": updated.nodes,
+        "edges": updated.edges,
+        "created_at": updated.created_at,
+        "updated_at": updated.updated_at,
+    })))
+}
+
+/// DELETE /v1/workflows/:id — delete a workflow definition.
+pub(crate) async fn delete_workflow(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
+
+    let store = state
+        .workflow_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let removed = store.delete(&id).map_err(|e| GatewayError::BadRequest {
+        message: e.to_string(),
+    })?;
+
+    if !removed {
+        return Err(GatewayError::NotFound {
+            resource: format!("workflow/{id}"),
+        });
+    }
+
+    Ok(Json(json!({ "deleted": true, "workflow_id": id })))
+}
+
+/// POST /v1/workflows/:id/execute — compile and execute a workflow graph.
+///
+/// Loads the workflow from the store, compiles its node/edge graph into an
+/// execution plan, and runs it through the `GatewayStepDispatcher`.
+pub(crate) async fn execute_workflow(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
+
+    let store = state
+        .workflow_store
+        .as_ref()
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    let workflow = store.get(&id).ok_or(GatewayError::NotFound {
+        resource: format!("workflow/{id}"),
+    })?;
+
+    // Compile the workflow graph into an execution plan.
+    let plan = agentzero_orchestrator::compile_workflow(&id, &workflow.nodes, &workflow.edges)
+        .map_err(|e| GatewayError::BadRequest {
+            message: e.to_string(),
+        })?;
+
+    let input = req["input"]["message"]
+        .as_str()
+        .or_else(|| req["input"].as_str())
+        .or_else(|| req["message"].as_str())
+        .unwrap_or("");
+
+    // Create the dispatcher from gateway state.
+    let dispatcher = crate::workflow_dispatch::GatewayStepDispatcher::from_state(&state)
+        .ok_or(GatewayError::AgentUnavailable)?;
+
+    // Execute the workflow synchronously.
+    let workflow_run =
+        agentzero_orchestrator::workflow_executor::execute(&plan, input, &dispatcher)
+            .await
+            .map_err(|e| GatewayError::AgentExecutionFailed {
+                message: e.to_string(),
+            })?;
+
+    // Serialize node statuses as a simple map.
+    let statuses: serde_json::Map<String, Value> = workflow_run
+        .node_statuses
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::to_value(v).unwrap_or(Value::Null)))
+        .collect();
+
+    // Serialize outputs: flatten (node_id, port) tuple keys into "node_id:port".
+    let outputs: serde_json::Map<String, Value> = workflow_run
+        .outputs
+        .iter()
+        .map(|((node_id, port), val)| (format!("{node_id}:{port}"), val.clone()))
+        .collect();
+
+    Ok(Json(json!({
+        "run_id": workflow_run.run_id,
+        "workflow_id": id,
+        "status": "completed",
+        "node_statuses": statuses,
+        "outputs": outputs,
+    })))
+}
+
 /// Extract fallback headers from the task-local, if a provider fallback occurred.
 ///
 /// Returns a list of `(header-name, value)` pairs that should be added to the

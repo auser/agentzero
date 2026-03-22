@@ -66,5 +66,5 @@ export function useWorkflowPersistence(
     }
   }, [setNodes, setEdges])
 
-  return { persistState, handleClear }
+  return { persistState, handleClear, workflowId: workflowIdRef.current }
 }
