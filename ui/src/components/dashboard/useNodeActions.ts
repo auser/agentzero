@@ -11,6 +11,8 @@ import {
   type Edge,
   type NodeChange,
   type EdgeChange,
+  type OnConnectStart,
+  type OnConnectEnd,
 } from '@xyflow/react'
 import { useCanvasDrop, dragPayloadToNode, type DragPayload } from '@/lib/hooks/useDragDrop'
 import { useConnectionValidation } from '@/lib/hooks/useConnectionValidation'
@@ -70,6 +72,51 @@ export function useNodeActions(
 
   const isValidConnection = useConnectionValidation()
 
+  // When dragging starts, mark all compatible target handles
+  const onConnectStart: OnConnectStart = useCallback((_event, params) => {
+    if (!params.nodeId || !params.handleId) return
+    const sourceNode = reactFlow.getNode(params.nodeId)
+    if (!sourceNode) return
+
+    const sourceDef = getDefinition((sourceNode.data as Record<string, unknown>).nodeType as string)
+    const isSource = params.handleType === 'source'
+    const sourcePort = isSource
+      ? sourceDef?.outputs?.find((p) => p.id === params.handleId)
+      : sourceDef?.inputs?.find((p) => p.id === params.handleId)
+
+    if (!sourcePort) return
+    const dragType = sourcePort.port_type
+
+    // Find all target handles in the DOM and mark compatible ones
+    const allNodes = reactFlow.getNodes()
+    for (const node of allNodes) {
+      if (node.id === params.nodeId) continue
+      const def = getDefinition((node.data as Record<string, unknown>).nodeType as string)
+      const ports = isSource ? (def?.inputs ?? []) : (def?.outputs ?? [])
+      for (const port of ports) {
+        if (port.port_type === dragType) {
+          // Find the DOM handle and mark it
+          const handleEl = document.querySelector(
+            `.react-flow__handle[data-handleid="${port.id}"][data-nodeid="${node.id}"]`
+          )
+          if (handleEl) {
+            handleEl.setAttribute('data-compatible', 'true')
+          }
+        }
+      }
+    }
+    // Add a class to the flow container so CSS can dim incompatible handles
+    document.querySelector('.react-flow')?.classList.add('connecting-active')
+  }, [reactFlow])
+
+  const onConnectEnd: OnConnectEnd = useCallback(() => {
+    // Remove all compatible markers
+    document.querySelectorAll('[data-compatible]').forEach((el) => {
+      el.removeAttribute('data-compatible')
+    })
+    document.querySelector('.react-flow')?.classList.remove('connecting-active')
+  }, [])
+
   return {
     handleNodesChange,
     handleEdgesChange,
@@ -78,5 +125,7 @@ export function useNodeActions(
     handleDrop,
     handleCmdKSelect,
     isValidConnection,
+    onConnectStart,
+    onConnectEnd,
   }
 }

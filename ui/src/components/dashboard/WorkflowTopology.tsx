@@ -3,7 +3,7 @@
  * Supports drag-drop from palette, port-to-port connections,
  * Cmd+K command palette, and localStorage persistence.
  */
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import {
   ReactFlow,
   Background,
@@ -19,6 +19,7 @@ import '@xyflow/react/dist/style.css'
 
 import { AgentNode } from '@/components/workflows/AgentNode'
 import { ProviderNode } from '@/components/workflows/ProviderNode'
+import { GroupNode } from '@/components/workflows/GroupNode'
 import { LabeledEdge } from '@/components/workflows/LabeledEdge'
 import { NodeDetailPanel } from '@/components/workflows/NodeDetailPanel'
 import { CommandPalette } from '@/components/workflows/CommandPalette'
@@ -41,11 +42,13 @@ const nodeTypes = {
   agent: AgentNode,
   tool: AgentNode,
   channel: AgentNode,
+  human_input: AgentNode,
   schedule: AgentNode,
   gate: AgentNode,
   subagent: AgentNode,
   role: AgentNode,
   provider: ProviderNode,
+  group: GroupNode,
 }
 
 const edgeTypes = {
@@ -80,9 +83,11 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     handleDrop,
     handleCmdKSelect,
     isValidConnection,
+    onConnectStart,
+    onConnectEnd,
   } = useNodeActions(setNodes, setEdges, onNodesChange, onEdgesChange, persistWithHistory)
 
-  const handleNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+  const handleNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
     setSelectedNodeId(node.id)
   }, [])
 
@@ -94,6 +99,112 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     e.preventDefault()
     setContextMenu({ x: e.clientX, y: e.clientY })
   }, [])
+
+  // ── Group selected nodes (Ctrl/Cmd+G) ──
+  const handleGroupSelected = useCallback(() => {
+    const selected = nodes.filter((n) => n.selected && n.type !== 'group')
+    if (selected.length < 2) return
+
+    // Compute bounding box of selected nodes
+    const PADDING = 40
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const n of selected) {
+      const x = n.position.x
+      const y = n.position.y
+      const w = (n.measured?.width ?? n.width ?? 260) as number
+      const h = (n.measured?.height ?? n.height ?? 200) as number
+      if (x < minX) minX = x
+      if (y < minY) minY = y
+      if (x + w > maxX) maxX = x + w
+      if (y + h > maxY) maxY = y + h
+    }
+
+    const groupId = `group_${Date.now()}`
+    const groupNode: Node = {
+      id: groupId,
+      type: 'group',
+      position: { x: minX - PADDING, y: minY - PADDING },
+      style: {
+        width: maxX - minX + PADDING * 2,
+        height: maxY - minY + PADDING * 2,
+      },
+      data: { name: 'Group', nodeType: 'group', collapsed: false },
+    }
+
+    // Re-parent selected nodes: position becomes relative to group
+    setNodes((nds) => {
+      const updated = nds.map((n) => {
+        if (selected.find((s) => s.id === n.id)) {
+          return {
+            ...n,
+            parentId: groupId,
+            position: {
+              x: n.position.x - (minX - PADDING),
+              y: n.position.y - (minY - PADDING),
+            },
+            selected: false,
+          }
+        }
+        return n
+      })
+      // Insert group node BEFORE its children (ReactFlow requires parent first)
+      return [groupNode, ...updated]
+    })
+    persistWithHistory()
+  }, [nodes, setNodes, persistWithHistory])
+
+  // ── Ungroup (Ctrl/Cmd+Shift+G) ──
+  const handleUngroupSelected = useCallback(() => {
+    const selectedGroups = nodes.filter((n) => n.selected && n.type === 'group')
+    if (selectedGroups.length === 0) return
+
+    const groupIds = new Set(selectedGroups.map((g) => g.id))
+
+    setNodes((nds) => {
+      const updated = nds
+        .filter((n) => !groupIds.has(n.id)) // Remove group nodes
+        .map((n) => {
+          if (n.parentId && groupIds.has(n.parentId)) {
+            // Find the group to convert relative position back to absolute
+            const group = selectedGroups.find((g) => g.id === n.parentId)
+            const gx = group?.position.x ?? 0
+            const gy = group?.position.y ?? 0
+            return {
+              ...n,
+              parentId: undefined,
+              position: {
+                x: n.position.x + gx,
+                y: n.position.y + gy,
+              },
+            }
+          }
+          return n
+        })
+      return updated
+    })
+    persistWithHistory()
+  }, [nodes, setNodes, persistWithHistory])
+
+  // Keyboard shortcuts for group/ungroup
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (readOnly) return
+    const mod = e.metaKey || e.ctrlKey
+    if (mod && e.key === 'g' && !e.shiftKey) {
+      e.preventDefault()
+      handleGroupSelected()
+    } else if (mod && e.key === 'g' && e.shiftKey) {
+      e.preventDefault()
+      handleUngroupSelected()
+    }
+  }, [readOnly, handleGroupSelected, handleUngroupSelected])
+
+  // Keyboard listener for group/ungroup
+  useEffect(() => {
+    if (readOnly) return
+    const handler = (e: KeyboardEvent) => handleKeyDown(e)
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [readOnly, handleKeyDown])
 
   return (
     <div
@@ -108,7 +219,9 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
         onNodesChange={readOnly ? undefined : handleNodesChange}
         onEdgesChange={readOnly ? undefined : handleEdgesChange}
         onConnect={readOnly ? undefined : handleConnect}
-        onNodeClick={readOnly ? undefined : handleNodeClick}
+        onConnectStart={readOnly ? undefined : onConnectStart}
+        onConnectEnd={readOnly ? undefined : onConnectEnd}
+        onNodeDoubleClick={readOnly ? undefined : handleNodeDoubleClick}
         onPaneClick={readOnly ? undefined : handlePaneClick}
         onDrop={readOnly ? undefined : handleDrop}
         onDragOver={readOnly ? undefined : handleDragOver}
@@ -118,6 +231,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
         elementsSelectable={!readOnly}
         nodesDraggable={!readOnly}
         nodesConnectable={!readOnly}
+        nodesFocusable
         selectNodesOnDrag={false}
         panOnDrag={!readOnly}
         zoomOnScroll={!readOnly}

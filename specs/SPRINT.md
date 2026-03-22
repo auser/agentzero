@@ -1953,6 +1953,69 @@ Add history management for node/edge operations.
 
 ---
 
+## Sprint 70: Workflow Execution Engine
+
+**Goal:** Build a graph traversal engine that actually executes visual workflows — topological sort, step-by-step agent/tool dispatch, conditional routing through gates, and real-time status tracking.
+
+**Architecture:** New `workflow_executor.rs` module in `agentzero-orchestrator`. Reuses existing `JobStore`, `EventBus`, `run_agent_once`, `Tool::execute()`, and fan-out infrastructure.
+
+---
+
+### Phase A: Core Types + Compiler (HIGH)
+
+Parse ReactFlow nodes/edges into an executable plan with topological ordering.
+
+- [ ] **`WorkflowExecutor` types** — `crates/agentzero-orchestrator/src/workflow_executor.rs`: `ExecutionPlan`, `ExecutionStep`, `NodeType` enum, `WorkflowRun`, `ResolvedNodeConfig`
+- [ ] **`compile()`** — Validate graph (detect cycles), classify nodes (trigger/config/executable/sink), resolve provider/role config edges into connected agent configs, topological sort into parallelizable levels
+- [ ] **Edge mapping** — `(source_node, source_port) -> Vec<(target_node, target_port)>` for data routing between steps
+- [ ] **Tests** — compile linear graph, compile parallel graph, detect cycle, resolve provider config, empty graph
+
+### Phase B: Execution Engine (HIGH)
+
+Walk the topological levels, dispatch each node type, collect outputs, route data through edges.
+
+- [ ] **`execute()`** — Create parent `JobRecord` for workflow run. For each level: collect inputs from upstream outputs via edge map, dispatch based on node type, store outputs keyed by `(node_id, port_id)`, publish status events
+- [ ] **Agent execution** — Build `RunAgentRequest` from node fields (system_prompt, provider, model) + resolved config. `input` port → `UserMessage.text`, `context` port → system prompt injection
+- [ ] **Tool execution** — Look up tool by `tool_name`, call `Tool::execute()` with input port JSON
+- [ ] **Channel sink** — Call `channel.send()` with `send` port payload
+- [ ] **Parallel levels** — Nodes at the same topological level with no inter-dependencies run concurrently via `tokio::JoinSet`
+- [ ] **Gate nodes** — Route to `approved` or `denied` output port; skip downstream nodes on inactive port
+- [ ] **Provider/Role resolution** — Fold config node values into connected agent configs during compile, not at runtime
+- [ ] **Tests** — execute single agent, execute agent chain, parallel fan-out, gate routing, tool invocation
+
+### Phase C: Gateway API (MEDIUM)
+
+REST endpoints for executing and monitoring workflow runs.
+
+- [ ] **`POST /v1/workflows/:id/execute`** — Load workflow, compile, execute. Returns `{ run_id, status: "running" }` (202 Accepted)
+- [ ] **`GET /v1/workflows/runs/:run_id`** — Workflow run status with per-node breakdown
+- [ ] **`DELETE /v1/workflows/runs/:run_id`** — Cancel workflow run (cascade-cancel child runs)
+- [ ] **SSE stream** — `GET /v1/workflows/runs/:run_id/stream` multiplexes child-run events
+- [ ] **Extend `EventKind`** — Add `NodeStarted`, `NodeCompleted`, `NodeSuspended`, `NodeSkipped` variants
+
+### Phase D: UI Integration (MEDIUM)
+
+Wire the Run button to the real execution endpoint and show live node status.
+
+- [ ] **Update `RunWorkflowButton`** — Switch from `POST /v1/runs` (text summary) to `POST /v1/workflows/:id/execute`
+- [ ] **Live node status** — Poll or SSE `GET /v1/workflows/runs/:run_id` and update node `status` field in ReactFlow. Running=pulse blue, completed=green, failed=red, skipped=gray
+- [ ] **Output routing display** — Show output values on edges as they flow through the graph
+
+---
+
+### Acceptance Criteria (Sprint 70)
+
+- [ ] `compile()` produces correct topological ordering for linear, parallel, and diamond graphs
+- [ ] Agent nodes execute with correct provider/model from connected Provider nodes
+- [ ] Tool nodes invoke the named tool directly
+- [ ] Gate nodes conditionally route to approved/denied paths
+- [ ] Workflow runs tracked in JobStore with parent-child relationship
+- [ ] REST API returns real-time per-node status
+- [ ] Canvas shows live execution status on nodes during a run
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)
