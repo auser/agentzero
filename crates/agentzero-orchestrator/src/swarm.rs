@@ -465,12 +465,22 @@ fn register_a2a_endpoints(
             continue;
         }
 
-        let endpoint = A2aAgentEndpoint::new(
+        let endpoint = match A2aAgentEndpoint::new(
             agent_id.clone(),
             agent_cfg.url.clone(),
             agent_cfg.auth_token.clone(),
             agent_cfg.timeout_secs,
-        );
+        ) {
+            Ok(ep) => ep,
+            Err(e) => {
+                tracing::warn!(
+                    agent = %agent_id,
+                    error = %e,
+                    "skipping A2A agent with invalid URL"
+                );
+                continue;
+            }
+        };
 
         tracing::info!(
             agent = %agent_id,
@@ -493,7 +503,11 @@ mod tests {
         agents: HashMap<String, A2aAgentConfig>,
     ) -> AgentZeroConfig {
         AgentZeroConfig {
-            a2a: A2aConfig { enabled, agents },
+            a2a: A2aConfig {
+                enabled,
+                agents,
+                bearer_token: None,
+            },
             ..Default::default()
         }
     }

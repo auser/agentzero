@@ -12,6 +12,19 @@ use async_trait::async_trait;
 use std::time::Duration;
 use tracing::{info, warn};
 
+/// Information about a provider fallback that occurred during a request.
+#[derive(Debug, Clone)]
+pub struct FallbackInfo {
+    pub original_provider: String,
+    pub actual_provider: String,
+}
+
+tokio::task_local! {
+    /// Task-local storage for provider fallback information.
+    /// Set by FallbackProvider when a cross-provider fallback occurs.
+    pub static FALLBACK_INFO: std::cell::RefCell<Option<FallbackInfo>>;
+}
+
 /// Default cooldown duration when a 429 is received and no Retry-After header
 /// is available (parsed from the error message).
 const DEFAULT_COOLDOWN_SECS: u64 = 10;
@@ -68,6 +81,12 @@ impl FallbackProvider {
 
 #[async_trait]
 impl Provider for FallbackProvider {
+    fn supports_streaming(&self) -> bool {
+        self.providers
+            .first()
+            .is_some_and(|(_, p)| p.supports_streaming())
+    }
+
     async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult> {
         let mut last_err = None;
         for (i, (label, provider)) in self.providers.iter().enumerate() {
@@ -78,6 +97,14 @@ impl Provider for FallbackProvider {
             match provider.complete(prompt).await {
                 Ok(result) => {
                     self.cooldowns[i].clear();
+                    if i > 0 {
+                        let _ = FALLBACK_INFO.try_with(|cell| {
+                            *cell.borrow_mut() = Some(FallbackInfo {
+                                original_provider: self.providers[0].0.clone(),
+                                actual_provider: label.clone(),
+                            });
+                        });
+                    }
                     return Ok(result);
                 }
                 Err(e) => {
@@ -110,6 +137,14 @@ impl Provider for FallbackProvider {
             match provider.complete_with_reasoning(prompt, reasoning).await {
                 Ok(result) => {
                     self.cooldowns[i].clear();
+                    if i > 0 {
+                        let _ = FALLBACK_INFO.try_with(|cell| {
+                            *cell.borrow_mut() = Some(FallbackInfo {
+                                original_provider: self.providers[0].0.clone(),
+                                actual_provider: label.clone(),
+                            });
+                        });
+                    }
                     return Ok(result);
                 }
                 Err(e) => {
@@ -211,6 +246,14 @@ impl Provider for FallbackProvider {
             {
                 Ok(result) => {
                     self.cooldowns[i].clear();
+                    if i > 0 {
+                        let _ = FALLBACK_INFO.try_with(|cell| {
+                            *cell.borrow_mut() = Some(FallbackInfo {
+                                original_provider: self.providers[0].0.clone(),
+                                actual_provider: label.clone(),
+                            });
+                        });
+                    }
                     return Ok(result);
                 }
                 Err(e) => {
@@ -501,6 +544,49 @@ mod tests {
         assert_eq!(result.output_text, "ok");
         assert_eq!(rl_count.load(Ordering::Relaxed), 1); // not called again
         assert_eq!(ok_count.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn fallback_info_set_when_fallback_occurs() {
+        let (primary, _) = FailingProvider::new("primary");
+        let (secondary, _) = SucceedingProvider::new("fallback-ok");
+
+        let fb = FallbackProvider::new(vec![
+            ("primary".into(), Box::new(primary)),
+            ("secondary".into(), Box::new(secondary)),
+        ]);
+
+        FALLBACK_INFO
+            .scope(std::cell::RefCell::new(None), async {
+                fb.complete("hello").await.expect("fallback should succeed");
+                let info = FALLBACK_INFO.with(|cell| cell.borrow().clone());
+                let info = info.expect("FALLBACK_INFO should be set after fallback");
+                assert_eq!(info.original_provider, "primary");
+                assert_eq!(info.actual_provider, "secondary");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn fallback_info_not_set_when_primary_succeeds() {
+        let (primary, _) = SucceedingProvider::new("primary-ok");
+        let (secondary, _) = SucceedingProvider::new("secondary-ok");
+
+        let fb = FallbackProvider::new(vec![
+            ("primary".into(), Box::new(primary)),
+            ("secondary".into(), Box::new(secondary)),
+        ]);
+
+        FALLBACK_INFO
+            .scope(std::cell::RefCell::new(None), async {
+                fb.complete("hello").await.expect("primary should succeed");
+                let info = FALLBACK_INFO.with(|cell| cell.borrow().clone());
+                assert!(
+                    info.is_none(),
+                    "FALLBACK_INFO should not be set when primary succeeds"
+                );
+            })
+            .await;
     }
 
     #[tokio::test]

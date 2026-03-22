@@ -10,6 +10,7 @@ import { api } from '@/lib/api/client'
 import { Bot, Wrench, Radio, Search } from 'lucide-react'
 import type { Port } from '@auser/workflow-graph-web'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
+import { getDefinition } from '@/lib/node-definitions'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
 
 interface ToolInfo {
@@ -31,8 +32,7 @@ interface PaletteItem {
   category: string
   icon: React.ReactNode
   detail?: string
-  textClass: string
-  bgClass: string
+  color: string
   data: DragNodeData
 }
 
@@ -77,8 +77,7 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
         category: 'Action',
         icon: <Plus className="h-3.5 w-3.5" />,
         detail: 'Add a new agent to your workspace',
-        textClass: 'text-emerald-500',
-        bgClass: 'bg-emerald-500/15',
+        color: '#22c55e',
         data: {
           nodeType: 'agent', id: '', name: '',
           metadata: {}, ports: portsForNodeType('agent'),
@@ -93,8 +92,7 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
         category: 'Agent',
         icon: <Bot className="h-3.5 w-3.5" />,
         detail: a.model,
-        textClass: 'text-blue-500',
-        bgClass: 'bg-blue-500/15',
+        color: getDefinition('agent')?.headerColor ?? '#3b82f6',
         data: {
           nodeType: 'agent', id: a.agent_id, name: a.name,
           metadata: { node_type: 'agent', model: a.model, description: a.description, status: a.status },
@@ -110,8 +108,7 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
         category: 'Tool',
         icon: <Wrench className="h-3.5 w-3.5" />,
         detail: t.description?.slice(0, 40),
-        textClass: 'text-violet-500',
-        bgClass: 'bg-violet-500/15',
+        color: getDefinition('tool')?.headerColor ?? '#8b5cf6',
         data: {
           nodeType: 'tool', id: `tool-${t.name}`, name: t.name,
           metadata: { node_type: 'tool', tool_name: t.name, description: t.description },
@@ -127,8 +124,7 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
         category: 'Channel',
         icon: <Radio className="h-3.5 w-3.5" />,
         detail: cfg.enabled !== false ? 'connected' : 'offline',
-        textClass: 'text-pink-500',
-        bgClass: 'bg-pink-500/15',
+        color: getDefinition('channel')?.headerColor ?? '#ec4899',
         data: {
           nodeType: 'channel', id: `channel-${name}`, name,
           metadata: { node_type: 'channel', channel_type: name, connected: cfg.enabled !== false },
@@ -252,14 +248,17 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
                 }}
                 onMouseEnter={() => setSelectedIndex(i)}
               >
-                <span className={item.textClass}>{item.icon}</span>
+                <span style={{ color: item.color }}>{item.icon}</span>
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-medium">{item.name}</span>
                   {item.detail && (
                     <span className="text-xs text-muted-foreground/50 ml-2 truncate">{item.detail}</span>
                   )}
                 </div>
-                <span className={`text-[9px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded ${item.textClass} ${item.bgClass}`}>
+                <span
+                  className="text-[9px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded"
+                  style={{ color: item.color, backgroundColor: `${item.color}26` }}
+                >
                   {item.category}
                 </span>
               </button>

@@ -11,11 +11,11 @@ import {
   WorkflowGraphComponent,
   type WorkflowGraphHandle,
   type Job,
-  type NodeDefinition,
   darkTheme,
 } from '@auser/workflow-graph-react'
 import { topologyApi } from '@/lib/api/topology'
 import { topologyToWorkflow } from '@/components/workflows/WorkflowCanvas'
+import { ALL_NODE_DEFINITIONS } from '@/lib/node-definitions'
 import { Button } from '@/components/ui/button'
 import { Maximize2, RotateCcw, Network, Settings } from 'lucide-react'
 import type { DragNodeData } from '@/components/workflows/DraggablePalette'
@@ -23,6 +23,7 @@ import { KeySelector, type PendingConnection } from '@/components/workflows/KeyS
 import { CommandPalette, useCommandPalette } from '@/components/workflows/CommandPalette'
 import { CreateAgentDialog } from '@/components/workflows/CreateAgentDialog'
 import { ConfigPanel } from '@/components/workflows/ConfigPanel'
+import { OverlayLayer } from '@/components/workflows/OverlayLayer'
 import { useWorkflowStore } from '@/store/workflowStore'
 
 interface WorkflowTopologyProps {
@@ -45,68 +46,10 @@ const THEME = {
   },
 }
 
-const NODE_TYPES: NodeDefinition[] = [
-  {
-    type: 'agent',
-    label: 'Agent',
-    icon: '🤖',
-    headerColor: '#3b82f6',
-    category: 'core',
-    fields: [
-      { key: 'model', type: 'select', label: 'Model', options: ['claude-3', 'gpt-4', 'llama-3'] },
-      { key: 'system_prompt', type: 'textarea', label: 'System Prompt' },
-    ],
-  },
-  {
-    type: 'tool',
-    label: 'Tool',
-    icon: '🔧',
-    headerColor: '#8b5cf6',
-    category: 'core',
-    fields: [
-      { key: 'tool_name', type: 'text', label: 'Tool' },
-    ],
-  },
-  {
-    type: 'subagent',
-    label: 'Sub-Agent',
-    icon: '🔀',
-    headerColor: '#22c55e',
-    category: 'core',
-    fields: [],
-  },
-  {
-    type: 'channel',
-    label: 'Channel',
-    icon: '📡',
-    headerColor: '#ec4899',
-    category: 'integration',
-    fields: [
-      { key: 'channel_type', type: 'select', label: 'Type', options: ['telegram', 'discord', 'slack', 'email', 'webhook'] },
-    ],
-  },
-  {
-    type: 'schedule',
-    label: 'Schedule',
-    icon: '⏰',
-    headerColor: '#eab308',
-    category: 'trigger',
-    fields: [
-      { key: 'cron', type: 'text', label: 'Cron' },
-    ],
-  },
-  {
-    type: 'gate',
-    label: 'Approval',
-    icon: '🛡️',
-    headerColor: '#ef4444',
-    category: 'control',
-    fields: [],
-  },
-]
 
 export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) {
   const graphRef = useRef<WorkflowGraphHandle>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const [dragOver, setDragOver] = useState(false)
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null)
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
@@ -342,6 +285,7 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
 
   return (
     <div
+      ref={containerRef}
       className={containerClasses}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -413,7 +357,7 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         style={fullHeight ? undefined : { height: 320 }}
         theme={THEME}
         persist={{ key: 'agentzero-workflow-graph' }}
-        nodeTypes={NODE_TYPES}
+        nodeTypes={ALL_NODE_DEFINITIONS}
         autoResize
         onNodeClick={handleNodeClick}
         onNodeDragEnd={handleNodeDragEnd}
@@ -426,6 +370,8 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
         }
       />
 
+      {/* LangFlow-style field overlays positioned over canvas nodes */}
+      <OverlayLayer graphRef={graphRef} containerRef={containerRef} />
 
       {pendingConnection && (
         <KeySelector

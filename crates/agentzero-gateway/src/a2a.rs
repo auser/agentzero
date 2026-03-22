@@ -11,7 +11,8 @@ use axum::http::HeaderMap;
 use axum::Json;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// In-memory task store for A2A tasks.
 /// Production deployments should use the JobStore, but this provides
@@ -28,19 +29,12 @@ impl A2aTaskStore {
         }
     }
 
-    fn get(&self, id: &str) -> Option<Task> {
-        self.tasks
-            .lock()
-            .expect("a2a task store lock")
-            .get(id)
-            .cloned()
+    async fn get(&self, id: &str) -> Option<Task> {
+        self.tasks.lock().await.get(id).cloned()
     }
 
-    fn upsert(&self, task: Task) {
-        self.tasks
-            .lock()
-            .expect("a2a task store lock")
-            .insert(task.id.clone(), task);
+    async fn upsert(&self, task: Task) {
+        self.tasks.lock().await.insert(task.id.clone(), task);
     }
 }
 
@@ -66,7 +60,7 @@ pub(crate) async fn agent_card(State(state): State<GatewayState>) -> Json<AgentC
     Json(AgentCard {
         name: state.service_name.as_ref().clone(),
         description: Some("AgentZero AI agent".to_string()),
-        url: String::new(), // Filled by the caller based on request URL
+        url: "http://localhost".to_string(),
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
         capabilities: AgentCapabilities {
             streaming: false,
@@ -92,9 +86,9 @@ pub(crate) async fn a2a_rpc(
     let params = body.get("params").cloned().unwrap_or(json!({}));
 
     let result = match method {
-        "tasks/send" => handle_tasks_send(&state, &params).await,
-        "tasks/get" => handle_tasks_get(&state, &params),
-        "tasks/cancel" => handle_tasks_cancel(&state, &params),
+        "tasks/send" | "message/send" => handle_tasks_send(&state, &params).await,
+        "tasks/get" => handle_tasks_get(&state, &params).await,
+        "tasks/cancel" => handle_tasks_cancel(&state, &params).await,
         _ => Err(json!({
             "code": -32601,
             "message": format!("method not found: {method}"),
@@ -182,12 +176,12 @@ async fn handle_tasks_send(state: &GatewayState, params: &Value) -> Result<Value
     };
 
     // Store the task.
-    state.a2a_tasks.upsert(task.clone());
+    state.a2a_tasks.upsert(task.clone()).await;
 
     Ok(serde_json::to_value(task).unwrap_or(json!({})))
 }
 
-fn handle_tasks_get(state: &GatewayState, params: &Value) -> Result<Value, Value> {
+async fn handle_tasks_get(state: &GatewayState, params: &Value) -> Result<Value, Value> {
     let get_params: TaskGetParams = serde_json::from_value(params.clone()).map_err(|e| {
         json!({
             "code": -32602,
@@ -195,7 +189,7 @@ fn handle_tasks_get(state: &GatewayState, params: &Value) -> Result<Value, Value
         })
     })?;
 
-    match state.a2a_tasks.get(&get_params.id) {
+    match state.a2a_tasks.get(&get_params.id).await {
         Some(mut task) => {
             if let Some(max_len) = get_params.history_length {
                 let len = task.history.len();
@@ -212,7 +206,7 @@ fn handle_tasks_get(state: &GatewayState, params: &Value) -> Result<Value, Value
     }
 }
 
-fn handle_tasks_cancel(state: &GatewayState, params: &Value) -> Result<Value, Value> {
+async fn handle_tasks_cancel(state: &GatewayState, params: &Value) -> Result<Value, Value> {
     let cancel_params: TaskCancelParams = serde_json::from_value(params.clone()).map_err(|e| {
         json!({
             "code": -32602,
@@ -220,7 +214,7 @@ fn handle_tasks_cancel(state: &GatewayState, params: &Value) -> Result<Value, Va
         })
     })?;
 
-    let mut tasks = state.a2a_tasks.tasks.lock().expect("a2a lock");
+    let mut tasks = state.a2a_tasks.tasks.lock().await;
     match tasks.get_mut(&cancel_params.id) {
         Some(task) => {
             task.status = TaskStatus {
@@ -240,8 +234,8 @@ fn handle_tasks_cancel(state: &GatewayState, params: &Value) -> Result<Value, Va
 mod tests {
     use super::*;
 
-    #[test]
-    fn a2a_task_store_upsert_and_get() {
+    #[tokio::test]
+    async fn a2a_task_store_upsert_and_get() {
         let store = A2aTaskStore::new();
         let task = Task {
             id: "t1".to_string(),
@@ -252,15 +246,15 @@ mod tests {
             history: vec![],
             artifacts: vec![],
         };
-        store.upsert(task);
-        let retrieved = store.get("t1").expect("should find task");
+        store.upsert(task).await;
+        let retrieved = store.get("t1").await.expect("should find task");
         assert_eq!(retrieved.id, "t1");
         assert_eq!(retrieved.status.state, TaskState::Completed);
     }
 
-    #[test]
-    fn a2a_task_store_get_missing_returns_none() {
+    #[tokio::test]
+    async fn a2a_task_store_get_missing_returns_none() {
         let store = A2aTaskStore::new();
-        assert!(store.get("nonexistent").is_none());
+        assert!(store.get("nonexistent").await.is_none());
     }
 }

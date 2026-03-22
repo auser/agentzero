@@ -110,7 +110,8 @@ pub fn tool_tier(name: &str) -> ToolTier {
         | "proxy_config"
         | "model_routing_config"
         | "docx_read"
-        | "html_extract" => ToolTier::Extended,
+        | "html_extract"
+        | "a2a" => ToolTier::Extended,
 
         // --- Full tier: everything else ---
         _ => ToolTier::Full,
@@ -141,6 +142,8 @@ pub mod task_plan;
 pub mod write_file;
 
 // ── Extended tier modules (tools-extended or tools-full) ─────────────
+#[cfg(feature = "tools-extended")]
+pub mod a2a;
 #[cfg(feature = "tools-extended")]
 pub mod agents_ipc;
 #[cfg(feature = "tools-extended")]
@@ -229,6 +232,8 @@ pub use task_plan::TaskPlanTool;
 pub use write_file::{WriteFilePolicy, WriteFileTool};
 
 // ── Extended tier re-exports ─────────────────────────────────────────
+#[cfg(feature = "tools-extended")]
+pub use a2a::A2aTool;
 #[cfg(feature = "tools-extended")]
 pub use agents_ipc::AgentsIpcTool;
 #[cfg(feature = "tools-extended")]
@@ -360,6 +365,8 @@ pub struct ToolSecurityPolicy {
     pub wasm_global_plugin_dir: Option<PathBuf>,
     pub wasm_project_plugin_dir: Option<PathBuf>,
     pub wasm_dev_plugin_dir: Option<PathBuf>,
+    /// Enable A2A (Agent-to-Agent) protocol tool for dynamic agent discovery and messaging.
+    pub enable_a2a_tool: bool,
     /// Enable Claude Code delegation tool (spawns `claude` CLI as subprocess).
     pub enable_claude_code: bool,
     /// Enable CLI harness tools (Codex, Gemini, OpenCode CLI delegation).
@@ -438,6 +445,7 @@ impl ToolSecurityPolicy {
             wasm_global_plugin_dir: None,
             wasm_project_plugin_dir: None,
             wasm_dev_plugin_dir: None,
+            enable_a2a_tool: false,
             enable_claude_code: false,
             enable_cli_harness: false,
         }
@@ -516,6 +524,7 @@ mod tests {
             "cli_discovery",
             "proxy_config",
             "model_routing_config",
+            "a2a",
         ];
         for name in &extended_tools {
             assert_eq!(

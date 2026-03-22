@@ -427,6 +427,69 @@ pub struct StreamChunk {
 /// Convenience alias for the sender half of a streaming channel.
 pub type StreamSink = tokio::sync::mpsc::UnboundedSender<StreamChunk>;
 
+/// Accumulates incremental tool call deltas from streaming responses into
+/// complete `ToolUseRequest` objects. Shared across provider implementations
+/// to avoid duplicating accumulation logic.
+#[derive(Debug, Default)]
+pub struct StreamToolCallAccumulator {
+    /// In-flight tool calls: `(index, id, name, arguments_json_buffer)`.
+    pending: Vec<(usize, String, String, String)>,
+}
+
+impl StreamToolCallAccumulator {
+    /// Create a new empty accumulator.
+    pub fn new() -> Self {
+        Self {
+            pending: Vec::new(),
+        }
+    }
+
+    /// Process a streaming tool call delta. Call this for each
+    /// `ToolCallDelta` received during streaming.
+    pub fn process_delta(&mut self, delta: &ToolCallDelta) {
+        // Find or create the accumulator entry for this index.
+        if let Some(entry) = self
+            .pending
+            .iter_mut()
+            .find(|(idx, _, _, _)| *idx == delta.index)
+        {
+            // Update id/name if provided (first chunk for this index).
+            if let Some(ref id) = delta.id {
+                entry.1 = id.clone();
+            }
+            if let Some(ref name) = delta.name {
+                entry.2 = name.clone();
+            }
+            entry.3.push_str(&delta.arguments_delta);
+        } else {
+            self.pending.push((
+                delta.index,
+                delta.id.clone().unwrap_or_default(),
+                delta.name.clone().unwrap_or_default(),
+                delta.arguments_delta.clone(),
+            ));
+        }
+    }
+
+    /// Consume the accumulator and produce finished tool use requests.
+    pub fn finish(mut self) -> Vec<ToolUseRequest> {
+        self.pending.sort_by_key(|(idx, _, _, _)| *idx);
+        self.pending
+            .into_iter()
+            .map(|(_, id, name, args)| {
+                let input = serde_json::from_str(&args)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                ToolUseRequest { id, name, input }
+            })
+            .collect()
+    }
+
+    /// Whether any tool calls have been accumulated.
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ToolContext {
     pub workspace_root: String,
@@ -483,6 +546,9 @@ pub struct ToolContext {
     /// Path to the agentzero.toml config file (for self-configuration tools).
     #[serde(default)]
     pub config_path: Option<String>,
+    /// Sender identity for per-sender rate limiting (e.g., Telegram user ID, Discord channel).
+    #[serde(default)]
+    pub sender_id: Option<String>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -522,6 +588,7 @@ impl std::fmt::Debug for ToolContext {
             )
             .field("max_tokens", &self.max_tokens)
             .field("max_cost_microdollars", &self.max_cost_microdollars)
+            .field("sender_id", &self.sender_id)
             .finish()
     }
 }
@@ -547,6 +614,7 @@ impl ToolContext {
             cost_microdollars: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             max_tokens: 0,
             max_cost_microdollars: 0,
+            sender_id: None,
         }
     }
 
@@ -885,6 +953,13 @@ pub enum AgentError {
 
 #[async_trait]
 pub trait Provider: Send + Sync {
+    /// Whether this provider supports native streaming. Used by channels to
+    /// decide whether to create draft messages for token-by-token updates.
+    /// Defaults to `false`; override in providers that implement real streaming.
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
     async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult>;
     async fn complete_with_reasoning(
         &self,
@@ -1691,5 +1766,11 @@ mod tests {
         let reason = ctx2.budget_exceeded();
         assert!(reason.is_some());
         assert!(reason.unwrap().contains("cost budget exceeded"));
+    }
+
+    #[test]
+    fn tool_context_sender_id_defaults_to_none() {
+        let ctx = ToolContext::new("/tmp/test".to_string());
+        assert!(ctx.sender_id.is_none(), "sender_id should default to None");
     }
 }

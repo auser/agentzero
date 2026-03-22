@@ -491,6 +491,10 @@ fn parse_output_text(body: &str) -> anyhow::Result<String> {
 
 #[async_trait]
 impl Provider for AnthropicProvider {
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
     async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult> {
         self.complete_with_reasoning(prompt, &ReasoningConfig::default())
             .await

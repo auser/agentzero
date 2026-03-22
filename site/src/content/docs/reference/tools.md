@@ -132,6 +132,8 @@ pub struct ToolContext {
     pub workspace_root: String,
     pub allow_sensitive_file_reads: bool,
     pub allow_sensitive_file_writes: bool,
+    pub sender_id: Option<String>,
+    // ... additional fields omitted for brevity
 }
 ```
 

@@ -327,6 +327,10 @@ fn extract_output_text_from_value(value: &Value) -> Option<String> {
 
 #[async_trait]
 impl Provider for OpenAiCompatibleProvider {
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
     async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult> {
         self.complete_with_reasoning(prompt, &ReasoningConfig::default())
             .await

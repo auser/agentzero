@@ -33,10 +33,11 @@ pub use agentzero_tools::{
 // ── Extended tier re-exports ─────────────────────────────────────────
 #[cfg(feature = "tools-extended")]
 pub use agentzero_tools::{
-    AgentsIpcTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool, CronListTool, CronPauseTool,
-    CronRemoveTool, CronResumeTool, CronUpdateTool, GitOperationsTool, HttpRequestTool,
-    ModelRoutingConfigTool, ProxyConfigTool, ScheduleTool, SopAdvanceTool, SopApproveTool,
-    SopExecuteTool, SopListTool, SopStatusTool, UrlValidationTool, WebFetchTool, WebSearchTool,
+    A2aTool, AgentsIpcTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool, CronListTool,
+    CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, GitOperationsTool,
+    HttpRequestTool, ModelRoutingConfigTool, ProxyConfigTool, ScheduleTool, SopAdvanceTool,
+    SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, UrlValidationTool, WebFetchTool,
+    WebSearchTool,
 };
 #[cfg(all(feature = "tools-extended", feature = "document-tools"))]
 pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
@@ -180,6 +181,10 @@ fn default_tools_inner(
 
         if policy.enable_code_interpreter {
             tools.push(Box::new(CodeInterpreterTool::default()));
+        }
+
+        if policy.enable_a2a_tool {
+            tools.push(Box::new(A2aTool));
         }
 
         if let Some(ref r) = router {

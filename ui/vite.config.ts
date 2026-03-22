@@ -20,6 +20,11 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
   },
+  optimizeDeps: {
+    // Don't pre-bundle workflow-graph — the WASM module must be loaded fresh
+    // to avoid stale pre-bundled binaries causing memory corruption.
+    exclude: ['@auser/workflow-graph-web', '@auser/workflow-graph-react'],
+  },
   server: {
     port: 5173,
     proxy: {

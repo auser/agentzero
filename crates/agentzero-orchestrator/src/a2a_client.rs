@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 /// An `AgentEndpoint` that communicates with external A2A agents via HTTP.
+#[derive(Debug)]
 pub struct A2aAgentEndpoint {
     /// Unique identifier for this endpoint within the swarm.
     id: String,
@@ -28,14 +29,19 @@ impl A2aAgentEndpoint {
         base_url: String,
         auth_token: Option<String>,
         timeout_secs: u64,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
+            return Err(anyhow::anyhow!(
+                "A2A agent URL must use http:// or https:// scheme, got: {base_url}"
+            ));
+        }
+        Ok(Self {
             id,
             base_url: base_url.trim_end_matches('/').to_string(),
             auth_token,
             client: reqwest::Client::new(),
             timeout_secs,
-        }
+        })
     }
 
     /// Fetch the remote agent's Agent Card.
@@ -141,7 +147,8 @@ mod tests {
             "https://agent.example.com".to_string(),
             None,
             30,
-        );
+        )
+        .expect("valid URL should succeed");
         assert_eq!(endpoint.agent_id(), "remote-agent");
     }
 
@@ -152,8 +159,21 @@ mod tests {
             "https://agent.example.com/".to_string(),
             None,
             30,
-        );
+        )
+        .expect("valid URL should succeed");
         assert_eq!(endpoint.base_url, "https://agent.example.com");
+    }
+
+    #[test]
+    fn a2a_endpoint_rejects_non_http_url() {
+        let err = A2aAgentEndpoint::new(
+            "test".to_string(),
+            "ftp://agent.example.com".to_string(),
+            None,
+            30,
+        )
+        .expect_err("ftp scheme should be rejected");
+        assert!(err.to_string().contains("http://"));
     }
 
     #[tokio::test]
@@ -163,7 +183,8 @@ mod tests {
             "http://localhost:1".to_string(), // Invalid port
             None,
             5,
-        );
+        )
+        .expect("valid URL should succeed");
         let err = endpoint
             .send("hello", "conv-1")
             .await
@@ -181,7 +202,8 @@ mod tests {
             "http://localhost:1".to_string(),
             None,
             5,
-        );
+        )
+        .expect("valid URL should succeed");
         let err = endpoint.fetch_agent_card().await.expect_err("should fail");
         assert!(err.to_string().contains("fetch agent card"));
     }

@@ -23,7 +23,7 @@ mod noise_transport;
 
 pub use anthropic::AnthropicProvider;
 pub use catalog::{find_provider, supported_providers, ProviderDescriptor};
-pub use fallback::FallbackProvider;
+pub use fallback::{FallbackInfo, FallbackProvider, FALLBACK_INFO};
 pub use models::{
     find_models_for_provider, model_capabilities, provider_config_fingerprint,
     provider_supports_model, ModelCapabilities, ModelDescriptor,

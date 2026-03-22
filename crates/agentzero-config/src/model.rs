@@ -868,6 +868,9 @@ pub struct AutonomyConfig {
     pub non_cli_natural_language_approval_mode: String,
     pub non_cli_natural_language_approval_mode_by_channel: HashMap<String, String>,
     pub max_actions_per_hour: u32,
+    /// Maximum actions per sender per hour. If None, uses the global limit.
+    #[serde(default)]
+    pub max_actions_per_sender_per_hour: Option<u32>,
     pub max_cost_per_day_cents: u32,
     pub require_approval_for_medium_risk: bool,
     pub block_high_risk_commands: bool,
@@ -897,6 +900,7 @@ impl Default for AutonomyConfig {
             non_cli_natural_language_approval_mode: "direct".to_string(),
             non_cli_natural_language_approval_mode_by_channel: HashMap::new(),
             max_actions_per_hour: 200,
+            max_actions_per_sender_per_hour: None,
             max_cost_per_day_cents: 2000,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
@@ -2500,6 +2504,8 @@ fn default_autopilot_stale_threshold() -> u32 {
 pub struct A2aConfig {
     /// Enable A2A protocol endpoints (/.well-known/agent.json and /a2a).
     pub enabled: bool,
+    /// Optional bearer token for authenticating incoming A2A requests.
+    pub bearer_token: Option<String>,
     /// External A2A agents to register as swarm participants.
     pub agents: HashMap<String, A2aAgentConfig>,
 }

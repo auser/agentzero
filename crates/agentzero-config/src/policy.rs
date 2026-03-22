@@ -104,6 +104,7 @@ pub fn load_tool_security_policy(
         wasm_global_plugin_dir: config.security.plugin.global_plugin_dir.map(PathBuf::from),
         wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),
         wasm_dev_plugin_dir: config.security.plugin.dev_plugin_dir.map(PathBuf::from),
+        enable_a2a_tool: config.a2a.enabled,
         enable_claude_code: config.agent.enable_claude_code,
         enable_cli_harness: config.agent.enable_cli_harness,
     };
@@ -121,6 +122,7 @@ pub fn load_tool_security_policy(
         policy.enable_image_gen = false;
         policy.enable_video_gen = false;
         policy.enable_domain_tools = false;
+        policy.enable_a2a_tool = false;
         // NOTE: do NOT restrict url_access — cloud providers route through
         // agentzero-providers, not through tool URL access, but we leave the
         // policy open so any explicit provider base_url is reachable.
@@ -135,6 +137,7 @@ pub fn load_tool_security_policy(
         policy.enable_image_gen = false;
         policy.enable_video_gen = false;
         policy.enable_domain_tools = false;
+        policy.enable_a2a_tool = false;
         // Restrict URL access to localhost only.
         policy.url_access.allow_loopback = true;
         policy.url_access.block_private_ip = false;
