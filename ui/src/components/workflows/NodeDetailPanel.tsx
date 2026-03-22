@@ -15,6 +15,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getDefinition } from '@/lib/node-definitions'
 import { portTypeColor, type Port } from '@/lib/workflow-types'
 import { modelsApi } from '@/lib/api/models'
+import { agentsApi } from '@/lib/api/agents'
 import type { AgentNodeData } from '@/components/workflows/AgentNode'
 
 interface NodeDetailPanelProps {
@@ -37,23 +38,29 @@ export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
     return () => window.removeEventListener('keydown', handler)
   }, [nodeId, onClose])
 
-  // Close on click outside panel
+  // Close on click outside panel — capture phase so ReactFlow can't swallow the event
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
   useEffect(() => {
     if (!nodeId) return
-    const handler = (e: MouseEvent) => {
+
+    const handler = (e: Event) => {
       if (panelRef.current && !panelRef.current.contains(e.target as HTMLElement)) {
-        onClose()
+        onCloseRef.current()
       }
     }
-    // Use setTimeout so the double-click that opened the panel doesn't immediately close it
+
+    // Delay so the double-click that opened the panel doesn't immediately close it
     const timer = setTimeout(() => {
-      window.addEventListener('mousedown', handler)
-    }, 100)
+      document.addEventListener('pointerdown', handler, true)
+    }, 300)
+
     return () => {
       clearTimeout(timer)
-      window.removeEventListener('mousedown', handler)
+      document.removeEventListener('pointerdown', handler, true)
     }
-  }, [nodeId, onClose])
+  }, [nodeId])
 
   const node = nodeId ? reactFlow.getNode(nodeId) : null
   const nodeData = node?.data as AgentNodeData | undefined
@@ -111,6 +118,45 @@ export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
   const outputs: Port[] = (nodeData?.metadata?.tool_outputs as Port[]) ?? def?.outputs ?? []
   const fields = def?.fields ?? []
   const hasAgentId = !!(nodeData?.metadata?.agent_id)
+  const agentId = nodeData?.metadata?.agent_id as string | undefined
+
+  // Load full agent config from API when connected
+  const { data: agentConfig } = useQuery({
+    queryKey: ['agent', agentId],
+    queryFn: () => agentsApi.get(agentId!),
+    enabled: !!agentId,
+    staleTime: 30_000,
+  })
+
+  // Merge API-loaded agent fields into node metadata for display
+  useEffect(() => {
+    if (!agentConfig || !nodeId) return
+    const currentMeta = nodeData?.metadata ?? {}
+    const needsUpdate =
+      (agentConfig.system_prompt && currentMeta.system_prompt !== agentConfig.system_prompt) ||
+      (agentConfig.model && currentMeta.model !== agentConfig.model)
+    if (needsUpdate) {
+      reactFlow.setNodes((nodes) =>
+        nodes.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  metadata: {
+                    ...(n.data as AgentNodeData).metadata,
+                    system_prompt: agentConfig.system_prompt ?? currentMeta.system_prompt,
+                    model: agentConfig.model ?? currentMeta.model,
+                    provider: agentConfig.provider ?? currentMeta.provider,
+                  },
+                },
+              }
+            : n,
+        ),
+      )
+    }
+  }, [agentConfig, nodeId, nodeData?.metadata, reactFlow])
+
   const isToolNode = nodeData?.nodeType === 'tool'
   const isCustomNode = nodeData?.nodeType === 'human_input'
   const canEditPorts = isToolNode || isCustomNode
@@ -159,6 +205,8 @@ export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
     ))
   }, [inputs, outputs, updatePorts])
 
+  if (!nodeId) return null
+
   return (
       <div
         ref={panelRef}
@@ -174,10 +222,7 @@ export function NodeDetailPanel({ nodeId, onClose }: NodeDetailPanelProps) {
           zIndex: 50,
           display: 'flex',
           flexDirection: 'column',
-          transform: nodeId ? 'translateX(0)' : 'translateX(100%)',
-          transition: 'transform 200ms ease-in-out',
-          pointerEvents: nodeId ? 'auto' : 'none',
-          boxShadow: nodeId ? '-4px 0 16px rgba(0,0,0,0.4)' : 'none',
+          boxShadow: '-4px 0 16px rgba(0,0,0,0.4)',
         }}
       >
       {/* Header */}

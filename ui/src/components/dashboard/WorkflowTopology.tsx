@@ -65,7 +65,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
   const cmdK = useCommandPalette()
 
   const { persistState, handleClear } = useWorkflowPersistence(setNodes, setEdges)
-  const { push: pushHistory } = useUndoRedo(setNodes, setEdges)
+  const { push: pushHistory, undo, redo } = useUndoRedo(setNodes, setEdges)
 
   // Push history snapshot on every persist (debounced saves also capture undo state)
   const persistWithHistory = useCallback(() => {
@@ -244,7 +244,32 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
         style={fullHeight ? { flex: 1 } : { height: readOnly ? '100%' : 400 }}
       >
         <Background />
-        {!readOnly && <Controls />}
+        {!readOnly && (
+          <Controls>
+            <button
+              onClick={undo}
+              title="Undo (Cmd+Z)"
+              style={{
+                width: 26, height: 26, display: 'flex', alignItems: 'center',
+                justifyContent: 'center', background: 'transparent', border: 'none',
+                color: '#737373', cursor: 'pointer', fontSize: 14,
+              }}
+            >
+              ↩
+            </button>
+            <button
+              onClick={redo}
+              title="Redo (Cmd+Shift+Z)"
+              style={{
+                width: 26, height: 26, display: 'flex', alignItems: 'center',
+                justifyContent: 'center', background: 'transparent', border: 'none',
+                color: '#737373', cursor: 'pointer', fontSize: 14,
+              }}
+            >
+              ↪
+            </button>
+          </Controls>
+        )}
         {!readOnly && (
           <MiniMap
             nodeColor={(node) => {
@@ -287,7 +312,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
 
       <NodeDetailPanel
         nodeId={selectedNodeId}
-        onClose={() => setSelectedNodeId(null)}
+        onClose={handlePaneClick}
       />
     </div>
   )
