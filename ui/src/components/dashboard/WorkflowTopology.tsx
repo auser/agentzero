@@ -101,10 +101,15 @@ export function WorkflowTopology({ fullHeight = false }: WorkflowTopologyProps) 
     }
   }, [workflow.jobs])
 
-  // Drag end is auto-persisted by workflow-graph's persist option
+  // Save state after drag — the WASM onNodeDragEnd wrapper also calls autoPersist,
+  // but we double-save here to ensure persistence works even if the WASM callback fails.
   const handleNodeDragEnd = useCallback(
     () => {
-      // Auto-persisted by workflow-graph
+      graphRef.current?.getState().then((state) => {
+        if (state) {
+          localStorage.setItem('agentzero-workflow-graph', JSON.stringify(state))
+        }
+      }).catch(() => {})
     },
     [],
   )

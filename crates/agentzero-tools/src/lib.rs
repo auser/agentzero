@@ -139,6 +139,7 @@ pub mod semantic_recall;
 pub mod shell;
 pub mod shell_parse;
 pub mod subagent_tools;
+pub mod task_manager;
 pub mod task_plan;
 pub mod write_file;
 
@@ -231,6 +232,7 @@ pub use read_file::{ReadFilePolicy, ReadFileTool};
 pub use screenshot::ScreenshotTool;
 pub use shell::{ShellPolicy, ShellTool};
 pub use subagent_tools::{SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool};
+pub use task_manager::TaskManager;
 pub use task_plan::TaskPlanTool;
 pub use write_file::{WriteFilePolicy, WriteFileTool};
 

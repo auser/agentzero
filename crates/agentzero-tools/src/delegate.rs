@@ -1,4 +1,5 @@
 use crate::autonomy::AutonomyPolicy;
+use crate::task_manager::TaskManager;
 use agentzero_core::delegation::{
     filter_tools, validate_delegation, DelegateConfig, DelegateRequest,
 };
@@ -25,10 +26,24 @@ pub type ToolBuilder = Arc<dyn Fn() -> anyhow::Result<Vec<Box<dyn Tool>>> + Send
 /// Wired to `LeakGuardPolicy::process()` at the call site.
 pub type OutputScanner = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
 
+fn default_action() -> String {
+    "delegate".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 struct Input {
-    agent: String,
-    prompt: String,
+    /// Action: "delegate" (default), "check_result", "list_results", "cancel_task"
+    #[serde(default = "default_action")]
+    action: String,
+    /// Agent name (required for delegate)
+    agent: Option<String>,
+    /// Prompt (required for delegate)
+    prompt: Option<String>,
+    /// Run in background mode — returns task_id immediately
+    #[serde(default)]
+    background: bool,
+    /// Task ID (required for check_result, cancel_task)
+    task_id: Option<String>,
 }
 
 pub struct DelegateTool {
@@ -42,6 +57,8 @@ pub struct DelegateTool {
     output_scanner: Option<OutputScanner>,
     /// Semaphore limiting concurrent delegations.
     semaphore: Arc<Semaphore>,
+    /// Optional task manager for background delegation.
+    task_manager: Option<Arc<TaskManager>>,
 }
 
 impl DelegateTool {
@@ -57,6 +74,7 @@ impl DelegateTool {
             parent_policy: None,
             output_scanner: None,
             semaphore: Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT)),
+            task_manager: None,
         }
     }
 
@@ -79,6 +97,12 @@ impl DelegateTool {
         self.semaphore = Arc::new(Semaphore::new(max));
         self
     }
+
+    /// Set the task manager for background delegation support.
+    pub fn with_task_manager(mut self, tm: Arc<TaskManager>) -> Self {
+        self.task_manager = Some(tm);
+        self
+    }
 }
 
 #[async_trait]
@@ -88,17 +112,37 @@ impl Tool for DelegateTool {
     }
 
     fn description(&self) -> &'static str {
-        "Delegate a subtask to a named sub-agent with its own provider, model, and tool set."
+        "Delegate a subtask to a named sub-agent. Supports synchronous, background (fire-and-forget), and task lifecycle management (check, list, cancel)."
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
         Some(serde_json::json!({
             "type": "object",
             "properties": {
-                "agent": { "type": "string", "description": "Name of the sub-agent to delegate to" },
-                "prompt": { "type": "string", "description": "The prompt/task to send to the sub-agent" }
+                "action": {
+                    "type": "string",
+                    "description": "Action to perform: 'delegate' (default), 'check_result', 'list_results', 'cancel_task'",
+                    "enum": ["delegate", "check_result", "list_results", "cancel_task"],
+                    "default": "delegate"
+                },
+                "agent": {
+                    "type": "string",
+                    "description": "Name of the sub-agent to delegate to (required for 'delegate' action)"
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The prompt/task to send to the sub-agent (required for 'delegate' action)"
+                },
+                "background": {
+                    "type": "boolean",
+                    "description": "Run delegation in background mode — returns task_id immediately without waiting for completion",
+                    "default": false
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID to check or cancel (required for 'check_result' and 'cancel_task' actions)"
+                }
             },
-            "required": ["agent", "prompt"],
             "additionalProperties": false
         }))
     }
@@ -114,124 +158,308 @@ impl Tool for DelegateTool {
         let parsed: Input =
             serde_json::from_str(input).map_err(|e| anyhow::anyhow!("invalid input: {e}"))?;
 
+        match parsed.action.as_str() {
+            "delegate" => self.execute_delegate(parsed, ctx).await,
+            "check_result" => self.execute_check_result(parsed).await,
+            "list_results" => self.execute_list_results().await,
+            "cancel_task" => self.execute_cancel_task(parsed).await,
+            other => Err(anyhow::anyhow!("unknown action: {other}")),
+        }
+    }
+}
+
+impl DelegateTool {
+    /// Execute the delegate action (synchronous or background).
+    async fn execute_delegate(
+        &self,
+        parsed: Input,
+        ctx: &ToolContext,
+    ) -> anyhow::Result<ToolResult> {
+        let agent_name = parsed
+            .agent
+            .ok_or_else(|| anyhow::anyhow!("'agent' is required for delegate action"))?;
+        let prompt = parsed
+            .prompt
+            .ok_or_else(|| anyhow::anyhow!("'prompt' is required for delegate action"))?;
+
         let config = self
             .agents
-            .get(&parsed.agent)
-            .ok_or_else(|| anyhow::anyhow!("unknown agent: {}", parsed.agent))?;
+            .get(&agent_name)
+            .ok_or_else(|| anyhow::anyhow!("unknown agent: {agent_name}"))?;
 
         let request = DelegateRequest {
-            agent_name: parsed.agent.clone(),
-            prompt: parsed.prompt.clone(),
+            agent_name: agent_name.clone(),
+            prompt: prompt.clone(),
             current_depth: self.current_depth,
         };
         validate_delegation(&request, config)?;
 
-        // Acquire concurrency permit (blocks if at limit).
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await
-            .map_err(|_| anyhow::anyhow!("delegation semaphore closed"))?;
+        if parsed.background {
+            // Background mode: spawn via task manager and return task_id immediately.
+            let tm = self
+                .task_manager
+                .as_ref()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "background mode requires a TaskManager — use with_task_manager()"
+                    )
+                })?
+                .clone();
 
-        let api_key = resolve_delegate_api_key(config);
+            // Capture everything needed for the background future.
+            let config = config.clone();
+            let tool_builder = self.tool_builder.clone();
+            let parent_policy = self.parent_policy.clone();
+            let output_scanner = self.output_scanner.clone();
+            let semaphore = self.semaphore.clone();
+            let child_ctx = build_child_ctx(ctx, &config, &agent_name);
 
-        let provider = agentzero_providers::build_provider(
-            &config.provider_kind,
-            config.provider.clone(),
-            api_key,
-            config.model.clone(),
-        );
+            let bg_agent_name = agent_name.clone();
+            let task_id = tm
+                .spawn_background(agent_name, async move {
+                    // Acquire concurrency permit.
+                    let _permit = semaphore
+                        .acquire()
+                        .await
+                        .map_err(|_| anyhow::anyhow!("delegation semaphore closed"))?;
 
-        // Build child context with inherited cancellation token and fresh budget counters.
-        let mut child_ctx = ctx.clone();
-        child_ctx.depth = ctx.depth.saturating_add(1);
+                    let output = run_delegation(
+                        &config,
+                        &prompt,
+                        &child_ctx,
+                        &tool_builder,
+                        parent_policy.as_ref(),
+                    )
+                    .await?;
 
-        // Fresh accumulators for the child — usage is aggregated back after completion.
-        child_ctx.tokens_used = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        child_ctx.cost_microdollars = Arc::new(std::sync::atomic::AtomicU64::new(0));
+                    // Leak guard: scan output.
+                    let safe_output =
+                        apply_output_scanner(output_scanner.as_ref(), &output, &bg_agent_name)?;
+                    Ok(safe_output)
+                })
+                .await;
 
-        // Set child budget limits from delegate config (0 = inherit parent's remaining budget).
-        if config.max_tokens > 0 {
-            child_ctx.max_tokens = config.max_tokens;
-        } else if ctx.max_tokens > 0 {
-            // Inherit remaining budget from parent.
-            let used = ctx.current_tokens();
-            child_ctx.max_tokens = ctx.max_tokens.saturating_sub(used);
-        }
-        if config.max_cost_microdollars > 0 {
-            child_ctx.max_cost_microdollars = config.max_cost_microdollars;
-        } else if ctx.max_cost_microdollars > 0 {
-            let used = ctx.current_cost();
-            child_ctx.max_cost_microdollars = ctx.max_cost_microdollars.saturating_sub(used);
-        }
+            Ok(ToolResult {
+                output: serde_json::json!({
+                    "status": "spawned",
+                    "task_id": task_id,
+                    "message": "Task started in background. Use action='check_result' with the task_id to poll for results."
+                })
+                .to_string(),
+            })
+        } else {
+            // Synchronous mode: existing behavior.
+            let _permit = self
+                .semaphore
+                .acquire()
+                .await
+                .map_err(|_| anyhow::anyhow!("delegation semaphore closed"))?;
 
-        // Assign a unique conversation_id to the child so its transcript is
-        // discoverable from the parent's event log / trace.
-        let child_conversation_id = format!(
-            "delegate-{}-{}-{}",
-            parsed.agent,
-            ctx.depth.saturating_add(1),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        );
-        child_ctx.conversation_id = Some(child_conversation_id.clone());
+            let child_ctx = build_child_ctx(ctx, config, &agent_name);
 
-        let output = if config.agentic {
-            run_agentic(
-                provider,
+            let output = run_delegation(
                 config,
-                &parsed.prompt,
+                &prompt,
                 &child_ctx,
                 &self.tool_builder,
                 self.parent_policy.as_ref(),
             )
-            .await?
-        } else {
-            let effective_prompt = match &config.system_prompt {
-                Some(sp) => format!("<system>{sp}</system>\n{}", parsed.prompt),
-                None => parsed.prompt.clone(),
-            };
-            run_single_shot(provider.as_ref(), &effective_prompt).await?
-        };
+            .await?;
 
-        tracing::info!(
-            agent = %parsed.agent,
-            child_conversation_id = %child_conversation_id,
-            parent_conversation_id = ctx.conversation_id.as_deref().unwrap_or(""),
-            depth = child_ctx.depth,
-            "delegation completed"
-        );
+            tracing::info!(
+                agent = %agent_name,
+                child_conversation_id = child_ctx.conversation_id.as_deref().unwrap_or(""),
+                parent_conversation_id = ctx.conversation_id.as_deref().unwrap_or(""),
+                depth = child_ctx.depth,
+                "delegation completed"
+            );
 
-        // Aggregate child usage back into parent counters.
-        let child_tokens = child_ctx.current_tokens();
-        let child_cost = child_ctx.current_cost();
-        if child_tokens > 0 {
-            ctx.add_tokens(child_tokens);
+            // Aggregate child usage back into parent counters.
+            let child_tokens = child_ctx.current_tokens();
+            let child_cost = child_ctx.current_cost();
+            if child_tokens > 0 {
+                ctx.add_tokens(child_tokens);
+            }
+            if child_cost > 0 {
+                ctx.add_cost(child_cost);
+            }
+
+            // Leak guard: scan sub-agent output.
+            let safe_output =
+                apply_output_scanner(self.output_scanner.as_ref(), &output, &agent_name)?;
+
+            Ok(ToolResult {
+                output: safe_output,
+            })
         }
-        if child_cost > 0 {
-            ctx.add_cost(child_cost);
-        }
+    }
 
-        // Leak guard: scan sub-agent output for credentials before returning.
-        let safe_output = if let Some(ref scanner) = self.output_scanner {
-            scanner(&output).map_err(|blocked| {
-                tracing::warn!(
-                    agent = %parsed.agent,
-                    "delegation output blocked by leak guard: {blocked}"
-                );
-                anyhow::anyhow!(
-                    "delegation output blocked: credential leak detected in sub-agent response"
-                )
-            })?
-        } else {
-            output
-        };
+    /// Check the status of a background task.
+    async fn execute_check_result(&self, parsed: Input) -> anyhow::Result<ToolResult> {
+        let tm = self
+            .task_manager
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no TaskManager configured"))?;
+        let task_id = parsed
+            .task_id
+            .ok_or_else(|| anyhow::anyhow!("'task_id' is required for check_result action"))?;
+
+        match tm.check_result(&task_id).await {
+            Some(status) => Ok(ToolResult {
+                output: serde_json::to_string(&serde_json::json!({
+                    "task_id": task_id,
+                    "result": status,
+                }))
+                .unwrap_or_default(),
+            }),
+            None => Ok(ToolResult {
+                output: serde_json::json!({
+                    "task_id": task_id,
+                    "error": "task not found"
+                })
+                .to_string(),
+            }),
+        }
+    }
+
+    /// List all background tasks.
+    async fn execute_list_results(&self) -> anyhow::Result<ToolResult> {
+        let tm = self
+            .task_manager
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no TaskManager configured"))?;
+
+        let results = tm.list_results().await;
+        let entries: Vec<serde_json::Value> = results
+            .into_iter()
+            .map(|(id, agent, status, created_at)| {
+                serde_json::json!({
+                    "task_id": id,
+                    "agent": agent,
+                    "status": status,
+                    "created_at": created_at,
+                })
+            })
+            .collect();
 
         Ok(ToolResult {
-            output: safe_output,
+            output: serde_json::to_string(&entries).unwrap_or_default(),
         })
+    }
+
+    /// Cancel a background task.
+    async fn execute_cancel_task(&self, parsed: Input) -> anyhow::Result<ToolResult> {
+        let tm = self
+            .task_manager
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no TaskManager configured"))?;
+        let task_id = parsed
+            .task_id
+            .ok_or_else(|| anyhow::anyhow!("'task_id' is required for cancel_task action"))?;
+
+        let cancelled = tm.cancel_task(&task_id).await;
+        Ok(ToolResult {
+            output: serde_json::json!({
+                "task_id": task_id,
+                "cancelled": cancelled,
+            })
+            .to_string(),
+        })
+    }
+}
+
+/// Build a child `ToolContext` with incremented depth and fresh budget counters.
+fn build_child_ctx(ctx: &ToolContext, config: &DelegateConfig, agent_name: &str) -> ToolContext {
+    let mut child_ctx = ctx.clone();
+    child_ctx.depth = ctx.depth.saturating_add(1);
+
+    // Fresh accumulators for the child — usage is aggregated back after completion.
+    child_ctx.tokens_used = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    child_ctx.cost_microdollars = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+    // Set child budget limits from delegate config (0 = inherit parent's remaining budget).
+    if config.max_tokens > 0 {
+        child_ctx.max_tokens = config.max_tokens;
+    } else if ctx.max_tokens > 0 {
+        let used = ctx.current_tokens();
+        child_ctx.max_tokens = ctx.max_tokens.saturating_sub(used);
+    }
+    if config.max_cost_microdollars > 0 {
+        child_ctx.max_cost_microdollars = config.max_cost_microdollars;
+    } else if ctx.max_cost_microdollars > 0 {
+        let used = ctx.current_cost();
+        child_ctx.max_cost_microdollars = ctx.max_cost_microdollars.saturating_sub(used);
+    }
+
+    // Assign a unique conversation_id to the child.
+    let child_conversation_id = format!(
+        "delegate-{}-{}-{}",
+        agent_name,
+        ctx.depth.saturating_add(1),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    child_ctx.conversation_id = Some(child_conversation_id);
+
+    child_ctx
+}
+
+/// Run the actual delegation (single-shot or agentic) and return the raw output.
+async fn run_delegation(
+    config: &DelegateConfig,
+    prompt: &str,
+    child_ctx: &ToolContext,
+    tool_builder: &ToolBuilder,
+    parent_policy: Option<&AutonomyPolicy>,
+) -> anyhow::Result<String> {
+    let api_key = resolve_delegate_api_key(config);
+
+    let provider = agentzero_providers::build_provider(
+        &config.provider_kind,
+        config.provider.clone(),
+        api_key,
+        config.model.clone(),
+    );
+
+    if config.agentic {
+        run_agentic(
+            provider,
+            config,
+            prompt,
+            child_ctx,
+            tool_builder,
+            parent_policy,
+        )
+        .await
+    } else {
+        let effective_prompt = match &config.system_prompt {
+            Some(sp) => format!("<system>{sp}</system>\n{prompt}"),
+            None => prompt.to_string(),
+        };
+        run_single_shot(provider.as_ref(), &effective_prompt).await
+    }
+}
+
+/// Apply the output scanner (leak guard) if configured.
+fn apply_output_scanner(
+    scanner: Option<&OutputScanner>,
+    output: &str,
+    agent_name: &str,
+) -> anyhow::Result<String> {
+    if let Some(scanner) = scanner {
+        scanner(output).map_err(|blocked| {
+            tracing::warn!(
+                agent = %agent_name,
+                "delegation output blocked by leak guard: {blocked}"
+            );
+            anyhow::anyhow!(
+                "delegation output blocked: credential leak detected in sub-agent response"
+            )
+        })
+    } else {
+        Ok(output.to_string())
     }
 }
 
@@ -573,7 +801,7 @@ mod tests {
             ])
         });
 
-        let all_tools = builder().unwrap();
+        let all_tools = builder().expect("builder should not fail");
         let all_names: Vec<String> = all_tools.iter().map(|t| t.name().to_string()).collect();
         let mut allowed = HashSet::new();
         allowed.insert("read_file".to_string());
@@ -598,7 +826,7 @@ mod tests {
         let result = tool
             .execute(r#"{"agent":"researcher","prompt":"hello"}"#, &ctx)
             .await
-            .unwrap();
+            .expect("cancelled should return Ok");
         assert_eq!(result.output, "[Delegation cancelled]");
     }
 
@@ -612,7 +840,9 @@ mod tests {
             }
         });
         let result = scanner("Here is the API key: sk-abc123def456");
-        assert!(result.unwrap().contains("[REDACTED]"));
+        assert!(result
+            .expect("scanner should succeed")
+            .contains("[REDACTED]"));
     }
 
     #[test]
@@ -645,7 +875,10 @@ mod tests {
         let tool =
             DelegateTool::new(HashMap::new(), 0, noop_builder()).with_parent_policy(policy.clone());
         assert!(tool.parent_policy.is_some());
-        assert_eq!(tool.parent_policy.unwrap().level, AutonomyLevel::ReadOnly);
+        assert_eq!(
+            tool.parent_policy.expect("should have policy").level,
+            AutonomyLevel::ReadOnly
+        );
     }
 
     #[test]
@@ -688,7 +921,7 @@ mod tests {
         let depth: u8 = 1;
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_nanos();
         let cid = format!("delegate-{agent_name}-{depth}-{nanos}");
         assert!(cid.starts_with("delegate-researcher-1-"));
@@ -697,9 +930,112 @@ mod tests {
             "delegate-{agent_name}-{depth}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_nanos()
         );
         assert_ne!(cid, cid2);
+    }
+
+    #[test]
+    fn with_task_manager_sets_manager() {
+        let tm = Arc::new(TaskManager::new());
+        let tool =
+            DelegateTool::new(HashMap::new(), 0, noop_builder()).with_task_manager(tm.clone());
+        assert!(tool.task_manager.is_some());
+    }
+
+    #[tokio::test]
+    async fn delegate_background_requires_task_manager() {
+        let tool = DelegateTool::new(test_agents(), 0, noop_builder());
+        let result = tool
+            .execute(
+                r#"{"agent":"researcher","prompt":"hello","background":true}"#,
+                &test_ctx(),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("TaskManager"));
+    }
+
+    #[tokio::test]
+    async fn check_result_requires_task_manager() {
+        let tool = DelegateTool::new(test_agents(), 0, noop_builder());
+        let result = tool
+            .execute(
+                r#"{"action":"check_result","task_id":"task-123"}"#,
+                &test_ctx(),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("TaskManager"));
+    }
+
+    #[tokio::test]
+    async fn list_results_requires_task_manager() {
+        let tool = DelegateTool::new(test_agents(), 0, noop_builder());
+        let result = tool
+            .execute(r#"{"action":"list_results"}"#, &test_ctx())
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("TaskManager"));
+    }
+
+    #[tokio::test]
+    async fn cancel_task_requires_task_id() {
+        let tm = Arc::new(TaskManager::new());
+        let tool = DelegateTool::new(test_agents(), 0, noop_builder()).with_task_manager(tm);
+        let result = tool
+            .execute(r#"{"action":"cancel_task"}"#, &test_ctx())
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("task_id"));
+    }
+
+    #[tokio::test]
+    async fn delegate_action_requires_agent_field() {
+        let tool = DelegateTool::new(test_agents(), 0, noop_builder());
+        let result = tool.execute(r#"{"prompt":"hello"}"#, &test_ctx()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("agent"));
+    }
+
+    #[tokio::test]
+    async fn delegate_action_requires_prompt_field() {
+        let tool = DelegateTool::new(test_agents(), 0, noop_builder());
+        let result = tool.execute(r#"{"agent":"researcher"}"#, &test_ctx()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("prompt"));
+    }
+
+    #[tokio::test]
+    async fn unknown_action_returns_error() {
+        let tool = DelegateTool::new(test_agents(), 0, noop_builder());
+        let result = tool.execute(r#"{"action":"explode"}"#, &test_ctx()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unknown action"));
+    }
+
+    #[tokio::test]
+    async fn backward_compat_old_input_format() {
+        // The old format { "agent": "...", "prompt": "..." } should still work.
+        let tool = DelegateTool::new(test_agents(), 0, noop_builder());
+        // This will fail at the provider level (no real API), but it should parse
+        // the input correctly and get past validation. We check it fails with
+        // a provider error, not a parsing error.
+        let result = tool
+            .execute(r#"{"agent":"researcher","prompt":"hello"}"#, &test_ctx())
+            .await;
+        // It should fail because there's no real provider, but NOT with "invalid input"
+        // or "agent is required" errors — proving backward compatibility.
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            !err.contains("invalid input"),
+            "should not be a parsing error: {err}"
+        );
+        assert!(
+            !err.contains("agent"),
+            "should not be a missing-agent error: {err}"
+        );
     }
 }
