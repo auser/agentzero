@@ -41,7 +41,7 @@ import { EmptyCanvasState } from '@/components/workflows/EmptyCanvasState'
 import { getDefinition } from '@/lib/node-definitions'
 import { useNodeDefinitions } from '@/lib/hooks/useNodeDefinitions'
 import type { WorkflowTemplate } from '@/lib/workflow-templates'
-import { workflowsApi } from '@/lib/api/workflows'
+import { templatesApi } from '@/lib/api/templates'
 import { getKeyBindingActions, getShortcutActions, matchesKey, type CanvasAction } from '@/lib/canvas-actions'
 
 interface WorkflowTopologyProps {
@@ -291,6 +291,17 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     persistWithHistory()
   }, [setNodes, setEdges, persistWithHistory])
 
+  // ── Pick up a template passed via sessionStorage (e.g. from /templates page) ──
+  useEffect(() => {
+    const raw = sessionStorage.getItem('agentzero-load-template')
+    if (!raw) return
+    sessionStorage.removeItem('agentzero-load-template')
+    try {
+      const template = JSON.parse(raw) as WorkflowTemplate
+      handleTemplateSelect(template)
+    } catch { /* invalid JSON — ignore */ }
+  }, [handleTemplateSelect])
+
   // Save current canvas as a template — always persists locally, also tries API
   const handleSaveAsTemplate = useCallback(async (name: string, description: string) => {
     const currentNodes = reactFlowInstance.getNodes()
@@ -322,8 +333,8 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
 
     // Also try the API
     try {
-      await workflowsApi.create({ name, description: desc, layout: { nodes: templateNodes, edges: templateEdges } })
-      void queryClient.invalidateQueries({ queryKey: ['workflows', 'templates'] })
+      await templatesApi.create({ name, description: desc, category: 'custom', layout: { nodes: templateNodes, edges: templateEdges } })
+      void queryClient.invalidateQueries({ queryKey: ['templates'] })
     } catch { /* API unavailable — local save is sufficient */ }
 
     setSaveTemplateOpen(false)

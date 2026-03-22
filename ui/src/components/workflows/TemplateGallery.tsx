@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ALL_TEMPLATES, type WorkflowTemplate } from '@/lib/workflow-templates'
-import { workflowsApi } from '@/lib/api/workflows'
+import { templatesApi } from '@/lib/api/templates'
 import { X, Layout, Search, Trash2 } from 'lucide-react'
 import { loadLocalTemplates, deleteLocalTemplate } from '@/lib/template-store'
 
@@ -35,8 +35,8 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
 
   // Fetch saved workflows from API — refetch every time the gallery opens
   const { data: savedWorkflows, refetch } = useQuery({
-    queryKey: ['workflows', 'templates'],
-    queryFn: () => workflowsApi.list('layout'),
+    queryKey: ['templates'],
+    queryFn: () => templatesApi.list('layout'),
     enabled: open,
     staleTime: 0,
   })
@@ -69,20 +69,18 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
     ]
 
     // API-sourced templates
-    for (const w of savedWorkflows?.data ?? []) {
-      if (w.name === 'default') continue
-      const nodeCount = (w.layout?.nodes as unknown[])?.length ?? 0
-      if (nodeCount === 0) continue
+    for (const t of savedWorkflows?.data ?? []) {
+      const nodeCount = t.node_count ?? (t.layout?.nodes as unknown[])?.length ?? 0
       templates.push({
-        id: w.workflow_id,
-        name: w.name,
-        description: w.description || `${nodeCount} nodes`,
-        category: 'custom',
+        id: t.template_id,
+        name: t.name,
+        description: t.description || `${nodeCount} nodes`,
+        category: t.category || 'custom',
         nodeCount,
-        nodes: (w.layout?.nodes ?? []) as WorkflowTemplate['nodes'],
-        edges: (w.layout?.edges ?? []) as WorkflowTemplate['edges'],
+        nodes: (t.layout?.nodes ?? []) as WorkflowTemplate['nodes'],
+        edges: (t.layout?.edges ?? []) as WorkflowTemplate['edges'],
         saved: true,
-        workflowId: w.workflow_id,
+        workflowId: t.template_id,
       })
     }
 
@@ -121,8 +119,8 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
     // Delete from API
     if (template.workflowId) {
       try {
-        await workflowsApi.delete(template.workflowId)
-        void queryClient.invalidateQueries({ queryKey: ['workflows', 'templates'] })
+        await templatesApi.delete(template.workflowId)
+        void queryClient.invalidateQueries({ queryKey: ['templates'] })
       } catch { /* API unavailable */ }
     }
   }

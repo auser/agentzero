@@ -13,6 +13,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkflowsIndexRouteImport } from './routes/workflows/index'
 import { Route as ToolsIndexRouteImport } from './routes/tools/index'
+import { Route as TemplatesIndexRouteImport } from './routes/templates/index'
 import { Route as ScheduleIndexRouteImport } from './routes/schedule/index'
 import { Route as RunsIndexRouteImport } from './routes/runs/index'
 import { Route as ModelsIndexRouteImport } from './routes/models/index'
@@ -44,6 +45,11 @@ const WorkflowsIndexRoute = WorkflowsIndexRouteImport.update({
 const ToolsIndexRoute = ToolsIndexRouteImport.update({
   id: '/tools/',
   path: '/tools/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplatesIndexRoute = TemplatesIndexRouteImport.update({
+  id: '/templates/',
+  path: '/templates/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ScheduleIndexRoute = ScheduleIndexRouteImport.update({
@@ -122,6 +128,7 @@ export interface FileRoutesByFullPath {
   '/models/': typeof ModelsIndexRoute
   '/runs/': typeof RunsIndexRoute
   '/schedule/': typeof ScheduleIndexRoute
+  '/templates/': typeof TemplatesIndexRoute
   '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
 }
@@ -140,6 +147,7 @@ export interface FileRoutesByTo {
   '/models': typeof ModelsIndexRoute
   '/runs': typeof RunsIndexRoute
   '/schedule': typeof ScheduleIndexRoute
+  '/templates': typeof TemplatesIndexRoute
   '/tools': typeof ToolsIndexRoute
   '/workflows': typeof WorkflowsIndexRoute
 }
@@ -159,6 +167,7 @@ export interface FileRoutesById {
   '/models/': typeof ModelsIndexRoute
   '/runs/': typeof RunsIndexRoute
   '/schedule/': typeof ScheduleIndexRoute
+  '/templates/': typeof TemplatesIndexRoute
   '/tools/': typeof ToolsIndexRoute
   '/workflows/': typeof WorkflowsIndexRoute
 }
@@ -179,6 +188,7 @@ export interface FileRouteTypes {
     | '/models/'
     | '/runs/'
     | '/schedule/'
+    | '/templates/'
     | '/tools/'
     | '/workflows/'
   fileRoutesByTo: FileRoutesByTo
@@ -197,6 +207,7 @@ export interface FileRouteTypes {
     | '/models'
     | '/runs'
     | '/schedule'
+    | '/templates'
     | '/tools'
     | '/workflows'
   id:
@@ -215,6 +226,7 @@ export interface FileRouteTypes {
     | '/models/'
     | '/runs/'
     | '/schedule/'
+    | '/templates/'
     | '/tools/'
     | '/workflows/'
   fileRoutesById: FileRoutesById
@@ -234,6 +246,7 @@ export interface RootRouteChildren {
   ModelsIndexRoute: typeof ModelsIndexRoute
   RunsIndexRoute: typeof RunsIndexRoute
   ScheduleIndexRoute: typeof ScheduleIndexRoute
+  TemplatesIndexRoute: typeof TemplatesIndexRoute
   ToolsIndexRoute: typeof ToolsIndexRoute
   WorkflowsIndexRoute: typeof WorkflowsIndexRoute
 }
@@ -266,6 +279,13 @@ declare module '@tanstack/react-router' {
       path: '/tools'
       fullPath: '/tools/'
       preLoaderRoute: typeof ToolsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/templates/': {
+      id: '/templates/'
+      path: '/templates'
+      fullPath: '/templates/'
+      preLoaderRoute: typeof TemplatesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/schedule/': {
@@ -370,6 +390,7 @@ const rootRouteChildren: RootRouteChildren = {
   ModelsIndexRoute: ModelsIndexRoute,
   RunsIndexRoute: RunsIndexRoute,
   ScheduleIndexRoute: ScheduleIndexRoute,
+  TemplatesIndexRoute: TemplatesIndexRoute,
   ToolsIndexRoute: ToolsIndexRoute,
   WorkflowsIndexRoute: WorkflowsIndexRoute,
 }

@@ -181,6 +181,17 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
                 tracing::warn!(error = %e, "failed to open persistent workflow store");
             }
         }
+
+        match agentzero_orchestrator::TemplateStore::persistent(data_dir) {
+            Ok(store) => {
+                let count = store.count();
+                tracing::info!(templates = count, "loaded persistent template store");
+                state = state.with_template_store(Arc::new(store));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to open persistent template store");
+            }
+        }
     }
 
     if let (Some(config_path), Some(workspace_root)) = (options.config_path, options.workspace_root)

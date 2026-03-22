@@ -16,6 +16,7 @@ pub mod lanes;
 pub mod loop_detection;
 pub mod presence;
 pub mod swarm;
+pub mod template_store;
 pub mod workflow_executor;
 pub mod workflow_store;
 
@@ -33,6 +34,7 @@ pub use lanes::{LaneConfig, LaneManager, LaneReceivers, WorkItem, WorkResult};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use presence::{PresenceRecord, PresenceStatus, PresenceStore};
 pub use swarm::{build_event_bus, build_swarm, build_swarm_with_presence};
+pub use template_store::{TemplateRecord, TemplateStore, TemplateUpdate};
 pub use workflow_executor::{
     compile as compile_workflow, ExecutionPlan, ExecutionStep, NodeStatus, NodeType,
     StepDispatcher, WorkflowRun,
