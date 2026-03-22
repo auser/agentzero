@@ -37,6 +37,7 @@ import { TemplateGallery } from '@/components/workflows/TemplateGallery'
 import { EmptyCanvasState } from '@/components/workflows/EmptyCanvasState'
 import { getDefinition } from '@/lib/node-definitions'
 import type { WorkflowTemplate } from '@/lib/workflow-templates'
+import { workflowsApi } from '@/lib/api/workflows'
 
 interface WorkflowTopologyProps {
   fullHeight?: boolean
@@ -67,6 +68,8 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   const [configPanelOpen, setConfigPanelOpen] = useState(false)
   const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false)
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
+  const [templateName, setTemplateName] = useState('')
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const cmdK = useCommandPalette()
@@ -287,42 +290,33 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     persistWithHistory()
   }, [setNodes, setEdges, persistWithHistory])
 
-  // Save current canvas as a downloadable template JSON
-  const handleSaveAsTemplate = useCallback(() => {
+  // Save current canvas as a template to the server
+  const handleSaveAsTemplate = useCallback(async (name: string) => {
+    if (!name.trim()) return
     const currentNodes = reactFlowInstance.getNodes()
     const currentEdges = reactFlowInstance.getEdges()
-    const name = window.prompt('Template name:') ?? 'My Workflow'
-    if (!name) return
 
-    const template = {
-      id: `custom-${Date.now()}`,
-      name,
-      description: `Custom template with ${currentNodes.length} nodes`,
-      category: 'custom',
-      nodeCount: currentNodes.length,
-      nodes: currentNodes.map((n) => ({
-        id: n.id,
-        type: n.type,
-        position: n.position,
-        data: n.data,
-      })),
-      edges: currentEdges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle ?? 'output',
-        targetHandle: e.targetHandle ?? 'input',
-        data: e.data,
-      })),
+    try {
+      await workflowsApi.create({
+        name: name.trim(),
+        description: `Custom template with ${currentNodes.length} nodes`,
+        layout: {
+          nodes: currentNodes.map((n) => ({
+            id: n.id, type: n.type, position: n.position, data: n.data,
+          })),
+          edges: currentEdges.map((e) => ({
+            id: e.id, source: e.source, target: e.target,
+            sourceHandle: e.sourceHandle ?? 'output',
+            targetHandle: e.targetHandle ?? 'input',
+            data: e.data,
+          })),
+        },
+      })
+    } catch {
+      // Server may not be running — that's OK
     }
-
-    const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${name.toLowerCase().replace(/\s+/g, '-')}.agentzero-template.json`
-    a.click()
-    URL.revokeObjectURL(url)
+    setSaveTemplateOpen(false)
+    setTemplateName('')
   }, [reactFlowInstance])
 
   // Keyboard shortcuts for group/ungroup
@@ -335,8 +329,11 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     } else if (mod && e.key === 'g' && e.shiftKey) {
       e.preventDefault()
       handleUngroupSelected()
+    } else if (mod && e.shiftKey && e.key === 'f') {
+      e.preventDefault()
+      reactFlowInstance.fitView({ padding: 0.2, duration: 300 })
     }
-  }, [readOnly, handleGroupSelected, handleUngroupSelected])
+  }, [readOnly, handleGroupSelected, handleUngroupSelected, reactFlowInstance])
 
   // Keyboard listener for group/ungroup
   useEffect(() => {
@@ -469,9 +466,9 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
           >
             &#x2922;
           </button>
-          {nodes.length > 0 && (
+          {nodes.length > 0 && !saveTemplateOpen && (
             <button
-              onClick={handleSaveAsTemplate}
+              onClick={() => setSaveTemplateOpen(true)}
               title="Save current workflow as a template"
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
@@ -483,6 +480,51 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
             >
               Save Template
             </button>
+          )}
+          {saveTemplateOpen && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              background: '#1C1C1E', border: '1px solid rgba(255,255,255,0.06)',
+              borderRadius: 8, padding: '4px 6px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+            }}>
+              <input
+                autoFocus
+                type="text"
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && templateName.trim()) handleSaveAsTemplate(templateName)
+                  if (e.key === 'Escape') { setSaveTemplateOpen(false); setTemplateName('') }
+                }}
+                placeholder="Template name..."
+                style={{
+                  width: 160, background: '#0F0F11', border: 'none', borderRadius: 6,
+                  padding: '6px 10px', fontSize: 12, color: '#E5E5E5', outline: 'none',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              />
+              <button
+                onClick={() => { if (templateName.trim()) handleSaveAsTemplate(templateName) }}
+                disabled={!templateName.trim()}
+                style={{
+                  padding: '6px 10px', background: templateName.trim() ? '#22c55e' : '#374151',
+                  color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  fontFamily: "'JetBrains Mono', monospace", cursor: templateName.trim() ? 'pointer' : 'not-allowed',
+                }}
+              >
+                Save
+              </button>
+              <button
+                onClick={() => { setSaveTemplateOpen(false); setTemplateName('') }}
+                style={{
+                  padding: '6px 8px', background: 'transparent', color: '#737373',
+                  border: 'none', cursor: 'pointer', fontSize: 14,
+                }}
+              >
+                &#x2715;
+              </button>
+            </div>
           )}
         </div>
       )}

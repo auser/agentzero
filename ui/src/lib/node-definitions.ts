@@ -84,6 +84,67 @@ const HUMAN_INPUT_DEFINITION: NodeDefinition = {
   ],
 }
 
+// ── Save to File ────────────────────────────────────────────────────────────
+
+const SAVE_FILE_DEFINITION: NodeDefinition = {
+  type: 'save_file',
+  label: 'Save to File',
+  icon: '💾',
+  headerColor: '#0ea5e9',
+  category: 'io',
+  fields: [
+    { key: 'path', type: 'text', label: 'File Path' },
+    { key: 'mode', type: 'select', label: 'Mode', options: ['overwrite', 'append'] },
+  ],
+  inputs: [
+    { id: 'content', label: 'content', direction: 'input', port_type: 'text' },
+  ],
+  outputs: [
+    { id: 'path', label: 'path', direction: 'output', port_type: 'text' },
+    { id: 'done', label: 'done', direction: 'output', port_type: 'event' },
+  ],
+}
+
+// ── Read File ───────────────────────────────────────────────────────────────
+
+const READ_FILE_DEFINITION: NodeDefinition = {
+  type: 'read_file',
+  label: 'Read File',
+  icon: '📄',
+  headerColor: '#0ea5e9',
+  category: 'io',
+  fields: [
+    { key: 'path', type: 'text', label: 'File Path' },
+  ],
+  inputs: [
+    { id: 'path', label: 'path', direction: 'input', port_type: 'text' },
+  ],
+  outputs: [
+    { id: 'content', label: 'content', direction: 'output', port_type: 'text' },
+  ],
+}
+
+// ── HTTP Request ────────────────────────────────────────────────────────────
+
+const HTTP_REQUEST_DEFINITION: NodeDefinition = {
+  type: 'http_request',
+  label: 'HTTP Request',
+  icon: '🌐',
+  headerColor: '#14b8a6',
+  category: 'io',
+  fields: [
+    { key: 'url', type: 'text', label: 'URL' },
+    { key: 'method', type: 'select', label: 'Method', options: ['GET', 'POST', 'PUT', 'DELETE'] },
+  ],
+  inputs: [
+    { id: 'body', label: 'body', direction: 'input', port_type: 'json' },
+  ],
+  outputs: [
+    { id: 'response', label: 'response', direction: 'output', port_type: 'text' },
+    { id: 'status', label: 'status', direction: 'output', port_type: 'number' },
+  ],
+}
+
 // ── Schedule ─────────────────────────────────────────────────────────────────
 
 const SCHEDULE_DEFINITION: NodeDefinition = {
@@ -183,6 +244,9 @@ export const ALL_NODE_DEFINITIONS: NodeDefinition[] = [
   TOOL_DEFINITION,
   CHANNEL_DEFINITION,
   HUMAN_INPUT_DEFINITION,
+  SAVE_FILE_DEFINITION,
+  READ_FILE_DEFINITION,
+  HTTP_REQUEST_DEFINITION,
   SCHEDULE_DEFINITION,
   GATE_DEFINITION,
   SUBAGENT_DEFINITION,
