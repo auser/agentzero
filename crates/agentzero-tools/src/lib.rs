@@ -111,7 +111,8 @@ pub fn tool_tier(name: &str) -> ToolTier {
         | "model_routing_config"
         | "docx_read"
         | "html_extract"
-        | "a2a" => ToolTier::Extended,
+        | "a2a"
+        | "canvas" => ToolTier::Extended,
 
         // --- Full tier: everything else ---
         _ => ToolTier::Full,
@@ -146,6 +147,8 @@ pub mod write_file;
 pub mod a2a;
 #[cfg(feature = "tools-extended")]
 pub mod agents_ipc;
+#[cfg(feature = "tools-extended")]
+pub mod canvas;
 #[cfg(feature = "tools-extended")]
 pub mod cli_discovery;
 #[cfg(feature = "tools-extended")]
@@ -236,6 +239,8 @@ pub use write_file::{WriteFilePolicy, WriteFileTool};
 pub use a2a::A2aTool;
 #[cfg(feature = "tools-extended")]
 pub use agents_ipc::AgentsIpcTool;
+#[cfg(feature = "tools-extended")]
+pub use canvas::CanvasTool;
 #[cfg(feature = "tools-extended")]
 pub use cli_discovery::CliDiscoveryTool;
 #[cfg(feature = "tools-extended")]
@@ -367,6 +372,8 @@ pub struct ToolSecurityPolicy {
     pub wasm_dev_plugin_dir: Option<PathBuf>,
     /// Enable A2A (Agent-to-Agent) protocol tool for dynamic agent discovery and messaging.
     pub enable_a2a_tool: bool,
+    /// Enable canvas tool for live rich content rendering.
+    pub enable_canvas: bool,
     /// Enable Claude Code delegation tool (spawns `claude` CLI as subprocess).
     pub enable_claude_code: bool,
     /// Enable CLI harness tools (Codex, Gemini, OpenCode CLI delegation).
@@ -446,6 +453,7 @@ impl ToolSecurityPolicy {
             wasm_project_plugin_dir: None,
             wasm_dev_plugin_dir: None,
             enable_a2a_tool: false,
+            enable_canvas: false,
             enable_claude_code: false,
             enable_cli_harness: false,
         }
@@ -525,6 +533,7 @@ mod tests {
             "proxy_config",
             "model_routing_config",
             "a2a",
+            "canvas",
         ];
         for name in &extended_tools {
             assert_eq!(

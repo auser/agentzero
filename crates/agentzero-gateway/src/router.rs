@@ -1,4 +1,8 @@
 use crate::a2a::{a2a_rpc, agent_card};
+use crate::canvas::{
+    canvas_history, delete_canvas as delete_canvas_handler, get_canvas, list_canvases, post_canvas,
+    ws_canvas,
+};
 use crate::handlers::{
     agent_stats, agents_list, api_chat, api_fallback, async_submit, create_agent, create_cron,
     dashboard, delete_agent, delete_cron, emergency_stop, forget_memory, get_agent, get_config,
@@ -72,6 +76,15 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/docs", get(api_docs_handler))
         .route("/ws/chat", get(ws_chat))
         .route("/ws/runs/:run_id", get(ws_run_subscribe))
+        .route("/api/canvas", get(list_canvases))
+        .route(
+            "/api/canvas/:id",
+            get(get_canvas)
+                .post(post_canvas)
+                .delete(delete_canvas_handler),
+        )
+        .route("/api/canvas/:id/history", get(canvas_history))
+        .route("/ws/canvas/:id", get(ws_canvas))
         .route("/api/*path", get(api_fallback));
 
     // Noise Protocol handshake and transport routes (privacy feature).

@@ -10,6 +10,7 @@ pub mod api_keys;
 mod audit;
 mod auth;
 mod banner;
+pub(crate) mod canvas;
 pub mod gateway_channel;
 mod gateway_metrics;
 mod handlers;

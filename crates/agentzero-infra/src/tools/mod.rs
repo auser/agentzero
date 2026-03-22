@@ -33,8 +33,8 @@ pub use agentzero_tools::{
 // ── Extended tier re-exports ─────────────────────────────────────────
 #[cfg(feature = "tools-extended")]
 pub use agentzero_tools::{
-    A2aTool, AgentsIpcTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool, CronListTool,
-    CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, GitOperationsTool,
+    A2aTool, AgentsIpcTool, CanvasTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool,
+    CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, GitOperationsTool,
     HttpRequestTool, ModelRoutingConfigTool, ProxyConfigTool, ScheduleTool, SopAdvanceTool,
     SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, UrlValidationTool, WebFetchTool,
     WebSearchTool,
@@ -186,6 +186,11 @@ fn default_tools_inner(
         if policy.enable_a2a_tool {
             tools.push(Box::new(A2aTool));
         }
+
+        // TODO: CanvasTool requires an Arc<CanvasStore> that is not available
+        // during default_tools() construction. The gateway will inject the
+        // CanvasTool directly when it has a CanvasStore instance.
+        // if policy.enable_canvas { tools.push(Box::new(CanvasTool::new(store))); }
 
         if let Some(ref r) = router {
             tools.push(Box::new(ModelRoutingConfigTool::new(r.clone())));

@@ -22,6 +22,7 @@ import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as ConfigIndexRouteImport } from './routes/config/index'
 import { Route as ChatIndexRouteImport } from './routes/chat/index'
 import { Route as ChannelsIndexRouteImport } from './routes/channels/index'
+import { Route as CanvasIndexRouteImport } from './routes/canvas/index'
 import { Route as ApprovalsIndexRouteImport } from './routes/approvals/index'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
 
@@ -90,6 +91,11 @@ const ChannelsIndexRoute = ChannelsIndexRouteImport.update({
   path: '/channels/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CanvasIndexRoute = CanvasIndexRouteImport.update({
+  id: '/canvas/',
+  path: '/canvas/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApprovalsIndexRoute = ApprovalsIndexRouteImport.update({
   id: '/approvals/',
   path: '/approvals/',
@@ -106,6 +112,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/agents/': typeof AgentsIndexRoute
   '/approvals/': typeof ApprovalsIndexRoute
+  '/canvas/': typeof CanvasIndexRoute
   '/channels/': typeof ChannelsIndexRoute
   '/chat/': typeof ChatIndexRoute
   '/config/': typeof ConfigIndexRoute
@@ -123,6 +130,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/agents': typeof AgentsIndexRoute
   '/approvals': typeof ApprovalsIndexRoute
+  '/canvas': typeof CanvasIndexRoute
   '/channels': typeof ChannelsIndexRoute
   '/chat': typeof ChatIndexRoute
   '/config': typeof ConfigIndexRoute
@@ -141,6 +149,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/agents/': typeof AgentsIndexRoute
   '/approvals/': typeof ApprovalsIndexRoute
+  '/canvas/': typeof CanvasIndexRoute
   '/channels/': typeof ChannelsIndexRoute
   '/chat/': typeof ChatIndexRoute
   '/config/': typeof ConfigIndexRoute
@@ -160,6 +169,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/agents/'
     | '/approvals/'
+    | '/canvas/'
     | '/channels/'
     | '/chat/'
     | '/config/'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/agents'
     | '/approvals'
+    | '/canvas'
     | '/channels'
     | '/chat'
     | '/config'
@@ -194,6 +205,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/agents/'
     | '/approvals/'
+    | '/canvas/'
     | '/channels/'
     | '/chat/'
     | '/config/'
@@ -212,6 +224,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   ApprovalsIndexRoute: typeof ApprovalsIndexRoute
+  CanvasIndexRoute: typeof CanvasIndexRoute
   ChannelsIndexRoute: typeof ChannelsIndexRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ConfigIndexRoute: typeof ConfigIndexRoute
@@ -318,6 +331,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChannelsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/canvas/': {
+      id: '/canvas/'
+      path: '/canvas'
+      fullPath: '/canvas/'
+      preLoaderRoute: typeof CanvasIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/approvals/': {
       id: '/approvals/'
       path: '/approvals'
@@ -340,6 +360,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   ApprovalsIndexRoute: ApprovalsIndexRoute,
+  CanvasIndexRoute: CanvasIndexRoute,
   ChannelsIndexRoute: ChannelsIndexRoute,
   ChatIndexRoute: ChatIndexRoute,
   ConfigIndexRoute: ConfigIndexRoute,

@@ -7,6 +7,7 @@
 pub mod a2a_types;
 pub mod agent;
 pub mod agent_store;
+pub mod canvas;
 pub mod common;
 pub mod delegation;
 pub mod embedding;
@@ -27,6 +28,7 @@ pub mod validation;
 pub use tracing;
 
 pub use agent::Agent;
+pub use canvas::{Canvas, CanvasFrame, CanvasStore, CanvasSummary};
 pub use event_bus::{Event, EventBus, EventSubscriber, FileBackedBus, InMemoryBus};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};

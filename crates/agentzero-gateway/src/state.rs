@@ -4,6 +4,7 @@ use crate::token_store::save_paired_tokens;
 use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
+use agentzero_core::canvas::CanvasStore;
 use agentzero_core::{EventBus, MemoryStore};
 use agentzero_orchestrator::{AgentStore, JobStore, PresenceStore};
 use metrics_exporter_prometheus::PrometheusHandle;
@@ -79,6 +80,8 @@ pub(crate) struct GatewayState {
     pub(crate) mcp_server: Option<Arc<agentzero_infra::mcp_server::McpServer>>,
     /// A2A task store for Agent-to-Agent protocol.
     pub(crate) a2a_tasks: crate::a2a::A2aTaskStore,
+    /// Canvas store for live canvas rendering.
+    pub(crate) canvas_store: Option<Arc<CanvasStore>>,
 }
 
 impl GatewayState {
@@ -130,7 +133,15 @@ impl GatewayState {
             agent_store: None,
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
+            canvas_store: None,
         }
+    }
+
+    /// Set the canvas store for live canvas rendering.
+    #[allow(dead_code)]
+    pub(crate) fn with_canvas_store(mut self, store: Arc<CanvasStore>) -> Self {
+        self.canvas_store = Some(store);
+        self
     }
 
     /// Set the distributed event bus for real-time event streaming.
@@ -346,6 +357,7 @@ impl GatewayState {
             agent_store: None,
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
+            canvas_store: None,
         }
     }
 
@@ -391,6 +403,7 @@ impl GatewayState {
             agent_store: None,
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
+            canvas_store: None,
         }
     }
 }

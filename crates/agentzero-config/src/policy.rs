@@ -105,6 +105,7 @@ pub fn load_tool_security_policy(
         wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),
         wasm_dev_plugin_dir: config.security.plugin.dev_plugin_dir.map(PathBuf::from),
         enable_a2a_tool: config.a2a.enabled,
+        enable_canvas: false, // Canvas is injected by gateway, not config-driven yet
         enable_claude_code: config.agent.enable_claude_code,
         enable_cli_harness: config.agent.enable_cli_harness,
     };
