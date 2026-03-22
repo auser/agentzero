@@ -291,31 +291,41 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
     persistWithHistory()
   }, [setNodes, setEdges, persistWithHistory])
 
-  // Save current canvas as a template to the server
+  // Save current canvas as a template — always persists locally, also tries API
   const handleSaveAsTemplate = useCallback(async (name: string, description: string) => {
     const currentNodes = reactFlowInstance.getNodes()
     const currentEdges = reactFlowInstance.getEdges()
+    const templateNodes = currentNodes.map((n) => ({
+      id: n.id, type: n.type ?? n.data?.nodeType ?? 'agent',
+      position: n.position, data: n.data as Record<string, unknown>,
+    }))
+    const templateEdges = currentEdges.map((e) => ({
+      id: e.id, source: e.source, target: e.target,
+      sourceHandle: e.sourceHandle ?? 'output',
+      targetHandle: e.targetHandle ?? 'input',
+      data: e.data,
+    }))
+    const desc = description || `Custom template with ${currentNodes.length} nodes`
 
+    // Always save locally so it's immediately available
+    const { saveLocalTemplate } = await import('@/lib/template-store')
+    saveLocalTemplate({
+      id: `custom_${Date.now()}`,
+      name,
+      description: desc,
+      category: 'custom',
+      nodeCount: currentNodes.length,
+      nodes: templateNodes as WorkflowTemplate['nodes'],
+      edges: templateEdges as WorkflowTemplate['edges'],
+      savedAt: Date.now(),
+    })
+
+    // Also try the API
     try {
-      await workflowsApi.create({
-        name,
-        description: description || `Custom template with ${currentNodes.length} nodes`,
-        layout: {
-          nodes: currentNodes.map((n) => ({
-            id: n.id, type: n.type, position: n.position, data: n.data,
-          })),
-          edges: currentEdges.map((e) => ({
-            id: e.id, source: e.source, target: e.target,
-            sourceHandle: e.sourceHandle ?? 'output',
-            targetHandle: e.targetHandle ?? 'input',
-            data: e.data,
-          })),
-        },
-      })
+      await workflowsApi.create({ name, description: desc, layout: { nodes: templateNodes, edges: templateEdges } })
       void queryClient.invalidateQueries({ queryKey: ['workflows', 'templates'] })
-    } catch {
-      // Server may not be running
-    }
+    } catch { /* API unavailable — local save is sufficient */ }
+
     setSaveTemplateOpen(false)
   }, [reactFlowInstance, queryClient])
 

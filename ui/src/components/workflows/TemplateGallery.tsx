@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ALL_TEMPLATES, type WorkflowTemplate } from '@/lib/workflow-templates'
 import { workflowsApi } from '@/lib/api/workflows'
 import { X, Layout, Search, Trash2 } from 'lucide-react'
+import { loadLocalTemplates, deleteLocalTemplate } from '@/lib/template-store'
 
 interface TemplateGalleryProps {
   open: boolean
@@ -43,6 +44,7 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
   useEffect(() => {
     if (open) {
       setQuery('') // eslint-disable-line react-hooks/set-state-in-effect -- reset on open
+      setLocalVersion((v) => v + 1) // eslint-disable-line react-hooks/set-state-in-effect -- reload local templates
       setTimeout(() => inputRef.current?.focus(), 50)
       void refetch()
     }
@@ -55,18 +57,22 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
     return () => window.removeEventListener('keydown', handler)
   }, [open, onClose])
 
-  // Merge built-in templates with saved workflows
+  // Reload local templates when gallery opens
+  const [localVersion, setLocalVersion] = useState(0)
+
+  // Merge built-in + API + local templates
   const allTemplates = useMemo(() => {
-    const templates: (WorkflowTemplate & { saved?: boolean; workflowId?: string })[] = [
+    // Suppress unused-var warning — localVersion is a dependency trigger
+    void localVersion
+    const templates: (WorkflowTemplate & { saved?: boolean; workflowId?: string; localId?: string })[] = [
       ...ALL_TEMPLATES,
     ]
 
+    // API-sourced templates
     for (const w of savedWorkflows?.data ?? []) {
-      // Skip the "default" active workflow — it's not a template
       if (w.name === 'default') continue
       const nodeCount = (w.layout?.nodes as unknown[])?.length ?? 0
       if (nodeCount === 0) continue
-
       templates.push({
         id: w.workflow_id,
         name: w.name,
@@ -80,8 +86,19 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
       })
     }
 
+    // Locally saved templates (fallback when API is unavailable)
+    const apiIds = new Set(templates.map((t) => t.name))
+    for (const lt of loadLocalTemplates()) {
+      if (apiIds.has(lt.name)) continue // don't duplicate if also on server
+      templates.push({
+        ...lt,
+        saved: true,
+        localId: lt.id,
+      })
+    }
+
     return templates
-  }, [savedWorkflows])
+  }, [savedWorkflows, localVersion])
 
   const filtered = useMemo(() => {
     if (!query) return allTemplates
@@ -94,13 +111,19 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
     )
   }, [allTemplates, query])
 
-  const handleDelete = async (workflowId: string, e: React.MouseEvent) => {
+  const handleDelete = async (template: typeof allTemplates[0], e: React.MouseEvent) => {
     e.stopPropagation()
-    try {
-      await workflowsApi.delete(workflowId)
-      void queryClient.invalidateQueries({ queryKey: ['workflows', 'templates'] })
-    } catch {
-      // Server may not be running
+    // Delete from local store
+    if (template.localId) {
+      deleteLocalTemplate(template.localId)
+      setLocalVersion((v) => v + 1)
+    }
+    // Delete from API
+    if (template.workflowId) {
+      try {
+        await workflowsApi.delete(template.workflowId)
+        void queryClient.invalidateQueries({ queryKey: ['workflows', 'templates'] })
+      } catch { /* API unavailable */ }
     }
   }
 
@@ -190,9 +213,9 @@ export function TemplateGallery({ open, onClose, onSelect }: TemplateGalleryProp
                         <span className="text-[10px] text-neutral-500">
                           {template.nodeCount} nodes
                         </span>
-                        {isSaved && 'workflowId' in template && (
+                        {isSaved && (
                           <button
-                            onClick={(e) => handleDelete(template.workflowId as string, e)}
+                            onClick={(e) => handleDelete(template, e)}
                             className="text-neutral-600 hover:text-red-400 transition-colors"
                             title="Delete template"
                           >

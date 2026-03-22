@@ -2849,8 +2849,18 @@ pub(crate) async fn create_workflow(
         .unwrap_or("Untitled Workflow")
         .to_string();
     let description = req["description"].as_str().unwrap_or("").to_string();
-    let nodes: Vec<Value> = req["nodes"].as_array().cloned().unwrap_or_default();
-    let edges: Vec<Value> = req["edges"].as_array().cloned().unwrap_or_default();
+    // Support both `{ layout: { nodes, edges } }` (frontend) and top-level `{ nodes, edges }`.
+    let layout = &req["layout"];
+    let nodes: Vec<Value> = layout["nodes"]
+        .as_array()
+        .or_else(|| req["nodes"].as_array())
+        .cloned()
+        .unwrap_or_default();
+    let edges: Vec<Value> = layout["edges"]
+        .as_array()
+        .or_else(|| req["edges"].as_array())
+        .cloned()
+        .unwrap_or_default();
 
     let record = agentzero_orchestrator::WorkflowRecord {
         workflow_id: String::new(),
@@ -2884,6 +2894,7 @@ pub(crate) async fn create_workflow(
 pub(crate) async fn list_workflows(
     State(state): State<GatewayState>,
     headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
@@ -2892,11 +2903,13 @@ pub(crate) async fn list_workflows(
         .as_ref()
         .ok_or(GatewayError::AgentUnavailable)?;
 
+    let include_layout = params.get("include").is_some_and(|v| v == "layout");
+
     let workflows: Vec<Value> = store
         .list()
         .into_iter()
         .map(|w| {
-            json!({
+            let mut entry = json!({
                 "workflow_id": w.workflow_id,
                 "name": w.name,
                 "description": w.description,
@@ -2904,11 +2917,23 @@ pub(crate) async fn list_workflows(
                 "edge_count": w.edges.len(),
                 "created_at": w.created_at,
                 "updated_at": w.updated_at,
-            })
+            });
+            if include_layout {
+                entry["layout"] = json!({
+                    "nodes": w.nodes,
+                    "edges": w.edges,
+                });
+            }
+            entry
         })
         .collect();
 
-    Ok(Json(json!({ "workflows": workflows })))
+    let total = workflows.len();
+    Ok(Json(json!({
+        "object": "list",
+        "data": workflows,
+        "total": total,
+    })))
 }
 
 /// GET /v1/workflows/:id — get a workflow definition.
@@ -2953,11 +2978,18 @@ pub(crate) async fn update_workflow(
         .as_ref()
         .ok_or(GatewayError::AgentUnavailable)?;
 
+    let layout = &req["layout"];
     let update = agentzero_orchestrator::WorkflowUpdate {
         name: req["name"].as_str().map(String::from),
         description: req["description"].as_str().map(String::from),
-        nodes: req["nodes"].as_array().cloned(),
-        edges: req["edges"].as_array().cloned(),
+        nodes: layout["nodes"]
+            .as_array()
+            .or_else(|| req["nodes"].as_array())
+            .cloned(),
+        edges: layout["edges"]
+            .as_array()
+            .or_else(|| req["edges"].as_array())
+            .cloned(),
     };
 
     let updated = store
