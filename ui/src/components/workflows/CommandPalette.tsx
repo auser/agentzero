@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { agentsApi } from '@/lib/api/agents'
 import { Plus } from 'lucide-react'
 import { api } from '@/lib/api/client'
-import { Bot, Wrench, Radio, Search, Hand, Clock, Shield, GitBranch, Sparkles, Zap, Theater } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
 import { getDefinition, ALL_NODE_DEFINITIONS } from '@/lib/node-definitions'
 import { portsFromSchema, type ToolInfo } from '@/lib/workflow-types'
@@ -65,6 +65,7 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
     const items: PaletteItem[] = []
 
     // "Create new agent" action at the top
+    // ── Actions ──
     if (onCreateAgent) {
       items.push({
         id: '__create_agent__',
@@ -80,92 +81,87 @@ export function CommandPalette({ open, onClose, onSelect, onCreateAgent }: Comma
       })
     }
 
-    for (const a of agents?.data ?? []) {
-      items.push({
-        id: a.agent_id,
-        name: a.name,
-        category: 'Agent',
-        icon: <Bot className="h-3.5 w-3.5" />,
-        detail: a.model,
-        color: getDefinition('agent')?.headerColor ?? '#3b82f6',
-        data: {
-          nodeType: 'agent', id: a.agent_id, name: a.name,
-          metadata: { node_type: 'agent', model: a.model, description: a.description, status: a.status },
-          ports: portsForNodeType('agent'),
-        },
-      })
-    }
-
-    for (const t of toolsData?.tools ?? []) {
-      const schemaPorts = portsFromSchema(t.input_schema)
-      const toolDef = getDefinition('tool')
-      // Use schema-derived input ports if available, otherwise fall back to generic
-      const toolInputs = schemaPorts.length > 0 ? schemaPorts : (toolDef?.inputs ?? [])
-      const toolOutputs = toolDef?.outputs ?? []
-      items.push({
-        id: `tool-${t.name}`,
-        name: t.name,
-        category: 'Tool',
-        icon: <Wrench className="h-3.5 w-3.5" />,
-        detail: t.description?.slice(0, 40),
-        color: toolDef?.headerColor ?? '#8b5cf6',
-        data: {
-          nodeType: 'tool', id: `tool-${t.name}`, name: t.name,
-          metadata: {
-            node_type: 'tool',
-            tool_name: t.name,
-            description: t.description,
-            tool_inputs: toolInputs,
-            tool_outputs: toolOutputs,
-          },
-          ports: [...toolInputs, ...toolOutputs],
-        },
-      })
-    }
-
-    for (const [name, cfg] of Object.entries(configData?.channels ?? {})) {
-      items.push({
-        id: `channel-${name}`,
-        name,
-        category: 'Channel',
-        icon: <Radio className="h-3.5 w-3.5" />,
-        detail: cfg.enabled !== false ? 'connected' : 'offline',
-        color: getDefinition('channel')?.headerColor ?? '#ec4899',
-        data: {
-          nodeType: 'channel', id: `channel-${name}`, name,
-          metadata: { node_type: 'channel', channel_type: name, connected: cfg.enabled !== false },
-          ports: portsForNodeType('channel'),
-        },
-      })
-    }
-
-    // Static node types — always available regardless of API data
-    const STATIC_ICON_MAP: Record<string, React.ReactNode> = {
-      role: <Theater className="h-3.5 w-3.5" />,
-      schedule: <Clock className="h-3.5 w-3.5" />,
-      gate: <Shield className="h-3.5 w-3.5" />,
-      subagent: <GitBranch className="h-3.5 w-3.5" />,
-      human_input: <Hand className="h-3.5 w-3.5" />,
-      provider: <Zap className="h-3.5 w-3.5" />,
-    }
-
+    // ── All node types from definitions (auto-registered) ──
     for (const def of ALL_NODE_DEFINITIONS) {
-      // Skip types already covered by dynamic data above
-      if (['agent', 'tool', 'channel'].includes(def.type)) continue
-      const icon = STATIC_ICON_MAP[def.type] ?? <Sparkles className="h-3.5 w-3.5" />
+      const icon = <span style={{ fontSize: 13 }}>{def.icon ?? '⚙️'}</span>
+      const category = def.category === 'core' ? 'Node'
+        : def.category === 'integration' ? 'Channel'
+        : def.category === 'io' ? 'I/O'
+        : def.category ?? 'Node'
+
       items.push({
         id: `${def.type}_static`,
         name: def.label,
-        category: def.category === 'core' ? 'Node' : def.category === 'integration' ? 'Channel' : def.category,
+        category,
         icon,
         detail: def.fields?.[0]?.label ?? def.type,
-        color: def.headerColor,
+        color: def.headerColor ?? '#6b7280',
         data: {
           nodeType: def.type,
           id: `${def.type}_new`,
           name: def.label,
           metadata: { node_type: def.type },
           ports: portsForNodeType(def.type),
+        },
+      })
+    }
+
+    // ── API-sourced agents (instances of agent nodes) ──
+    for (const a of agents?.data ?? []) {
+      const def = getDefinition('agent')
+      items.push({
+        id: a.agent_id,
+        name: a.name,
+        category: 'Agent',
+        icon: <span style={{ fontSize: 13 }}>{def?.icon ?? '🤖'}</span>,
+        detail: a.model,
+        color: def?.headerColor ?? '#3b82f6',
+        data: {
+          nodeType: 'agent', id: a.agent_id, name: a.name,
+          metadata: { node_type: 'agent', agent_id: a.agent_id, model: a.model, description: a.description, status: a.status },
+          ports: portsForNodeType('agent'),
+        },
+      })
+    }
+
+    // ── API-sourced tools (with schema-derived ports) ──
+    for (const t of toolsData?.tools ?? []) {
+      const schemaPorts = portsFromSchema(t.input_schema)
+      const toolDef = getDefinition('tool')
+      const toolInputs = schemaPorts.length > 0 ? schemaPorts : (toolDef?.inputs ?? [])
+      const toolOutputs = toolDef?.outputs ?? []
+      items.push({
+        id: `tool-${t.name}`,
+        name: t.name,
+        category: 'Tool',
+        icon: <span style={{ fontSize: 13 }}>{toolDef?.icon ?? '🔧'}</span>,
+        detail: t.description?.slice(0, 40),
+        color: toolDef?.headerColor ?? '#8b5cf6',
+        data: {
+          nodeType: 'tool', id: `tool-${t.name}`, name: t.name,
+          metadata: {
+            node_type: 'tool', tool_name: t.name, description: t.description,
+            tool_inputs: toolInputs, tool_outputs: toolOutputs,
+          },
+          ports: [...toolInputs, ...toolOutputs],
+        },
+      })
+    }
+
+    // ── API-sourced channels (configured instances) ──
+    for (const [name, cfg] of Object.entries(configData?.channels ?? {})) {
+      const def = getDefinition('channel')
+      items.push({
+        id: `channel-${name}`,
+        name,
+        category: 'Channel',
+        icon: <span style={{ fontSize: 13 }}>{def?.icon ?? '📡'}</span>,
+        detail: cfg.enabled !== false ? 'connected' : 'offline',
+        color: def?.headerColor ?? '#ec4899',
+        data: {
+          nodeType: 'channel', id: `channel-${name}`, name,
+          metadata: { node_type: 'channel', channel_type: name, connected: cfg.enabled !== false },
+          ports: portsForNodeType('channel'),
         },
       })
     }

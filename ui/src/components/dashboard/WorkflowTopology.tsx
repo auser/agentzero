@@ -35,7 +35,7 @@ import { useUndoRedo } from '@/components/dashboard/useUndoRedo'
 import { RunWorkflowButton } from '@/components/workflows/RunWorkflowButton'
 import { TemplateGallery } from '@/components/workflows/TemplateGallery'
 import { EmptyCanvasState } from '@/components/workflows/EmptyCanvasState'
-import { getDefinition } from '@/lib/node-definitions'
+import { getDefinition, ALL_NODE_DEFINITIONS } from '@/lib/node-definitions'
 import type { WorkflowTemplate } from '@/lib/workflow-templates'
 import { workflowsApi } from '@/lib/api/workflows'
 
@@ -44,15 +44,9 @@ interface WorkflowTopologyProps {
   readOnly?: boolean
 }
 
-const nodeTypes = {
-  agent: AgentNode,
-  tool: AgentNode,
-  channel: AgentNode,
-  human_input: AgentNode,
-  schedule: AgentNode,
-  gate: AgentNode,
-  subagent: AgentNode,
-  role: AgentNode,
+// Auto-register all node definitions as AgentNode, with overrides for special types
+const nodeTypes: Record<string, typeof AgentNode | typeof ProviderNode | typeof GroupNode> = {
+  ...Object.fromEntries(ALL_NODE_DEFINITIONS.map((d) => [d.type, AgentNode])),
   provider: ProviderNode,
   group: GroupNode,
 }
