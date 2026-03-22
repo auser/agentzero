@@ -72,6 +72,10 @@ pub struct RuntimeExecution {
     pub data_dir: PathBuf,
     /// Optional tool selector for AI/keyword-based tool filtering.
     pub tool_selector: Option<Box<dyn agentzero_core::ToolSelector>>,
+    /// Source channel name (set when invoked from a channel, e.g. "telegram").
+    pub source_channel: Option<String>,
+    /// Sender identity for per-sender rate limiting.
+    pub sender_id: Option<String>,
 }
 
 struct AuditHookSink {
@@ -357,6 +361,8 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             // "ai" selector requires a provider — wired at a higher level.
             _ => None,
         },
+        source_channel: None,
+        sender_id: None,
     })
 }
 
@@ -429,6 +435,8 @@ pub fn run_agent_streaming(
         ctx.conversation_id = execution.conversation_id.clone();
         ctx.max_tokens = execution.max_tokens;
         ctx.max_cost_microdollars = execution.max_cost_microdollars;
+        ctx.source_channel = execution.source_channel.clone();
+        ctx.sender_id = execution.sender_id.clone();
 
         let response = agent
             .respond_streaming(UserMessage { text: message }, &ctx, tx)
@@ -497,6 +505,8 @@ pub async fn run_agent_with_runtime(
     ctx.privacy_boundary = privacy_boundary;
     ctx.max_tokens = execution.max_tokens;
     ctx.max_cost_microdollars = execution.max_cost_microdollars;
+    ctx.source_channel = execution.source_channel.clone();
+    ctx.sender_id = execution.sender_id.clone();
 
     // Transcribe [AUDIO:path] markers before the message reaches the LLM.
     let message = process_audio_markers(&message, execution.audio_config.as_ref()).await?;
@@ -1194,6 +1204,8 @@ mod tests {
             cost_config: Default::default(),
             data_dir: std::path::PathBuf::from("/tmp"),
             tool_selector: None,
+            source_channel: None,
+            sender_id: None,
         }
     }
 
