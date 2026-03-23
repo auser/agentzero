@@ -1500,20 +1500,20 @@ Nodes render on WASM canvas but interactive fields use React overlays positioned
 
 Card-based template gallery for pre-built workflows (matching LangFlow's "Limitless Control" grid).
 
-- [ ] **Template cards** — Grid of cards: title, 3-line description, category badge (AGENTS, PROMPTING, TOOLS, etc.), provider chips. Dark card styling matching current theme.
-- [ ] **Built-in templates** — Content Search, Code Debugger, Basic Prompting, API Integration, Doc Assistant, Basic Agent, Research Pipeline, Multi-Agent Team (from existing examples).
-- [ ] **One-click deploy** — Click card → loads pre-built workflow into canvas with all nodes, connections, and configs. Optionally creates agents via `/v1/agents` API.
-- [ ] **Template API** — `GET /v1/templates` returns available templates. Templates stored as JSON workflow definitions (nodes + edges + field values).
-- [ ] **Category/provider filtering** — Filter gallery by category badge or provider chip. Search bar for fuzzy match.
+- [x] **Template cards** — TemplateGallery.tsx: 2-column grid with category color coding, node counts, search, delete. *(Shipped via ReactFlow migration)*
+- [x] **Built-in templates** — 8 templates in workflow-templates.ts (Research Pipeline, Content Generator, Code Review, Customer Support, Data Analysis, Agent Debate, Collaborative Writing, Agent Conversation). *(Shipped via ReactFlow migration)*
+- [x] **One-click deploy** — "Use Template" populates canvas. *(Shipped via ReactFlow migration)*
+- [x] **Template API** — `GET/POST /v1/templates` with TemplateStore (SQLite). *(Shipped in Sprint 70)*
+- [x] **Category/provider filtering** — Search filter + category color badges in gallery. *(Shipped via ReactFlow migration)*
 
 #### 6E: Connection Line Polish
 
 Upgrade edge rendering to match LangFlow's clean connection style.
 
-- [ ] **Type-colored edges** — Edge color matches source port type (text=yellow, json=purple, event=green). 2.5px bezier curves.
+- [x] **Type-colored edges** — LabeledEdge.tsx: bezier curves colored by source port type. *(Shipped via ReactFlow migration)*
 - [ ] **Animated data flow** — Dashed-line animation along edges during active runs (particles flowing from output → input).
-- [ ] **Connection validation UI** — Invalid port connections show red flash + tooltip explaining type mismatch. Valid connections show green flash.
-- [ ] **Edge labels** — Optional label on edge midpoint showing transformation (e.g. ".content" for JSON→text key extraction).
+- [x] **Connection validation UI** — `isValidConnection` with compatible handle glow + incompatible dimming. *(Shipped via ReactFlow migration)*
+- [x] **Edge labels** — LabeledEdge.tsx: port type labels + editable conditions on edges. *(Shipped in Sprint 69)*
 
 ---
 
@@ -1954,13 +1954,13 @@ Add history management for node/edge operations.
 
 ### Acceptance Criteria (Sprint 69)
 
-- [ ] ProviderNode selects persist changes to node data
-- [ ] Clicking a node opens a detail panel with full editing
-- [ ] Edges show port-type labels and support conditions
-- [ ] Cmd+Z / Cmd+Shift+Z undo/redo works for all canvas operations
-- [ ] Run button executes workflow and shows live status on nodes
-- [ ] All node types available in the palette
-- [ ] 0 lint errors, all existing tests pass
+- [x] ProviderNode selects persist changes to node data
+- [x] Clicking a node opens a detail panel with full editing
+- [x] Edges show port-type labels and support conditions
+- [x] Cmd+Z / Cmd+Shift+Z undo/redo works for all canvas operations
+- [x] Run button executes workflow and shows live status on nodes
+- [x] All node types available in the palette
+- [x] 0 lint errors, all existing tests pass
 
 ---
 
