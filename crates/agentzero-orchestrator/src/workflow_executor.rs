@@ -401,6 +401,14 @@ pub trait StepDispatcher: Send + Sync {
 
     /// Send a message to a channel.
     async fn send_channel(&self, channel_type: &str, message: &str) -> anyhow::Result<()>;
+
+    /// Suspend execution at a gate node and wait for a human decision.
+    ///
+    /// Returns the decision string ("approved" or "denied").
+    /// Default implementation auto-approves (for non-interactive contexts).
+    async fn suspend_gate(&self, _run_id: &str, _node_id: &str, _node_name: &str) -> String {
+        "approved".to_string()
+    }
 }
 
 /// Real-time status update emitted during workflow execution.
@@ -853,15 +861,21 @@ async fn dispatch_step(
             Ok(StepOutput { port_values: ports })
         }
         NodeType::Gate => {
-            // Gates always "approve" for now. Real implementation would suspend
-            // and wait for human input via the resume() mechanism.
+            // Suspend and wait for human decision via the dispatcher.
+            let decision = dispatcher.suspend_gate("", &step.node_id, &step.name).await;
+
             let mut ports = HashMap::new();
-            ports.insert(
-                "approved".to_string(),
-                serde_json::Value::String(input.to_string()),
-            );
-            // The "denied" port intentionally gets no value — downstream
-            // nodes connected to it will be skipped by handle_gate_routing.
+            if decision == "approved" {
+                ports.insert(
+                    "approved".to_string(),
+                    serde_json::Value::String(input.to_string()),
+                );
+            } else {
+                ports.insert(
+                    "denied".to_string(),
+                    serde_json::Value::String(input.to_string()),
+                );
+            }
             Ok(StepOutput { port_values: ports })
         }
         NodeType::Schedule => {

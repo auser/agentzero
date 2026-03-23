@@ -10,10 +10,10 @@ use crate::handlers::{
     get_config, get_template, get_tools, get_workflow, get_workflow_run, health, health_live,
     health_ready, import_workflow, job_cancel, job_events, job_list, job_result, job_status,
     job_transcript, legacy_webhook, list_approvals, list_cron, list_memory, list_templates,
-    list_workflows, mcp_message, metrics, openapi_spec, pair, ping, recall_memory, sse_events,
-    sse_run_stream, swarm_execute, tool_execute, topology, update_agent, update_config,
-    update_cron, update_template, update_workflow, v1_chat_completions, v1_models, webhook,
-    webhook_with_agent, ws_chat, ws_run_subscribe,
+    list_workflows, mcp_message, metrics, openapi_spec, pair, ping, recall_memory,
+    resume_workflow_run, sse_events, sse_run_stream, swarm_execute, tool_execute, topology,
+    update_agent, update_config, update_cron, update_template, update_workflow,
+    v1_chat_completions, v1_models, webhook, webhook_with_agent, ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -61,6 +61,10 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/agents/:agent_id/stats", get(agent_stats))
         .route("/v1/workflows", get(list_workflows).post(create_workflow))
         .route("/v1/workflows/runs/:run_id", get(get_workflow_run))
+        .route(
+            "/v1/workflows/runs/:run_id/resume",
+            post(resume_workflow_run),
+        )
         .route(
             "/v1/workflows/:id",
             get(get_workflow)

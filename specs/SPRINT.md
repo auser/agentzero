@@ -2076,8 +2076,8 @@ Wire `GatewayStepDispatcher::send_channel` to actual platform sends.
 
 Real suspend/resume for approval workflows.
 
-- [ ] **Suspend mechanism** — when a Gate node is reached, persist `WorkflowRun` state and set node status to `Suspended`
-- [ ] **`POST /v1/workflows/runs/:run_id/resume`** — accepts `{ node_id, decision: "approved"|"denied" }`, resumes execution from the gate node
+- [x] **Suspend mechanism** — `StepDispatcher::suspend_gate()` trait method. Gate dispatch calls `suspend_gate()` which blocks until resumed. Gateway implementation creates oneshot channel, stores sender in `GateSenderMap`, awaits receiver. Default impl auto-approves for non-interactive contexts.
+- [x] **`POST /v1/workflows/runs/:run_id/resume`** — `resume_workflow_run` handler. Accepts `{ node_id, decision: "approved"|"denied" }`. Looks up oneshot sender, sends decision, unblocks gate task. Returns 404 if gate not found or already resumed.
 - [ ] **Notification** — send approval request to a configured channel (Slack, Telegram, email) with approve/deny buttons
 - [ ] **Timeout** — configurable approval timeout (default 24h), auto-deny on expiry
 - [ ] **UI approval panel** — in-canvas overlay showing pending approvals with approve/deny buttons

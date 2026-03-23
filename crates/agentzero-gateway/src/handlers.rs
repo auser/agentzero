@@ -3177,18 +3177,18 @@ pub(crate) async fn execute_workflow(
         .unwrap_or("")
         .to_string();
 
-    let dispatcher: Arc<dyn agentzero_orchestrator::StepDispatcher> = Arc::new(
-        crate::workflow_dispatch::GatewayStepDispatcher::from_state(&state, &plan)
-            .ok_or(GatewayError::AgentUnavailable)?,
-    );
-
-    // Generate a run ID and seed the run store so polling can start immediately.
+    // Generate a run ID before creating dispatcher so gates can be keyed.
     let run_id = format!(
         "wfrun-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis()
+    );
+
+    let dispatcher: Arc<dyn agentzero_orchestrator::StepDispatcher> = Arc::new(
+        crate::workflow_dispatch::GatewayStepDispatcher::from_state(&state, &plan, run_id.clone())
+            .ok_or(GatewayError::AgentUnavailable)?,
     );
 
     let now = std::time::SystemTime::now()
@@ -3359,10 +3359,23 @@ pub(crate) async fn swarm_execute(
             }
         })?;
 
+    // Generate run ID before dispatcher so gates can be keyed.
+    let run_id = format!(
+        "swarm-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+
     // Build dispatcher.
     let dispatcher: Arc<dyn agentzero_orchestrator::StepDispatcher> = Arc::new(
-        crate::workflow_dispatch::GatewayStepDispatcher::from_state(&state, &exec_plan)
-            .ok_or(GatewayError::AgentUnavailable)?,
+        crate::workflow_dispatch::GatewayStepDispatcher::from_state(
+            &state,
+            &exec_plan,
+            run_id.clone(),
+        )
+        .ok_or(GatewayError::AgentUnavailable)?,
     );
 
     let input = req
@@ -3377,15 +3390,6 @@ pub(crate) async fn swarm_execute(
 
     let (status_tx, mut status_rx) =
         tokio::sync::mpsc::channel::<agentzero_orchestrator::StatusUpdate>(64);
-
-    // Generate run ID.
-    let run_id = format!(
-        "swarm-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    );
     let run_id_clone = run_id.clone();
 
     // Store initial run state.
@@ -3528,6 +3532,81 @@ pub(crate) async fn get_workflow_run(
         "finished_at": run.finished_at,
         "error": run.error,
     })))
+}
+
+/// POST /v1/workflows/runs/:run_id/resume — resume a suspended gate node.
+///
+/// Accepts `{ "node_id": "...", "decision": "approved"|"denied" }`.
+/// Unblocks the gate node's execution task with the given decision.
+pub(crate) async fn resume_workflow_run(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
+
+    let node_id = req["node_id"]
+        .as_str()
+        .ok_or(GatewayError::BadRequest {
+            message: "missing 'node_id' field".to_string(),
+        })?
+        .to_string();
+
+    let decision = req["decision"]
+        .as_str()
+        .ok_or(GatewayError::BadRequest {
+            message: "missing 'decision' field (must be 'approved' or 'denied')".to_string(),
+        })?
+        .to_string();
+
+    if decision != "approved" && decision != "denied" {
+        return Err(GatewayError::BadRequest {
+            message: format!("decision must be 'approved' or 'denied', got '{decision}'"),
+        });
+    }
+
+    // Look up the gate sender.
+    let sender = {
+        let mut senders = state.gate_senders.lock().expect("gate_senders lock");
+        senders.remove(&(run_id.clone(), node_id.clone()))
+    };
+
+    match sender {
+        Some(tx) => {
+            let _ = tx.send(decision.clone());
+
+            // Update the node status from Suspended to Running.
+            {
+                let mut runs = state.workflow_runs.lock().expect("workflow_runs lock");
+                if let Some(run) = runs.get_mut(&run_id) {
+                    run.node_statuses.insert(
+                        node_id.clone(),
+                        agentzero_orchestrator::NodeStatus::Running,
+                    );
+                }
+            }
+
+            tracing::info!(
+                run_id = %run_id,
+                node_id = %node_id,
+                decision = %decision,
+                "gate node resumed"
+            );
+
+            Ok(Json(json!({
+                "resumed": true,
+                "run_id": run_id,
+                "node_id": node_id,
+                "decision": decision,
+            })))
+        }
+        None => Err(GatewayError::NotFound {
+            resource: format!(
+                "suspended gate node '{node_id}' in run '{run_id}' (may have already been resumed or timed out)"
+            ),
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------------

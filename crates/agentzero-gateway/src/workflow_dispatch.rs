@@ -16,8 +16,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::state::GatewayState;
-
 /// Dispatches workflow steps through the gateway's real execution infrastructure.
 ///
 /// For agent steps, uses `run_agent_once` with provider/model overrides from
@@ -33,6 +31,10 @@ pub(crate) struct GatewayStepDispatcher {
     agent_endpoints: HashMap<String, Arc<dyn AgentEndpoint>>,
     /// Channel registry for dispatching messages to real platforms.
     channels: Arc<agentzero_channels::ChannelRegistry>,
+    /// Gate resume senders: `(run_id, node_id) → oneshot::Sender<decision>`.
+    gate_senders: crate::state::GateSenderMap,
+    /// Run ID for this workflow execution (used as key for gate senders).
+    run_id: String,
 }
 
 impl GatewayStepDispatcher {
@@ -43,7 +45,11 @@ impl GatewayStepDispatcher {
     ///
     /// Returns `None` if the gateway was started without a config/workspace path
     /// (i.e. agent execution is not available).
-    pub(crate) fn from_state(state: &GatewayState, plan: &ExecutionPlan) -> Option<Self> {
+    pub(crate) fn from_state(
+        state: &crate::state::GatewayState,
+        plan: &ExecutionPlan,
+        run_id: String,
+    ) -> Option<Self> {
         let config_path = state.config_path.as_ref()?.as_ref().clone();
         let workspace_root = state
             .workspace_root
@@ -80,6 +86,8 @@ impl GatewayStepDispatcher {
             agent_store,
             agent_endpoints,
             channels: Arc::clone(&state.channels),
+            gate_senders: Arc::clone(&state.gate_senders),
+            run_id,
         })
     }
 }
@@ -188,6 +196,44 @@ impl StepDispatcher for GatewayStepDispatcher {
             None => {
                 tracing::warn!(channel = channel_type, "channel not found or offline");
                 anyhow::bail!("channel '{channel_type}' not found in registry")
+            }
+        }
+    }
+
+    async fn suspend_gate(&self, _run_id: &str, node_id: &str, node_name: &str) -> String {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        // Store the sender so the resume endpoint can send the decision.
+        {
+            let mut senders = self.gate_senders.lock().expect("gate_senders lock");
+            senders.insert((self.run_id.clone(), node_id.to_string()), tx);
+        }
+
+        tracing::info!(
+            run_id = %self.run_id,
+            node_id = %node_id,
+            node_name = %node_name,
+            "gate suspended — waiting for human decision via POST /v1/workflows/runs/:run_id/resume"
+        );
+
+        // Block until the resume endpoint sends a decision.
+        match rx.await {
+            Ok(decision) => {
+                tracing::info!(
+                    run_id = %self.run_id,
+                    node_id = %node_id,
+                    decision = %decision,
+                    "gate resumed"
+                );
+                decision
+            }
+            Err(_) => {
+                // Sender dropped (run cancelled) — auto-deny.
+                tracing::warn!(
+                    node_id = %node_id,
+                    "gate resume channel closed — auto-denying"
+                );
+                "denied".to_string()
             }
         }
     }

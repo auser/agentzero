@@ -9,6 +9,11 @@ use agentzero_core::{EventBus, MemoryStore};
 use agentzero_orchestrator::{
     AgentStore, JobStore, NodeStatus, PresenceStore, TemplateStore, WorkflowStore,
 };
+
+/// Type alias for the gate resume sender map to avoid clippy type_complexity.
+pub(crate) type GateSenderMap =
+    Arc<Mutex<HashMap<(String, String), tokio::sync::oneshot::Sender<String>>>>;
+
 use serde::Serialize;
 
 /// Snapshot of a workflow run's state, updated in real-time by the executor.
@@ -107,6 +112,9 @@ pub(crate) struct GatewayState {
     pub(crate) template_store: Option<Arc<TemplateStore>>,
     /// In-flight workflow runs — updated in real-time as nodes execute.
     pub(crate) workflow_runs: Arc<Mutex<HashMap<String, WorkflowRunState>>>,
+    /// Gate resume channels: `(run_id, node_id) → oneshot::Sender<decision>`.
+    /// Used by the resume endpoint to unblock suspended gate nodes.
+    pub(crate) gate_senders: GateSenderMap,
 }
 
 impl GatewayState {
@@ -162,6 +170,7 @@ impl GatewayState {
             workflow_store: None,
             template_store: None,
             workflow_runs: Arc::new(Mutex::new(HashMap::new())),
+            gate_senders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -403,6 +412,7 @@ impl GatewayState {
             workflow_store: None,
             template_store: None,
             workflow_runs: Arc::new(Mutex::new(HashMap::new())),
+            gate_senders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -452,6 +462,7 @@ impl GatewayState {
             workflow_store: None,
             template_store: None,
             workflow_runs: Arc::new(Mutex::new(HashMap::new())),
+            gate_senders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
