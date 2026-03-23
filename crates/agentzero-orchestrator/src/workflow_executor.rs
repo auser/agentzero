@@ -792,12 +792,33 @@ async fn dispatch_step(
         }
         NodeType::Channel => {
             let channel_type = step.metadata["channel_type"].as_str().unwrap_or_default();
-            // Channel as sink — send the input
-            if !input.is_empty() {
-                dispatcher.send_channel(channel_type, input).await?;
-            }
-            // Channel as trigger — output the input as trigger/message
             let mut ports = HashMap::new();
+
+            // Channel as sink — send the input and record delivery status.
+            if !input.is_empty() {
+                match dispatcher.send_channel(channel_type, input).await {
+                    Ok(()) => {
+                        ports.insert(
+                            "delivery_status".to_string(),
+                            serde_json::Value::String("delivered".to_string()),
+                        );
+                    }
+                    Err(e) => {
+                        ports.insert(
+                            "delivery_status".to_string(),
+                            serde_json::Value::String(format!("failed: {e}")),
+                        );
+                        // Don't propagate error — still output trigger/message for downstream.
+                        tracing::warn!(
+                            channel = channel_type,
+                            error = %e,
+                            "channel send failed but continuing workflow"
+                        );
+                    }
+                }
+            }
+
+            // Channel as trigger — output the input as trigger/message.
             ports.insert(
                 "trigger".to_string(),
                 serde_json::Value::String(input.to_string()),

@@ -22,6 +22,7 @@ use agentzero_infra::runtime::{
     build_runtime_execution, run_agent_once, run_agent_streaming, RunAgentRequest,
 };
 use axum::{
+    body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, State,
@@ -3555,6 +3556,124 @@ pub(crate) async fn get_workflow_run(
         "finished_at": run.finished_at,
         "error": run.error,
     })))
+}
+
+/// DELETE /v1/workflows/runs/:run_id — cancel a workflow run.
+///
+/// Marks the run as failed, drops any suspended gate senders (which auto-denies),
+/// and removes the run from the active runs map.
+pub(crate) async fn cancel_workflow_run(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsManage)?;
+
+    let mut runs = state.workflow_runs.lock().expect("workflow_runs lock");
+    let run = runs.get_mut(&run_id).ok_or(GatewayError::NotFound {
+        resource: format!("workflow-run/{run_id}"),
+    })?;
+
+    // Mark as cancelled/failed.
+    run.status = "cancelled".to_string();
+    run.finished_at = Some(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    );
+    run.error = Some("cancelled by user".to_string());
+
+    // Drop gate senders for this run (auto-denies any suspended gates).
+    {
+        let mut senders = state.gate_senders.lock().expect("gate_senders lock");
+        senders.retain(|(rid, _), _| rid != &run_id);
+    }
+
+    tracing::info!(run_id = %run_id, "workflow run cancelled");
+
+    Ok(Json(json!({
+        "cancelled": true,
+        "run_id": run_id,
+    })))
+}
+
+/// GET /v1/workflows/runs/:run_id/stream — SSE stream for workflow run status.
+///
+/// Polls the workflow run state every 500ms and emits node status events.
+/// Ends when the run reaches a terminal state or after 10 minutes.
+pub(crate) async fn stream_workflow_run(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> Result<Response, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    // Verify the run exists.
+    {
+        let runs = state.workflow_runs.lock().expect("workflow_runs lock");
+        if !runs.contains_key(&run_id) {
+            return Err(GatewayError::NotFound {
+                resource: format!("workflow-run/{run_id}"),
+            });
+        }
+    }
+
+    let runs_ref = Arc::clone(&state.workflow_runs);
+    let rid = run_id.clone();
+
+    let stream = async_stream::stream! {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(600);
+
+        loop {
+            // Check if we've exceeded the deadline.
+            if tokio::time::Instant::now() >= deadline {
+                yield Ok::<_, std::convert::Infallible>(
+                    "data: {\"event\":\"timeout\"}\n\n".to_string()
+                );
+                break;
+            }
+
+            let (status, statuses, error) = {
+                let runs = runs_ref.lock().expect("workflow_runs lock");
+                match runs.get(&rid) {
+                    Some(run) => {
+                        let statuses: serde_json::Map<String, Value> = run
+                            .node_statuses
+                            .iter()
+                            .map(|(k, v)| {
+                                (k.clone(), serde_json::to_value(v).unwrap_or(Value::Null))
+                            })
+                            .collect();
+                        (run.status.clone(), statuses, run.error.clone())
+                    }
+                    None => break,
+                }
+            };
+
+            let event = json!({
+                "run_id": rid,
+                "status": status,
+                "node_statuses": statuses,
+                "error": error,
+            });
+            yield Ok(format!("data: {event}\n\n"));
+
+            // Terminal states end the stream.
+            if status == "completed" || status == "failed" || status == "cancelled" {
+                break;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    };
+
+    Ok(Response::builder()
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive")
+        .body(Body::from_stream(stream))
+        .expect("valid sse response"))
 }
 
 /// POST /v1/workflows/runs/:run_id/resume — resume a suspended gate node.

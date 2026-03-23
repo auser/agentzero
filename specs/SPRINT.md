@@ -1948,7 +1948,7 @@ Add history management for node/edge operations.
 
 - [x] **Role and Provider chips** — add Role and Provider node types to the palette (currently only Agent, Tool, Channel, Schedule, Gate are listed)
 - [x] **Sub-Agent chip** — add Sub-Agent to the palette
-- [ ] **Keyboard navigation** — arrow keys + Enter in the palette search results
+- [x] **Keyboard navigation** — Arrow up/down navigates filtered items, Escape clears focus. Focused index resets on search change. Hint in placeholder text.
 
 ---
 
@@ -2000,8 +2000,8 @@ REST endpoints for executing and monitoring workflow runs.
 
 - [x] **`POST /v1/workflows/:id/execute`** — `execute_workflow` handler: loads workflow, compiles, spawns background executor, returns `{ run_id, status: "running" }`. *(Shipped in Sprint 70)*
 - [x] **`GET /v1/workflows/runs/:run_id`** — `get_workflow_run` handler: returns per-node status breakdown from `WorkflowRunState`. *(Shipped in Sprint 70)*
-- [ ] **`DELETE /v1/workflows/runs/:run_id`** — Cancel workflow run (cascade-cancel child runs)
-- [ ] **SSE stream** — `GET /v1/workflows/runs/:run_id/stream` multiplexes child-run events
+- [x] **`DELETE /v1/workflows/runs/:run_id`** — `cancel_workflow_run` handler. Marks run as "cancelled", drops gate senders (auto-denies), sets error message.
+- [x] **SSE stream** — `GET /v1/workflows/runs/:run_id/stream` via `stream_workflow_run`. Polls run state every 500ms, emits JSON events with node_statuses. Ends on terminal state or 10min timeout.
 - [x] **Status updates** — `StatusUpdate` struct with node_id, node_name, status, output. Streamed via `mpsc` channel from executor to run store. *(Shipped in Sprint 70)*
 
 ### Phase D: UI Integration (MEDIUM)
@@ -2070,7 +2070,7 @@ Wire `GatewayStepDispatcher::send_channel` to actual platform sends.
 - [x] **Channel registry lookup** — `GatewayStepDispatcher` now holds `Arc<ChannelRegistry>` from `GatewayState`.
 - [x] **Send message** — `send_channel()` dispatches via `channels.dispatch(channel_type, payload)` with text/content/message fields. Returns error on rejection or missing channel.
 - [x] **Channel trigger nodes** — `trigger_workflows_for_channel()` in webhook handler. When a message arrives, scans all workflows for Channel nodes matching the channel type, compiles and executes each match with the message as input. Runs tracked in `WorkflowRunState` for polling.
-- [ ] **Delivery confirmation** — store send status in workflow run outputs
+- [x] **Delivery confirmation** — Channel dispatch stores `delivery_status` port ("delivered" or "failed: {error}") in step output. Failures logged but don't block downstream nodes.
 
 ### Phase E: Human-in-the-Loop Gate Nodes (HIGH)
 

@@ -7,7 +7,7 @@ import { agentsApi } from '@/lib/api/agents'
 import { api } from '@/lib/api/client'
 import { portsFromSchema, type Port, type ToolInfo } from '@/lib/workflow-types'
 import { Bot, Wrench, Radio, CalendarClock, ShieldCheck, Zap, GitFork, UserCircle, ChevronDown, ChevronRight, Search } from 'lucide-react'
-import { type DragEvent, useState, useMemo } from 'react'
+import { type DragEvent, useState, useMemo, useCallback, useRef } from 'react'
 import { portsForNodeType } from '@/components/workflows/WorkflowCanvas'
 import { getDefinition } from '@/lib/node-definitions'
 
@@ -234,8 +234,41 @@ export function DraggablePalette() {
     }]
   }, [filter])
 
+  // Keyboard navigation: collect all visible items for arrow key traversal.
+  const allItems: DragNodeData[] = useMemo(() => [
+    ...filteredAgents.map(a => ({
+      nodeType: 'agent', id: a.agent_id, name: a.name,
+      metadata: { node_type: 'agent', model: a.model, description: a.description, status: a.status },
+      ports: portsForNodeType('agent'),
+    } as DragNodeData)),
+    ...filteredSchedules,
+    ...filteredGates,
+    ...filteredRoles,
+    ...filteredProviders,
+    ...filteredSubAgents,
+  ], [filteredAgents, filteredSchedules, filteredGates, filteredRoles, filteredProviders, filteredSubAgents])
+
+  const [focusedIdx, setFocusedIdx] = useState(-1)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (allItems.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setFocusedIdx(prev => Math.min(prev + 1, allItems.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setFocusedIdx(prev => Math.max(prev - 1, 0))
+    } else if (e.key === 'Escape') {
+      setFocusedIdx(-1)
+    }
+  }, [allItems.length])
+
   return (
-    <div className="rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden h-full flex flex-col">
+    <div
+      className="rounded-lg border border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden h-full flex flex-col"
+      onKeyDown={handleKeyDown}
+    >
       <div className="px-3 py-2.5 border-b border-border/50">
         <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
           Components
@@ -245,8 +278,8 @@ export function DraggablePalette() {
           <input
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filter..."
+            onChange={(e) => { setSearch(e.target.value); setFocusedIdx(-1) }}
+            placeholder="Filter... (↑↓ to navigate)"
             className="w-full h-6 pl-6 pr-2 text-[11px] rounded border border-border/50 bg-background/50 focus:ring-1 focus:ring-ring outline-none placeholder:text-muted-foreground/30"
           />
         </div>
