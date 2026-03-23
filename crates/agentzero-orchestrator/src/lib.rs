@@ -10,6 +10,7 @@ pub mod block_stream;
 pub mod coordinator;
 pub mod event_bus;
 pub mod fanout;
+pub mod goal_planner;
 pub mod gossip;
 pub mod job_store;
 pub mod lanes;
@@ -19,6 +20,7 @@ pub mod recovery;
 pub mod sandbox;
 pub mod swarm;
 pub mod swarm_context;
+pub mod swarm_supervisor;
 pub mod template_store;
 pub mod workflow_executor;
 pub mod workflow_store;
@@ -32,6 +34,7 @@ pub use event_bus::{
     BusEvent, EventBus, EventReceiver, FileBackedEventBus, InMemoryEventBus, PersistedEvent,
 };
 pub use fanout::{execute_fanout, FanOutResult, FanOutStep};
+pub use goal_planner::{parse_planner_response, PlannedNode, PlannedWorkflow, GOAL_PLANNER_PROMPT};
 pub use gossip::{GossipConfig, GossipEventBus};
 pub use job_store::{EventKind, EventLog, JobRecord, JobStore, RunEvent};
 pub use lanes::{LaneConfig, LaneManager, LaneReceivers, WorkItem, WorkResult};
@@ -43,6 +46,7 @@ pub use sandbox::{
 };
 pub use swarm::{build_event_bus, build_swarm, build_swarm_with_presence};
 pub use swarm_context::{AgentAssignment, AgentAssignmentStatus, SiblingContext, SwarmContext};
+pub use swarm_supervisor::{SwarmConfig, SwarmResult, SwarmSupervisor};
 pub use template_store::{TemplateRecord, TemplateStore, TemplateUpdate};
 pub use workflow_executor::{
     compile as compile_workflow, execute_with_updates as execute_workflow_streaming, ExecutionPlan,

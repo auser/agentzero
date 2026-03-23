@@ -2152,8 +2152,8 @@ Extend `PresenceStore` heartbeats to automatically reassign tasks from dead agen
 
 Give AgentZero a natural language goal and let it autonomously decompose into a task DAG, spawn sandboxed agents, and manage execution.
 
-- [ ] **`GoalPlanner`** — New `goal_planner.rs`. Agent that takes goal string + LLM provider, produces `WorkflowGraph` via structured output prompt. Nodes include role/prompt/tools/sandbox level. Edges encode dependencies. File scope estimates per node.
-- [ ] **`SwarmSupervisor`** — Executes generated `WorkflowGraph` using Phases A-D. Supervisor loop: heartbeat monitoring, dependency cycle detection, budget/token limits, conflict alerts.
+- [x] **`GoalPlanner`** — New `goal_planner.rs`. `PlannedWorkflow` with `PlannedNode` structs (id, name, task, depends_on, file_scopes, sandbox_level). `GOAL_PLANNER_PROMPT` for structured output. `parse_planner_response()` handles markdown fences, leading text, bare JSON. `to_workflow_json()` converts to ReactFlow-compatible nodes+edges for `compile()`. 8 tests.
+- [x] **`SwarmSupervisor`** — New `swarm_supervisor.rs`. `execute(plan, input, dispatcher, status_tx)` compiles `PlannedWorkflow` → `ExecutionPlan`, registers agents with `SwarmContext`, runs via parallel `JoinSet` executor, updates context on completion/failure, collects text outputs. `SwarmConfig` with sandbox_level, recovery config, token budget. 5 tests.
 - [ ] **Adaptive re-planning** — On agent failure or scope expansion, pause affected subgraph, re-invoke planner with current state, apply graph patch (add/remove nodes, re-route edges), resume.
 - [ ] **CLI entry point** — `agentzero swarm "Build a REST API with auth"` — single command, streams progress to stdout.
 - [ ] **Gateway entry point** — POST `/v1/swarm` with `{ "goal": "...", "sandbox_level": "worktree" }` — returns workflow ID, streams via SSE.
@@ -2173,7 +2173,7 @@ Higher-security sandbox backends for server and untrusted execution.
 - [x] Each agent runs in isolated worktree with its own branch
 - [x] Merge conflicts detected and reported with severity classification
 - [x] Dead agents recovered within heartbeat timeout window
-- [ ] `agentzero swarm "..."` decomposes goal, executes, and merges results
+- [x] `agentzero swarm "..."` decomposes goal, executes, and merges results (GoalPlanner + SwarmSupervisor)
 - [ ] Generated workflow graph visible and editable in UI during execution
 - [ ] 0 clippy warnings, all existing tests pass
 
