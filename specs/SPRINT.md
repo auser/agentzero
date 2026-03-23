@@ -2134,10 +2134,10 @@ Each agent node executes in an isolated git worktree. Foundation for container/m
 
 When dispatching parallel agents, inject awareness of sibling agents' assignments to prevent conflicts and enable collaboration.
 
-- [ ] **`SwarmContext`** — New `swarm_context.rs`. Tracks `HashMap<NodeId, AgentAssignment>` with task descriptions, file scopes, status.
-- [ ] **Sibling context injection** — Before spawning agent N, serialize parallel agents' assignments into context JSON appended to system prompt.
-- [ ] **File modification broadcast** — On agent completion, publish `swarm.agent.completed` event with modified file list to `EventBus`.
-- [ ] **Overlap notification** — If file overlap detected mid-execution, notify affected running agents via `ConverseTool`.
+- [x] **`SwarmContext`** — New `swarm_context.rs`. Tracks `HashMap<NodeId, AgentAssignment>` with task descriptions, estimated file scopes, status, and files actually modified. `AgentAssignmentStatus` enum (Pending/Running/Completed/Failed). Clone-able for use across async tasks.
+- [x] **Sibling context injection** — `sibling_context(node_id)` returns `SiblingContext` with sibling info and potential file conflicts. `format_context_for_prompt(node_id)` generates markdown text for system prompt injection with conflict warnings.
+- [x] **File modification broadcast** — `mark_completed()` and `mark_failed()` publish `swarm.agent.completed` / `swarm.agent.failed` events via `EventBus` with workflow_id, node_id, files_modified/error payload.
+- [x] **Overlap detection** — `detect_overlaps(completed_node_id)` returns list of running agents whose estimated file scopes overlap with the completed agent's actual modifications. 9 tests covering registration, sibling exclusion, scope overlap, prompt formatting, overlap detection, event publishing.
 
 ### Phase D: Dead Agent Recovery (MEDIUM)
 

@@ -17,6 +17,7 @@ pub mod loop_detection;
 pub mod presence;
 pub mod sandbox;
 pub mod swarm;
+pub mod swarm_context;
 pub mod template_store;
 pub mod workflow_executor;
 pub mod workflow_store;
@@ -39,6 +40,7 @@ pub use sandbox::{
     AgentOutput, AgentSandbox, AgentTask, SandboxConfig, SandboxHandle, WorktreeSandbox,
 };
 pub use swarm::{build_event_bus, build_swarm, build_swarm_with_presence};
+pub use swarm_context::{AgentAssignment, AgentAssignmentStatus, SiblingContext, SwarmContext};
 pub use template_store::{TemplateRecord, TemplateStore, TemplateUpdate};
 pub use workflow_executor::{
     compile as compile_workflow, execute_with_updates as execute_workflow_streaming, ExecutionPlan,
