@@ -31,6 +31,8 @@ pub(crate) struct GatewayStepDispatcher {
     /// Agent endpoints for all agent nodes in the workflow, keyed by node name.
     /// Injected into each agent via ConverseTool so they can converse.
     agent_endpoints: HashMap<String, Arc<dyn AgentEndpoint>>,
+    /// Channel registry for dispatching messages to real platforms.
+    channels: Arc<agentzero_channels::ChannelRegistry>,
 }
 
 impl GatewayStepDispatcher {
@@ -77,6 +79,7 @@ impl GatewayStepDispatcher {
             workspace_root,
             agent_store,
             agent_endpoints,
+            channels: Arc::clone(&state.channels),
         })
     }
 }
@@ -166,9 +169,27 @@ impl StepDispatcher for GatewayStepDispatcher {
         Ok(result.output)
     }
 
-    async fn send_channel(&self, channel_type: &str, _message: &str) -> anyhow::Result<()> {
-        tracing::info!(channel = channel_type, "workflow channel send (stub)");
-        Ok(())
+    async fn send_channel(&self, channel_type: &str, message: &str) -> anyhow::Result<()> {
+        let payload = serde_json::json!({
+            "text": message,
+            "content": message,
+            "message": message,
+        });
+
+        match self.channels.dispatch(channel_type, payload).await {
+            Some(delivery) if delivery.accepted => {
+                tracing::info!(channel = channel_type, "workflow channel send dispatched");
+                Ok(())
+            }
+            Some(_) => {
+                tracing::warn!(channel = channel_type, "channel rejected message");
+                anyhow::bail!("channel '{channel_type}' rejected the message")
+            }
+            None => {
+                tracing::warn!(channel = channel_type, "channel not found or offline");
+                anyhow::bail!("channel '{channel_type}' not found in registry")
+            }
+        }
     }
 }
 
