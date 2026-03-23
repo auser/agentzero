@@ -16,11 +16,13 @@ const SAVE_DEBOUNCE_MS = 800
 export function useWorkflowPersistence(
   setNodes: React.Dispatch<React.SetStateAction<Node[]>>,
   setEdges: React.Dispatch<React.SetStateAction<Edge[]>>,
+  /** When provided, loads this specific workflow instead of the default. */
+  targetWorkflowId?: string,
 ) {
   const reactFlow = useReactFlow()
   const isDirtyRef = useRef(false)
   const initializedRef = useRef(false)
-  const workflowIdRef = useRef<string | null>(null)
+  const workflowIdRef = useRef<string | null>(targetWorkflowId ?? null)
   const lastKnownUpdatedAtRef = useRef<number>(0)
 
   const refs = { initializedRef, workflowIdRef, lastKnownUpdatedAtRef }
@@ -31,7 +33,7 @@ export function useWorkflowPersistence(
     refetchInterval: 3_000,
   })
 
-  useWorkflowInit(setNodes, setEdges, topology, refs)
+  useWorkflowInit(setNodes, setEdges, topology, refs, targetWorkflowId)
   useWorkflowSync(setNodes, setEdges, topology, refs, isDirtyRef)
 
   const saveLayout = useCallback(async () => {

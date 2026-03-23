@@ -23,6 +23,14 @@ pub enum NodeType {
     SubAgent,
     Provider,
     Role,
+    /// Human-in-the-loop input node — behaves like a Channel trigger at
+    /// execution time (passes through input as `response` output).
+    HumanInput,
+    /// File I/O nodes — dispatched as built-in tools at execution time.
+    SaveFile,
+    ReadFile,
+    /// HTTP request node — dispatched as a tool at execution time.
+    HttpRequest,
 }
 
 impl NodeType {
@@ -32,6 +40,10 @@ impl NodeType {
             "agent" => Some(Self::Agent),
             "tool" => Some(Self::Tool),
             "channel" => Some(Self::Channel),
+            "human_input" => Some(Self::HumanInput),
+            "save_file" => Some(Self::SaveFile),
+            "read_file" => Some(Self::ReadFile),
+            "http_request" => Some(Self::HttpRequest),
             "schedule" => Some(Self::Schedule),
             "gate" => Some(Self::Gate),
             "subagent" => Some(Self::SubAgent),
@@ -48,7 +60,7 @@ impl NodeType {
 
     /// Trigger nodes have no inputs — they initiate execution.
     pub fn is_trigger(&self) -> bool {
-        matches!(self, Self::Schedule | Self::Channel)
+        matches!(self, Self::Schedule | Self::Channel | Self::HumanInput)
     }
 }
 
@@ -351,6 +363,17 @@ pub trait StepDispatcher: Send + Sync {
     async fn send_channel(&self, channel_type: &str, message: &str) -> anyhow::Result<()>;
 }
 
+/// Real-time status update emitted during workflow execution.
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusUpdate {
+    pub node_id: String,
+    pub node_name: String,
+    pub status: NodeStatus,
+    /// Output text from the node (only set on completion).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+}
+
 /// Execute a compiled workflow plan.
 ///
 /// Walks topological levels, dispatching each step via the `StepDispatcher`,
@@ -359,6 +382,16 @@ pub async fn execute(
     plan: &ExecutionPlan,
     initial_input: &str,
     dispatcher: &dyn StepDispatcher,
+) -> anyhow::Result<WorkflowRun> {
+    execute_with_updates(plan, initial_input, dispatcher, None).await
+}
+
+/// Execute a workflow with optional real-time status updates via a channel.
+pub async fn execute_with_updates(
+    plan: &ExecutionPlan,
+    initial_input: &str,
+    dispatcher: &dyn StepDispatcher,
+    status_tx: Option<tokio::sync::mpsc::Sender<StatusUpdate>>,
 ) -> anyhow::Result<WorkflowRun> {
     let run_id = format!(
         "wfrun-{}",
@@ -413,6 +446,18 @@ pub async fn execute(
             run.node_statuses
                 .insert(step.node_id.clone(), NodeStatus::Running);
 
+            // Emit running status
+            if let Some(ref tx) = status_tx {
+                let _ = tx
+                    .send(StatusUpdate {
+                        node_id: step.node_id.clone(),
+                        node_name: step.name.clone(),
+                        status: NodeStatus::Running,
+                        output: None,
+                    })
+                    .await;
+            }
+
             // Dispatch based on node type
             let step_clone = step.clone();
             let input_clone = input_text.clone();
@@ -444,6 +489,22 @@ pub async fn execute(
 
                     run.node_statuses
                         .insert(step.node_id.clone(), NodeStatus::Completed);
+
+                    // Emit completed status with output text
+                    if let Some(ref tx) = status_tx {
+                        let out_text = output
+                            .port_values
+                            .values()
+                            .find_map(|v| v.as_str().map(String::from));
+                        let _ = tx
+                            .send(StatusUpdate {
+                                node_id: step.node_id.clone(),
+                                node_name: step.name.clone(),
+                                status: NodeStatus::Completed,
+                                output: out_text,
+                            })
+                            .await;
+                    }
                 }
                 Err(e) => {
                     tracing::error!(
@@ -453,6 +514,18 @@ pub async fn execute(
                     );
                     run.node_statuses
                         .insert(step.node_id.clone(), NodeStatus::Failed);
+
+                    // Emit failed status
+                    if let Some(ref tx) = status_tx {
+                        let _ = tx
+                            .send(StatusUpdate {
+                                node_id: step.node_id.clone(),
+                                node_name: step.name.clone(),
+                                status: NodeStatus::Failed,
+                                output: Some(e.to_string()),
+                            })
+                            .await;
+                    }
                     // Continue executing other nodes in the level,
                     // but downstream dependents will get empty inputs.
                 }
@@ -538,6 +611,57 @@ async fn dispatch_step(
             );
             Ok(StepOutput { port_values: ports })
         }
+        NodeType::HumanInput => {
+            // Human-in-the-loop: behaves like a channel trigger.
+            // In interactive mode the executor would pause for user input;
+            // for batch/API execution, pass through the initial input.
+            let mut ports = HashMap::new();
+            ports.insert(
+                "response".to_string(),
+                serde_json::Value::String(input.to_string()),
+            );
+            Ok(StepOutput { port_values: ports })
+        }
+        NodeType::SaveFile => {
+            // Dispatch as the built-in write_file tool.
+            let path = step.metadata["path"].as_str().unwrap_or("output.txt");
+            let tool_input = serde_json::json!({ "path": path, "content": input });
+            let result = dispatcher.run_tool("write_file", &tool_input).await?;
+            let mut ports = HashMap::new();
+            ports.insert(
+                "path".to_string(),
+                serde_json::Value::String(path.to_string()),
+            );
+            ports.insert("done".to_string(), serde_json::Value::String(result));
+            Ok(StepOutput { port_values: ports })
+        }
+        NodeType::ReadFile => {
+            let path = step.metadata["path"].as_str().unwrap_or_default();
+            // If there's an incoming path from the port, prefer it.
+            let effective_path = if input.is_empty() {
+                path.to_string()
+            } else {
+                input.to_string()
+            };
+            let tool_input = serde_json::json!({ "path": effective_path });
+            let result = dispatcher.run_tool("read_file", &tool_input).await?;
+            let mut ports = HashMap::new();
+            ports.insert("content".to_string(), serde_json::Value::String(result));
+            Ok(StepOutput { port_values: ports })
+        }
+        NodeType::HttpRequest => {
+            let url = step.metadata["url"].as_str().unwrap_or_default();
+            let method = step.metadata["method"].as_str().unwrap_or("GET");
+            let tool_input = serde_json::json!({
+                "url": url,
+                "method": method,
+                "body": input,
+            });
+            let result = dispatcher.run_tool("http_request", &tool_input).await?;
+            let mut ports = HashMap::new();
+            ports.insert("response".to_string(), serde_json::Value::String(result));
+            Ok(StepOutput { port_values: ports })
+        }
         NodeType::Gate => {
             // Gates always "approve" for now. Real implementation would suspend
             // and wait for human input via the resume() mechanism.
@@ -575,8 +699,10 @@ fn collect_input_text(
     reverse_edges: &HashMap<(String, String), Vec<(String, String)>>,
     node_id: &str,
 ) -> String {
-    // Check the "input" port first, then "task", then "send", then "request"
-    for port in &["input", "task", "send", "request"] {
+    // Check the "input" port first, then common port aliases used by various node types
+    for port in &[
+        "input", "task", "send", "request", "content", "path", "body",
+    ] {
         let key = (node_id.to_string(), port.to_string());
         if let Some(sources) = reverse_edges.get(&key) {
             let mut parts = Vec::new();

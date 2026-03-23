@@ -303,6 +303,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: TemplateCommands,
     },
+    /// Manage and execute visual workflows.
+    Workflow {
+        #[command(subcommand)]
+        command: crate::commands::workflow::WorkflowCommands,
+    },
     /// Inspect registered tool definitions and schemas.
     Tools {
         #[command(subcommand)]
@@ -588,6 +593,15 @@ pub enum DaemonCommands {
     },
     /// Stop the running daemon.
     Stop,
+    /// Stop and restart the daemon.
+    Restart {
+        /// Host interface to bind (default: previous or 127.0.0.1).
+        #[arg(long)]
+        host: Option<String>,
+        /// Port to bind (default: previous or 8080).
+        #[arg(short, long)]
+        port: Option<u16>,
+    },
     /// Show daemon status.
     Status {
         /// Emit machine-readable JSON output.

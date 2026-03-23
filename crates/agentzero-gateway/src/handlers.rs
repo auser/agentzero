@@ -3040,8 +3040,8 @@ pub(crate) async fn delete_workflow(
 
 /// POST /v1/workflows/:id/execute — compile and execute a workflow graph.
 ///
-/// Loads the workflow from the store, compiles its node/edge graph into an
-/// execution plan, and runs it through the `GatewayStepDispatcher`.
+/// Spawns execution in a background task and returns immediately with a
+/// `run_id`. Poll `GET /v1/workflows/runs/:run_id` for real-time status.
 pub(crate) async fn execute_workflow(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -3069,40 +3069,171 @@ pub(crate) async fn execute_workflow(
         .as_str()
         .or_else(|| req["input"].as_str())
         .or_else(|| req["message"].as_str())
-        .unwrap_or("");
+        .unwrap_or("")
+        .to_string();
 
-    // Create the dispatcher from gateway state.
-    let dispatcher = crate::workflow_dispatch::GatewayStepDispatcher::from_state(&state)
+    let dispatcher = crate::workflow_dispatch::GatewayStepDispatcher::from_state(&state, &plan)
         .ok_or(GatewayError::AgentUnavailable)?;
 
-    // Execute the workflow synchronously.
-    let workflow_run =
-        agentzero_orchestrator::workflow_executor::execute(&plan, input, &dispatcher)
-            .await
-            .map_err(|e| GatewayError::AgentExecutionFailed {
-                message: e.to_string(),
-            })?;
+    // Generate a run ID and seed the run store so polling can start immediately.
+    let run_id = format!(
+        "wfrun-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
 
-    // Serialize node statuses as a simple map.
-    let statuses: serde_json::Map<String, Value> = workflow_run
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Collect initial node statuses (all pending).
+    let mut initial_statuses = std::collections::HashMap::new();
+    for level in &plan.levels {
+        for step in level {
+            initial_statuses.insert(
+                step.node_id.clone(),
+                agentzero_orchestrator::NodeStatus::Pending,
+            );
+        }
+    }
+
+    let run_state = crate::state::WorkflowRunState {
+        run_id: run_id.clone(),
+        workflow_id: id.clone(),
+        status: "running".to_string(),
+        node_statuses: initial_statuses,
+        node_outputs: std::collections::HashMap::new(),
+        outputs: std::collections::HashMap::new(),
+        started_at: now,
+        finished_at: None,
+        error: None,
+    };
+
+    // Store the initial state.
+    {
+        let mut runs = state.workflow_runs.lock().expect("workflow_runs lock");
+        runs.insert(run_id.clone(), run_state);
+    }
+
+    // Set up status update channel — the executor sends updates, we write them
+    // to the shared run store so the polling endpoint can see them.
+    let (status_tx, mut status_rx) =
+        tokio::sync::mpsc::channel::<agentzero_orchestrator::StatusUpdate>(64);
+    let runs_ref = Arc::clone(&state.workflow_runs);
+    let run_id_for_rx = run_id.clone();
+
+    // Spawn a task that drains status updates into the shared run store.
+    tokio::spawn(async move {
+        while let Some(update) = status_rx.recv().await {
+            let mut runs = runs_ref.lock().expect("workflow_runs lock");
+            if let Some(run) = runs.get_mut(&run_id_for_rx) {
+                run.node_statuses
+                    .insert(update.node_id.clone(), update.status);
+                if let Some(ref output) = update.output {
+                    run.node_outputs
+                        .insert(update.node_id.clone(), output.clone());
+                }
+            }
+        }
+    });
+
+    // Spawn the actual executor.
+    let runs_ref2 = Arc::clone(&state.workflow_runs);
+    let run_id_for_exec = run_id.clone();
+    let workflow_id = id.clone();
+
+    tokio::spawn(async move {
+        let result = agentzero_orchestrator::execute_workflow_streaming(
+            &plan,
+            &input,
+            &dispatcher,
+            Some(status_tx),
+        )
+        .await;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut runs = runs_ref2.lock().expect("workflow_runs lock");
+        if let Some(run) = runs.get_mut(&run_id_for_exec) {
+            run.finished_at = Some(now);
+            match result {
+                Ok(wf_run) => {
+                    run.status = "completed".to_string();
+                    for (k, v) in &wf_run.node_statuses {
+                        run.node_statuses.insert(k.clone(), *v);
+                    }
+                    for ((node_id, port), val) in &wf_run.outputs {
+                        run.outputs.insert(format!("{node_id}:{port}"), val.clone());
+                    }
+                }
+                Err(e) => {
+                    run.status = "failed".to_string();
+                    run.error = Some(e.to_string());
+                }
+            }
+        }
+
+        tracing::info!(
+            run_id = %run_id_for_exec,
+            workflow_id = %workflow_id,
+            "workflow execution finished"
+        );
+    });
+
+    Ok(Json(json!({
+        "run_id": run_id,
+        "workflow_id": id,
+        "status": "running",
+    })))
+}
+
+/// GET /v1/workflows/runs/:run_id — poll for workflow run status.
+pub(crate) async fn get_workflow_run(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let runs = state.workflow_runs.lock().expect("workflow_runs lock");
+    let run = runs.get(&run_id).ok_or(GatewayError::NotFound {
+        resource: format!("workflow-run/{run_id}"),
+    })?;
+
+    let statuses: serde_json::Map<String, Value> = run
         .node_statuses
         .iter()
         .map(|(k, v)| (k.clone(), serde_json::to_value(v).unwrap_or(Value::Null)))
         .collect();
 
-    // Serialize outputs: flatten (node_id, port) tuple keys into "node_id:port".
-    let outputs: serde_json::Map<String, Value> = workflow_run
+    let node_outputs: serde_json::Map<String, Value> = run
+        .node_outputs
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+
+    let outputs: serde_json::Map<String, Value> = run
         .outputs
         .iter()
-        .map(|((node_id, port), val)| (format!("{node_id}:{port}"), val.clone()))
+        .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
     Ok(Json(json!({
-        "run_id": workflow_run.run_id,
-        "workflow_id": id,
-        "status": "completed",
+        "run_id": run.run_id,
+        "workflow_id": run.workflow_id,
+        "status": run.status,
         "node_statuses": statuses,
+        "node_outputs": node_outputs,
         "outputs": outputs,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "error": run.error,
     })))
 }
 

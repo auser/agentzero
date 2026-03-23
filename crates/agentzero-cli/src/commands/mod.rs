@@ -47,3 +47,4 @@ pub mod tunnel;
 pub mod update;
 #[cfg(feature = "interactive")]
 pub mod ux;
+pub mod workflow;

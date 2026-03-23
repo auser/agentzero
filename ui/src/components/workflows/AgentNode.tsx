@@ -297,13 +297,23 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
         height: '100%',
         background: '#1C1C1E',
         borderRadius: 14,
-        border: selected ? `2px solid ${sColor}` : '1px solid rgba(255,255,255,0.04)',
+        border: status === 'running'
+          ? `2px solid ${sColor}`
+          : status === 'success'
+            ? `2px solid ${sColor}80`
+            : selected
+              ? `2px solid ${sColor}`
+              : '1px solid rgba(255,255,255,0.04)',
         fontFamily: "'JetBrains Mono', monospace",
         overflow: 'visible',
         userSelect: 'none',
         boxShadow: status === 'running'
-          ? `0 0 16px ${sColor}30`
-          : '0 2px 8px rgba(0,0,0,0.4)',
+          ? `0 0 24px ${sColor}60, 0 0 48px ${sColor}20`
+          : status === 'success'
+            ? `0 0 12px ${sColor}30`
+            : '0 2px 8px rgba(0,0,0,0.4)',
+        animation: status === 'running' ? 'nodeRunningPulse 1.5s ease-in-out infinite' : 'none',
+        transition: 'border 0.3s ease, box-shadow 0.3s ease',
       }}
     >
       {/* Header — click to toggle collapse */}

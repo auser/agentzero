@@ -44,6 +44,34 @@ impl AgentZeroCommand for DaemonCommand {
                 println!("daemon stopped");
                 Ok(())
             }
+            DaemonCommands::Restart { host, port } => {
+                // Capture previous host/port before stopping.
+                let prev = manager.status()?;
+                let prev_host = prev.host.unwrap_or_else(|| "127.0.0.1".to_string());
+                let prev_port = prev.port.unwrap_or(8080);
+
+                if prev.running {
+                    manager.stop_process()?;
+                    println!("daemon stopped");
+                    // Brief pause to let the port release.
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+
+                let cfg = agentzero_config::load(&ctx.config_path).ok();
+                let host = host.unwrap_or_else(|| {
+                    cfg.as_ref()
+                        .map(|c| c.gateway.host.clone())
+                        .unwrap_or(prev_host)
+                });
+                let requested_port = port
+                    .unwrap_or_else(|| cfg.as_ref().map(|c| c.gateway.port).unwrap_or(prev_port));
+                let port = find_available_port(&host, requested_port)?;
+                if port != requested_port {
+                    println!("port {requested_port} is in use, using port {port} instead");
+                }
+
+                spawn_background(&manager, ctx, host, port)
+            }
             DaemonCommands::Status { json } => {
                 let status = manager.status()?;
                 if json {

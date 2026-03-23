@@ -263,6 +263,179 @@ const DATA_ANALYSIS: WorkflowTemplate = {
   ],
 }
 
+// ── Agent Debate ────────────────────────────────────────────────────────────
+
+const AGENT_DEBATE: WorkflowTemplate = {
+  id: 'agent-debate',
+  name: 'Agent Debate',
+  description: 'Two agents debate a topic using back-and-forth conversation via ConverseTool, then a judge synthesizes the best arguments.',
+  category: 'reasoning',
+  nodeCount: 5,
+  nodes: [
+    {
+      id: 'input-1', type: 'human_input',
+      position: { x: 0, y: 160 },
+      data: { name: 'Topic', nodeType: 'human_input', status: 'queued', metadata: {} },
+    },
+    {
+      id: 'advocate-1', type: 'agent',
+      position: { x: 300, y: 40 },
+      data: {
+        name: 'Advocate', nodeType: 'agent', status: 'queued',
+        metadata: {
+          system_prompt: 'You are a persuasive advocate. Argue IN FAVOR of the given topic. You have access to a "converse" tool — use it to debate with the "Critic" agent. Send your opening argument, read their counter-argument, and respond with a rebuttal. Have 2-3 exchanges before writing your final position.',
+        },
+      },
+    },
+    {
+      id: 'critic-1', type: 'agent',
+      position: { x: 300, y: 300 },
+      data: {
+        name: 'Critic', nodeType: 'agent', status: 'queued',
+        metadata: {
+          system_prompt: 'You are a rigorous critic. Argue AGAINST the given topic. When contacted by the Advocate agent via the converse tool, provide strong counter-arguments. Challenge assumptions, cite potential risks, and demand evidence. Be thorough but fair.',
+        },
+      },
+    },
+    {
+      id: 'judge-1', type: 'agent',
+      position: { x: 650, y: 160 },
+      data: {
+        name: 'Judge', nodeType: 'agent', status: 'queued',
+        metadata: {
+          system_prompt: 'You are an impartial judge. You will receive arguments from both an Advocate and a Critic. Evaluate the strength of each position, identify the most compelling points from both sides, and deliver a balanced verdict with your reasoning.',
+        },
+      },
+    },
+    {
+      id: 'save-1', type: 'save_file',
+      position: { x: 950, y: 160 },
+      data: { name: 'Save Verdict', nodeType: 'save_file', status: 'queued', metadata: { path: 'debate-verdict.md', mode: 'overwrite' } },
+    },
+  ],
+  edges: [
+    { id: 'e1', source: 'input-1', target: 'advocate-1', sourceHandle: 'response', targetHandle: 'input', data: { port_type: 'text' } },
+    { id: 'e2', source: 'input-1', target: 'critic-1', sourceHandle: 'response', targetHandle: 'input', data: { port_type: 'text' } },
+    { id: 'e3', source: 'advocate-1', target: 'judge-1', sourceHandle: 'response', targetHandle: 'input', data: { port_type: 'text' } },
+    { id: 'e4', source: 'critic-1', target: 'judge-1', sourceHandle: 'response', targetHandle: 'context', data: { port_type: 'json' } },
+    { id: 'e5', source: 'judge-1', target: 'save-1', sourceHandle: 'response', targetHandle: 'content', data: { port_type: 'text' } },
+  ],
+}
+
+// ── Collaborative Writing ───────────────────────────────────────────────────
+
+const COLLABORATIVE_WRITING: WorkflowTemplate = {
+  id: 'collaborative-writing',
+  name: 'Collaborative Writing',
+  description: 'A writer and editor collaborate in real-time via ConverseTool, iterating on drafts until both are satisfied.',
+  category: 'content',
+  nodeCount: 4,
+  nodes: [
+    {
+      id: 'input-1', type: 'human_input',
+      position: { x: 0, y: 100 },
+      data: { name: 'Brief', nodeType: 'human_input', status: 'queued', metadata: {} },
+    },
+    {
+      id: 'writer-1', type: 'agent',
+      position: { x: 300, y: 100 },
+      data: {
+        name: 'Writer', nodeType: 'agent', status: 'queued',
+        metadata: {
+          system_prompt: 'You are a skilled writer. Draft content based on the brief. You have access to a "converse" tool — use it to send your draft to the "Editor" agent for feedback. Revise based on their feedback and send back. Iterate 2-3 times until the Editor approves. Output your final polished draft.',
+        },
+      },
+    },
+    {
+      id: 'editor-1', type: 'agent',
+      position: { x: 300, y: 320 },
+      data: {
+        name: 'Editor', nodeType: 'agent', status: 'queued',
+        metadata: {
+          system_prompt: 'You are a meticulous editor. When the Writer sends you a draft via the converse tool, review it for clarity, structure, grammar, and tone. Provide specific, actionable feedback. When the draft meets your standards, respond with "APPROVED:" followed by a brief note on what made it work.',
+        },
+      },
+    },
+    {
+      id: 'save-1', type: 'save_file',
+      position: { x: 620, y: 100 },
+      data: { name: 'Save Article', nodeType: 'save_file', status: 'queued', metadata: { path: 'article.md', mode: 'overwrite' } },
+    },
+  ],
+  edges: [
+    { id: 'e1', source: 'input-1', target: 'writer-1', sourceHandle: 'response', targetHandle: 'input', data: { port_type: 'text' } },
+    { id: 'e2', source: 'writer-1', target: 'save-1', sourceHandle: 'response', targetHandle: 'content', data: { port_type: 'text' } },
+  ],
+}
+
+// ── Agent Conversation ──────────────────────────────────────────────────────
+
+const AGENT_CONVERSATION: WorkflowTemplate = {
+  id: 'agent-conversation',
+  name: 'Agent Conversation',
+  description: 'Two agents converse in multi-turn dialogue via ConverseTool — an Interviewer extracts knowledge from a Domain Expert, then a Synthesizer compiles the transcript into structured output.',
+  category: 'reasoning',
+  nodeCount: 6,
+  nodes: [
+    {
+      id: 'input-1', type: 'human_input',
+      position: { x: 0, y: 180 },
+      data: { name: 'Topic / Question', nodeType: 'human_input', status: 'queued', metadata: {} },
+    },
+    {
+      id: 'interviewer-1', type: 'agent',
+      position: { x: 300, y: 60 },
+      data: {
+        name: 'Interviewer', nodeType: 'agent', status: 'queued',
+        metadata: {
+          system_prompt: 'You are a skilled interviewer. Your goal is to deeply understand a topic by conversing with the Domain Expert agent. Use the "converse" tool to ask the Expert focused questions. Start broad, then drill into specifics. After 3-4 exchanges, summarize what you learned as structured notes with key facts, open questions, and confidence levels.',
+          converse_targets: ['expert-1'],
+          max_turns: 8,
+        },
+      },
+    },
+    {
+      id: 'expert-1', type: 'agent',
+      position: { x: 300, y: 320 },
+      data: {
+        name: 'Domain Expert', nodeType: 'agent', status: 'queued',
+        metadata: {
+          system_prompt: 'You are a domain expert. When the Interviewer contacts you via the converse tool, answer their questions thoroughly. Share relevant context, caveats, and edge cases. If you are uncertain about something, say so — do not fabricate. Reference concrete examples when possible.',
+          converse_targets: ['interviewer-1'],
+        },
+      },
+    },
+    {
+      id: 'gate-1', type: 'gate',
+      position: { x: 600, y: 60 },
+      data: { name: 'Quality Gate', nodeType: 'gate', status: 'queued', metadata: { condition: 'auto-approve when confidence > 0.7' } },
+    },
+    {
+      id: 'synthesizer-1', type: 'agent',
+      position: { x: 900, y: 180 },
+      data: {
+        name: 'Synthesizer', nodeType: 'agent', status: 'queued',
+        metadata: {
+          system_prompt: 'You receive interview notes from the Interviewer and optionally the raw conversation. Compile them into a well-structured document with: (1) Executive Summary, (2) Key Findings, (3) Open Questions, (4) Recommended Next Steps. Be concise and cite which parts came from the expert vs. the interviewer\'s interpretation.',
+        },
+      },
+    },
+    {
+      id: 'save-1', type: 'save_file',
+      position: { x: 1200, y: 180 },
+      data: { name: 'Save Report', nodeType: 'save_file', status: 'queued', metadata: { path: 'conversation-report.md', mode: 'overwrite' } },
+    },
+  ],
+  edges: [
+    { id: 'e1', source: 'input-1', target: 'interviewer-1', sourceHandle: 'response', targetHandle: 'input', data: { port_type: 'text' } },
+    { id: 'e2', source: 'input-1', target: 'expert-1', sourceHandle: 'response', targetHandle: 'context', data: { port_type: 'text' } },
+    { id: 'e3', source: 'interviewer-1', target: 'gate-1', sourceHandle: 'response', targetHandle: 'request', data: { port_type: 'json' } },
+    { id: 'e4', source: 'gate-1', target: 'synthesizer-1', sourceHandle: 'approved', targetHandle: 'input', data: { port_type: 'text' } },
+    { id: 'e5', source: 'expert-1', target: 'synthesizer-1', sourceHandle: 'response', targetHandle: 'context', data: { port_type: 'json' } },
+    { id: 'e6', source: 'synthesizer-1', target: 'save-1', sourceHandle: 'response', targetHandle: 'content', data: { port_type: 'text' } },
+  ],
+}
+
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 export const ALL_TEMPLATES: WorkflowTemplate[] = [
@@ -271,6 +444,9 @@ export const ALL_TEMPLATES: WorkflowTemplate[] = [
   CODE_REVIEW,
   CUSTOMER_SUPPORT,
   DATA_ANALYSIS,
+  AGENT_DEBATE,
+  COLLABORATIVE_WRITING,
+  AGENT_CONVERSATION,
 ]
 
 export function getTemplate(id: string): WorkflowTemplate | undefined {

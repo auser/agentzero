@@ -6,7 +6,26 @@ use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
 use agentzero_core::canvas::CanvasStore;
 use agentzero_core::{EventBus, MemoryStore};
-use agentzero_orchestrator::{AgentStore, JobStore, PresenceStore, TemplateStore, WorkflowStore};
+use agentzero_orchestrator::{
+    AgentStore, JobStore, NodeStatus, PresenceStore, TemplateStore, WorkflowStore,
+};
+use serde::Serialize;
+
+/// Snapshot of a workflow run's state, updated in real-time by the executor.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WorkflowRunState {
+    pub run_id: String,
+    pub workflow_id: String,
+    pub status: String,
+    pub node_statuses: HashMap<String, NodeStatus>,
+    /// Per-node output text (populated on completion).
+    pub node_outputs: HashMap<String, String>,
+    /// Flattened outputs: "node_id:port" → value.
+    pub outputs: HashMap<String, serde_json::Value>,
+    pub started_at: u64,
+    pub finished_at: Option<u64>,
+    pub error: Option<String>,
+}
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
     collections::{HashMap, HashSet},
@@ -86,6 +105,8 @@ pub(crate) struct GatewayState {
     pub(crate) workflow_store: Option<Arc<WorkflowStore>>,
     /// Template store for reusable workflow templates.
     pub(crate) template_store: Option<Arc<TemplateStore>>,
+    /// In-flight workflow runs — updated in real-time as nodes execute.
+    pub(crate) workflow_runs: Arc<Mutex<HashMap<String, WorkflowRunState>>>,
 }
 
 impl GatewayState {
@@ -140,6 +161,7 @@ impl GatewayState {
             canvas_store: None,
             workflow_store: None,
             template_store: None,
+            workflow_runs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -380,6 +402,7 @@ impl GatewayState {
             canvas_store: None,
             workflow_store: None,
             template_store: None,
+            workflow_runs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -428,6 +451,7 @@ impl GatewayState {
             canvas_store: None,
             workflow_store: None,
             template_store: None,
+            workflow_runs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }

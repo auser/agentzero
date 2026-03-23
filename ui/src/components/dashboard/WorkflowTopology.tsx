@@ -47,13 +47,15 @@ import { getKeyBindingActions, getShortcutActions, matchesKey, type CanvasAction
 interface WorkflowTopologyProps {
   fullHeight?: boolean
   readOnly?: boolean
+  /** When provided, loads this specific workflow instead of the default. */
+  workflowId?: string
 }
 
 const edgeTypes = {
   default: LabeledEdge,
 }
 
-function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: WorkflowTopologyProps) {
+function WorkflowTopologyInner({ fullHeight = false, readOnly = false, workflowId: workflowIdProp }: WorkflowTopologyProps) {
   // Dynamic nodeTypes — rebuilds when custom definitions are added/removed
   const definitions = useNodeDefinitions()
   const nodeTypes = useMemo(() => ({
@@ -75,7 +77,7 @@ function WorkflowTopologyInner({ fullHeight = false, readOnly = false }: Workflo
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const cmdK = useCommandPalette()
 
-  const { persistState, handleClear, workflowId } = useWorkflowPersistence(setNodes, setEdges)
+  const { persistState, handleClear, workflowId } = useWorkflowPersistence(setNodes, setEdges, workflowIdProp)
   const { push: pushHistory, undo, redo } = useUndoRedo(setNodes, setEdges)
 
   // Push history snapshot on every persist (debounced saves also capture undo state)

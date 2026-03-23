@@ -36,7 +36,7 @@ pub use presence::{PresenceRecord, PresenceStatus, PresenceStore};
 pub use swarm::{build_event_bus, build_swarm, build_swarm_with_presence};
 pub use template_store::{TemplateRecord, TemplateStore, TemplateUpdate};
 pub use workflow_executor::{
-    compile as compile_workflow, ExecutionPlan, ExecutionStep, NodeStatus, NodeType,
-    StepDispatcher, WorkflowRun,
+    compile as compile_workflow, execute_with_updates as execute_workflow_streaming, ExecutionPlan,
+    ExecutionStep, NodeStatus, NodeType, StatusUpdate, StepDispatcher, WorkflowRun,
 };
 pub use workflow_store::{WorkflowRecord, WorkflowStore, WorkflowUpdate};

@@ -7,12 +7,12 @@ use crate::handlers::{
     agent_stats, agents_list, api_chat, api_fallback, async_submit, create_agent, create_cron,
     create_template, create_workflow, dashboard, delete_agent, delete_cron, delete_template,
     delete_workflow, emergency_stop, execute_workflow, forget_memory, get_agent, get_config,
-    get_template, get_tools, get_workflow, health, health_live, health_ready, job_cancel,
-    job_events, job_list, job_result, job_status, job_transcript, legacy_webhook, list_approvals,
-    list_cron, list_memory, list_templates, list_workflows, mcp_message, metrics, openapi_spec,
-    pair, ping, recall_memory, sse_events, sse_run_stream, tool_execute, topology, update_agent,
-    update_config, update_cron, update_template, update_workflow, v1_chat_completions, v1_models,
-    webhook, webhook_with_agent, ws_chat, ws_run_subscribe,
+    get_template, get_tools, get_workflow, get_workflow_run, health, health_live, health_ready,
+    job_cancel, job_events, job_list, job_result, job_status, job_transcript, legacy_webhook,
+    list_approvals, list_cron, list_memory, list_templates, list_workflows, mcp_message, metrics,
+    openapi_spec, pair, ping, recall_memory, sse_events, sse_run_stream, tool_execute, topology,
+    update_agent, update_config, update_cron, update_template, update_workflow,
+    v1_chat_completions, v1_models, webhook, webhook_with_agent, ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -66,6 +66,7 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
                 .delete(delete_workflow),
         )
         .route("/v1/workflows/:id/execute", post(execute_workflow))
+        .route("/v1/workflows/runs/:run_id", get(get_workflow_run))
         .route("/v1/templates", get(list_templates).post(create_template))
         .route(
             "/v1/templates/:id",

@@ -31,6 +31,8 @@ export function useWorkflowInit(
   setEdges: React.Dispatch<React.SetStateAction<Edge[]>>,
   topology: { nodes: { agent_id: string; status: string }[]; edges?: unknown[] } | undefined,
   refs: WorkflowRefs,
+  /** When provided, loads this specific workflow by ID instead of the default. */
+  targetWorkflowId?: string,
 ) {
   const { initializedRef, workflowIdRef, lastKnownUpdatedAtRef } = refs
 
@@ -49,6 +51,19 @@ export function useWorkflowInit(
 
     const init = async () => {
       try {
+        // If a specific workflow ID is requested, load it directly.
+        if (targetWorkflowId) {
+          const wf = await workflowsApi.get(targetWorkflowId, 'layout')
+          if (wf?.layout?.nodes && (wf.layout.nodes as unknown[]).length > 0) {
+            setNodes(wf.layout.nodes as Node[])
+            setEdges((wf.layout.edges ?? []) as Edge[])
+          }
+          workflowIdRef.current = wf.workflow_id
+          lastKnownUpdatedAtRef.current = wf.updated_at
+          initializedRef.current = true
+          return
+        }
+
         const list = await workflowsApi.list('layout')
         const existing = list.data.find((w) => w.name === DEFAULT_WORKFLOW_NAME) ?? list.data[0]
 
@@ -96,5 +111,5 @@ export function useWorkflowInit(
     }
 
     init()
-  }, [topology, setNodes, setEdges, initializedRef, workflowIdRef, lastKnownUpdatedAtRef])
+  }, [topology, setNodes, setEdges, initializedRef, workflowIdRef, lastKnownUpdatedAtRef, targetWorkflowId])
 }

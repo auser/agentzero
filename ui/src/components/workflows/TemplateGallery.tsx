@@ -21,6 +21,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   engineering: '#f97316',
   support: '#ec4899',
   analytics: '#22c55e',
+  reasoning: '#14b8a6',
   custom: '#f59e0b',
 }
 

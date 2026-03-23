@@ -26,6 +26,7 @@ import { Route as ChannelsIndexRouteImport } from './routes/channels/index'
 import { Route as CanvasIndexRouteImport } from './routes/canvas/index'
 import { Route as ApprovalsIndexRouteImport } from './routes/approvals/index'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
+import { Route as WorkflowsWorkflowIdRouteImport } from './routes/workflows/$workflowId'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -112,10 +113,16 @@ const AgentsIndexRoute = AgentsIndexRouteImport.update({
   path: '/agents/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WorkflowsWorkflowIdRoute = WorkflowsWorkflowIdRouteImport.update({
+  id: '/workflows/$workflowId',
+  path: '/workflows/$workflowId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/workflows/$workflowId': typeof WorkflowsWorkflowIdRoute
   '/agents/': typeof AgentsIndexRoute
   '/approvals/': typeof ApprovalsIndexRoute
   '/canvas/': typeof CanvasIndexRoute
@@ -135,6 +142,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/workflows/$workflowId': typeof WorkflowsWorkflowIdRoute
   '/agents': typeof AgentsIndexRoute
   '/approvals': typeof ApprovalsIndexRoute
   '/canvas': typeof CanvasIndexRoute
@@ -155,6 +163,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/workflows/$workflowId': typeof WorkflowsWorkflowIdRoute
   '/agents/': typeof AgentsIndexRoute
   '/approvals/': typeof ApprovalsIndexRoute
   '/canvas/': typeof CanvasIndexRoute
@@ -176,6 +185,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/workflows/$workflowId'
     | '/agents/'
     | '/approvals/'
     | '/canvas/'
@@ -195,6 +205,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/workflows/$workflowId'
     | '/agents'
     | '/approvals'
     | '/canvas'
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/login'
+    | '/workflows/$workflowId'
     | '/agents/'
     | '/approvals/'
     | '/canvas/'
@@ -234,6 +246,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  WorkflowsWorkflowIdRoute: typeof WorkflowsWorkflowIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   ApprovalsIndexRoute: typeof ApprovalsIndexRoute
   CanvasIndexRoute: typeof CanvasIndexRoute
@@ -372,12 +385,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/workflows/$workflowId': {
+      id: '/workflows/$workflowId'
+      path: '/workflows/$workflowId'
+      fullPath: '/workflows/$workflowId'
+      preLoaderRoute: typeof WorkflowsWorkflowIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  WorkflowsWorkflowIdRoute: WorkflowsWorkflowIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   ApprovalsIndexRoute: ApprovalsIndexRoute,
   CanvasIndexRoute: CanvasIndexRoute,
