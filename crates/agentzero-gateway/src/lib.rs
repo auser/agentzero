@@ -68,6 +68,8 @@ pub struct GatewayRunOptions {
     pub default_privacy_mode: Option<String>,
     /// Whether to serve the embedded web UI at the root path.
     pub serve_ui: bool,
+    /// Disable all authentication checks (open mode). For local development only.
+    pub no_auth: bool,
 }
 
 pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::Result<()> {
@@ -121,20 +123,33 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
 
     let prometheus_handle = gateway_metrics::init_prometheus();
 
-    let paired_tokens = load_paired_tokens(options.token_store_path.as_deref())?;
-    let pairing_code = if paired_tokens.is_empty() {
-        Some(generate_pairing_code())
+    let (paired_tokens, pairing_code) = if options.no_auth {
+        println!("⚠️  Authentication DISABLED (--no-auth). Do not use in production.");
+        (std::collections::HashSet::new(), None)
     } else {
-        None
+        let tokens = load_paired_tokens(options.token_store_path.as_deref())?;
+        let code = if tokens.is_empty() {
+            Some(generate_pairing_code())
+        } else {
+            None
+        };
+        (tokens, code)
     };
     let mut state = GatewayState::new(
         pairing_code.clone(),
         otp_secret,
         paired_tokens,
-        options.token_store_path,
+        if options.no_auth {
+            None
+        } else {
+            options.token_store_path
+        },
         prometheus_handle,
     )
     .with_gateway_config(require_pairing, allow_public_bind);
+    if options.no_auth {
+        state.bearer_token = None;
+    }
 
     // Wire perplexity filter from loaded security config.
     if let Some(ref cfg) = full_config {
@@ -149,16 +164,19 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
             });
     }
 
-    // Wire persistent API key store when a data directory is available.
+    // Wire persistent stores when a data directory is available.
     if let Some(ref data_dir) = options.data_dir {
-        match api_keys::ApiKeyStore::persistent(data_dir) {
-            Ok(store) => {
-                let count = store.list_all_count();
-                tracing::info!(keys = count, "loaded persistent API key store");
-                state = state.with_api_key_store(Arc::new(store));
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to open persistent API key store");
+        // Skip API key store in no-auth mode so auth falls through to open mode.
+        if !options.no_auth {
+            match api_keys::ApiKeyStore::persistent(data_dir) {
+                Ok(store) => {
+                    let count = store.list_all_count();
+                    tracing::info!(keys = count, "loaded persistent API key store");
+                    state = state.with_api_key_store(Arc::new(store));
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to open persistent API key store");
+                }
             }
         }
 

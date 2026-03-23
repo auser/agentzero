@@ -7,6 +7,7 @@ pub struct GatewayOptions {
     pub port: Option<u16>,
     pub new_pairing: bool,
     pub ui: bool,
+    pub no_auth: bool,
 }
 
 pub struct GatewayCommand;
@@ -43,6 +44,7 @@ impl AgentZeroCommand for GatewayCommand {
                 config_path: Some(ctx.config_path.clone()),
                 workspace_root: Some(ctx.workspace_root.clone()),
                 serve_ui: opts.ui,
+                no_auth: opts.no_auth,
                 ..Default::default()
             },
         )
@@ -62,6 +64,7 @@ mod tests {
             port: None,
             new_pairing: false,
             ui: false,
+            no_auth: false,
         };
         // Without a config, falls back to hardcoded defaults
         let host = opts.host.unwrap_or_else(|| "127.0.0.1".to_string());

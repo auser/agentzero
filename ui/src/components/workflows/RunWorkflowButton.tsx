@@ -3,10 +3,10 @@
  * Starts workflow via POST, then polls GET /v1/workflows/runs/:id for
  * real-time node status updates until completion.
  */
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useReactFlow } from '@xyflow/react'
 import { api } from '@/lib/api/client'
-import { Play, X, Loader2 } from 'lucide-react'
+import { Play, Square, X, Loader2 } from 'lucide-react'
 
 interface StartResponse {
   run_id: string
@@ -66,6 +66,21 @@ export function RunWorkflowButton({ workflowId, disabled }: RunWorkflowButtonPro
   const logEndRef = useRef<HTMLDivElement>(null)
   // Track which node statuses we've already logged to avoid duplicates
   const seenStatusesRef = useRef<Map<string, string>>(new Map())
+  const abortRef = useRef<AbortController | null>(null)
+
+  // Cleanup abort controller on unmount
+  useEffect(() => () => { abortRef.current?.abort() }, [])
+
+  const cancelRun = useCallback(async () => {
+    abortRef.current?.abort()
+    if (runId) {
+      try {
+        await api.delete(`/v1/workflows/runs/${runId}`)
+      } catch { /* best-effort */ }
+    }
+    setRunning(false)
+    appendLog({ time: new Date().toLocaleTimeString(), icon: '⏹', node: 'system', text: 'Run cancelled' })
+  }, [runId])
 
   const appendLog = useCallback((entry: LogEntry) => {
     setLog((prev) => [...prev, entry])
@@ -151,6 +166,9 @@ export function RunWorkflowButton({ workflowId, disabled }: RunWorkflowButtonPro
   /** Start execution and poll for updates */
   const executeWorkflow = useCallback(async (message: string) => {
     if (!workflowId) return
+    abortRef.current?.abort()
+    const abort = new AbortController()
+    abortRef.current = abort
     setShowInputPrompt(false)
     setRunning(true)
     setLog([])
@@ -171,7 +189,9 @@ export function RunWorkflowButton({ workflowId, disabled }: RunWorkflowButtonPro
 
       // Poll for status updates every 500ms
       for (let i = 0; i < 600; i++) {
+        if (abort.signal.aborted) return
         await new Promise((r) => setTimeout(r, 500))
+        if (abort.signal.aborted) return
 
         try {
           const status = await api.get<RunStatus>(
@@ -235,8 +255,26 @@ export function RunWorkflowButton({ workflowId, disabled }: RunWorkflowButtonPro
 
   return (
     <>
-      {/* Run button */}
-      <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 20 }}>
+      {/* Run / Stop button */}
+      <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 20, display: 'flex', gap: 6 }}>
+        {running && (
+          <button
+            onClick={() => void cancelRun()}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '8px 16px',
+              background: '#ef4444',
+              color: '#fff', border: 'none', borderRadius: 8,
+              fontSize: 13, fontWeight: 600,
+              fontFamily: "'JetBrains Mono', monospace",
+              cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+            }}
+          >
+            <Square className="h-3.5 w-3.5" />
+            Stop
+          </button>
+        )}
         <button
           onClick={handleRunClick}
           disabled={disabled || running}

@@ -87,7 +87,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
       onClick={resetAndClose}
     >
       <div
-        className="w-[520px] bg-card border border-border rounded-xl shadow-2xl overflow-hidden"
+        className="w-[520px] border border-border rounded-xl shadow-2xl overflow-hidden"
+        style={{ background: '#1C1C1E' }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >

@@ -127,17 +127,20 @@ impl StepDispatcher for GatewayStepDispatcher {
                     peers = ?peer_names,
                     "injecting ConverseTool for workflow agent"
                 );
-                extra_tools.push(Box::new(ConverseTool::new(peer_endpoints)));
+                extra_tools.push(Box::new(
+                    ConverseTool::new(peer_endpoints)
+                        .with_max_turns(3)
+                        .with_turn_timeout_secs(60),
+                ));
 
                 // Instruct the agent to actively converse with its peers.
                 message = format!(
                     "{message}\n\n\
                      You are part of a multi-agent workflow. You have access to a `converse` tool \
-                     that lets you have multi-turn conversations with other agents: {peers}. \
-                     Use the converse tool to discuss, debate, and collaborate with them before \
-                     formulating your final response. Each converse call is one turn — call \
-                     repeatedly with the same conversation_id to continue the conversation. \
-                     When you are satisfied with the discussion, write your final response.",
+                     that lets you send a message to another agent: {peers}. \
+                     Use it only if you need specific input from a peer — do NOT have open-ended \
+                     back-and-forth discussions. Limit yourself to at most 2 converse calls total. \
+                     After gathering any needed input, write your final response directly.",
                     peers = peer_names.join(", ")
                 );
             }

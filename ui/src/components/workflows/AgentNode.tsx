@@ -12,12 +12,10 @@
  * - Text color: #E5E5E5
  * - Input bg: #0F0F11
  */
-import { memo, useState, useCallback, useMemo } from 'react'
+import { memo, useState, useCallback } from 'react'
 import { Handle, Position, NodeResizer, useReactFlow, type NodeProps } from '@xyflow/react'
-import { useQuery } from '@tanstack/react-query'
 import { getDefinition } from '@/lib/node-definitions'
 import { portTypeColor, statusColor } from '@/lib/workflow-types'
-import { modelsApi } from '@/lib/api/models'
 import { agentsApi } from '@/lib/api/agents'
 
 
@@ -50,29 +48,6 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
 
   const reactFlow = useReactFlow()
 
-  // Fetch models for the provider/model dropdowns
-  const { data: modelsData } = useQuery({
-    queryKey: ['models'],
-    queryFn: () => modelsApi.list(),
-    staleTime: 60_000,
-  })
-  const allModels = modelsData?.data ?? []
-
-  // Derive providers from models
-  const providers = useMemo(() =>
-    [...new Set(allModels.map((m) => m.owned_by).filter(Boolean))].sort(),
-    [allModels],
-  )
-
-  // Filter models by selected provider
-  const selectedProvider = (nodeData.metadata?.provider as string) ?? ''
-  const filteredModels = useMemo(() => {
-    const models = selectedProvider
-      ? allModels.filter((m) => m.owned_by === selectedProvider)
-      : allModels
-    return [...new Set(models.map((m) => m.id))]
-  }, [allModels, selectedProvider])
-
   // Update node data and optionally save to API
   const updateField = useCallback((key: string, value: string) => {
     reactFlow.setNodes((nodes) =>
@@ -90,7 +65,7 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
     )
     // Save to agent API if this is an agent node with an agent_id
     const agentId = nodeData.metadata?.agent_id as string
-    if (agentId && (key === 'system_prompt' || key === 'model' || key === 'provider')) {
+    if (agentId && key === 'system_prompt') {
       agentsApi.update(agentId, { [key]: value }).catch(() => {})
     }
   }, [reactFlow, id, nodeData.metadata])
@@ -181,7 +156,12 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
               // Delay to allow click on dropdown item
               setTimeout(() => {
                 setShowDropdown(false)
-                if (roleSearch) updateField('role_name', roleSearch)
+                if (roleSearch) {
+                  updateField('role_name', roleSearch)
+                  if (PRESET_ROLES[roleSearch]) {
+                    updateField('role_description', PRESET_ROLES[roleSearch])
+                  }
+                }
               }, 200)
             }}
             style={{
@@ -200,7 +180,7 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
           />
           {showDropdown && matchingRoles.length > 0 && (
             <div
-              className="nowheel"
+              className="nodrag nopan nowheel"
               style={{
                 position: 'absolute',
                 top: '100%',
@@ -218,7 +198,12 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
               {matchingRoles.map((r) => (
                 <div
                   key={r}
-                  onMouseDown={() => selectRole(r)}
+                  className="nodrag nopan"
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    selectRole(r)
+                  }}
                   style={{
                     padding: '6px 12px',
                     fontSize: 12,
@@ -347,10 +332,34 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
         </span>
       </div>
 
-      {/* Node name */}
-      <div style={{ padding: '0 16px 8px', fontSize: 13, fontWeight: 500, color: '#A3A3A3' }}>
-        {nodeData.name}
-      </div>
+      {/* Node name / constant inline editor */}
+      {nodeData.nodeType === 'constant' ? (
+        <div style={{ padding: '0 16px 8px' }}>
+          <input
+            className="nodrag nowheel"
+            type="text"
+            placeholder="Enter value..."
+            value={(nodeData.metadata?.value as string) ?? ''}
+            onChange={(e) => updateField('value', e.target.value)}
+            style={{
+              width: '100%',
+              background: '#0F0F11',
+              borderRadius: 8,
+              padding: '8px 12px',
+              fontSize: 12,
+              color: '#E5E5E5',
+              border: 'none',
+              outline: 'none',
+              fontFamily: "'JetBrains Mono', monospace",
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+      ) : (
+        <div style={{ padding: '0 16px 8px', fontSize: 13, fontWeight: 500, color: '#A3A3A3' }}>
+          {nodeData.name}
+        </div>
+      )}
 
       {/* Fields — hidden when collapsed */}
       {!collapsed && fields.map((field) => {
@@ -396,10 +405,6 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
                 value={value}
                 onChange={(e) => {
                   updateField(field.key, e.target.value)
-                  // When provider changes, clear the model selection
-                  if (field.key === 'provider') {
-                    updateField('model', '')
-                  }
                 }}
                 style={{
                   width: '100%',
@@ -416,12 +421,7 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
                 }}
               >
                 <option value="">—</option>
-                {(field.key === 'provider'
-                  ? providers
-                  : field.key === 'model'
-                    ? filteredModels
-                    : (field.options ?? [])
-                ).map((opt) => (
+                {(field.options ?? []).map((opt) => (
                   <option key={opt} value={opt}>{opt}</option>
                 ))}
               </select>

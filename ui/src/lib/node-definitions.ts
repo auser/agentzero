@@ -15,8 +15,6 @@ const AGENT_DEFINITION: NodeDefinition = {
   category: 'core',
   fields: [
     { key: 'system_prompt', type: 'textarea', label: 'Prompt' },
-    { key: 'provider', type: 'select', label: 'Provider' },
-    { key: 'model', type: 'select', label: 'Model' },
     { key: 'tools_count', type: 'badge', label: 'Tools', defaultValue: '0 added' },
   ],
   inputs: [
@@ -24,6 +22,7 @@ const AGENT_DEFINITION: NodeDefinition = {
     { id: 'context', label: 'context', direction: 'input', port_type: 'json' },
     { id: 'tools', label: 'tools', direction: 'input', port_type: 'tool' },
     { id: 'role', label: 'role', direction: 'input', port_type: 'role' },
+    { id: 'provider', label: 'provider', direction: 'input', port_type: 'config' },
   ],
   outputs: [
     { id: 'response', label: 'response', direction: 'output', port_type: 'text' },
@@ -236,6 +235,21 @@ const ROLE_DEFINITION: NodeDefinition = {
   ],
 }
 
+// ── Constant ────────────────────────────────────────────────────────────────
+
+const CONSTANT_DEFINITION: NodeDefinition = {
+  type: 'constant',
+  label: 'Constant',
+  icon: '📌',
+  headerColor: '#737373',
+  category: 'core',
+  fields: [],
+  inputs: [],
+  outputs: [
+    { id: 'value', label: 'value', direction: 'output', port_type: 'text' },
+  ],
+}
+
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 // ── Registry ─────────────────────────────────────────────────────────────────
@@ -253,6 +267,7 @@ const BUILT_IN_DEFINITIONS: NodeDefinition[] = [
   SUBAGENT_DEFINITION,
   ROLE_DEFINITION,
   PROVIDER_DEFINITION,
+  CONSTANT_DEFINITION,
 ]
 
 const CUSTOM_STORAGE_KEY = 'agentzero-custom-node-definitions'
@@ -332,4 +347,4 @@ export function portsForType(type: string): Port[] {
   return [...(def.inputs ?? []), ...(def.outputs ?? [])]
 }
 
-export { AGENT_DEFINITION, TOOL_DEFINITION, CHANNEL_DEFINITION, HUMAN_INPUT_DEFINITION, SCHEDULE_DEFINITION, GATE_DEFINITION, SUBAGENT_DEFINITION, ROLE_DEFINITION, PROVIDER_DEFINITION }
+export { AGENT_DEFINITION, TOOL_DEFINITION, CHANNEL_DEFINITION, HUMAN_INPUT_DEFINITION, SCHEDULE_DEFINITION, GATE_DEFINITION, SUBAGENT_DEFINITION, ROLE_DEFINITION, PROVIDER_DEFINITION, CONSTANT_DEFINITION }

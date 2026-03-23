@@ -85,6 +85,9 @@ pub enum Commands {
         /// Serve the embedded web UI at the root path.
         #[arg(long)]
         ui: bool,
+        /// Disable authentication (open mode). For local development only.
+        #[arg(long)]
+        no_auth: bool,
     },
     /// Manage the background daemon process.
     Daemon {
@@ -1012,6 +1015,9 @@ pub enum AuthCommands {
         /// Use OAuth device-code flow (planned).
         #[arg(long)]
         device_code: bool,
+        /// Port for the OAuth callback listener (default: provider-specific).
+        #[arg(long)]
+        port: Option<u16>,
     },
     /// Complete OAuth by pasting redirect URL or auth code.
     PasteRedirect {

@@ -35,37 +35,91 @@ function GroupNodeComponent({ id, data, selected }: NodeProps) {
   const childIds = new Set(children.map((c) => c.id))
 
   // Aggregate ports for collapsed view:
-  // Entry inputs = child input ports with no incoming edge from inside the group
-  // Exit outputs = child output ports with no outgoing edge to inside the group
+  // Only show true boundary ports — entry node inputs and exit node outputs.
+  // Entry nodes = children with no internal incoming edges (nothing inside feeds them)
+  // Exit nodes = children with no internal outgoing edges (they don't feed anything inside)
+  // For each, show only their primary (first) port + any ports with external edges.
   const { entryInputs, exitOutputs } = useMemo(() => {
     const inputs: (Port & { childId: string })[] = []
     const outputs: (Port & { childId: string })[] = []
+    const seen = new Set<string>()
 
+    // Find entry nodes (no internal incoming edges) and exit nodes (no internal outgoing edges)
+    const hasInternalIncoming = new Set<string>()
+    const hasInternalOutgoing = new Set<string>()
+    for (const e of edges) {
+      if (childIds.has(e.source) && childIds.has(e.target)) {
+        hasInternalIncoming.add(e.target)
+        hasInternalOutgoing.add(e.source)
+      }
+    }
+
+    // Entry nodes: show first input port
     for (const child of children) {
+      if (hasInternalIncoming.has(child.id)) continue
       const childData = child.data as Record<string, unknown>
       const def = getDefinition((childData.nodeType as string) ?? '')
       const childInputs = (childData.tool_inputs as Port[]) ?? def?.inputs ?? []
-      const childOutputs = (childData.tool_outputs as Port[]) ?? def?.outputs ?? []
-
-      for (const port of childInputs) {
-        // Is there an internal edge connecting to this port?
-        const hasInternalSource = edges.some(
-          (e) => e.target === child.id && e.targetHandle === port.id && childIds.has(e.source),
-        )
-        if (!hasInternalSource) {
-          inputs.push({ ...port, childId: child.id, id: `${child.id}__${port.id}` })
-        }
-      }
-
-      for (const port of childOutputs) {
-        const hasInternalTarget = edges.some(
-          (e) => e.source === child.id && e.sourceHandle === port.id && childIds.has(e.target),
-        )
-        if (!hasInternalTarget) {
-          outputs.push({ ...port, childId: child.id, id: `${child.id}__${port.id}` })
+      if (childInputs.length > 0) {
+        const port = childInputs[0]
+        const key = `${child.id}__${port.id}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          inputs.push({ ...port, childId: child.id, id: key })
         }
       }
     }
+
+    // Exit nodes: show first output port
+    for (const child of children) {
+      if (hasInternalOutgoing.has(child.id)) continue
+      const childData = child.data as Record<string, unknown>
+      const def = getDefinition((childData.nodeType as string) ?? '')
+      const childOutputs = (childData.tool_outputs as Port[]) ?? def?.outputs ?? []
+      if (childOutputs.length > 0) {
+        const port = childOutputs[0]
+        const key = `${child.id}__${port.id}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          outputs.push({ ...port, childId: child.id, id: key })
+        }
+      }
+    }
+
+    // Also include any ports with external edges (connected to nodes outside the group)
+    for (const e of edges) {
+      if (childIds.has(e.target) && !childIds.has(e.source)) {
+        const child = children.find((c) => c.id === e.target)
+        if (!child) continue
+        const childData = child.data as Record<string, unknown>
+        const def = getDefinition((childData.nodeType as string) ?? '')
+        const port = ((childData.tool_inputs as Port[]) ?? def?.inputs ?? [])
+          .find((p) => p.id === e.targetHandle)
+        if (port) {
+          const key = `${child.id}__${port.id}`
+          if (!seen.has(key)) {
+            seen.add(key)
+            inputs.push({ ...port, childId: child.id, id: key })
+          }
+        }
+      }
+      if (childIds.has(e.source) && !childIds.has(e.target)) {
+        const child = children.find((c) => c.id === e.source)
+        if (!child) continue
+        const childData = child.data as Record<string, unknown>
+        const def = getDefinition((childData.nodeType as string) ?? '')
+        const port = ((childData.tool_outputs as Port[]) ?? def?.outputs ?? [])
+          .find((p) => p.id === e.sourceHandle)
+        if (port) {
+          const key = `${child.id}__${port.id}`
+          if (!seen.has(key)) {
+            seen.add(key)
+            outputs.push({ ...port, childId: child.id, id: key })
+          }
+        }
+      }
+    }
+
     return { entryInputs: inputs, exitOutputs: outputs }
   }, [children, edges, childIds])
 
@@ -75,8 +129,11 @@ function GroupNodeComponent({ id, data, selected }: NodeProps) {
     e.stopPropagation()
     const nextCollapsed = !collapsed
 
-    reactFlow.setNodes((nodes) =>
-      nodes.map((n) => {
+    reactFlow.setNodes((nodes) => {
+      // Collect child positions to restore later.
+      const childPositions = new Map<string, { x: number; y: number }>()
+
+      return nodes.map((n) => {
         if (n.id === id) {
           if (nextCollapsed) {
             const w = (n.measured?.width ?? n.style?.width ?? 300) as number
@@ -85,6 +142,8 @@ function GroupNodeComponent({ id, data, selected }: NodeProps) {
               ...n,
               data: { ...n.data, collapsed: true, expandedSize: { width: w, height: h } },
               style: { ...n.style, width: COLLAPSED_WIDTH, height: collapsedHeight },
+              width: COLLAPSED_WIDTH,
+              height: collapsedHeight,
             }
           }
           const saved = (n.data as GroupNodeData).expandedSize
@@ -92,14 +151,32 @@ function GroupNodeComponent({ id, data, selected }: NodeProps) {
             ...n,
             data: { ...n.data, collapsed: false },
             style: { ...n.style, width: saved?.width ?? 300, height: saved?.height ?? 200 },
+            width: undefined,
+            height: undefined,
           }
         }
         if (n.parentId === id) {
-          return { ...n, hidden: nextCollapsed }
+          if (nextCollapsed) {
+            // Save position and move to origin so they don't inflate parent size.
+            childPositions.set(n.id, { ...n.position })
+            return {
+              ...n,
+              hidden: true,
+              data: { ...n.data, _savedPosition: { ...n.position } },
+              position: { x: 0, y: 0 },
+            }
+          }
+          // Restore saved position.
+          const saved = (n.data as Record<string, unknown>)?._savedPosition as { x: number; y: number } | undefined
+          return {
+            ...n,
+            hidden: false,
+            position: saved ?? n.position,
+          }
         }
         return n
-      }),
-    )
+      })
+    })
   }, [id, collapsed, collapsedHeight, reactFlow])
 
   // Proportional resize: scale children when group is resized
@@ -292,8 +369,25 @@ function GroupNodeComponent({ id, data, selected }: NodeProps) {
           fontFamily: "'JetBrains Mono', monospace",
           overflow: 'visible',
           userSelect: 'none',
+          position: 'relative',
         }}
       >
+        {/* Collapse chevron — top right */}
+        <button
+          className="nodrag nopan"
+          onClick={toggleCollapse}
+          onDoubleClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute', top: 6, right: 8, zIndex: 1,
+            background: 'rgba(124,58,237,0.15)', border: 'none', cursor: 'pointer',
+            fontSize: 10, color: '#A78BFA', padding: '3px 6px',
+            lineHeight: 1, borderRadius: 4,
+            transition: 'transform 0.15s',
+          }}
+        >
+          ▼
+        </button>
+
         <div
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -316,24 +410,12 @@ function GroupNodeComponent({ id, data, selected }: NodeProps) {
             />
           ) : (
             <span
-              style={{ fontSize: 12, fontWeight: 600, color: '#A78BFA', flex: 1 }}
+              style={{ fontSize: 12, fontWeight: 600, color: '#A78BFA' }}
               onDoubleClick={startEditing}
             >
               {nameValue}
             </span>
           )}
-          <button
-            className="nodrag nopan"
-            onClick={toggleCollapse}
-            onDoubleClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 10, color: '#525252', padding: '2px 4px',
-              lineHeight: 1, transition: 'transform 0.15s',
-            }}
-          >
-            ▼
-          </button>
         </div>
       </div>
     </>

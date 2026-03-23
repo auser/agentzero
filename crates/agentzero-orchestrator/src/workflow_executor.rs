@@ -34,6 +34,8 @@ pub enum NodeType {
     ReadFile,
     /// HTTP request node — dispatched as a tool at execution time.
     HttpRequest,
+    /// Constant node — outputs a hardcoded value. Resolved at compile time.
+    Constant,
 }
 
 impl NodeType {
@@ -52,6 +54,7 @@ impl NodeType {
             "subagent" => Some(Self::SubAgent),
             "provider" => Some(Self::Provider),
             "role" => Some(Self::Role),
+            "constant" => Some(Self::Constant),
             _ => None,
         }
     }
@@ -184,6 +187,10 @@ pub fn compile(
         let id = node_val["id"].as_str().unwrap_or_default().to_string();
         let data = &node_val["data"];
         let node_type_str = data["nodeType"].as_str().unwrap_or_default();
+        // Group nodes are visual containers — skip them during compilation.
+        if node_type_str == "group" {
+            continue;
+        }
         let node_type = NodeType::parse(node_type_str)
             .ok_or_else(|| CompileError::UnknownNodeType(node_type_str.to_string(), id.clone()))?;
 
@@ -520,12 +527,13 @@ pub async fn execute_with_updates(
                 }
 
                 // Collect inputs from upstream (needs lock on outputs).
-                let (input_text, context) = {
+                let (input_text, context, port_inputs) = {
                     let out = outputs.lock().await;
                     let run_view = OutputView(&out);
                     let input = collect_input_text_from(&run_view, &reverse_edges, &node_id);
                     let ctx = collect_context_from(&run_view, &reverse_edges, &node_id);
-                    (input, ctx)
+                    let ports = collect_all_port_inputs(&run_view, &reverse_edges, &node_id);
+                    (input, ctx, ports)
                 };
 
                 // Mark as Running.
@@ -545,8 +553,14 @@ pub async fn execute_with_updates(
                 }
 
                 // Dispatch the step.
-                let result =
-                    dispatch_step(&*dispatcher, &step, &input_text, context.as_ref()).await;
+                let result = dispatch_step(
+                    &*dispatcher,
+                    &step,
+                    &input_text,
+                    context.as_ref(),
+                    &port_inputs,
+                )
+                .await;
 
                 let step_result = match result {
                     Ok(output) => Ok(output),
@@ -753,6 +767,28 @@ fn collect_context_from(
     }
 }
 
+/// Collect all port input values for a node from upstream edges.
+/// Returns a map of `port_id → value` for every input port that has a connected source.
+fn collect_all_port_inputs(
+    view: &OutputView<'_>,
+    reverse_edges: &HashMap<(String, String), Vec<(String, String)>>,
+    node_id: &str,
+) -> HashMap<String, serde_json::Value> {
+    let mut result = HashMap::new();
+    for ((target_node, target_port), sources) in reverse_edges {
+        if target_node != node_id {
+            continue;
+        }
+        for (src_node, src_port) in sources {
+            if let Some(val) = view.0.get(&(src_node.clone(), src_port.clone())) {
+                result.insert(target_port.clone(), val.clone());
+                break; // first connected source wins per port
+            }
+        }
+    }
+    result
+}
+
 /// Output from a single step execution.
 #[derive(Clone)]
 struct StepOutput {
@@ -766,6 +802,7 @@ async fn dispatch_step(
     step: &ExecutionStep,
     input: &str,
     context: Option<&serde_json::Value>,
+    port_inputs: &HashMap<String, serde_json::Value>,
 ) -> anyhow::Result<StepOutput> {
     match step.node_type {
         NodeType::Agent | NodeType::SubAgent => {
@@ -780,10 +817,40 @@ async fn dispatch_step(
         }
         NodeType::Tool => {
             let tool_name = step.metadata["tool_name"].as_str().unwrap_or_default();
-            let tool_input = if input.is_empty() {
-                serde_json::json!({})
-            } else {
-                serde_json::from_str(input).unwrap_or(serde_json::json!({ "input": input }))
+            // Build tool input from all connected port values + metadata defaults.
+            // Wired port values take priority; metadata fields fill in unconnected ports.
+            let tool_input = {
+                let mut obj = serde_json::Map::new();
+                // Start with metadata fields as defaults (e.g. path, mode set in the node UI).
+                if let Some(meta_obj) = step.metadata.as_object() {
+                    for (k, v) in meta_obj {
+                        // Skip internal metadata keys.
+                        if !matches!(
+                            k.as_str(),
+                            "node_type"
+                                | "tool_name"
+                                | "description"
+                                | "tool_inputs"
+                                | "tool_outputs"
+                        ) {
+                            if let Some(s) = v.as_str() {
+                                if !s.is_empty() {
+                                    obj.insert(k.clone(), v.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Override with wired port values.
+                for (port_id, val) in port_inputs {
+                    obj.insert(port_id.clone(), val.clone());
+                }
+                // If no ports were wired and no metadata, fall back to input text.
+                if obj.is_empty() && !input.is_empty() {
+                    serde_json::from_str(input).unwrap_or(serde_json::json!({ "input": input }))
+                } else {
+                    serde_json::Value::Object(obj)
+                }
             };
             let result = dispatcher.run_tool(tool_name, &tool_input).await?;
             let mut ports = HashMap::new();
@@ -906,6 +973,16 @@ async fn dispatch_step(
                 "trigger".to_string(),
                 serde_json::Value::String(input.to_string()),
             );
+            Ok(StepOutput { port_values: ports })
+        }
+        NodeType::Constant => {
+            // Output the hardcoded value from metadata.
+            let value = step.metadata["value"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let mut ports = HashMap::new();
+            ports.insert("value".to_string(), serde_json::Value::String(value));
             Ok(StepOutput { port_values: ports })
         }
         NodeType::Provider | NodeType::Role => {

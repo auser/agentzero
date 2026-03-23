@@ -33,6 +33,7 @@ impl AgentZeroCommand for AuthCommand {
                 provider,
                 profile,
                 device_code,
+                port,
             } => {
                 let provider = match provider {
                     Some(p) => normalize_oauth_provider(&p)?.to_string(),
@@ -80,13 +81,13 @@ impl AgentZeroCommand for AuthCommand {
                     );
                 }
 
-                let preferred_port = if provider == "openai-codex" {
+                let preferred_port = port.unwrap_or(if provider == "openai-codex" {
                     1455
                 } else if provider == "anthropic" {
                     54321
                 } else {
                     1456
-                };
+                });
                 let callback_path = if provider == "anthropic" {
                     "/callback"
                 } else {
@@ -964,6 +965,7 @@ mod tests {
                 provider: Some("openai-codex".to_string()),
                 profile: "default".to_string(),
                 device_code: false,
+                port: None,
             },
         )
         .await

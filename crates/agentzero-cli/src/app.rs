@@ -47,6 +47,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             port,
             new_pairing,
             ui,
+            no_auth,
         } => {
             commands::gateway::GatewayCommand::run(
                 &ctx,
@@ -55,6 +56,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     port,
                     new_pairing,
                     ui,
+                    no_auth,
                 },
             )
             .await
