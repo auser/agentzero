@@ -7,6 +7,129 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.10.0] - 2026-03-23
+
+### Added
+- Prepare all crates for crates.io publishing, bump to v0.9.0 — Add per-crate descriptions and remove publish = false from all library
+- Add workflow topology dashboard with WASM-powered graph visualization — Replace the simple canvas-based TopologyGraph with an interactive
+- Redesign dashboard with modern bento grid layout — Modern dashboard redesign with:
+- Add WorkflowDetails panel, fix canvas sizing and click behavior — - WorkflowDetails: sidebar listing agents, tools, channels, and
+- Add DraggablePalette and wire onDrop to WorkflowTopology — - DraggablePalette: draggable list of agents, tools, and channels
+- Wire Blender-style ports into agent/tool/channel nodes — Define port schemas for each node type:
+- Working drag-drop from palette to canvas with ports — Move drop handling from WASM to React level to bypass RefCell borrow
+- Wire port-to-port connection with onConnect callback — When a user drags from an output port to an input port, the WASM
+- Add KeySelector for JSON↔text port connections — When connecting ports with different types (json→text or text→json),
+- Update workflow-graph to 0.7.8, Delete key removes nodes
+- Drop nodes at cursor position, port-to-port edge rendering — - Drop handler passes mouse coordinates to addNode so nodes appear
+- Redesign DraggablePalette with categories, search, and collapse — - Tools organized into categories: File & Search, Memory, Agents,
+- Palette items rendered as miniature node previews — Each palette item is a MiniNode matching the canvas node style:
+- Palette items as cute node chips — Small rounded pills with a colored dot matching node type:
+- Persist workflow graph across page refresh — Add workflowStore (Zustand + persist middleware) to save added nodes
+- Cmd+K palette, /workflows page, sidebar nav, fixes — - CommandPalette: dark backdrop (bg-black/60), selected item has
+- Gateway offline page, fix write_file config — Dashboard shows a "Gateway Offline" page with WifiOff icon and the
+- Clear button, create agent from Cmd+K, persistence fixes — - Clear button in topology toolbar removes all persisted added nodes
+- Persist node layout positions across refresh — - workflowStore gains nodePositions: Record<string, [x, y]>
+- Use workflow-graph getState/loadState for persistence — Replace custom addedNodes/nodePositions/edges store with workflow-graph's
+- Inline Create Agent dialog + Quick Config panel
+- Channels/schedules/gates in palette, fix layout restore — Palette now always shows:
+- Use workflow-graph built-in persistence, remove all manual save code — WorkflowTopology now passes persist={{ key: 'agentzero-workflow-graph' }}
+- Add CLI harness tools, 429 cooldown, and upstream integration plan — Phase 1A: CLI Harness Tools
+- A2A tool, streaming support, per-sender rate limiting, fallback notification — Phase 1C: A2A Tool Interface + Spec Alignment
+- Add A2UI Live Canvas — rich visual agent output — CanvasStore (agentzero-core):
+- Add background and parallel delegation with TaskManager — TaskManager (agentzero-tools):
+- Add deterministic SOP engine with typed steps and checkpoints — SOP Types (sop/types.rs):
+- Add media pipeline, Discord history, voice wake, Gmail push channels — Phase 5A: Universal Media Pipeline
+- Sprint 68 — streaming drafts, rate limiter, fallback headers, canvas registration, SOP config, A2A persistence
+- Wire sender_id and source_channel into RuntimeExecution — Add source_channel and sender_id fields to RuntimeExecution so
+- Workflow builder polish — detail panel, edges, undo, run button — Sprint 69: Visual Workflow Builder Polish
+- ReactFlow workflow builder with collapsible nodes, connection validation, and compound groups — - Replace WASM workflow-graph with ReactFlow for full-featured node editor
+- Add workflow execution engine — compiler with topological sort — Sprint 70 Phase A: Workflow graph compiler
+- Add workflow execution engine with step dispatch and data routing — Sprint 70 Phase B: Workflow executor
+- Add workflow execution API and wire UI to real endpoint — Sprint 70 Phases C+D: Gateway API + UI integration
+- Edge condition editor, agent API loading, undo/redo toolbar — Sprint 69 deferred items:
+- Workflow templates gallery, live execution viz, Sprint 71 plan — Sprint 71 Phase A: Workflow Template Gallery
+- Add zoom-to-fit button and save/export template as JSON — Top-left toolbar now has three buttons:
+- Add Cmd+Shift+? keyboard shortcuts panel — Dark-themed modal showing all canvas keyboard shortcuts:
+- Save template dialog with name+description, fix Cmd+? shortcut — Save Template:
+- Template save/load with localStorage fallback and dynamic node registry — Templates now persist to localStorage when the API is unavailable,
+- Add /v1/templates API — separate store for reusable workflow templates — Templates are now stored separately from active workflows via a dedicated
+- Workflow execution with real-time node status, human input, and ConverseTool — Add full workflow execution pipeline:
+- Parallel workflow execution with tokio::JoinSet — Replace sequential batch execution in the workflow executor with true
+- Sandboxed agent execution with git worktrees — Add AgentSandbox trait and WorktreeSandbox implementation for isolated
+- Cross-agent context awareness with SwarmContext — Add SwarmContext for tracking agent assignments during swarm execution.
+- Dead agent recovery with RecoveryMonitor — Add RecoveryMonitor that wraps PresenceStore for automatic detection
+- Goal decomposition and swarm supervisor — Add GoalPlanner for decomposing natural language goals into workflow
+- Container and microVM sandbox backends — Add ContainerSandbox (Docker/Podman) and MicroVmSandbox (Firecracker)
+- CLI swarm command and gateway /v1/swarm endpoint — Wire the GoalPlanner and SwarmSupervisor into user-facing entry points
+- Workflow export/import endpoints + real channel dispatch — - GET /v1/workflows/:id/export — returns full workflow JSON
+- Gate suspend/resume for human-in-the-loop workflows — Add real suspend/resume mechanism for gate nodes. When a gate is
+- Channel triggers, --ui flag, gate timeout — Three features completing Sprint 71 backend:
+- Run cancel, SSE stream, delivery confirmation, keyboard nav — Four remaining Sprint 69-71 items:
+- 14 integration tests for Sprint 71 backend features — Gateway endpoint tests (11):
+- Workflow builder overhaul — provider ports, constants, group collapse, execution fixes — Workflow node system:
+- Self-evolving agent system — NL goals, dynamic tools, catalog learning — Sprint 73: Agents can now be defined with natural language and self-assemble
+
+### Fixed
+- Resolve CI markdown-lint and security audit failures — - Fix MD029 (ordered list prefix) in sandbox.md: use 1/1/1 style
+- Resolve all markdown-lint CI errors across docs — - Add blank lines below headings (MD022) in AGENTS.md, threat-model.md,
+- Use published workflow-graph ^0.5.0 and fix theme layout fields — Switch from local link: to published @auser/workflow-graph-* ^0.5.0.
+- Use DraggablePalette, larger nodes, port connection dragging — - Replace WorkflowDetails with DraggablePalette in dashboard bento grid
+- Update workflow-graph to 0.6.3, tighter port hit radius
+- Update workflow-graph to 0.6.4 — Canvas fills parent container, nodes clamp to visible area,
+- Update workflow-graph to 0.6.5, fix WASM crash
+- Update workflow-graph to 0.6.6, fix crash and node layout — Node name renders at top, port labels below. Click and drag works
+- Update workflow-graph to 0.6.8, fix ResizeObserver crash — Remove [&>div]:h-full CSS hack — container sizing now handled
+- Update workflow-graph to 0.7.1, all borrow panics resolved — All RefCell borrow panics fixed in workflow-graph v0.7.1:
+- Update workflow-graph to 0.7.4, allow any port connections — Removes strict port_type matching so response (text) can connect
+- Use WASM default node renderer, add KeySelector, debug logging — - Remove custom onRenderNode (was drawing without pan/zoom transform)
+- Make drop resilient to stale WASM graph instance — Added nodes are tracked in React state (addedNodes) and merged into
+- Update workflow-graph to 0.7.5, nodes persist across re-renders — New nodes from drops are synced to WASM on workflow prop changes.
+- Update workflow-graph to 0.7.6, free node dragging — Nodes drag freely without position clamping. Works correctly
+- Update workflow-graph to 0.7.7, fix ghost drag line
+- Update workflow-graph to 0.7.9, canvas fills parent fully — Nodes render without clipping — canvas always matches parent
+- Update workflow-graph to 0.8.1, fix WASM lifecycle — Synchronous setWorkflow init, StrictMode-safe destroy. Nodes
+- Update workflow-graph to 0.8.2 with destroyed flag — All post-destroy WASM errors silenced. Event handlers, ResizeObserver,
+- Disable React StrictMode to fix WASM canvas lifecycle — StrictMode's double mount/unmount causes the workflow-graph WASM
+- Show KeySelector for any cross-type port connection — Previously only triggered for json↔text. Now shows for any type
+- Replace hardcoded hex colors with Tailwind classes — - Create workflow-theme.ts with NODE_TYPES config using Tailwind classes
+- Update workflow-graph to 0.8.4, reliable theme on init — Theme re-applied after setWorkflow completes. Parse errors warn
+- Update workflow-graph to 0.8.5, JS-level destroy guard — All WASM calls guarded at JS level — destroyed instances silently
+- GET /v1/tools uses user config instead of default policy — The tools endpoint was using ToolSecurityPolicy::default_for_workspace()
+- CLI tools and gateway use user config for tool security policy — - CLI `tools list`: loads policy from user config via
+- Workflow editor fills full available height — WorkflowTopology accepts fullHeight prop — on /workflows page the
+- Sync node deletions from WASM back to persisted store — When Delete/Backspace is pressed, compare WASM nodes with the
+- Layout positions survive topology poll resets — Saved positions stored in a ref and re-applied after every topology
+- Migrate old workflow store format, guard null positions — The workflowStore format changed from addedNodes/edges/nodePositions
+- InitDetector uses getState to verify WASM is fully ready — The previous check (graphRef.current.instance) was truthy immediately
+- Event-driven save instead of timer, debug logging — Replace 2-second auto-save interval with event-driven saves:
+- Save positions directly on drag end, bypass getState — getState() was returning null because the WorkflowGraph.alive check
+- Restore positions immediately, don't wait for initialized — Position restore now runs on every workflow change (50ms delay),
+- Instant layout restore via initialPositions prop — Remove all timers and InitDetector. Positions now flow as a prop
+- Explicit width/height style on canvas to fill container
+- Simplify NodeDetailPanel — unmount when closed, click-outside to dismiss — The panel was always rendered in the DOM with transform/opacity tricks,
+- Add persistent Templates button and restore workflowId prop — Templates button now always visible in top-left of canvas (not just
+- Inline template name input, save to server, zoom-to-fit shortcut — Save Template:
+- Escape closes keyboard shortcuts panel
+- PATCH not PUT for workflow/template updates, channel fallback in Cmd+K — - workflowsApi.update and templatesApi.update now use PATCH (matching
+
+### Changed
+- Auto-register node types from definitions, clean up CommandPalette
+- Data-driven canvas actions registry for shortcuts + context menu — New canvas-actions.ts registry:
+
+### Changed
+- Update Sprint 60 acceptance criteria with completed items
+- Update Sprint 60 to reflect actual progress — Phase 1: all workflow-graph features shipped (v0.8.2) — ports, drag-drop,
+- Add AI chat bubble for agent creation to SPRINT.md — Future sprint item: floating chat widget powered by local model
+- Update SPRINT.md, make auto-save interval configurable — Sprint 60 fully updated to reflect actual progress. All completed
+- Add Phase 4 (agent creation + config) and Phase 5 (AI chat bubble) — Phase 4: Inline agent creation dialog from Cmd+K, quick config
+- Add workflow-graph v2 design plan (specs/plans/28) — Design targets from chaiNNer and LangChain references:
+- Update SPRINT.md with known bugs and remaining work — Three critical bugs documented:
+- Update SPRINT.md with ReactFlow migration status
+- Add Sprint 72 — Autonomous Agent Swarms plan — Event-driven task unblocking, sandboxed agent execution
+- Mark ~30 stale Sprint 60-71 checkboxes as done — Reconcile SPRINT.md with actual codebase state. Many items from
+- Check off export/import and channel dispatch in Sprint 71
+- Mark remaining stale checkboxes in Sprints 60, 69 — - Sprint 60 Phase 6D (Template Gallery): all 5 items done
+
 ## [0.8.1] - 2026-03-20
 
 ### Added
