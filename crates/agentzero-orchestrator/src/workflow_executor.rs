@@ -625,7 +625,8 @@ async fn dispatch_step(
         NodeType::SaveFile => {
             // Dispatch as the built-in write_file tool.
             let path = step.metadata["path"].as_str().unwrap_or("output.txt");
-            let tool_input = serde_json::json!({ "path": path, "content": input });
+            let tool_input =
+                serde_json::json!({ "path": path, "content": input, "overwrite": true });
             let result = dispatcher.run_tool("write_file", &tool_input).await?;
             let mut ports = HashMap::new();
             ports.insert(

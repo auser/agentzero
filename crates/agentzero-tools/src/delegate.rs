@@ -3,10 +3,7 @@ use crate::task_manager::TaskManager;
 use agentzero_core::delegation::{
     filter_tools, validate_delegation, DelegateConfig, DelegateRequest,
 };
-use agentzero_core::{
-    Agent, AgentConfig, ChatResult, MemoryEntry, MemoryStore, Provider, Tool, ToolContext,
-    ToolResult,
-};
+use agentzero_core::{Agent, AgentConfig, ChatResult, Provider, Tool, ToolContext, ToolResult};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -516,7 +513,7 @@ async fn run_agentic(
         system_prompt: config.system_prompt.clone(),
         ..Default::default()
     };
-    let memory = EphemeralMemory::default();
+    let memory = agentzero_core::EphemeralMemory::default();
 
     // Build tools for the sub-agent. The builder creates the full set; we
     // filter to only those in the agent's allowed_tools (filter_tools also
@@ -563,27 +560,6 @@ async fn run_agentic(
         )
         .await?;
     Ok(response.text)
-}
-
-#[derive(Default)]
-struct EphemeralMemory {
-    entries: std::sync::Mutex<Vec<MemoryEntry>>,
-}
-
-#[async_trait]
-impl MemoryStore for EphemeralMemory {
-    async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
-        self.entries
-            .lock()
-            .expect("ephemeral memory lock poisoned")
-            .push(entry);
-        Ok(())
-    }
-
-    async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
-        let entries = self.entries.lock().expect("ephemeral memory lock poisoned");
-        Ok(entries.iter().rev().take(limit).cloned().collect())
-    }
 }
 
 #[cfg(test)]

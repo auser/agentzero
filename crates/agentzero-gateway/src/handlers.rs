@@ -287,6 +287,7 @@ fn build_agent_request(
         extra_tools: vec![],
         conversation_id: None,
         agent_store: None,
+        memory_override: None,
     })
 }
 
@@ -667,6 +668,7 @@ async fn handle_text_message(
         extra_tools: vec![],
         conversation_id: None,
         agent_store: None,
+        memory_override: None,
     };
     let execution = match build_runtime_execution(req).await {
         Ok(exec) => exec,

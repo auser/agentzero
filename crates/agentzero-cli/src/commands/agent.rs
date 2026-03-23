@@ -42,6 +42,7 @@ impl AgentZeroCommand for AgentCommand {
             extra_tools: vec![],
             conversation_id: super::conversation::read_active_conversation(ctx),
             agent_store,
+            memory_override: None,
         })
         .await?;
 
@@ -76,6 +77,7 @@ async fn run_streaming(ctx: &CommandContext, opts: AgentOptions) -> anyhow::Resu
         extra_tools: vec![],
         conversation_id: super::conversation::read_active_conversation(ctx),
         agent_store,
+        memory_override: None,
     })
     .await?;
 

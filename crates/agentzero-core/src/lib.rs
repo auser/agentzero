@@ -35,10 +35,10 @@ pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{
     AgentConfig, AgentEndpoint, AgentError, AnnounceMessage, AssistantMessage, AuditEvent,
     AuditSink, ChannelEndpoint, ChatResult, ContentPart, ConversationMessage, DepthPolicy,
-    DepthRule, HookEvent, HookFailureMode, HookPolicy, HookRiskTier, HookSink, JobStatus, Lane,
-    LoopAction, MemoryEntry, MemoryStore, MergeStrategy, MetricsSink, Provider, QueueMode,
-    ReasoningConfig, ResearchPolicy, ResearchTrigger, RunId, StopReason, StreamChunk, StreamSink,
-    StreamToolCallAccumulator, SummarizationConfig, Tool, ToolCallDelta, ToolContext,
+    DepthRule, EphemeralMemory, HookEvent, HookFailureMode, HookPolicy, HookRiskTier, HookSink,
+    JobStatus, Lane, LoopAction, MemoryEntry, MemoryStore, MergeStrategy, MetricsSink, Provider,
+    QueueMode, ReasoningConfig, ResearchPolicy, ResearchTrigger, RunId, StopReason, StreamChunk,
+    StreamSink, StreamToolCallAccumulator, SummarizationConfig, Tool, ToolCallDelta, ToolContext,
     ToolDefinition, ToolResult, ToolResultMessage, ToolSelectionMode, ToolSelector, ToolSummary,
     ToolUseRequest, UserMessage,
 };

@@ -59,6 +59,7 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         )
         .route("/v1/agents/:agent_id/stats", get(agent_stats))
         .route("/v1/workflows", get(list_workflows).post(create_workflow))
+        .route("/v1/workflows/runs/:run_id", get(get_workflow_run))
         .route(
             "/v1/workflows/:id",
             get(get_workflow)
@@ -66,7 +67,6 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
                 .delete(delete_workflow),
         )
         .route("/v1/workflows/:id/execute", post(execute_workflow))
-        .route("/v1/workflows/runs/:run_id", get(get_workflow_run))
         .route("/v1/templates", get(list_templates).post(create_template))
         .route(
             "/v1/templates/:id",

@@ -1255,6 +1255,145 @@ pub trait MemoryStore: Send + Sync {
     }
 }
 
+/// Blanket implementation allowing `Arc<dyn MemoryStore>` to be used anywhere
+/// a `Box<dyn MemoryStore>` is expected (via `Box::new(arc.clone())`).
+///
+/// This enables a single store instance to be shared across multiple agents
+/// — e.g. the coordinator creates one `SqliteMemoryStore` and wraps it in
+/// `Arc`, then each agent receives `Box::new(arc.clone())`.
+#[async_trait]
+impl<T: MemoryStore + ?Sized> MemoryStore for std::sync::Arc<T> {
+    async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
+        (**self).append(entry).await
+    }
+
+    async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self).recent(limit).await
+    }
+
+    async fn recent_for_boundary(
+        &self,
+        limit: usize,
+        boundary: &str,
+        source_channel: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self)
+            .recent_for_boundary(limit, boundary, source_channel)
+            .await
+    }
+
+    async fn recent_for_conversation(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self)
+            .recent_for_conversation(conversation_id, limit)
+            .await
+    }
+
+    async fn fork_conversation(&self, from_id: &str, new_id: &str) -> anyhow::Result<()> {
+        (**self).fork_conversation(from_id, new_id).await
+    }
+
+    async fn list_conversations(&self) -> anyhow::Result<Vec<String>> {
+        (**self).list_conversations().await
+    }
+
+    async fn gc_expired(&self) -> anyhow::Result<u64> {
+        (**self).gc_expired().await
+    }
+
+    async fn recent_for_org(&self, org_id: &str, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self).recent_for_org(org_id, limit).await
+    }
+
+    async fn recent_for_org_conversation(
+        &self,
+        org_id: &str,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self)
+            .recent_for_org_conversation(org_id, conversation_id, limit)
+            .await
+    }
+
+    async fn recent_for_agent(
+        &self,
+        agent_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self).recent_for_agent(agent_id, limit).await
+    }
+
+    async fn recent_for_agent_conversation(
+        &self,
+        agent_id: &str,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self)
+            .recent_for_agent_conversation(agent_id, conversation_id, limit)
+            .await
+    }
+
+    async fn list_conversations_for_agent(&self, agent_id: &str) -> anyhow::Result<Vec<String>> {
+        (**self).list_conversations_for_agent(agent_id).await
+    }
+
+    async fn recent_for_timerange(
+        &self,
+        since: Option<i64>,
+        until: Option<i64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self).recent_for_timerange(since, until, limit).await
+    }
+
+    async fn append_with_embedding(
+        &self,
+        entry: MemoryEntry,
+        embedding: Vec<f32>,
+    ) -> anyhow::Result<()> {
+        (**self).append_with_embedding(entry, embedding).await
+    }
+
+    async fn semantic_recall(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self).semantic_recall(query_embedding, limit).await
+    }
+}
+
+/// In-memory [`MemoryStore`] for ephemeral agents (workflow steps, delegates).
+///
+/// Entries live only for the lifetime of this struct — nothing is persisted to
+/// disk. Useful when an agent does not need cross-session memory (e.g. a
+/// short-lived workflow step that runs once and produces output).
+#[derive(Default)]
+pub struct EphemeralMemory {
+    entries: std::sync::Mutex<Vec<MemoryEntry>>,
+}
+
+#[async_trait]
+impl MemoryStore for EphemeralMemory {
+    async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
+        self.entries
+            .lock()
+            .expect("ephemeral memory lock poisoned")
+            .push(entry);
+        Ok(())
+    }
+
+    async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+        let entries = self.entries.lock().expect("ephemeral memory lock poisoned");
+        Ok(entries.iter().rev().take(limit).cloned().collect())
+    }
+}
+
 #[async_trait]
 pub trait Tool: Send + Sync {
     /// Unique tool identifier (e.g. `"read_file"`, `"shell"`).

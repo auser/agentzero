@@ -44,6 +44,10 @@ pub struct RunAgentRequest {
     /// When provided and `enable_agent_manage` is true in config, the tool
     /// is registered so agents can create/manage other persistent agents.
     pub agent_store: Option<std::sync::Arc<dyn agentzero_core::agent_store::AgentStoreApi>>,
+    /// Optional memory override. When set, skips building the default
+    /// SQLite/Turso memory store and uses this instead. Useful for ephemeral
+    /// workflow agents that don't need persistent conversation memory.
+    pub memory_override: Option<Box<dyn MemoryStore>>,
 }
 
 #[derive(Debug, Clone)]
@@ -228,7 +232,10 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             );
             Box::new(agentzero_providers::FallbackProvider::new(chain))
         };
-    let memory = build_memory_store(&req.config_path).await?;
+    let memory = match req.memory_override {
+        Some(m) => m,
+        None => build_memory_store(&req.config_path).await?,
+    };
     let tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
     let mut tools: Vec<Box<dyn Tool>> =
         default_tools_with_store(&tool_policy, router, delegate_agents, req.agent_store)?;
@@ -713,7 +720,13 @@ fn apply_provider_defaults(config: &mut agentzero_config::AgentZeroConfig, provi
     }
 }
 
-async fn build_memory_store(config_path: &Path) -> anyhow::Result<Box<dyn MemoryStore>> {
+/// Build a [`MemoryStore`] from the configuration at `config_path`.
+///
+/// When running multiple agents that share the same database, callers should
+/// build the store **once**, wrap it in `Arc`, and pass clones via
+/// `RunAgentRequest::memory_override` to avoid redundant connections and
+/// file-level lock contention.
+pub async fn build_memory_store(config_path: &Path) -> anyhow::Result<Box<dyn MemoryStore>> {
     let config = load(config_path)?;
     match config.memory.backend.as_str() {
         "sqlite" => {

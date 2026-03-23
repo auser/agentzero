@@ -372,6 +372,7 @@ impl StepDispatcher for CliStepDispatcher {
             extra_tools,
             conversation_id: None,
             agent_store: self.agent_store.clone(),
+            memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
         };
 
         let output = run_agent_once(req).await?;
@@ -442,6 +443,7 @@ impl agentzero_core::AgentEndpoint for CliWorkflowAgentEndpoint {
             extra_tools: vec![],
             conversation_id: None,
             agent_store: self.agent_store.clone(),
+            memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
         };
 
         let output = run_agent_once(req).await?;

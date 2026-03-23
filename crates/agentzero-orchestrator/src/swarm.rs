@@ -14,7 +14,7 @@ use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
 use agentzero_core::event_bus::{Event, EventBus, FileBackedBus, InMemoryBus};
 use agentzero_core::{Agent, AgentEndpoint};
-use agentzero_infra::runtime::{build_runtime_execution, RunAgentRequest};
+use agentzero_infra::runtime::{build_memory_store, build_runtime_execution, RunAgentRequest};
 use agentzero_storage::SqliteEventBus;
 use agentzero_tools::ConverseTool;
 use async_trait::async_trait;
@@ -257,6 +257,7 @@ pub async fn build_swarm_with_presence(
             extra_tools: Vec::new(),
             conversation_id: None,
             agent_store: None,
+            memory_override: None,
         };
         match build_runtime_execution(router_req).await {
             Ok(exec) => AgentRouter::new(
@@ -297,6 +298,22 @@ pub async fn build_swarm_with_presence(
             interval_secs: 30,
         });
     }
+
+    // Build a shared memory store so all swarm agents use one connection
+    // instead of each opening their own SQLite file handle.
+    let shared_memory: Arc<dyn agentzero_core::MemoryStore> = match build_memory_store(config_path)
+        .await
+    {
+        Ok(m) => {
+            let arc: Arc<dyn agentzero_core::MemoryStore> = Arc::from(m);
+            coord = coord.with_shared_memory(arc.clone());
+            arc
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to build shared memory store; agents will use ephemeral memory");
+            Arc::new(agentzero_core::EphemeralMemory::default())
+        }
+    };
 
     // ── Pass 1: Build all agents and create task channels ───────────────
 
@@ -340,6 +357,7 @@ pub async fn build_swarm_with_presence(
             extra_tools: Vec::new(),
             conversation_id: None,
             agent_store: None,
+            memory_override: Some(Box::new(shared_memory.clone())),
         };
 
         match build_runtime_execution(req).await {

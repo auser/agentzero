@@ -2094,6 +2094,81 @@ Real suspend/resume for approval workflows.
 
 ---
 
+## Sprint 72: Autonomous Agent Swarms — Parallel Execution, Sandboxing, Self-Management
+
+**Goal:** Transform AgentZero's workflow executor from sequential level-based execution into a self-managing swarm runtime. Agents execute in sandboxed isolation (worktree → container → microVM), coordinate with cross-agent context awareness, recover from failures automatically, and can autonomously decompose goals into visual workflow graphs.
+
+**Baseline:** Sprint 71 complete. Workflow execution engine with topological compilation, real-time node status, human input gates, and `ConverseTool` for agent-to-agent communication.
+
+**Plan:** `specs/plans/31-autonomous-agent-swarms.md`
+
+---
+
+### Phase A: Event-Driven Task Unblocking (HIGH)
+
+Replace level-based execution with fine-grained dependency tracking. When a node completes, immediately start any downstream node whose dependencies are all satisfied — don't wait for the entire level.
+
+- [ ] **Ready-queue executor** — Replace level iteration in `execute()` with `pending_deps: HashMap<NodeId, HashSet<NodeId>>`. On node completion, remove from all dependents' sets; empty set → push to ready-queue. Run ready nodes with `tokio::JoinSet`.
+- [ ] **Diamond-dependency test** — Graph: A→C, B→C, A→D. Verify C starts as soon as A+B complete, not waiting for D.
+- [ ] **Backward compatibility** — Existing sequential workflow tests still pass.
+
+### Phase B: Sandboxed Agent Execution — WorktreeSandbox (HIGH)
+
+Each agent node executes in an isolated git worktree. Foundation for container/microVM backends.
+
+- [ ] **`AgentSandbox` trait** — `create(SandboxConfig) -> SandboxHandle`, `execute(handle, AgentTask) -> AgentOutput`, `destroy(handle)`. Pluggable backends.
+- [ ] **`WorktreeSandbox`** — Git worktree per agent on branch `agentzero/wf/{workflow_id}/{node_id}`. `ToolSecurityPolicy` scoped to worktree root.
+- [ ] **Workspace lifecycle** — Create worktree → agent executes → collect diff → merge worktree → cleanup branch.
+- [ ] **Conflict detection** — Diff overlapping files across worktrees. Classify severity: high (same lines), medium (same file), low (same directory). Report to user.
+- [ ] **Merge strategy** — Sequential merge in topological order after all agents complete. Surface conflicts as structured output.
+
+### Phase C: Cross-Agent Context Awareness (MEDIUM)
+
+When dispatching parallel agents, inject awareness of sibling agents' assignments.
+
+- [ ] **Sibling context injection** — Before spawning agent N, collect parallel agents' task descriptions and estimated file scopes. Append to system prompt.
+- [ ] **File modification broadcast** — On agent completion, publish summary of files modified to the event bus.
+- [ ] **Overlap notification** — If file overlap detected mid-execution, notify affected agents via `ConverseTool`.
+
+### Phase D: Dead Agent Recovery (MEDIUM)
+
+Extend `PresenceStore` heartbeats to automatically reassign tasks from dead agents.
+
+- [ ] **Heartbeat timeout** — Configurable per agent (default 60s). On timeout: mark `Failed`, destroy sandbox, reset task to `pending`.
+- [ ] **Auto-reassignment** — Coordinator re-dispatches to fresh agent instance in new sandbox.
+- [ ] **Observability events** — Emit `swarm.agent.failed` and `swarm.agent.reassigned` events. UI shows failed → retrying transition.
+
+### Phase E: Self-Managing Swarm — Goal Decomposition (HIGH)
+
+Give AgentZero a natural language goal and let it autonomously decompose into a task DAG, spawn sandboxed agents, and manage execution.
+
+- [ ] **`GoalPlanner`** — Agent that takes a goal + LLM, produces a `WorkflowGraph` via structured output. Nodes include role/prompt/tools/sandbox level. Edges encode dependencies. File scope estimates enable pre-execution conflict prediction.
+- [ ] **`SwarmSupervisor`** — Executes the generated `WorkflowGraph` using Phases A-D infrastructure. Supervisor loop: heartbeat monitoring, dependency cycle detection, budget/token limits, conflict alerts.
+- [ ] **Adaptive re-planning** — On agent failure or scope expansion, pause affected subgraph, re-invoke planner with current state, apply graph patch (add/remove nodes, re-route edges), resume.
+- [ ] **CLI entry point** — `agentzero swarm "Build a REST API with auth"` — single command, streams progress.
+- [ ] **Gateway entry point** — POST `/v1/swarm` with `{ "goal": "...", "sandbox_level": "worktree" }` — returns workflow ID, streams via SSE.
+- [ ] **UI integration** — Goal input → live graph visualization → interactive editing during execution → merge review at end.
+
+### Phase F: Container & MicroVM Backends (MEDIUM, follow-up)
+
+Higher-security sandbox backends for server and untrusted execution.
+
+- [ ] **`ContainerSandbox`** — Docker/Podman container per agent. Bind-mount worktree. Network policy, memory/CPU limits, seccomp profile.
+- [ ] **`MicroVmSandbox`** — Firecracker/Cloud Hypervisor microVM per agent. Full kernel isolation. ~125ms boot.
+- [ ] **Sandbox level config** — `[swarm] sandbox = "worktree" | "container" | "microvm"`. Per-node override in workflow graph.
+
+### Acceptance Criteria
+
+- [ ] Parallel agents execute concurrently (not blocked by level boundaries)
+- [ ] Each agent runs in isolated worktree with its own branch
+- [ ] Merge conflicts detected and reported with severity classification
+- [ ] Dead agents recovered within heartbeat timeout window
+- [ ] `agentzero swarm "..."` decomposes goal, executes, and merges results
+- [ ] Generated workflow graph visible and editable in UI during execution
+- [ ] 0 clippy warnings, all existing tests pass
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

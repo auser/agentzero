@@ -99,6 +99,10 @@ pub struct Coordinator {
     presence: Option<Arc<PresenceStore>>,
     /// Optional agent store + paths for periodic sync (hot-loading).
     store_sync: Option<StoreSyncConfig>,
+    /// Shared memory store for all agents managed by this coordinator.
+    /// When set, agents receive a clone of this `Arc` instead of each opening
+    /// their own SQLite connection — eliminating file-level lock contention.
+    shared_memory: Option<Arc<dyn agentzero_core::MemoryStore>>,
 }
 
 /// Configuration for periodic agent store synchronization.
@@ -128,6 +132,7 @@ impl Coordinator {
             shutdown_grace_ms,
             presence: None,
             store_sync: None,
+            shared_memory: None,
         }
     }
 
@@ -143,6 +148,16 @@ impl Coordinator {
     /// hot-load any new agents (or deregister deleted/stopped ones).
     pub fn with_store_sync(mut self, config: StoreSyncConfig) -> Self {
         self.store_sync = Some(config);
+        self
+    }
+
+    /// Set a shared memory store for all agents managed by this coordinator.
+    ///
+    /// When set, agents receive a clone of this `Arc` via `memory_override`
+    /// instead of each opening their own SQLite connection. This eliminates
+    /// file-level lock contention when running multiple persistent agents.
+    pub fn with_shared_memory(mut self, store: Arc<dyn agentzero_core::MemoryStore>) -> Self {
+        self.shared_memory = Some(store);
         self
     }
 
@@ -322,6 +337,10 @@ impl Coordinator {
             extra_tools: Vec::new(),
             conversation_id: None,
             agent_store: None,
+            memory_override: self
+                .shared_memory
+                .as_ref()
+                .map(|m| Box::new(Arc::clone(m)) as Box<dyn agentzero_core::MemoryStore>),
         };
 
         let exec = build_runtime_execution(req).await?;

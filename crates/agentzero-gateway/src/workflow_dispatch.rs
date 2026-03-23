@@ -110,13 +110,25 @@ impl StepDispatcher for GatewayStepDispatcher {
                 .collect();
 
             if !peer_endpoints.is_empty() {
-                let peer_names: Vec<&str> = peer_endpoints.keys().map(|s| s.as_str()).collect();
+                let peer_names: Vec<String> = peer_endpoints.keys().cloned().collect();
                 tracing::info!(
                     agent = %step.name,
                     peers = ?peer_names,
                     "injecting ConverseTool for workflow agent"
                 );
                 extra_tools.push(Box::new(ConverseTool::new(peer_endpoints)));
+
+                // Instruct the agent to actively converse with its peers.
+                message = format!(
+                    "{message}\n\n\
+                     You are part of a multi-agent workflow. You have access to a `converse` tool \
+                     that lets you have multi-turn conversations with other agents: {peers}. \
+                     Use the converse tool to discuss, debate, and collaborate with them before \
+                     formulating your final response. Each converse call is one turn — call \
+                     repeatedly with the same conversation_id to continue the conversation. \
+                     When you are satisfied with the discussion, write your final response.",
+                    peers = peer_names.join(", ")
+                );
             }
         }
 
@@ -130,6 +142,8 @@ impl StepDispatcher for GatewayStepDispatcher {
             extra_tools,
             conversation_id: None,
             agent_store: self.agent_store.clone(),
+            // Workflow agents are ephemeral — no persistent memory needed.
+            memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
         };
 
         let output = run_agent_once(req).await?;
@@ -192,6 +206,7 @@ impl AgentEndpoint for WorkflowAgentEndpoint {
             extra_tools: vec![],
             conversation_id: None,
             agent_store: self.agent_store.clone(),
+            memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
         };
 
         let output = run_agent_once(req).await?;

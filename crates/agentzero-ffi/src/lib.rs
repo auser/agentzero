@@ -439,6 +439,7 @@ impl AgentZeroController {
             extra_tools,
             conversation_id: None,
             agent_store: None,
+            memory_override: None,
         };
 
         let result = runtime().block_on(agentzero_infra::runtime::run_agent_once(req));
