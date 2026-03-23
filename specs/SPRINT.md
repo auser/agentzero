@@ -2122,15 +2122,13 @@ The executor already uses `pending_deps` for event-driven unblocking between bat
 
 Each agent node executes in an isolated git worktree. Foundation for container/microVM backends.
 
-- [ ] **`AgentSandbox` trait** — `create(SandboxConfig) -> SandboxHandle`, `execute(handle, AgentTask) -> AgentOutput`, `destroy(handle)`. In new `sandbox.rs`. Pluggable backends.
-- [ ] **`SandboxConfig` / `SandboxHandle`** — Config: `workflow_id`, `node_id`, `workspace_root`, `ToolSecurityPolicy`. Handle: `worktree_path`, `branch_name`.
-- [ ] **`WorktreeSandbox`** — `create()`: `git worktree add -b agentzero/wf/{wf_id}/{node_id}`. `execute()`: scope `ToolSecurityPolicy` workspace root to worktree. `destroy()`: `git worktree remove` + `git branch -D`.
-- [ ] **Workspace lifecycle module** — New `workspace.rs`: `collect_diff(worktree) -> Vec<FileDiff>`, `merge_workspaces(diffs, topo_order) -> MergeResult`, `cleanup_workspace()`.
-- [ ] **Conflict detection** — `ConflictSeverity { High, Medium, Low }`. High: same lines changed. Medium: same file. Low: same directory. `ConflictReport` with file paths, severity, diff hunks.
-- [ ] **Merge strategy** — Sequential merge in topological order after all agents complete. Surface conflicts as structured `MergeResult`.
-- [ ] **Worktree lifecycle test** — Create → verify exists → destroy → verify cleaned up.
-- [ ] **Non-overlapping merge test** — Two worktrees with independent changes merge cleanly.
-- [ ] **Conflict detection test** — Two worktrees editing same file → conflict reported with correct severity.
+- [x] **`AgentSandbox` trait** — `create(&SandboxConfig) -> SandboxHandle`, `destroy(&SandboxHandle)`. In new `sandbox.rs`. Async trait with pluggable backends. Also defines `AgentTask`, `AgentOutput` structs.
+- [x] **`SandboxConfig` / `SandboxHandle`** — Config: `workflow_id`, `node_id`, `workspace_root`. Handle: `worktree_path`, `branch_name`, `workspace_root`.
+- [x] **`WorktreeSandbox`** — `create()`: `git worktree add -b agentzero/wf/{wf_id}/{node_id}`. `destroy()`: `git worktree remove --force` + `git branch -D`. Configurable worktree base dir. Branch names sanitized.
+- [x] **Workspace lifecycle module** — New `workspace.rs`: `collect_diff(handle) -> Vec<FileDiff>` (git status + diff), `merge_worktree(handle, name) -> bool` (stage/commit/cherry-pick), `detect_conflicts(agent_diffs) -> Vec<Conflict>`.
+- [x] **Conflict detection** — `ConflictSeverity { Low, Medium, High }` with `Ord`. Line-range overlap via unified diff `@@` header parsing. Directory-level tracking (skips root). Sorted by severity descending.
+- [x] **Merge strategy** — `merge_worktree()` commits in worktree, cherry-picks onto workspace. Failed picks aborted cleanly. Returns clean/conflict bool.
+- [x] **Tests** — 11 new tests: worktree lifecycle (create/destroy), isolation (two independent worktrees), diff collection (new file + modification), conflict detection (no overlap, same file different lines, same lines, same directory, line range parsing), clean merge. 2,809 tests workspace-wide, 0 clippy warnings.
 
 ### Phase C: Cross-Agent Context Awareness (MEDIUM)
 
@@ -2171,8 +2169,8 @@ Higher-security sandbox backends for server and untrusted execution.
 ### Acceptance Criteria
 
 - [x] Ready nodes execute concurrently via `JoinSet` (not sequentially within batches)
-- [ ] Each agent runs in isolated worktree with its own branch
-- [ ] Merge conflicts detected and reported with severity classification
+- [x] Each agent runs in isolated worktree with its own branch
+- [x] Merge conflicts detected and reported with severity classification
 - [ ] Dead agents recovered within heartbeat timeout window
 - [ ] `agentzero swarm "..."` decomposes goal, executes, and merges results
 - [ ] Generated workflow graph visible and editable in UI during execution

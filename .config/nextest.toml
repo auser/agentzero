@@ -19,3 +19,8 @@ fail-fast = false
 filter = "test(ollama)"
 threads-required = "num-cpus"
 slow-timeout = { period = "60s", terminate-after = 2 }
+
+# Git worktree tests: serialized to avoid .git/index race under parallel nextest
+[[profile.default.overrides]]
+filter = "test(/sandbox::tests::worktree/) | test(/workspace::tests::(collect_diff|merge_worktree)/)"
+threads-required = "num-cpus"

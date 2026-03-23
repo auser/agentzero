@@ -15,10 +15,12 @@ pub mod job_store;
 pub mod lanes;
 pub mod loop_detection;
 pub mod presence;
+pub mod sandbox;
 pub mod swarm;
 pub mod template_store;
 pub mod workflow_executor;
 pub mod workflow_store;
+pub mod workspace;
 
 pub use agent_router::{AgentDescriptor, AgentRouter};
 pub use agent_store::{AgentChannelConfig, AgentRecord, AgentStatus, AgentStore, AgentUpdate};
@@ -33,6 +35,9 @@ pub use job_store::{EventKind, EventLog, JobRecord, JobStore, RunEvent};
 pub use lanes::{LaneConfig, LaneManager, LaneReceivers, WorkItem, WorkResult};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use presence::{PresenceRecord, PresenceStatus, PresenceStore};
+pub use sandbox::{
+    AgentOutput, AgentSandbox, AgentTask, SandboxConfig, SandboxHandle, WorktreeSandbox,
+};
 pub use swarm::{build_event_bus, build_swarm, build_swarm_with_presence};
 pub use template_store::{TemplateRecord, TemplateStore, TemplateUpdate};
 pub use workflow_executor::{

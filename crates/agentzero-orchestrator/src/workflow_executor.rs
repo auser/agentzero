@@ -1444,14 +1444,8 @@ mod tests {
         assert!(plan.deps.get("a3").is_some_and(|s| s.contains("a2")));
 
         // Dependents: a1 → {a2}, a2 → {a3}
-        assert!(plan
-            .dependents
-            .get("a1")
-            .is_some_and(|s| s.contains("a2")));
-        assert!(plan
-            .dependents
-            .get("a2")
-            .is_some_and(|s| s.contains("a3")));
+        assert!(plan.dependents.get("a1").is_some_and(|s| s.contains("a2")));
+        assert!(plan.dependents.get("a2").is_some_and(|s| s.contains("a3")));
     }
 
     #[tokio::test]
