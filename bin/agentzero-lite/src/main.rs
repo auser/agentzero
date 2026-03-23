@@ -92,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
         workspace_root: Some(args.workspace),
         data_dir: Some(data_dir),
         default_privacy_mode: Some(args.privacy_mode),
+        ..Default::default()
     };
     agentzero_gateway::run(&args.host, args.port, options).await
 }
@@ -176,6 +177,7 @@ mod tests {
             workspace_root: Some(tmp.clone()),
             data_dir: Some(tmp),
             default_privacy_mode: Some("private".into()),
+            ..Default::default()
         };
         // Lite mode delegates to gateway::run() — verify the options are well-formed
         assert!(options.config_path.is_some());
@@ -208,6 +210,7 @@ mod tests {
             workspace_root: None,
             data_dir: None,
             default_privacy_mode: None,
+            ..Default::default()
         };
 
         // Spawn gateway in background

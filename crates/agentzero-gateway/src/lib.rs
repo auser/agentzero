@@ -66,6 +66,8 @@ pub struct GatewayRunOptions {
     /// Default privacy mode when no config file sets one.
     /// Used by agentzero-lite to default to `"private"`.
     pub default_privacy_mode: Option<String>,
+    /// Whether to serve the embedded web UI at the root path.
+    pub serve_ui: bool,
 }
 
 pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::Result<()> {

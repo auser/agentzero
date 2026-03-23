@@ -216,9 +216,12 @@ impl StepDispatcher for GatewayStepDispatcher {
             "gate suspended — waiting for human decision via POST /v1/workflows/runs/:run_id/resume"
         );
 
-        // Block until the resume endpoint sends a decision.
-        match rx.await {
-            Ok(decision) => {
+        // Block until the resume endpoint sends a decision, or timeout.
+        // Default timeout: 24 hours.
+        let timeout = std::time::Duration::from_secs(24 * 60 * 60);
+
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(decision)) => {
                 tracing::info!(
                     run_id = %self.run_id,
                     node_id = %node_id,
@@ -227,11 +230,25 @@ impl StepDispatcher for GatewayStepDispatcher {
                 );
                 decision
             }
-            Err(_) => {
+            Ok(Err(_)) => {
                 // Sender dropped (run cancelled) — auto-deny.
                 tracing::warn!(
                     node_id = %node_id,
                     "gate resume channel closed — auto-denying"
+                );
+                "denied".to_string()
+            }
+            Err(_) => {
+                // Timeout expired — auto-deny and clean up the sender.
+                {
+                    let mut senders = self.gate_senders.lock().expect("gate_senders lock");
+                    senders.remove(&(self.run_id.clone(), node_id.to_string()));
+                }
+                tracing::warn!(
+                    run_id = %self.run_id,
+                    node_id = %node_id,
+                    timeout_secs = timeout.as_secs(),
+                    "gate timed out — auto-denying"
                 );
                 "denied".to_string()
             }

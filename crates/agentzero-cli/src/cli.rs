@@ -82,6 +82,9 @@ pub enum Commands {
         /// Clear all paired gateway tokens and generate a fresh pairing code.
         #[arg(long)]
         new_pairing: bool,
+        /// Serve the embedded web UI at the root path.
+        #[arg(long)]
+        ui: bool,
     },
     /// Manage the background daemon process.
     Daemon {

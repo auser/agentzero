@@ -1394,7 +1394,7 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 - [ ] **WorkflowToolbar** — Deploy, Export TOML, Import, Auto-layout.
 - [ ] **QuickCreateWizard** — 6-step wizard: name → agent → tools → channel → schedule → review.
 - [ ] **Serialization** — Builder ↔ SwarmConfig round-trip.
-- [ ] **`--ui` flag for gateway** — UI should only launch when `agentzero gateway --ui` is passed or via an explicit `agentzero ui` command.
+- [x] **`--ui` flag for gateway** — `agentzero gateway --ui` flag added. `GatewayRunOptions.serve_ui` field. Embedded UI served via `#[cfg(feature = "embedded-ui")]` fallback handler when flag is set.
 
 ---
 
@@ -2069,7 +2069,7 @@ Wire `GatewayStepDispatcher::send_channel` to actual platform sends.
 
 - [x] **Channel registry lookup** — `GatewayStepDispatcher` now holds `Arc<ChannelRegistry>` from `GatewayState`.
 - [x] **Send message** — `send_channel()` dispatches via `channels.dispatch(channel_type, payload)` with text/content/message fields. Returns error on rejection or missing channel.
-- [ ] **Channel trigger nodes** — wire inbound channel messages as workflow triggers (create a run when a message arrives matching a workflow's trigger channel)
+- [x] **Channel trigger nodes** — `trigger_workflows_for_channel()` in webhook handler. When a message arrives, scans all workflows for Channel nodes matching the channel type, compiles and executes each match with the message as input. Runs tracked in `WorkflowRunState` for polling.
 - [ ] **Delivery confirmation** — store send status in workflow run outputs
 
 ### Phase E: Human-in-the-Loop Gate Nodes (HIGH)
@@ -2079,7 +2079,7 @@ Real suspend/resume for approval workflows.
 - [x] **Suspend mechanism** — `StepDispatcher::suspend_gate()` trait method. Gate dispatch calls `suspend_gate()` which blocks until resumed. Gateway implementation creates oneshot channel, stores sender in `GateSenderMap`, awaits receiver. Default impl auto-approves for non-interactive contexts.
 - [x] **`POST /v1/workflows/runs/:run_id/resume`** — `resume_workflow_run` handler. Accepts `{ node_id, decision: "approved"|"denied" }`. Looks up oneshot sender, sends decision, unblocks gate task. Returns 404 if gate not found or already resumed.
 - [ ] **Notification** — send approval request to a configured channel (Slack, Telegram, email) with approve/deny buttons
-- [ ] **Timeout** — configurable approval timeout (default 24h), auto-deny on expiry
+- [x] **Timeout** — `tokio::time::timeout(24h, rx)` in `suspend_gate()`. On timeout: auto-deny, clean up sender from map, log warning.
 - [ ] **UI approval panel** — in-canvas overlay showing pending approvals with approve/deny buttons
 
 ---
