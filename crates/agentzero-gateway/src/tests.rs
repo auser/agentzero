@@ -4423,3 +4423,618 @@ async fn cross_feature_openapi_spec_includes_tool_routes() {
         "/health/ready should be in OpenAPI spec"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Workflow endpoint tests (Sprint 71 backend)
+// ---------------------------------------------------------------------------
+
+mod workflow_tests {
+    use super::*;
+
+    fn state_with_workflow_store() -> GatewayState {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let store =
+            agentzero_orchestrator::WorkflowStore::persistent(tmp.path()).expect("create store");
+
+        // Create a test workflow.
+        store
+            .create(agentzero_orchestrator::WorkflowRecord {
+                workflow_id: String::new(),
+                name: "test-workflow".to_string(),
+                description: "A test workflow".to_string(),
+                nodes: vec![serde_json::json!({
+                    "id": "a1",
+                    "data": {
+                        "name": "agent1",
+                        "nodeType": "agent",
+                        "metadata": { "system_prompt": "test" }
+                    }
+                })],
+                edges: vec![],
+                created_at: 0,
+                updated_at: 0,
+            })
+            .expect("create workflow");
+
+        let mut state = GatewayState::test_with_bearer(Some("test-token"));
+        state.workflow_store = Some(Arc::new(store));
+        // Keep temp dir alive by leaking it (test only).
+        std::mem::forget(tmp);
+        state
+    }
+
+    fn authed(builder: axum::http::request::Builder) -> axum::http::request::Builder {
+        builder.header("authorization", "Bearer test-token")
+    }
+
+    fn get_workflow_id(state: &GatewayState) -> String {
+        let store = state.workflow_store.as_ref().expect("store");
+        store
+            .list()
+            .first()
+            .expect("workflow exists")
+            .workflow_id
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn export_workflow_returns_full_json() {
+        let state = state_with_workflow_store();
+        let wf_id = get_workflow_id(&state);
+        let app = build_router(state, &default_config());
+
+        let req = authed(Request::builder())
+            .method("GET")
+            .uri(format!("/v1/workflows/{wf_id}/export"))
+            .header("authorization", "Bearer test-token")
+            .body(Body::empty())
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.expect("body").to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+
+        assert_eq!(json["name"], "test-workflow");
+        assert!(json["nodes"].is_array());
+        assert!(json["edges"].is_array());
+        assert!(json["workflow_id"].is_string());
+    }
+
+    #[tokio::test]
+    async fn export_unknown_workflow_returns_404() {
+        let state = state_with_workflow_store();
+        let app = build_router(state, &default_config());
+
+        let req = authed(Request::builder())
+            .method("GET")
+            .uri("/v1/workflows/nonexistent/export")
+            .body(Body::empty())
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn import_workflow_creates_new_record() {
+        let state = state_with_workflow_store();
+        let app = build_router(state, &default_config());
+
+        let payload = json!({
+            "name": "imported-wf",
+            "description": "imported",
+            "nodes": [{
+                "id": "n1",
+                "data": {
+                    "name": "node1",
+                    "nodeType": "agent",
+                    "metadata": { "system_prompt": "hello" }
+                }
+            }],
+            "edges": []
+        });
+
+        let req = authed(Request::builder())
+            .method("POST")
+            .uri("/v1/workflows/import")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.expect("body").to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+
+        assert!(json["imported"].as_bool().unwrap_or(false));
+        assert!(json["workflow_id"].is_string());
+        assert_eq!(json["nodes_count"], 1);
+    }
+
+    #[tokio::test]
+    async fn import_invalid_workflow_returns_400() {
+        let state = state_with_workflow_store();
+        let app = build_router(state, &default_config());
+
+        // Empty nodes — compile will fail with EmptyGraph.
+        let payload = json!({
+            "name": "bad",
+            "nodes": [],
+            "edges": []
+        });
+
+        let req = authed(Request::builder())
+            .method("POST")
+            .uri("/v1/workflows/import")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn cancel_workflow_run_marks_cancelled() {
+        let state = state_with_workflow_store();
+
+        // Insert a fake running workflow run.
+        {
+            let mut runs = state.workflow_runs.lock().expect("lock");
+            runs.insert(
+                "test-run-1".to_string(),
+                crate::state::WorkflowRunState {
+                    run_id: "test-run-1".to_string(),
+                    workflow_id: "wf-1".to_string(),
+                    status: "running".to_string(),
+                    node_statuses: std::collections::HashMap::new(),
+                    node_outputs: std::collections::HashMap::new(),
+                    outputs: std::collections::HashMap::new(),
+                    started_at: 0,
+                    finished_at: None,
+                    error: None,
+                },
+            );
+        }
+
+        let app = build_router(state.clone(), &default_config());
+
+        let req = authed(Request::builder())
+            .method("DELETE")
+            .uri("/v1/workflows/runs/test-run-1")
+            .body(Body::empty())
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.expect("body").to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert!(json["cancelled"].as_bool().unwrap_or(false));
+
+        // Verify status updated.
+        let runs = state.workflow_runs.lock().expect("lock");
+        let run = runs.get("test-run-1").expect("run exists");
+        assert_eq!(run.status, "cancelled");
+        assert!(run.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn cancel_unknown_run_returns_404() {
+        let state = state_with_workflow_store();
+        let app = build_router(state, &default_config());
+
+        let req = authed(Request::builder())
+            .method("DELETE")
+            .uri("/v1/workflows/runs/nonexistent")
+            .body(Body::empty())
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn stream_workflow_run_returns_sse() {
+        let state = state_with_workflow_store();
+
+        // Insert a completed workflow run.
+        {
+            let mut runs = state.workflow_runs.lock().expect("lock");
+            runs.insert(
+                "sse-run-1".to_string(),
+                crate::state::WorkflowRunState {
+                    run_id: "sse-run-1".to_string(),
+                    workflow_id: "wf-1".to_string(),
+                    status: "completed".to_string(),
+                    node_statuses: std::collections::HashMap::new(),
+                    node_outputs: std::collections::HashMap::new(),
+                    outputs: std::collections::HashMap::new(),
+                    started_at: 0,
+                    finished_at: Some(1),
+                    error: None,
+                },
+            );
+        }
+
+        let app = build_router(state, &default_config());
+
+        let req = authed(Request::builder())
+            .method("GET")
+            .uri("/v1/workflows/runs/sse-run-1/stream")
+            .body(Body::empty())
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok()),
+            Some("text/event-stream")
+        );
+
+        // Read the SSE body — should contain at least one event with status.
+        let body = resp.into_body().collect().await.expect("body").to_bytes();
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("data:"),
+            "SSE body should contain data events"
+        );
+        assert!(
+            text.contains("completed"),
+            "SSE body should contain completed status"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_unknown_run_returns_404() {
+        let state = state_with_workflow_store();
+        let app = build_router(state, &default_config());
+
+        let req = authed(Request::builder())
+            .method("GET")
+            .uri("/v1/workflows/runs/ghost/stream")
+            .body(Body::empty())
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn resume_nonexistent_gate_returns_404() {
+        let state = state_with_workflow_store();
+
+        // Insert a running workflow run but no gate senders.
+        {
+            let mut runs = state.workflow_runs.lock().expect("lock");
+            runs.insert(
+                "resume-run-1".to_string(),
+                crate::state::WorkflowRunState {
+                    run_id: "resume-run-1".to_string(),
+                    workflow_id: "wf-1".to_string(),
+                    status: "running".to_string(),
+                    node_statuses: std::collections::HashMap::new(),
+                    node_outputs: std::collections::HashMap::new(),
+                    outputs: std::collections::HashMap::new(),
+                    started_at: 0,
+                    finished_at: None,
+                    error: None,
+                },
+            );
+        }
+
+        let app = build_router(state, &default_config());
+
+        let payload = json!({ "node_id": "gate-1", "decision": "approved" });
+        let req = authed(Request::builder())
+            .method("POST")
+            .uri("/v1/workflows/runs/resume-run-1/resume")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn resume_gate_sends_decision() {
+        let state = state_with_workflow_store();
+
+        // Create a oneshot channel and register it as a gate sender.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut senders = state.gate_senders.lock().expect("lock");
+            senders.insert(("gate-run-1".to_string(), "gate-node-1".to_string()), tx);
+        }
+
+        // Insert the run.
+        {
+            let mut runs = state.workflow_runs.lock().expect("lock");
+            runs.insert(
+                "gate-run-1".to_string(),
+                crate::state::WorkflowRunState {
+                    run_id: "gate-run-1".to_string(),
+                    workflow_id: "wf-1".to_string(),
+                    status: "running".to_string(),
+                    node_statuses: std::collections::HashMap::new(),
+                    node_outputs: std::collections::HashMap::new(),
+                    outputs: std::collections::HashMap::new(),
+                    started_at: 0,
+                    finished_at: None,
+                    error: None,
+                },
+            );
+        }
+
+        let app = build_router(state, &default_config());
+
+        let payload = json!({ "node_id": "gate-node-1", "decision": "denied" });
+        let req = authed(Request::builder())
+            .method("POST")
+            .uri("/v1/workflows/runs/gate-run-1/resume")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.expect("body").to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert!(json["resumed"].as_bool().unwrap_or(false));
+        assert_eq!(json["decision"], "denied");
+
+        // Verify the decision was sent through the channel.
+        let decision = rx.await.expect("should receive decision");
+        assert_eq!(decision, "denied");
+    }
+
+    #[tokio::test]
+    async fn resume_rejects_invalid_decision() {
+        let state = state_with_workflow_store();
+        let app = build_router(state, &default_config());
+
+        let payload = json!({ "node_id": "g1", "decision": "maybe" });
+        let req = authed(Request::builder())
+            .method("POST")
+            .uri("/v1/workflows/runs/some-run/resume")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("build request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Delivery confirmation + gate suspend/resume executor tests
+// ---------------------------------------------------------------------------
+
+mod executor_tests {
+    use agentzero_orchestrator::workflow_executor::*;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    struct FailingChannelDispatcher;
+
+    #[async_trait::async_trait]
+    impl StepDispatcher for FailingChannelDispatcher {
+        async fn run_agent(
+            &self,
+            step: &ExecutionStep,
+            input: &str,
+            _context: Option<&serde_json::Value>,
+        ) -> anyhow::Result<String> {
+            Ok(format!("[{}] processed: {}", step.name, input))
+        }
+
+        async fn run_tool(
+            &self,
+            _tool_name: &str,
+            _input: &serde_json::Value,
+        ) -> anyhow::Result<String> {
+            Ok("ok".to_string())
+        }
+
+        async fn send_channel(&self, _channel_type: &str, _message: &str) -> anyhow::Result<()> {
+            anyhow::bail!("channel offline")
+        }
+    }
+
+    struct DenyingGateDispatcher;
+
+    #[async_trait::async_trait]
+    impl StepDispatcher for DenyingGateDispatcher {
+        async fn run_agent(
+            &self,
+            step: &ExecutionStep,
+            input: &str,
+            _context: Option<&serde_json::Value>,
+        ) -> anyhow::Result<String> {
+            Ok(format!("[{}] processed: {}", step.name, input))
+        }
+
+        async fn run_tool(
+            &self,
+            _tool_name: &str,
+            _input: &serde_json::Value,
+        ) -> anyhow::Result<String> {
+            Ok("ok".to_string())
+        }
+
+        async fn send_channel(&self, _: &str, _: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn suspend_gate(&self, _run_id: &str, _node_id: &str, _node_name: &str) -> String {
+            "denied".to_string()
+        }
+    }
+
+    fn channel_node(id: &str, channel_type: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "data": {
+                "name": channel_type,
+                "nodeType": "channel",
+                "metadata": { "channel_type": channel_type }
+            }
+        })
+    }
+
+    fn agent_node(id: &str, name: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "data": {
+                "name": name,
+                "nodeType": "agent",
+                "metadata": { "system_prompt": "test" }
+            }
+        })
+    }
+
+    fn gate_node(id: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "data": {
+                "name": "gate",
+                "nodeType": "gate",
+                "metadata": {}
+            }
+        })
+    }
+
+    fn edge(id: &str, source: &str, target: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "source": source,
+            "target": target,
+            "sourceHandle": "response",
+            "targetHandle": "input"
+        })
+    }
+
+    #[tokio::test]
+    async fn channel_delivery_failure_records_status() {
+        // Channel node with a dispatcher that always fails send_channel.
+        let nodes = vec![channel_node("c1", "slack")];
+        let edges: Vec<serde_json::Value> = vec![];
+        let plan = compile("wf-delivery", &nodes, &edges).expect("compile");
+
+        let run = execute(&plan, "hello", Arc::new(FailingChannelDispatcher))
+            .await
+            .expect("execute");
+
+        // Node should still complete (delivery failure is non-fatal).
+        assert_eq!(run.node_statuses.get("c1"), Some(&NodeStatus::Completed));
+
+        // delivery_status port should record the failure.
+        let status = run
+            .outputs
+            .get(&("c1".to_string(), "delivery_status".to_string()))
+            .expect("should have delivery_status");
+        let status_str = status.as_str().expect("string");
+        assert!(
+            status_str.starts_with("failed:"),
+            "expected 'failed:...' got '{status_str}'"
+        );
+    }
+
+    #[tokio::test]
+    async fn gate_with_deny_skips_approved_branch() {
+        // a1 → gate → a2 (approved) / a3 (denied)
+        // DenyingGateDispatcher always returns "denied".
+        let nodes = vec![
+            agent_node("a1", "check"),
+            gate_node("g1"),
+            agent_node("a2", "proceed"),
+            agent_node("a3", "reject"),
+        ];
+        let edges = vec![
+            edge("e1", "a1", "g1"),
+            json!({
+                "id": "e2", "source": "g1", "target": "a2",
+                "sourceHandle": "approved", "targetHandle": "input"
+            }),
+            json!({
+                "id": "e3", "source": "g1", "target": "a3",
+                "sourceHandle": "denied", "targetHandle": "input"
+            }),
+        ];
+        let plan = compile("wf-gate-deny", &nodes, &edges).expect("compile");
+
+        let run = execute(&plan, "review this", Arc::new(DenyingGateDispatcher))
+            .await
+            .expect("execute");
+
+        // Denied branch should complete, approved branch should be skipped.
+        assert_eq!(
+            run.node_statuses.get("a2"),
+            Some(&NodeStatus::Skipped),
+            "approved branch should be skipped when gate denies"
+        );
+        assert_eq!(
+            run.node_statuses.get("a3"),
+            Some(&NodeStatus::Completed),
+            "denied branch should complete"
+        );
+    }
+
+    #[tokio::test]
+    async fn gate_default_auto_approves() {
+        // Default StepDispatcher auto-approves (existing MockDispatcher behavior).
+        struct AutoApproveDispatcher;
+
+        #[async_trait::async_trait]
+        impl StepDispatcher for AutoApproveDispatcher {
+            async fn run_agent(
+                &self,
+                step: &ExecutionStep,
+                input: &str,
+                _ctx: Option<&serde_json::Value>,
+            ) -> anyhow::Result<String> {
+                Ok(format!("[{}] {}", step.name, input))
+            }
+            async fn run_tool(&self, _: &str, _: &serde_json::Value) -> anyhow::Result<String> {
+                Ok("ok".to_string())
+            }
+            async fn send_channel(&self, _: &str, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+            // suspend_gate uses default impl → "approved"
+        }
+
+        let nodes = vec![
+            agent_node("a1", "check"),
+            gate_node("g1"),
+            agent_node("a2", "proceed"),
+            agent_node("a3", "reject"),
+        ];
+        let edges = vec![
+            edge("e1", "a1", "g1"),
+            json!({
+                "id": "e2", "source": "g1", "target": "a2",
+                "sourceHandle": "approved", "targetHandle": "input"
+            }),
+            json!({
+                "id": "e3", "source": "g1", "target": "a3",
+                "sourceHandle": "denied", "targetHandle": "input"
+            }),
+        ];
+        let plan = compile("wf-gate-approve", &nodes, &edges).expect("compile");
+
+        let run = execute(&plan, "review", Arc::new(AutoApproveDispatcher))
+            .await
+            .expect("execute");
+
+        assert_eq!(run.node_statuses.get("a2"), Some(&NodeStatus::Completed));
+        assert_eq!(run.node_statuses.get("a3"), Some(&NodeStatus::Skipped));
+    }
+}

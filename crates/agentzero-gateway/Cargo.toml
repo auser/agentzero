@@ -50,4 +50,5 @@ agentzero-tools = { workspace = true }
 [dev-dependencies]
 http-body-util = "0.1"
 reqwest = { workspace = true, features = ["rustls-tls"] }
+tempfile = "3.27.0"
 tower = "0.5"
