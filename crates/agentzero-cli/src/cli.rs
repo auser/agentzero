@@ -308,6 +308,17 @@ pub enum Commands {
         #[command(subcommand)]
         command: crate::commands::workflow::WorkflowCommands,
     },
+    /// Decompose a goal into agents and execute as a swarm.
+    Swarm {
+        /// Natural language goal to decompose and execute.
+        goal: String,
+        /// Path to a pre-generated plan JSON file.
+        #[arg(long, short)]
+        plan: Option<std::path::PathBuf>,
+        /// Sandbox isolation level: worktree, container, or microvm.
+        #[arg(long, default_value = "worktree")]
+        sandbox: String,
+    },
     /// Inspect registered tool definitions and schemas.
     Tools {
         #[command(subcommand)]

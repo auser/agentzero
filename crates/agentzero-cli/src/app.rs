@@ -190,6 +190,21 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Workflow { command } => {
             commands::workflow::WorkflowCommand::run(&ctx, command).await
         }
+        Commands::Swarm {
+            goal,
+            plan,
+            sandbox,
+        } => {
+            commands::swarm::SwarmCommand::run(
+                &ctx,
+                commands::swarm::SwarmOptions {
+                    goal,
+                    plan_file: plan,
+                    sandbox_level: sandbox,
+                },
+            )
+            .await
+        }
         Commands::Tools { command } => commands::tools::ToolsCommand::run(&ctx, command).await,
         #[cfg(feature = "gateway")]
         Commands::McpServe => commands::mcp_serve::McpServeCommand::run(&ctx, ()).await,

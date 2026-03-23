@@ -10,9 +10,10 @@ use crate::handlers::{
     get_template, get_tools, get_workflow, get_workflow_run, health, health_live, health_ready,
     job_cancel, job_events, job_list, job_result, job_status, job_transcript, legacy_webhook,
     list_approvals, list_cron, list_memory, list_templates, list_workflows, mcp_message, metrics,
-    openapi_spec, pair, ping, recall_memory, sse_events, sse_run_stream, tool_execute, topology,
-    update_agent, update_config, update_cron, update_template, update_workflow,
-    v1_chat_completions, v1_models, webhook, webhook_with_agent, ws_chat, ws_run_subscribe,
+    openapi_spec, pair, ping, recall_memory, sse_events, sse_run_stream, swarm_execute,
+    tool_execute, topology, update_agent, update_config, update_cron, update_template,
+    update_workflow, v1_chat_completions, v1_models, webhook, webhook_with_agent, ws_chat,
+    ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -67,6 +68,7 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
                 .delete(delete_workflow),
         )
         .route("/v1/workflows/:id/execute", post(execute_workflow))
+        .route("/v1/swarm", post(swarm_execute))
         .route("/v1/templates", get(list_templates).post(create_template))
         .route(
             "/v1/templates/:id",

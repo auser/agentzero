@@ -271,6 +271,13 @@ fn load_from_store(
     ))
 }
 
+/// Build an `Arc<dyn StepDispatcher>` for CLI workflow execution.
+///
+/// Public so the `swarm` command can reuse it.
+pub fn build_cli_dispatcher(ctx: &CommandContext, plan: &ExecutionPlan) -> Arc<dyn StepDispatcher> {
+    Arc::new(CliStepDispatcher::new(ctx, plan))
+}
+
 // ── CLI Step Dispatcher ─────────────────────────────────────────────────────
 
 /// Step dispatcher for CLI workflow execution.

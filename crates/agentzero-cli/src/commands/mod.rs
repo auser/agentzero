@@ -41,6 +41,7 @@ pub mod service;
 #[cfg(feature = "tools-extended")]
 pub mod skill;
 pub mod status;
+pub mod swarm;
 pub mod template;
 pub mod tools;
 pub mod tunnel;

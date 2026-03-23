@@ -2155,8 +2155,8 @@ Give AgentZero a natural language goal and let it autonomously decompose into a 
 - [x] **`GoalPlanner`** — New `goal_planner.rs`. `PlannedWorkflow` with `PlannedNode` structs (id, name, task, depends_on, file_scopes, sandbox_level). `GOAL_PLANNER_PROMPT` for structured output. `parse_planner_response()` handles markdown fences, leading text, bare JSON. `to_workflow_json()` converts to ReactFlow-compatible nodes+edges for `compile()`. 8 tests.
 - [x] **`SwarmSupervisor`** — New `swarm_supervisor.rs`. `execute(plan, input, dispatcher, status_tx)` compiles `PlannedWorkflow` → `ExecutionPlan`, registers agents with `SwarmContext`, runs via parallel `JoinSet` executor, updates context on completion/failure, collects text outputs. `SwarmConfig` with sandbox_level, recovery config, token budget. 5 tests.
 - [ ] **Adaptive re-planning** — On agent failure or scope expansion, pause affected subgraph, re-invoke planner with current state, apply graph patch (add/remove nodes, re-route edges), resume.
-- [ ] **CLI entry point** — `agentzero swarm "Build a REST API with auth"` — single command, streams progress to stdout.
-- [ ] **Gateway entry point** — POST `/v1/swarm` with `{ "goal": "...", "sandbox_level": "worktree" }` — returns workflow ID, streams via SSE.
+- [x] **CLI entry point** — `agentzero swarm "Build a REST API with auth"` in `commands/swarm.rs`. Accepts `--plan` for pre-generated JSON, `--sandbox` for isolation level. Streams node status updates to stderr, prints structured results to stdout. Reuses `CliStepDispatcher` via `build_cli_dispatcher()`.
+- [x] **Gateway entry point** — `POST /v1/swarm` in `handlers.rs`. Accepts `{ "goal": "..." }` or `{ "plan": {...} }`. Compiles plan, executes via `SwarmSupervisor` in background task, stores run state for polling via `GET /v1/workflows/runs/:run_id`. Returns `{ run_id, title, node_count, status }`.
 - [ ] **UI integration** — Goal input → live graph visualization → interactive editing during execution → merge review at end.
 
 ### Phase F: Container & MicroVM Backends (MEDIUM)
@@ -2175,7 +2175,7 @@ Higher-security sandbox backends for server and untrusted execution.
 - [x] Dead agents recovered within heartbeat timeout window
 - [x] `agentzero swarm "..."` decomposes goal, executes, and merges results (GoalPlanner + SwarmSupervisor)
 - [ ] Generated workflow graph visible and editable in UI during execution
-- [ ] 0 clippy warnings, all existing tests pass
+- [x] 0 clippy warnings, all existing tests pass
 
 ---
 

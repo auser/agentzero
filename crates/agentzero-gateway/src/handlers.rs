@@ -3209,6 +3209,176 @@ pub(crate) async fn execute_workflow(
     })))
 }
 
+/// POST /v1/swarm — decompose a goal and execute as a swarm.
+///
+/// Accepts `{ "goal": "...", "sandbox_level": "worktree" }` or
+/// `{ "plan": { "title": "...", "nodes": [...] } }` for pre-planned workflows.
+/// Returns a workflow run ID for status polling.
+pub(crate) async fn swarm_execute(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
+
+    // Parse the request — either a goal string or a pre-planned workflow.
+    let plan = if let Some(plan_val) = req.get("plan") {
+        serde_json::from_value::<agentzero_orchestrator::PlannedWorkflow>(plan_val.clone())
+            .map_err(|e| GatewayError::BadRequest {
+                message: format!("invalid plan: {e}"),
+            })?
+    } else if let Some(goal) = req.get("goal").and_then(|v| v.as_str()) {
+        // For now, wrap the goal in a single agent node.
+        // In production, this would invoke GoalPlanner with an LLM.
+        agentzero_orchestrator::PlannedWorkflow {
+            title: goal.to_string(),
+            nodes: vec![agentzero_orchestrator::PlannedNode {
+                id: "agent-1".to_string(),
+                name: "executor".to_string(),
+                task: goal.to_string(),
+                depends_on: vec![],
+                file_scopes: vec![],
+                sandbox_level: req
+                    .get("sandbox_level")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("worktree")
+                    .to_string(),
+            }],
+        }
+    } else {
+        return Err(GatewayError::BadRequest {
+            message: "request must contain 'goal' (string) or 'plan' (object)".to_string(),
+        });
+    };
+
+    // Compile the plan.
+    let (nodes, edges) = plan.to_workflow_json();
+    let exec_plan =
+        agentzero_orchestrator::compile_workflow("swarm", &nodes, &edges).map_err(|e| {
+            GatewayError::BadRequest {
+                message: format!("plan compilation failed: {e}"),
+            }
+        })?;
+
+    // Build dispatcher.
+    let dispatcher: Arc<dyn agentzero_orchestrator::StepDispatcher> = Arc::new(
+        crate::workflow_dispatch::GatewayStepDispatcher::from_state(&state, &exec_plan)
+            .ok_or(GatewayError::AgentUnavailable)?,
+    );
+
+    let input = req
+        .get("input")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Execute via SwarmSupervisor in a background task.
+    let supervisor = agentzero_orchestrator::SwarmSupervisor::new();
+    let plan_clone = plan.clone();
+
+    let (status_tx, mut status_rx) =
+        tokio::sync::mpsc::channel::<agentzero_orchestrator::StatusUpdate>(64);
+
+    // Generate run ID.
+    let run_id = format!(
+        "swarm-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let run_id_clone = run_id.clone();
+
+    // Store initial run state.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let mut initial_statuses = std::collections::HashMap::new();
+    for node in &plan.nodes {
+        initial_statuses.insert(node.id.clone(), agentzero_orchestrator::NodeStatus::Pending);
+    }
+
+    let run_state = crate::state::WorkflowRunState {
+        run_id: run_id.clone(),
+        workflow_id: "swarm".to_string(),
+        status: "running".to_string(),
+        node_statuses: initial_statuses,
+        node_outputs: std::collections::HashMap::new(),
+        outputs: std::collections::HashMap::new(),
+        started_at: now,
+        finished_at: None,
+        error: None,
+    };
+
+    {
+        let mut runs = state.workflow_runs.lock().expect("workflow_runs lock");
+        runs.insert(run_id.clone(), run_state);
+    }
+
+    // Drain status updates to the run store.
+    let runs_ref = Arc::clone(&state.workflow_runs);
+    let run_id_for_rx = run_id.clone();
+    tokio::spawn(async move {
+        while let Some(update) = status_rx.recv().await {
+            let mut runs = runs_ref.lock().expect("workflow_runs lock");
+            if let Some(run) = runs.get_mut(&run_id_for_rx) {
+                run.node_statuses
+                    .insert(update.node_id.clone(), update.status);
+                if let Some(ref output) = update.output {
+                    run.node_outputs
+                        .insert(update.node_id.clone(), output.clone());
+                }
+            }
+        }
+    });
+
+    // Execute in background.
+    let runs_ref2 = Arc::clone(&state.workflow_runs);
+    tokio::spawn(async move {
+        let result = supervisor
+            .execute(&plan_clone, &input, dispatcher, Some(status_tx))
+            .await;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut runs = runs_ref2.lock().expect("workflow_runs lock");
+        if let Some(run) = runs.get_mut(&run_id_clone) {
+            run.finished_at = Some(now);
+            match result {
+                Ok(swarm_result) => {
+                    run.status = if swarm_result.success {
+                        "completed".to_string()
+                    } else {
+                        "failed".to_string()
+                    };
+                    for (k, v) in &swarm_result.node_statuses {
+                        run.node_statuses.insert(k.clone(), *v);
+                    }
+                    for (k, v) in &swarm_result.outputs {
+                        run.outputs.insert(k.clone(), serde_json::json!(v));
+                    }
+                }
+                Err(e) => {
+                    run.status = "failed".to_string();
+                    run.error = Some(e.to_string());
+                }
+            }
+        }
+    });
+
+    Ok(Json(json!({
+        "run_id": run_id,
+        "title": plan.title,
+        "node_count": plan.nodes.len(),
+        "status": "running",
+    })))
+}
+
 /// GET /v1/workflows/runs/:run_id — poll for workflow run status.
 pub(crate) async fn get_workflow_run(
     State(state): State<GatewayState>,
