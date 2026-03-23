@@ -6,8 +6,11 @@
 //! to the appropriate runtime (agent loop, tool execute, channel send).
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -125,6 +128,12 @@ pub struct ExecutionPlan {
     pub edges: HashMap<(String, String), Vec<(String, String)>>,
     /// Reverse edge map for collecting inputs: (target_node, target_port) → Vec<(source_node, source_port)>
     pub reverse_edges: HashMap<(String, String), Vec<(String, String)>>,
+    /// All execution steps indexed by node ID (for ready-queue executor).
+    pub steps: HashMap<String, ExecutionStep>,
+    /// Dependency graph: node_id → set of node IDs it depends on (executable edges only).
+    pub deps: HashMap<String, HashSet<String>>,
+    /// Reverse dependency graph: node_id → set of node IDs that depend on it.
+    pub dependents: HashMap<String, HashSet<String>>,
 }
 
 /// Status of a single node during workflow execution.
@@ -334,11 +343,42 @@ pub fn compile(
         return Err(CompileError::CycleDetected(cycle_node));
     }
 
+    // Build step index, deps, and dependents maps for the ready-queue executor
+    let mut steps_map: HashMap<String, ExecutionStep> = HashMap::new();
+    let mut deps_map: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut dependents_map: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for level in &levels {
+        for step in level {
+            steps_map.insert(step.node_id.clone(), step.clone());
+            deps_map.entry(step.node_id.clone()).or_default();
+            dependents_map.entry(step.node_id.clone()).or_default();
+        }
+    }
+
+    for edge in &parsed_edges {
+        let src = edge.source.as_str();
+        let tgt = edge.target.as_str();
+        if exec_ids.contains(src) && exec_ids.contains(tgt) {
+            deps_map
+                .entry(tgt.to_string())
+                .or_default()
+                .insert(src.to_string());
+            dependents_map
+                .entry(src.to_string())
+                .or_default()
+                .insert(tgt.to_string());
+        }
+    }
+
     Ok(ExecutionPlan {
         workflow_id: workflow_id.to_string(),
         levels,
         edges: edge_map,
         reverse_edges: reverse_edge_map,
+        steps: steps_map,
+        deps: deps_map,
+        dependents: dependents_map,
     })
 }
 
@@ -376,21 +416,25 @@ pub struct StatusUpdate {
 
 /// Execute a compiled workflow plan.
 ///
-/// Walks topological levels, dispatching each step via the `StepDispatcher`,
-/// collecting outputs, and routing data through edges.
+/// Dispatches nodes concurrently via `tokio::JoinSet` — ready nodes are
+/// spawned immediately and dependents are unblocked as each completes.
 pub async fn execute(
     plan: &ExecutionPlan,
     initial_input: &str,
-    dispatcher: &dyn StepDispatcher,
+    dispatcher: Arc<dyn StepDispatcher>,
 ) -> anyhow::Result<WorkflowRun> {
     execute_with_updates(plan, initial_input, dispatcher, None).await
 }
 
 /// Execute a workflow with optional real-time status updates via a channel.
+///
+/// Uses `tokio::JoinSet` for true parallel execution: ready nodes are spawned
+/// as concurrent tasks immediately, and as each completes its dependents are
+/// unblocked and spawned without waiting for sibling nodes.
 pub async fn execute_with_updates(
     plan: &ExecutionPlan,
     initial_input: &str,
-    dispatcher: &dyn StepDispatcher,
+    dispatcher: Arc<dyn StepDispatcher>,
     status_tx: Option<tokio::sync::mpsc::Sender<StatusUpdate>>,
 ) -> anyhow::Result<WorkflowRun> {
     let run_id = format!(
@@ -401,163 +445,308 @@ pub async fn execute_with_updates(
             .as_millis()
     );
 
-    let mut run = WorkflowRun {
-        run_id,
-        workflow_id: plan.workflow_id.clone(),
-        outputs: HashMap::new(),
-        node_statuses: HashMap::new(),
-    };
+    // Shared mutable state accessed by spawned tasks and the main loop.
+    let outputs: Arc<Mutex<HashMap<(String, String), serde_json::Value>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let node_statuses: Arc<Mutex<HashMap<String, NodeStatus>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
-    // Initialize all nodes as Pending
-    for level in &plan.levels {
-        for step in level {
-            run.node_statuses
-                .insert(step.node_id.clone(), NodeStatus::Pending);
+    // Initialize all nodes as Pending.
+    {
+        let mut statuses = node_statuses.lock().await;
+        for step in plan.steps.values() {
+            statuses.insert(step.node_id.clone(), NodeStatus::Pending);
         }
     }
 
-    // Seed trigger/first-level nodes with the initial input
-    if let Some(first_level) = plan.levels.first() {
-        for step in first_level {
-            run.outputs.insert(
-                (step.node_id.clone(), "input".to_string()),
-                serde_json::Value::String(initial_input.to_string()),
-            );
+    // Track remaining dependencies per node (mutable, owned by main loop).
+    let mut pending_deps: HashMap<String, HashSet<String>> = plan.deps.clone();
+
+    // Seed root nodes with initial input.
+    let mut initial_ready: Vec<String> = Vec::new();
+    {
+        let mut out = outputs.lock().await;
+        for (node_id, deps) in &pending_deps {
+            if deps.is_empty() {
+                initial_ready.push(node_id.clone());
+                out.insert(
+                    (node_id.clone(), "input".to_string()),
+                    serde_json::Value::String(initial_input.to_string()),
+                );
+            }
         }
     }
 
-    // Walk each level
-    for level in &plan.levels {
-        let handles: Vec<(
-            String,
-            tokio::task::JoinHandle<Result<StepOutput, anyhow::Error>>,
-        )> = Vec::new();
+    // JoinSet for concurrent node execution.
+    // Each task returns (node_id, node_name, node_type, result).
+    type TaskResult = (String, String, NodeType, Result<StepOutput, String>);
+    let mut join_set: JoinSet<TaskResult> = JoinSet::new();
 
-        for step in level {
-            // Check if this node should be skipped (gate routing)
-            if run.node_statuses.get(&step.node_id) == Some(&NodeStatus::Skipped) {
-                continue;
-            }
+    // Spawn a node into the JoinSet.
+    let spawn_node =
+        |join_set: &mut JoinSet<TaskResult>,
+         node_id: String,
+         step: ExecutionStep,
+         dispatcher: Arc<dyn StepDispatcher>,
+         outputs: Arc<Mutex<HashMap<(String, String), serde_json::Value>>>,
+         node_statuses: Arc<Mutex<HashMap<String, NodeStatus>>>,
+         reverse_edges: HashMap<(String, String), Vec<(String, String)>>,
+         status_tx: Option<tokio::sync::mpsc::Sender<StatusUpdate>>| {
+            join_set.spawn(async move {
+                let node_name = step.name.clone();
+                let node_type = step.node_type;
 
-            // Collect inputs from upstream via reverse edge map
-            let input_text = collect_input_text(&run, &plan.reverse_edges, &step.node_id);
-            let context = collect_context(&run, &plan.reverse_edges, &step.node_id);
-
-            run.node_statuses
-                .insert(step.node_id.clone(), NodeStatus::Running);
-
-            // Emit running status
-            if let Some(ref tx) = status_tx {
-                let _ = tx
-                    .send(StatusUpdate {
-                        node_id: step.node_id.clone(),
-                        node_name: step.name.clone(),
-                        status: NodeStatus::Running,
-                        output: None,
-                    })
-                    .await;
-            }
-
-            // Dispatch based on node type
-            let step_clone = step.clone();
-            let input_clone = input_text.clone();
-            let ctx_clone = context.clone();
-
-            // For truly parallel execution within a level, we'd spawn tasks.
-            // For now, execute sequentially within each level for simplicity
-            // and to avoid complex lifetime issues with the dispatcher ref.
-            let result =
-                dispatch_step(dispatcher, &step_clone, &input_clone, ctx_clone.as_ref()).await;
-
-            match result {
-                Ok(output) => {
-                    // Store outputs keyed by (node_id, port_id)
-                    for (port_id, value) in &output.port_values {
-                        run.outputs
-                            .insert((step.node_id.clone(), port_id.clone()), value.clone());
-                    }
-
-                    // Handle gate routing — skip inactive branches
-                    if step.node_type == NodeType::Gate {
-                        handle_gate_routing(
-                            &output,
-                            &step.node_id,
-                            &plan.edges,
-                            &mut run.node_statuses,
+                // Check if this node should be skipped (gate routing).
+                {
+                    let statuses = node_statuses.lock().await;
+                    if statuses.get(&node_id) == Some(&NodeStatus::Skipped) {
+                        return (
+                            node_id,
+                            node_name,
+                            node_type,
+                            Ok(StepOutput {
+                                port_values: HashMap::new(),
+                            }),
                         );
                     }
+                }
 
-                    run.node_statuses
-                        .insert(step.node_id.clone(), NodeStatus::Completed);
+                // Collect inputs from upstream (needs lock on outputs).
+                let (input_text, context) = {
+                    let out = outputs.lock().await;
+                    let run_view = OutputView(&out);
+                    let input = collect_input_text_from(&run_view, &reverse_edges, &node_id);
+                    let ctx = collect_context_from(&run_view, &reverse_edges, &node_id);
+                    (input, ctx)
+                };
 
-                    // Emit completed status with output text
-                    if let Some(ref tx) = status_tx {
-                        let out_text = output
-                            .port_values
-                            .values()
-                            .find_map(|v| v.as_str().map(String::from));
-                        let _ = tx
-                            .send(StatusUpdate {
-                                node_id: step.node_id.clone(),
-                                node_name: step.name.clone(),
-                                status: NodeStatus::Completed,
-                                output: out_text,
-                            })
-                            .await;
+                // Mark as Running.
+                {
+                    let mut statuses = node_statuses.lock().await;
+                    statuses.insert(node_id.clone(), NodeStatus::Running);
+                }
+                if let Some(ref tx) = status_tx {
+                    let _ = tx
+                        .send(StatusUpdate {
+                            node_id: node_id.clone(),
+                            node_name: node_name.clone(),
+                            status: NodeStatus::Running,
+                            output: None,
+                        })
+                        .await;
+                }
+
+                // Dispatch the step.
+                let result =
+                    dispatch_step(&*dispatcher, &step, &input_text, context.as_ref()).await;
+
+                let step_result = match result {
+                    Ok(output) => Ok(output),
+                    Err(e) => {
+                        tracing::error!(
+                            node_id = %node_id,
+                            error = %e,
+                            "workflow step failed"
+                        );
+                        Err(e.to_string())
+                    }
+                };
+
+                (node_id, node_name, node_type, step_result)
+            });
+        };
+
+    // Spawn initial ready nodes.
+    for node_id in initial_ready {
+        let step = match plan.steps.get(&node_id) {
+            Some(s) => s.clone(),
+            None => continue,
+        };
+        spawn_node(
+            &mut join_set,
+            node_id,
+            step,
+            Arc::clone(&dispatcher),
+            Arc::clone(&outputs),
+            Arc::clone(&node_statuses),
+            plan.reverse_edges.clone(),
+            status_tx.clone(),
+        );
+    }
+
+    // Process completions as they arrive — immediately unblock and spawn dependents.
+    while let Some(join_result) = join_set.join_next().await {
+        let (node_id, node_name, node_type, step_result) =
+            join_result.map_err(|e| anyhow::anyhow!("workflow task panicked: {e}"))?;
+
+        match step_result {
+            Ok(output) => {
+                // Store outputs and update status.
+                {
+                    let mut out = outputs.lock().await;
+                    for (port_id, value) in &output.port_values {
+                        out.insert((node_id.clone(), port_id.clone()), value.clone());
                     }
                 }
-                Err(e) => {
-                    tracing::error!(
-                        node_id = %step.node_id,
-                        error = %e,
-                        "workflow step failed"
-                    );
-                    run.node_statuses
-                        .insert(step.node_id.clone(), NodeStatus::Failed);
 
-                    // Emit failed status
-                    if let Some(ref tx) = status_tx {
-                        let _ = tx
-                            .send(StatusUpdate {
-                                node_id: step.node_id.clone(),
-                                node_name: step.name.clone(),
-                                status: NodeStatus::Failed,
-                                output: Some(e.to_string()),
-                            })
-                            .await;
-                    }
-                    // Continue executing other nodes in the level,
-                    // but downstream dependents will get empty inputs.
+                // Handle gate routing synchronously before unblocking dependents.
+                if node_type == NodeType::Gate {
+                    let mut statuses = node_statuses.lock().await;
+                    handle_gate_routing(&output, &node_id, &plan.edges, &mut statuses);
                 }
+
+                // Only mark Completed if the node wasn't already Skipped by gate routing.
+                let final_status = {
+                    let mut statuses = node_statuses.lock().await;
+                    let current = statuses.get(&node_id).copied();
+                    if current != Some(NodeStatus::Skipped) {
+                        statuses.insert(node_id.clone(), NodeStatus::Completed);
+                        NodeStatus::Completed
+                    } else {
+                        NodeStatus::Skipped
+                    }
+                };
+
+                if let Some(ref tx) = status_tx {
+                    let out_text = output
+                        .port_values
+                        .values()
+                        .find_map(|v| v.as_str().map(String::from));
+                    let _ = tx
+                        .send(StatusUpdate {
+                            node_id: node_id.clone(),
+                            node_name: node_name.clone(),
+                            status: final_status,
+                            output: out_text,
+                        })
+                        .await;
+                }
+            }
+            Err(err_msg) => {
+                {
+                    let mut statuses = node_statuses.lock().await;
+                    statuses.insert(node_id.clone(), NodeStatus::Failed);
+                }
+
+                if let Some(ref tx) = status_tx {
+                    let _ = tx
+                        .send(StatusUpdate {
+                            node_id: node_id.clone(),
+                            node_name: node_name.clone(),
+                            status: NodeStatus::Failed,
+                            output: Some(err_msg),
+                        })
+                        .await;
+                }
+                // Failed nodes still resolve dependencies — downstream runs with empty input.
             }
         }
 
-        // Await any parallel handles (future use)
-        for (node_id, handle) in handles {
-            match handle.await {
-                Ok(Ok(output)) => {
-                    for (port_id, value) in &output.port_values {
-                        run.outputs
-                            .insert((node_id.clone(), port_id.clone()), value.clone());
+        // Unblock dependents and spawn newly ready nodes.
+        if let Some(deps_of) = plan.dependents.get(&node_id) {
+            for dependent_id in deps_of {
+                if let Some(remaining) = pending_deps.get_mut(dependent_id) {
+                    remaining.remove(&node_id);
+                    if remaining.is_empty() {
+                        if let Some(step) = plan.steps.get(dependent_id) {
+                            spawn_node(
+                                &mut join_set,
+                                dependent_id.clone(),
+                                step.clone(),
+                                Arc::clone(&dispatcher),
+                                Arc::clone(&outputs),
+                                Arc::clone(&node_statuses),
+                                plan.reverse_edges.clone(),
+                                status_tx.clone(),
+                            );
+                        }
                     }
-                    run.node_statuses.insert(node_id, NodeStatus::Completed);
-                }
-                Ok(Err(e)) => {
-                    tracing::error!(node_id = %node_id, error = %e, "parallel step failed");
-                    run.node_statuses.insert(node_id, NodeStatus::Failed);
-                }
-                Err(e) => {
-                    tracing::error!(node_id = %node_id, error = %e, "parallel step panicked");
-                    run.node_statuses.insert(node_id, NodeStatus::Failed);
                 }
             }
         }
     }
 
-    Ok(run)
+    // Assemble the final WorkflowRun from shared state.
+    let final_outputs = match Arc::try_unwrap(outputs) {
+        Ok(mutex) => mutex.into_inner(),
+        Err(arc) => arc.lock().await.clone(),
+    };
+    let final_statuses = match Arc::try_unwrap(node_statuses) {
+        Ok(mutex) => mutex.into_inner(),
+        Err(arc) => arc.lock().await.clone(),
+    };
+
+    Ok(WorkflowRun {
+        run_id,
+        workflow_id: plan.workflow_id.clone(),
+        outputs: final_outputs,
+        node_statuses: final_statuses,
+    })
+}
+
+/// Thin wrapper around a borrowed output map for use inside spawned tasks.
+struct OutputView<'a>(&'a HashMap<(String, String), serde_json::Value>);
+
+/// Collect input text from an output map (for use inside spawned tasks).
+fn collect_input_text_from(
+    view: &OutputView<'_>,
+    reverse_edges: &HashMap<(String, String), Vec<(String, String)>>,
+    node_id: &str,
+) -> String {
+    for port in &[
+        "input", "task", "send", "request", "content", "path", "body",
+    ] {
+        let key = (node_id.to_string(), port.to_string());
+        if let Some(sources) = reverse_edges.get(&key) {
+            let mut parts = Vec::new();
+            for (src_node, src_port) in sources {
+                if let Some(val) = view.0.get(&(src_node.clone(), src_port.clone())) {
+                    match val {
+                        serde_json::Value::String(s) => parts.push(s.clone()),
+                        other => parts.push(other.to_string()),
+                    }
+                }
+            }
+            if !parts.is_empty() {
+                return parts.join("\n");
+            }
+        }
+    }
+
+    if let Some(val) = view.0.get(&(node_id.to_string(), "input".to_string())) {
+        return val.as_str().unwrap_or_default().to_string();
+    }
+
+    String::new()
+}
+
+/// Collect context JSON from an output map (for use inside spawned tasks).
+fn collect_context_from(
+    view: &OutputView<'_>,
+    reverse_edges: &HashMap<(String, String), Vec<(String, String)>>,
+    node_id: &str,
+) -> Option<serde_json::Value> {
+    let key = (node_id.to_string(), "context".to_string());
+    let sources = reverse_edges.get(&key)?;
+
+    let mut context_parts = Vec::new();
+    for (src_node, src_port) in sources {
+        if let Some(val) = view.0.get(&(src_node.clone(), src_port.clone())) {
+            context_parts.push(val.clone());
+        }
+    }
+
+    if context_parts.is_empty() {
+        None
+    } else if context_parts.len() == 1 {
+        Some(context_parts.into_iter().next().expect("just checked len"))
+    } else {
+        Some(serde_json::Value::Array(context_parts))
+    }
 }
 
 /// Output from a single step execution.
+#[derive(Clone)]
 struct StepOutput {
     /// Values keyed by output port ID.
     port_values: HashMap<String, serde_json::Value>,
@@ -694,66 +883,6 @@ async fn dispatch_step(
     }
 }
 
-/// Collect the input text for a node from its upstream connections.
-fn collect_input_text(
-    run: &WorkflowRun,
-    reverse_edges: &HashMap<(String, String), Vec<(String, String)>>,
-    node_id: &str,
-) -> String {
-    // Check the "input" port first, then common port aliases used by various node types
-    for port in &[
-        "input", "task", "send", "request", "content", "path", "body",
-    ] {
-        let key = (node_id.to_string(), port.to_string());
-        if let Some(sources) = reverse_edges.get(&key) {
-            let mut parts = Vec::new();
-            for (src_node, src_port) in sources {
-                if let Some(val) = run.outputs.get(&(src_node.clone(), src_port.clone())) {
-                    match val {
-                        serde_json::Value::String(s) => parts.push(s.clone()),
-                        other => parts.push(other.to_string()),
-                    }
-                }
-            }
-            if !parts.is_empty() {
-                return parts.join("\n");
-            }
-        }
-    }
-
-    // Fallback: check if there's a seeded input
-    if let Some(val) = run.outputs.get(&(node_id.to_string(), "input".to_string())) {
-        return val.as_str().unwrap_or_default().to_string();
-    }
-
-    String::new()
-}
-
-/// Collect context JSON for an agent node from its "context" port.
-fn collect_context(
-    run: &WorkflowRun,
-    reverse_edges: &HashMap<(String, String), Vec<(String, String)>>,
-    node_id: &str,
-) -> Option<serde_json::Value> {
-    let key = (node_id.to_string(), "context".to_string());
-    let sources = reverse_edges.get(&key)?;
-
-    let mut context_parts = Vec::new();
-    for (src_node, src_port) in sources {
-        if let Some(val) = run.outputs.get(&(src_node.clone(), src_port.clone())) {
-            context_parts.push(val.clone());
-        }
-    }
-
-    if context_parts.is_empty() {
-        None
-    } else if context_parts.len() == 1 {
-        Some(context_parts.into_iter().next().expect("just checked len"))
-    } else {
-        Some(serde_json::Value::Array(context_parts))
-    }
-}
-
 /// Handle gate routing — mark downstream nodes on the inactive port as Skipped.
 fn handle_gate_routing(
     output: &StepOutput,
@@ -781,6 +910,7 @@ fn handle_gate_routing(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Arc;
 
     fn agent_node(id: &str, name: &str) -> serde_json::Value {
         json!({
@@ -1069,7 +1199,7 @@ mod tests {
         let edges: Vec<serde_json::Value> = vec![];
         let plan = compile("wf-1", &nodes, &edges).expect("compile");
 
-        let run = super::execute(&plan, "Hello world", &MockDispatcher)
+        let run = super::execute(&plan, "Hello world", Arc::new(MockDispatcher))
             .await
             .expect("execute");
 
@@ -1090,7 +1220,7 @@ mod tests {
         let edges = vec![edge("e1", "a1", "a2")];
         let plan = compile("wf-2", &nodes, &edges).expect("compile");
 
-        let run = super::execute(&plan, "start", &MockDispatcher)
+        let run = super::execute(&plan, "start", Arc::new(MockDispatcher))
             .await
             .expect("execute");
 
@@ -1120,7 +1250,7 @@ mod tests {
         let edges: Vec<serde_json::Value> = vec![];
         let plan = compile("wf-tool", &nodes, &edges).expect("compile");
 
-        let run = super::execute(&plan, "ls -la", &MockDispatcher)
+        let run = super::execute(&plan, "ls -la", Arc::new(MockDispatcher))
             .await
             .expect("execute");
 
@@ -1160,7 +1290,7 @@ mod tests {
         ];
         let plan = compile("wf-gate", &nodes, &edges).expect("compile");
 
-        let run = super::execute(&plan, "review this", &MockDispatcher)
+        let run = super::execute(&plan, "review this", Arc::new(MockDispatcher))
             .await
             .expect("execute");
 
@@ -1185,7 +1315,7 @@ mod tests {
         let edges = vec![edge("e1", "a1", "a2"), edge("e2", "a1", "a3")];
         let plan = compile("wf-parallel", &nodes, &edges).expect("compile");
 
-        let run = super::execute(&plan, "split me", &MockDispatcher)
+        let run = super::execute(&plan, "split me", Arc::new(MockDispatcher))
             .await
             .expect("execute");
 
@@ -1227,13 +1357,214 @@ mod tests {
         let edges: Vec<serde_json::Value> = vec![];
         let plan = compile("wf-fail", &nodes, &edges).expect("compile");
 
-        let run = super::execute(&plan, "boom", &FailingDispatcher)
+        let run = super::execute(&plan, "boom", Arc::new(FailingDispatcher))
             .await
             .expect("execute completes even with failures");
 
         assert_eq!(
             run.node_statuses.get("a1"),
             Some(&super::NodeStatus::Failed)
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_diamond_event_driven_unblocking() {
+        // Diamond: a1 → a2, a1 → a3, a2 → a4, a3 → a4
+        // Plus an independent node a5 at level 0 with a5 → a6.
+        // a4 should complete as soon as a2 + a3 are done,
+        // without waiting for a5/a6 — verifying event-driven unblocking.
+        let nodes = vec![
+            agent_node("a1", "start"),
+            agent_node("a2", "left"),
+            agent_node("a3", "right"),
+            agent_node("a4", "merge"),
+            agent_node("a5", "independent"),
+            agent_node("a6", "after-independent"),
+        ];
+        let edges = vec![
+            edge("e1", "a1", "a2"),
+            edge("e2", "a1", "a3"),
+            edge("e3", "a2", "a4"),
+            edge("e4", "a3", "a4"),
+            edge("e5", "a5", "a6"),
+        ];
+
+        let plan = compile("wf-diamond-event", &nodes, &edges).expect("compile");
+
+        // Verify the dep graph is correct
+        assert_eq!(plan.deps.get("a1").map(|s| s.len()), Some(0));
+        assert_eq!(plan.deps.get("a5").map(|s| s.len()), Some(0));
+        assert!(plan
+            .deps
+            .get("a4")
+            .is_some_and(|s| s.contains("a2") && s.contains("a3")));
+        assert!(plan.deps.get("a6").is_some_and(|s| s.contains("a5")));
+
+        let run = super::execute(&plan, "diamond test", Arc::new(MockDispatcher))
+            .await
+            .expect("execute");
+
+        // All nodes should complete
+        for nid in &["a1", "a2", "a3", "a4", "a5", "a6"] {
+            assert_eq!(
+                run.node_statuses.get(*nid),
+                Some(&super::NodeStatus::Completed),
+                "node {} should be completed",
+                nid
+            );
+        }
+
+        // a4's output should contain a2 and a3's outputs (merged via input collection)
+        let a4_out = run
+            .outputs
+            .get(&("a4".to_string(), "response".to_string()))
+            .expect("a4 output")
+            .as_str()
+            .expect("string");
+        assert!(a4_out.contains("merge"));
+    }
+
+    #[test]
+    fn compile_populates_dep_graph() {
+        // a1 → a2 → a3
+        let nodes = vec![
+            agent_node("a1", "first"),
+            agent_node("a2", "second"),
+            agent_node("a3", "third"),
+        ];
+        let edges = vec![edge("e1", "a1", "a2"), edge("e2", "a2", "a3")];
+
+        let plan = compile("wf-deps", &nodes, &edges).expect("compile");
+
+        // a1 has no deps
+        assert!(plan.deps.get("a1").is_some_and(|s| s.is_empty()));
+        // a2 depends on a1
+        assert!(plan.deps.get("a2").is_some_and(|s| s.contains("a1")));
+        // a3 depends on a2
+        assert!(plan.deps.get("a3").is_some_and(|s| s.contains("a2")));
+
+        // Dependents: a1 → {a2}, a2 → {a3}
+        assert!(plan
+            .dependents
+            .get("a1")
+            .is_some_and(|s| s.contains("a2")));
+        assert!(plan
+            .dependents
+            .get("a2")
+            .is_some_and(|s| s.contains("a3")));
+    }
+
+    #[tokio::test]
+    async fn execute_failed_node_unblocks_dependents() {
+        // a1 → a2 where a1 fails. a2 should still run (with empty input).
+        let nodes = vec![agent_node("a1", "fail"), agent_node("a2", "after")];
+        let edges = vec![edge("e1", "a1", "a2")];
+        let plan = compile("wf-fail-chain", &nodes, &edges).expect("compile");
+
+        let run = super::execute(&plan, "boom", Arc::new(FailingDispatcher))
+            .await
+            .expect("execute completes");
+
+        assert_eq!(
+            run.node_statuses.get("a1"),
+            Some(&super::NodeStatus::Failed)
+        );
+        // a2 should also run (and fail, since FailingDispatcher fails everything)
+        assert_eq!(
+            run.node_statuses.get("a2"),
+            Some(&super::NodeStatus::Failed)
+        );
+    }
+
+    /// Verifies that independent nodes execute concurrently via JoinSet.
+    ///
+    /// Uses a dispatcher with a sleep to prove that two independent nodes
+    /// overlap in time — total duration should be ~sleep_time, not ~2x.
+    #[tokio::test]
+    async fn execute_concurrent_independent_nodes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::{Duration, Instant};
+
+        /// Dispatcher that sleeps and tracks peak concurrency.
+        struct ConcurrencyTracker {
+            active: AtomicUsize,
+            peak: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl super::StepDispatcher for ConcurrencyTracker {
+            async fn run_agent(
+                &self,
+                step: &super::ExecutionStep,
+                input: &str,
+                _context: Option<&serde_json::Value>,
+            ) -> anyhow::Result<String> {
+                let prev = self.active.fetch_add(1, Ordering::SeqCst);
+                let current = prev + 1;
+                // Update peak if this is the highest so far.
+                self.peak.fetch_max(current, Ordering::SeqCst);
+
+                tokio::time::sleep(Duration::from_millis(50)).await;
+
+                self.active.fetch_sub(1, Ordering::SeqCst);
+                Ok(format!("[{}] processed: {}", step.name, input))
+            }
+
+            async fn run_tool(
+                &self,
+                tool_name: &str,
+                input: &serde_json::Value,
+            ) -> anyhow::Result<String> {
+                Ok(format!("tool:{tool_name} result for {input}"))
+            }
+
+            async fn send_channel(&self, _: &str, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+        }
+
+        // Three independent root nodes — should all run concurrently.
+        let nodes = vec![
+            agent_node("a1", "alpha"),
+            agent_node("a2", "beta"),
+            agent_node("a3", "gamma"),
+        ];
+        let edges: Vec<serde_json::Value> = vec![];
+        let plan = compile("wf-concurrent", &nodes, &edges).expect("compile");
+
+        let tracker = Arc::new(ConcurrencyTracker {
+            active: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+        });
+        let tracker_ref = Arc::clone(&tracker);
+
+        let start = Instant::now();
+        let run = super::execute(&plan, "go", tracker_ref)
+            .await
+            .expect("execute");
+        let elapsed = start.elapsed();
+
+        // All nodes should complete.
+        for nid in &["a1", "a2", "a3"] {
+            assert_eq!(
+                run.node_statuses.get(*nid),
+                Some(&super::NodeStatus::Completed),
+                "node {nid} should be completed"
+            );
+        }
+
+        // Peak concurrency should be > 1, proving parallel execution.
+        let peak = tracker.peak.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            peak >= 2,
+            "expected peak concurrency >= 2, got {peak} (nodes ran sequentially)"
+        );
+
+        // Total time should be closer to 50ms than 150ms (3 * 50ms sequential).
+        assert!(
+            elapsed < Duration::from_millis(120),
+            "expected parallel execution under 120ms, took {:?}",
+            elapsed
         );
     }
 }

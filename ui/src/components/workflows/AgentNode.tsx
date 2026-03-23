@@ -308,10 +308,12 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
         overflow: 'visible',
         userSelect: 'none',
         boxShadow: status === 'running'
-          ? `0 0 24px ${sColor}60, 0 0 48px ${sColor}20`
+          ? `0 0 20px ${sColor}90, 0 0 40px ${sColor}50, 0 0 60px ${sColor}30`
           : status === 'success'
             ? `0 0 12px ${sColor}30`
-            : '0 2px 8px rgba(0,0,0,0.4)',
+            : status === 'failure'
+              ? `0 0 12px ${sColor}30`
+              : '0 2px 8px rgba(0,0,0,0.4)',
         animation: status === 'running' ? 'nodeRunningPulse 1.5s ease-in-out infinite' : 'none',
         transition: 'border 0.3s ease, box-shadow 0.3s ease',
       }}
@@ -332,7 +334,11 @@ function AgentNodeComponent({ id, data, selected }: NodeProps) {
             height: 10,
             borderRadius: '50%',
             background: sColor,
-            boxShadow: status === 'running' ? `0 0 8px ${sColor}` : 'none',
+            boxShadow: status === 'running'
+              ? `0 0 8px ${sColor}, 0 0 16px ${sColor}80`
+              : status === 'success' || status === 'failure'
+                ? `0 0 6px ${sColor}80`
+                : 'none',
           }}
         />
         {/* Chevron */}

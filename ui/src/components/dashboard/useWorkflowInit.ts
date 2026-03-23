@@ -54,9 +54,13 @@ export function useWorkflowInit(
         // If a specific workflow ID is requested, load it directly.
         if (targetWorkflowId) {
           const wf = await workflowsApi.get(targetWorkflowId, 'layout')
-          if (wf?.layout?.nodes && (wf.layout.nodes as unknown[]).length > 0) {
-            setNodes(wf.layout.nodes as Node[])
-            setEdges((wf.layout.edges ?? []) as Edge[])
+          // Backend may return nodes under `layout` or at the top level
+          const wfAny = wf as Record<string, unknown>
+          const layoutNodes = (wf?.layout?.nodes ?? wfAny.nodes) as Node[] | undefined
+          const layoutEdges = (wf?.layout?.edges ?? wfAny.edges) as Edge[] | undefined
+          if (layoutNodes && layoutNodes.length > 0) {
+            setNodes(layoutNodes)
+            setEdges(layoutEdges ?? [])
           }
           workflowIdRef.current = wf.workflow_id
           lastKnownUpdatedAtRef.current = wf.updated_at

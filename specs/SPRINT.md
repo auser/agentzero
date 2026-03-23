@@ -2096,56 +2096,67 @@ Real suspend/resume for approval workflows.
 
 ## Sprint 72: Autonomous Agent Swarms — Parallel Execution, Sandboxing, Self-Management
 
-**Goal:** Transform AgentZero's workflow executor from sequential level-based execution into a self-managing swarm runtime. Agents execute in sandboxed isolation (worktree → container → microVM), coordinate with cross-agent context awareness, recover from failures automatically, and can autonomously decompose goals into visual workflow graphs.
+**Goal:** Transform AgentZero's workflow executor into a self-managing swarm runtime. Add true intra-batch parallelism via `tokio::JoinSet`, sandboxed agent isolation (worktree → container → microVM), cross-agent context awareness, dead agent recovery, and autonomous goal decomposition into visual workflow graphs.
 
-**Baseline:** Sprint 71 complete. Workflow execution engine with topological compilation, real-time node status, human input gates, and `ConverseTool` for agent-to-agent communication.
+**Baseline:** Sprint 71 complete. Workflow executor already uses `pending_deps` ready-queue with event-driven unblocking (dependency tracking, not level-based). Real-time node status, human input gates, `ConverseTool` for agent-to-agent communication. `fanout.rs` provides established `JoinSet` parallel execution pattern.
 
 **Plan:** `specs/plans/31-autonomous-agent-swarms.md`
 
 ---
 
-### Phase A: Event-Driven Task Unblocking (HIGH)
+### Phase A: True Parallel Execution with `tokio::JoinSet` (HIGH)
 
-Replace level-based execution with fine-grained dependency tracking. When a node completes, immediately start any downstream node whose dependencies are all satisfied — don't wait for the entire level.
+The executor already uses `pending_deps` for event-driven unblocking between batches, but executes nodes **sequentially within each batch**. Add true intra-batch concurrency using `tokio::JoinSet`, following the established pattern in `fanout.rs`.
 
-- [ ] **Ready-queue executor** — Replace level iteration in `execute()` with `pending_deps: HashMap<NodeId, HashSet<NodeId>>`. On node completion, remove from all dependents' sets; empty set → push to ready-queue. Run ready nodes with `tokio::JoinSet`.
-- [ ] **Diamond-dependency test** — Graph: A→C, B→C, A→D. Verify C starts as soon as A+B complete, not waiting for D.
-- [ ] **Backward compatibility** — Existing sequential workflow tests still pass.
+- [x] **`Arc<dyn StepDispatcher>`** — Changed `execute()` and `execute_with_updates()` from `&dyn StepDispatcher` to `Arc<dyn StepDispatcher>`. Updated gateway handlers, CLI workflow command, and all test call sites.
+- [x] **`SharedRunState`** — Extracted `outputs` and `node_statuses` into `Arc<tokio::sync::Mutex<_>>` for concurrent access from spawned tasks. Added `OutputView` wrapper and `collect_input_text_from`/`collect_context_from` for lock-scoped reads.
+- [x] **`JoinSet` execution loop** — Replaced sequential batch loop with `JoinSet::spawn()` per ready node. Main loop: `join_set.join_next().await` → process completion → unblock dependents → immediately spawn newly ready nodes into the same JoinSet. No batch boundaries.
+- [x] **Gate routing synchronization** — Gate routing processed synchronously on completion before spawning dependents. Skipped status preserved — nodes marked `Skipped` by gate routing are not overwritten to `Completed`.
+- [x] **Error handling** — Failed nodes still resolve dependencies (preserving existing behavior). `JoinSet` join errors (panics) converted to `anyhow::Error`.
+- [x] **Update callers** — `GatewayStepDispatcher` in `handlers.rs` wrapped in `Arc`. `CliStepDispatcher` in `workflow.rs` wrapped in `Arc`. All 20 existing test call sites updated.
+- [x] **Diamond-dependency test** — Pre-existing `execute_diamond_event_driven_unblocking` test passes (6-node diamond + independent chain).
+- [x] **Concurrency verification test** — New `execute_concurrent_independent_nodes` test: 3 independent nodes with 50ms sleep, verifies peak concurrency >= 2 and total time < 120ms. Uses `AtomicUsize` concurrency tracker.
+- [x] **Backward compatibility** — All 21 workflow executor tests pass (20 existing + 1 new). 2,798 tests pass workspace-wide, 0 clippy warnings.
 
 ### Phase B: Sandboxed Agent Execution — WorktreeSandbox (HIGH)
 
 Each agent node executes in an isolated git worktree. Foundation for container/microVM backends.
 
-- [ ] **`AgentSandbox` trait** — `create(SandboxConfig) -> SandboxHandle`, `execute(handle, AgentTask) -> AgentOutput`, `destroy(handle)`. Pluggable backends.
-- [ ] **`WorktreeSandbox`** — Git worktree per agent on branch `agentzero/wf/{workflow_id}/{node_id}`. `ToolSecurityPolicy` scoped to worktree root.
-- [ ] **Workspace lifecycle** — Create worktree → agent executes → collect diff → merge worktree → cleanup branch.
-- [ ] **Conflict detection** — Diff overlapping files across worktrees. Classify severity: high (same lines), medium (same file), low (same directory). Report to user.
-- [ ] **Merge strategy** — Sequential merge in topological order after all agents complete. Surface conflicts as structured output.
+- [ ] **`AgentSandbox` trait** — `create(SandboxConfig) -> SandboxHandle`, `execute(handle, AgentTask) -> AgentOutput`, `destroy(handle)`. In new `sandbox.rs`. Pluggable backends.
+- [ ] **`SandboxConfig` / `SandboxHandle`** — Config: `workflow_id`, `node_id`, `workspace_root`, `ToolSecurityPolicy`. Handle: `worktree_path`, `branch_name`.
+- [ ] **`WorktreeSandbox`** — `create()`: `git worktree add -b agentzero/wf/{wf_id}/{node_id}`. `execute()`: scope `ToolSecurityPolicy` workspace root to worktree. `destroy()`: `git worktree remove` + `git branch -D`.
+- [ ] **Workspace lifecycle module** — New `workspace.rs`: `collect_diff(worktree) -> Vec<FileDiff>`, `merge_workspaces(diffs, topo_order) -> MergeResult`, `cleanup_workspace()`.
+- [ ] **Conflict detection** — `ConflictSeverity { High, Medium, Low }`. High: same lines changed. Medium: same file. Low: same directory. `ConflictReport` with file paths, severity, diff hunks.
+- [ ] **Merge strategy** — Sequential merge in topological order after all agents complete. Surface conflicts as structured `MergeResult`.
+- [ ] **Worktree lifecycle test** — Create → verify exists → destroy → verify cleaned up.
+- [ ] **Non-overlapping merge test** — Two worktrees with independent changes merge cleanly.
+- [ ] **Conflict detection test** — Two worktrees editing same file → conflict reported with correct severity.
 
 ### Phase C: Cross-Agent Context Awareness (MEDIUM)
 
-When dispatching parallel agents, inject awareness of sibling agents' assignments.
+When dispatching parallel agents, inject awareness of sibling agents' assignments to prevent conflicts and enable collaboration.
 
-- [ ] **Sibling context injection** — Before spawning agent N, collect parallel agents' task descriptions and estimated file scopes. Append to system prompt.
-- [ ] **File modification broadcast** — On agent completion, publish summary of files modified to the event bus.
-- [ ] **Overlap notification** — If file overlap detected mid-execution, notify affected agents via `ConverseTool`.
+- [ ] **`SwarmContext`** — New `swarm_context.rs`. Tracks `HashMap<NodeId, AgentAssignment>` with task descriptions, file scopes, status.
+- [ ] **Sibling context injection** — Before spawning agent N, serialize parallel agents' assignments into context JSON appended to system prompt.
+- [ ] **File modification broadcast** — On agent completion, publish `swarm.agent.completed` event with modified file list to `EventBus`.
+- [ ] **Overlap notification** — If file overlap detected mid-execution, notify affected running agents via `ConverseTool`.
 
 ### Phase D: Dead Agent Recovery (MEDIUM)
 
 Extend `PresenceStore` heartbeats to automatically reassign tasks from dead agents.
 
-- [ ] **Heartbeat timeout** — Configurable per agent (default 60s). On timeout: mark `Failed`, destroy sandbox, reset task to `pending`.
-- [ ] **Auto-reassignment** — Coordinator re-dispatches to fresh agent instance in new sandbox.
-- [ ] **Observability events** — Emit `swarm.agent.failed` and `swarm.agent.reassigned` events. UI shows failed → retrying transition.
+- [ ] **Heartbeat integration** — Register each spawned agent with `PresenceStore`. Agents send periodic heartbeats during execution. Configurable TTL per agent (default 60s).
+- [ ] **Recovery handler** — Monitor `PresenceStatus::Dead` in supervisor loop → destroy sandbox → reset node status to `Pending` → re-add to ready queue.
+- [ ] **Observability events** — Emit `swarm.agent.failed` and `swarm.agent.reassigned` events via `EventBus`. UI shows failed → retrying transition.
 
 ### Phase E: Self-Managing Swarm — Goal Decomposition (HIGH)
 
 Give AgentZero a natural language goal and let it autonomously decompose into a task DAG, spawn sandboxed agents, and manage execution.
 
-- [ ] **`GoalPlanner`** — Agent that takes a goal + LLM, produces a `WorkflowGraph` via structured output. Nodes include role/prompt/tools/sandbox level. Edges encode dependencies. File scope estimates enable pre-execution conflict prediction.
-- [ ] **`SwarmSupervisor`** — Executes the generated `WorkflowGraph` using Phases A-D infrastructure. Supervisor loop: heartbeat monitoring, dependency cycle detection, budget/token limits, conflict alerts.
+- [ ] **`GoalPlanner`** — New `goal_planner.rs`. Agent that takes goal string + LLM provider, produces `WorkflowGraph` via structured output prompt. Nodes include role/prompt/tools/sandbox level. Edges encode dependencies. File scope estimates per node.
+- [ ] **`SwarmSupervisor`** — Executes generated `WorkflowGraph` using Phases A-D. Supervisor loop: heartbeat monitoring, dependency cycle detection, budget/token limits, conflict alerts.
 - [ ] **Adaptive re-planning** — On agent failure or scope expansion, pause affected subgraph, re-invoke planner with current state, apply graph patch (add/remove nodes, re-route edges), resume.
-- [ ] **CLI entry point** — `agentzero swarm "Build a REST API with auth"` — single command, streams progress.
+- [ ] **CLI entry point** — `agentzero swarm "Build a REST API with auth"` — single command, streams progress to stdout.
 - [ ] **Gateway entry point** — POST `/v1/swarm` with `{ "goal": "...", "sandbox_level": "worktree" }` — returns workflow ID, streams via SSE.
 - [ ] **UI integration** — Goal input → live graph visualization → interactive editing during execution → merge review at end.
 
@@ -2159,7 +2170,7 @@ Higher-security sandbox backends for server and untrusted execution.
 
 ### Acceptance Criteria
 
-- [ ] Parallel agents execute concurrently (not blocked by level boundaries)
+- [x] Ready nodes execute concurrently via `JoinSet` (not sequentially within batches)
 - [ ] Each agent runs in isolated worktree with its own branch
 - [ ] Merge conflicts detected and reported with severity classification
 - [ ] Dead agents recovered within heartbeat timeout window

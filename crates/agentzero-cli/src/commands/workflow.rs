@@ -116,10 +116,11 @@ async fn cmd_run(
         plan.levels.iter().map(|l| l.len()).sum::<usize>(),
     );
 
-    let dispatcher = CliStepDispatcher::new(ctx, &plan);
+    let dispatcher: std::sync::Arc<dyn StepDispatcher> =
+        std::sync::Arc::new(CliStepDispatcher::new(ctx, &plan));
 
     println!("Executing...\n");
-    let run = execute(&plan, input_text, &dispatcher).await?;
+    let run = execute(&plan, input_text, dispatcher).await?;
 
     // Print results
     println!("─── Results ───────────────────────────────────────────");

@@ -2961,6 +2961,10 @@ pub(crate) async fn get_workflow(
         "description": workflow.description,
         "nodes": workflow.nodes,
         "edges": workflow.edges,
+        "layout": {
+            "nodes": workflow.nodes,
+            "edges": workflow.edges,
+        },
         "created_at": workflow.created_at,
         "updated_at": workflow.updated_at,
     })))
@@ -3074,8 +3078,10 @@ pub(crate) async fn execute_workflow(
         .unwrap_or("")
         .to_string();
 
-    let dispatcher = crate::workflow_dispatch::GatewayStepDispatcher::from_state(&state, &plan)
-        .ok_or(GatewayError::AgentUnavailable)?;
+    let dispatcher: Arc<dyn agentzero_orchestrator::StepDispatcher> = Arc::new(
+        crate::workflow_dispatch::GatewayStepDispatcher::from_state(&state, &plan)
+            .ok_or(GatewayError::AgentUnavailable)?,
+    );
 
     // Generate a run ID and seed the run store so polling can start immediately.
     let run_id = format!(
@@ -3130,6 +3136,14 @@ pub(crate) async fn execute_workflow(
     // Spawn a task that drains status updates into the shared run store.
     tokio::spawn(async move {
         while let Some(update) = status_rx.recv().await {
+            tracing::info!(
+                run_id = %run_id_for_rx,
+                node_id = %update.node_id,
+                node_name = %update.node_name,
+                status = ?update.status,
+                has_output = update.output.is_some(),
+                "workflow status update received"
+            );
             let mut runs = runs_ref.lock().expect("workflow_runs lock");
             if let Some(run) = runs.get_mut(&run_id_for_rx) {
                 run.node_statuses
@@ -3151,7 +3165,7 @@ pub(crate) async fn execute_workflow(
         let result = agentzero_orchestrator::execute_workflow_streaming(
             &plan,
             &input,
-            &dispatcher,
+            dispatcher,
             Some(status_tx),
         )
         .await;
@@ -3207,6 +3221,14 @@ pub(crate) async fn get_workflow_run(
     let run = runs.get(&run_id).ok_or(GatewayError::NotFound {
         resource: format!("workflow-run/{run_id}"),
     })?;
+
+    tracing::debug!(
+        run_id = %run.run_id,
+        run_status = %run.status,
+        node_count = run.node_statuses.len(),
+        node_statuses = ?run.node_statuses,
+        "polling workflow run status"
+    );
 
     let statuses: serde_json::Map<String, Value> = run
         .node_statuses
