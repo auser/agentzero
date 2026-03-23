@@ -2057,8 +2057,8 @@ Nodes visually update during workflow execution — pulsing, color changes, outp
 
 Save and share workflows as portable files.
 
-- [ ] **Export endpoint** — `GET /v1/workflows/:id/export` returns full workflow JSON (nodes, edges, metadata) as downloadable file
-- [ ] **Import endpoint** — `POST /v1/workflows/import` accepts workflow JSON and creates a new workflow
+- [x] **Export endpoint** — `GET /v1/workflows/:id/export` returns full workflow JSON with nodes, edges, metadata.
+- [x] **Import endpoint** — `POST /v1/workflows/import` accepts JSON, validates via `compile_workflow()`, creates in store with fresh ID.
 - [ ] **UI export button** — download button in workflow toolbar, saves as `.agentzero-workflow.json`
 - [ ] **UI import button** — file upload or drag-drop onto canvas to load a workflow
 - [ ] **Conflict resolution** — when importing, remap node IDs to avoid collisions with existing nodes
@@ -2067,8 +2067,8 @@ Save and share workflows as portable files.
 
 Wire `GatewayStepDispatcher::send_channel` to actual platform sends.
 
-- [ ] **Channel registry lookup** — resolve `channel_type` to the actual `Channel` impl from the gateway's channel registry
-- [ ] **Send message** — call `channel.send()` with the workflow step's output as the message content
+- [x] **Channel registry lookup** — `GatewayStepDispatcher` now holds `Arc<ChannelRegistry>` from `GatewayState`.
+- [x] **Send message** — `send_channel()` dispatches via `channels.dispatch(channel_type, payload)` with text/content/message fields. Returns error on rejection or missing channel.
 - [ ] **Channel trigger nodes** — wire inbound channel messages as workflow triggers (create a run when a message arrives matching a workflow's trigger channel)
 - [ ] **Delivery confirmation** — store send status in workflow run outputs
 
@@ -2089,7 +2089,7 @@ Real suspend/resume for approval workflows.
 - [x] 4+ workflow templates available in the gallery *(8 built-in templates)*
 - [x] Empty canvas shows template CTA *(EmptyCanvasState.tsx)*
 - [x] Nodes visually update during execution (pulse, color, output preview) *(AgentNode status styling + RunWorkflowButton polling)*
-- [ ] Workflows exportable/importable as JSON files
+- [x] Workflows exportable/importable as JSON files *(GET /v1/workflows/:id/export + POST /v1/workflows/import)*
 - [x] 0 lint errors, all tests pass
 
 ---
