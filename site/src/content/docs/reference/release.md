@@ -7,6 +7,32 @@ This document defines the versioning and changelog process used for tagged relea
 
 ## Release History
 
+### [0.10.0] — 2026-03-23
+
+#### Added
+
+- **NL goal decomposition** — `GoalPlanner::plan()` decomposes natural language goals into multi-agent DAGs with per-node `tool_hints`. The planner sends the goal + available tool catalog to the LLM and returns a `PlannedWorkflow`.
+- **`HintedToolSelector`** — New tool selector combining explicit hints (from goal planner), recipe matches (from catalog learning), and keyword fallback. Selection priority: hints → recipes → TF-IDF.
+- **Dynamic tools** — Runtime-created tools with 4 execution strategies: Shell (`{{input}}` substitution), HTTP (endpoint calls), LLM (specialized system prompts), and Composite (tool chaining). Persist encrypted in `.agentzero/dynamic-tools.json`. Export/import for sharing between instances.
+- **`tool_create` tool** — LLM-callable tool for creating dynamic tools mid-session from natural language descriptions. Actions: `create`, `list`, `delete`, `export`, `import`. Gated by `enable_dynamic_tools` config.
+- **`ToolSource` trait** — Enables mid-session tool registration. `Agent.build_tool_definitions()` merges static tools with dynamically registered tools on each iteration.
+- **NL agent definitions** — `agent_manage create_from_description` derives name, system prompt, keywords, allowed tools, and suggested schedule from a plain English description. Includes existing agents in prompt for dedup awareness.
+- **Tool catalog learning** — `RecipeStore` records successful tool combos after agent/swarm runs. Jaccard similarity matching on goal keywords boosts previously successful tools for similar future goals. Persists encrypted in `.agentzero/tool-recipes.json`.
+- **`build_provider_from_config()`** — Public helper for lightweight LLM callers (goal planner, tool_create) that need a provider without the full agent runtime.
+- **Swarm CLI wiring** — `agentzero swarm "goal"` now calls `GoalPlanner::plan()` instead of wrapping the goal in a single agent. Each agent node gets a `HintedToolSelector` with its `tool_hints`.
+- **`enable_dynamic_tools`** — New config flag in `[agent]` section (default: `false`). When enabled, loads persisted dynamic tools at startup and registers the `tool_create` tool.
+
+#### Changed
+
+- `PlannedNode` gains `tool_hints: Vec<String>` field (backward-compatible via `#[serde(default)]`).
+- `Agent` gains `extra_tool_source: Option<Arc<dyn ToolSource>>` for mid-session tool discovery.
+- `RuntimeExecution` gains `dynamic_registry` field for tool persistence lifecycle.
+- `AgentManageTool` gains optional `provider` for LLM-based agent derivation.
+- `ToolSecurityPolicy` gains `enable_dynamic_tools: bool`.
+- Workspace version bumped to `0.10.0`.
+
+---
+
 ### [0.4.0] — 2026-03-06
 
 #### Added

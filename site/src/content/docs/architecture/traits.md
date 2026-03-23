@@ -69,7 +69,19 @@ pub trait Tool: Send + Sync {
 }
 ```
 
-All 58+ built-in tools implement this trait with `input_schema()` for structured tool-use APIs. WASM plugins and process plugins are wrapped in `Tool` adapters. MCP servers are registered as first-class tools — each remote tool gets its own `McpIndividualTool` with a namespaced name (`mcp__{server}__{tool}`), the tool's real description, and its real input schema.
+All 58+ built-in tools implement this trait with `input_schema()` for structured tool-use APIs. WASM plugins and process plugins are wrapped in `Tool` adapters. MCP servers are registered as first-class tools — each remote tool gets its own `McpIndividualTool` with a namespaced name (`mcp__{server}__{tool}`), the tool's real description, and its real input schema. Dynamic tools created at runtime also implement this trait and persist across sessions.
+
+### ToolSource
+
+The `ToolSource` trait enables mid-session tool registration:
+
+```rust
+pub trait ToolSource: Send + Sync {
+    fn additional_tools(&self) -> Vec<Box<dyn Tool>>;
+}
+```
+
+Implemented by `DynamicToolRegistry` — when an agent creates a new tool via `tool_create`, the `ToolSource` makes it visible to the agent on the next tool loop iteration without restarting.
 
 ## Crate Boundaries
 

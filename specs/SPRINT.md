@@ -2181,6 +2181,70 @@ Higher-security sandbox backends for server and untrusted execution.
 
 ---
 
+## Sprint 73: Self-Evolving Agent System — NL Definitions, Runtime Tools, Catalog Learning
+
+**Goal:** Make AgentZero a self-growing system. Natural language goals auto-decompose into multi-agent DAGs with per-node tool filtering. Agents create missing tools mid-session (persistent across restarts). Plain English agent definitions create persistent specialists. Successful tool combos are remembered and reused. Every artifact persists encrypted at rest — the system compounds over weeks and months.
+
+**Baseline:** Sprint 72 complete. Swarm supervisor, parallel executor, goal planner types, tool selectors (keyword + AI), CLI swarm command, and agent manage tool all exist. GoalPlanner has types/prompt but no LLM call. Tools only load at startup. agent_manage requires explicit fields.
+
+**Plan:** `specs/plans/32-self-evolving-agent-system.md`
+
+---
+
+### Phase A: NL Goal Decomposition (HIGH)
+
+Wire `GoalPlanner::plan()` so goals auto-decompose into multi-agent DAGs with per-node tool filtering.
+
+- [ ] **`tool_hints` on `PlannedNode`** — Add `#[serde(default)] pub tool_hints: Vec<String>` to `PlannedNode`. Update `GOAL_PLANNER_PROMPT` to include tool_hints in example and rules. Update `to_workflow_json()` to pass through in metadata. Backward-compatible via serde default.
+- [ ] **`GoalPlanner::plan()`** — New `GoalPlanner` struct with `plan(goal, available_tools) -> Result<PlannedWorkflow>`. Builds prompt from `GOAL_PLANNER_PROMPT` + tool catalog + goal, calls `provider.complete()`, parses response. Re-export from orchestrator `lib.rs`.
+- [ ] **`HintedToolSelector`** — New selector in `tool_selection.rs`. Combines explicit tool name hints with `KeywordToolSelector` fallback. Always includes foundational tools (`read_file`, `shell`, `content_search`).
+- [ ] **Dispatcher wiring** — `CliStepDispatcher::run_agent()` extracts `tool_hints` from step metadata, sets `execution.tool_selector` to `HintedToolSelector`. Same for gateway `WorkflowStepDispatcher`. No changes to `RunAgentRequest`.
+- [ ] **`build_provider_from_config()`** — Extract config-loading + API-key-resolution + provider-construction from `build_runtime_execution()` into standalone public function.
+- [ ] **Swarm CLI integration** — Replace single-agent fallback in `cmd_swarm` with `GoalPlanner::plan()` using provider from `build_provider_from_config()`.
+- [ ] **Tests** — Mock provider returning multi-node plan, `HintedToolSelector` with/without hints, `PlannedNode` deserialization with missing `tool_hints`.
+
+### Phase B: Runtime Tool Creation + Persistent Tool Growth (HIGH)
+
+Agents describe a missing tool in NL → system creates it mid-session, immediately available, and persists it forever.
+
+- [ ] **`DynamicTool` + strategies** — New `dynamic_tool.rs`. `DynamicToolDef` with `DynamicToolStrategy` enum (Llm, Shell, Http, Composite). Implement `Tool` trait using `Box::leak()` for static lifetimes. Shell validates against `ShellPolicy`, HTTP against `UrlAccessPolicy`.
+- [ ] **`DynamicToolRegistry`** — Persistence via `EncryptedJsonStore` at `.agentzero/dynamic-tools.json`. `register()`, `load_all()`, `remove()`. Tools survive restarts.
+- [ ] **`ToolSource` trait** — New trait in `agent.rs` for mid-session tool registration. `Agent` gains `extra_tool_source: Option<Arc<dyn ToolSource>>`. `build_tool_definitions()` merges static tools with `ToolSource::additional_tools()`. `DynamicToolRegistry` implements `ToolSource`.
+- [ ] **`ToolCreateTool`** — New `tool_create.rs`. LLM-callable tool: `create` (NL → LLM derives def → register), `list`, `delete`. Gated by `ctx.depth == 0` and `enable_dynamic_tools`.
+- [ ] **Registration wiring** — Load dynamic tools at startup in `default_tools_inner()`. Add `enable_dynamic_tools: bool` to `ToolSecurityPolicy`. Add `dynamic_registry` to `RuntimeExecution`, wire into agent's `extra_tool_source`.
+- [ ] **Tests** — Shell-strategy dynamic tool execution, LLM-strategy with mock provider, mid-session registration visible in `build_tool_definitions()`.
+
+### Phase C: NL Agent Definitions — Persistent Specialists (MEDIUM)
+
+Define persistent agents from plain English descriptions. Agents accumulate as the user's personal team of specialists.
+
+- [ ] **`create_from_description` action** — New action on `AgentManageTool`. Takes NL description, LLM derives: name, system_prompt, keywords, allowed_tools, suggested_schedule. Add `provider: Option<Arc<dyn Provider>>` via `with_provider()` builder. Agents persist in encrypted `.agentzero/agents.json`.
+- [ ] **Provider wiring** — Pass primary provider to `AgentManageTool` during construction in `default_tools_inner()`.
+- [ ] **Auto-routing** — Verify `AgentRouter` reads `AgentStoreApi` dynamically. Future goals matching keywords auto-route to persistent specialist.
+- [ ] **Agent self-improvement** — Add `version: u32` to `AgentRecord`. Similar NL description updates existing agent rather than creating duplicate. LLM prompt includes existing agents for dedup.
+- [ ] **Tests** — NL description → mock LLM → `AgentRecord` with correct keywords/allowed_tools. Persistence across reload.
+
+### Phase D: Tool Catalog Learning — Compounding Knowledge (MEDIUM)
+
+Record successful tool combos, boost them on matching future goals.
+
+- [ ] **`RecipeStore`** — New `tool_recipes.rs`. `ToolRecipe { id, goal_summary, goal_keywords, tools_used, success, timestamp, use_count }`. `EncryptedJsonStore` at `.agentzero/tool-recipes.json`. `record()`, `find_matching()` (TF-IDF).
+- [ ] **Record after swarm execution** — Add `recipe_store: Option<Arc<Mutex<RecipeStore>>>` to `SwarmSupervisor`. Record recipe after `execute()`.
+- [ ] **Record after single-agent runs** — Add `tools_invoked: Vec<String>` to `RunAgentOutput`. Record recipe in `run_agent_with_runtime()`.
+- [ ] **Recipe-boosted selection** — Extend `HintedToolSelector` with `recipes: Option<Arc<Mutex<RecipeStore>>>`. Selection priority: hints → recipe-matched → keyword fallback.
+- [ ] **Tests** — Record recipe, query with similar goal, verify tools are boosted.
+
+### Acceptance Criteria
+
+- [ ] `agentzero swarm "summarize this video"` decomposes into multi-agent DAG, each node gets filtered tools
+- [ ] Dynamic tools created mid-session persist and load on next startup
+- [ ] `agent_manage create_from_description "..."` creates full AgentRecord from plain English
+- [ ] Successful tool combos recorded and boosted on matching future goals
+- [ ] All persistence files encrypted at rest via `EncryptedJsonStore`
+- [ ] 0 clippy warnings, all existing tests pass
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

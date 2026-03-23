@@ -4,6 +4,7 @@
 //! [`PlannedWorkflow`] — a set of agent nodes with dependencies that can
 //! be compiled into an [`ExecutionPlan`] and run by the workflow executor.
 
+use agentzero_core::{Provider, ToolSummary};
 use serde::{Deserialize, Serialize};
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -26,6 +27,11 @@ pub struct PlannedNode {
     /// Sandbox isolation level for this node.
     #[serde(default = "default_sandbox_level")]
     pub sandbox_level: String,
+    /// Optional tool names this agent should have access to.
+    /// When present, the dispatcher filters the tool set to these + always-on tools.
+    /// When empty, all tools are available (or keyword-matched by task description).
+    #[serde(default)]
+    pub tool_hints: Vec<String>,
 }
 
 fn default_sandbox_level() -> String {
@@ -58,6 +64,7 @@ impl PlannedWorkflow {
                         "system_prompt": node.task,
                         "file_scopes": node.file_scopes,
                         "sandbox_level": node.sandbox_level,
+                        "tool_hints": node.tool_hints,
                     }
                 }
             }));
@@ -91,7 +98,8 @@ Output a JSON object with this exact structure:
       "task": "Detailed task description for the agent",
       "depends_on": ["id-of-dependency"],
       "file_scopes": ["src/file.rs", "src/other.rs"],
-      "sandbox_level": "worktree"
+      "sandbox_level": "worktree",
+      "tool_hints": ["shell", "read_file", "web_fetch"]
     }
   ]
 }
@@ -103,6 +111,7 @@ Rules:
 - Keep the number of nodes reasonable (2-8 for most goals)
 - file_scopes should list files the agent is likely to modify (for conflict detection)
 - sandbox_level is always "worktree" for now
+- tool_hints: list of tool names this agent needs from the available tools catalog below. Include only tools relevant to the task. Leave empty if unsure or if the agent only needs the LLM (no tools).
 - Output ONLY the JSON object, no markdown fences or explanation"#;
 
 /// Parse a planner LLM response into a `PlannedWorkflow`.
@@ -114,6 +123,49 @@ pub fn parse_planner_response(response: &str) -> anyhow::Result<PlannedWorkflow>
 
     serde_json::from_str(json_str)
         .map_err(|e| anyhow::anyhow!("failed to parse planner response as PlannedWorkflow: {e}"))
+}
+
+// ── GoalPlanner ─────────────────────────────────────────────────────────────
+
+/// Decomposes a natural-language goal into a workflow graph via an LLM call.
+///
+/// The planner sends the goal plus a catalog of available tools to the LLM,
+/// which returns a [`PlannedWorkflow`] with per-node `tool_hints` so each
+/// agent gets only the tools it needs.
+pub struct GoalPlanner {
+    provider: Box<dyn Provider>,
+}
+
+impl GoalPlanner {
+    /// Create a planner backed by the given LLM provider.
+    pub fn new(provider: Box<dyn Provider>) -> Self {
+        Self { provider }
+    }
+
+    /// Decompose `goal` into a multi-agent workflow.
+    ///
+    /// `available_tools` is included in the prompt so the LLM can assign
+    /// `tool_hints` per node from real tool names.
+    pub async fn plan(
+        &self,
+        goal: &str,
+        available_tools: &[ToolSummary],
+    ) -> anyhow::Result<PlannedWorkflow> {
+        let tool_catalog: String = available_tools
+            .iter()
+            .map(|t| format!("- {}: {}", t.name, t.description))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let prompt = if tool_catalog.is_empty() {
+            format!("{GOAL_PLANNER_PROMPT}\n\nGoal: {goal}")
+        } else {
+            format!("{GOAL_PLANNER_PROMPT}\n\nAvailable tools:\n{tool_catalog}\n\nGoal: {goal}")
+        };
+
+        let result = self.provider.complete(&prompt).await?;
+        parse_planner_response(&result.output_text)
+    }
 }
 
 /// Extract JSON from an LLM response that may be wrapped in markdown fences.
@@ -235,6 +287,7 @@ This should work well."#;
                     depends_on: vec![],
                     file_scopes: vec!["src/a.rs".to_string()],
                     sandbox_level: "worktree".to_string(),
+                    tool_hints: vec![],
                 },
                 PlannedNode {
                     id: "n2".to_string(),
@@ -243,6 +296,7 @@ This should work well."#;
                     depends_on: vec!["n1".to_string()],
                     file_scopes: vec![],
                     sandbox_level: "worktree".to_string(),
+                    tool_hints: vec![],
                 },
             ],
         };
@@ -266,6 +320,7 @@ This should work well."#;
                     depends_on: vec![],
                     file_scopes: vec![],
                     sandbox_level: "worktree".to_string(),
+                    tool_hints: vec![],
                 },
                 PlannedNode {
                     id: "b".to_string(),
@@ -274,6 +329,7 @@ This should work well."#;
                     depends_on: vec![],
                     file_scopes: vec![],
                     sandbox_level: "worktree".to_string(),
+                    tool_hints: vec![],
                 },
             ],
         };
@@ -290,6 +346,137 @@ This should work well."#;
         assert_eq!(node.sandbox_level, "worktree");
         assert!(node.depends_on.is_empty());
         assert!(node.file_scopes.is_empty());
+        assert!(node.tool_hints.is_empty());
+    }
+
+    #[test]
+    fn tool_hints_deserialized_when_present() {
+        let json = r#"{"id":"n1","name":"X","task":"Y","tool_hints":["shell","web_fetch"]}"#;
+        let node: PlannedNode = serde_json::from_str(json).expect("parse");
+        assert_eq!(node.tool_hints, vec!["shell", "web_fetch"]);
+    }
+
+    #[test]
+    fn tool_hints_default_empty_when_missing() {
+        let response = r#"{"title":"T","nodes":[{"id":"n1","name":"X","task":"Y"}]}"#;
+        let plan = parse_planner_response(response).expect("parse");
+        assert!(plan.nodes[0].tool_hints.is_empty());
+    }
+
+    #[test]
+    fn tool_hints_in_workflow_json_metadata() {
+        let plan = PlannedWorkflow {
+            title: "T".to_string(),
+            nodes: vec![PlannedNode {
+                id: "n1".to_string(),
+                name: "Worker".to_string(),
+                task: "Do work".to_string(),
+                depends_on: vec![],
+                file_scopes: vec![],
+                sandbox_level: "worktree".to_string(),
+                tool_hints: vec!["shell".to_string(), "read_file".to_string()],
+            }],
+        };
+        let (nodes, _) = plan.to_workflow_json();
+        let hints = &nodes[0]["data"]["metadata"]["tool_hints"];
+        assert_eq!(hints, &serde_json::json!(["shell", "read_file"]));
+    }
+
+    #[tokio::test]
+    async fn goal_planner_calls_provider_and_parses() {
+        use agentzero_core::ChatResult;
+        use async_trait::async_trait;
+
+        struct MockProvider;
+
+        #[async_trait]
+        impl Provider for MockProvider {
+            async fn complete(&self, _prompt: &str) -> anyhow::Result<ChatResult> {
+                Ok(ChatResult {
+                    output_text: r#"{
+                        "title": "Summarize Video",
+                        "nodes": [
+                            {"id":"n1","name":"Downloader","task":"Download the video","tool_hints":["shell","web_fetch"]},
+                            {"id":"n2","name":"Summarizer","task":"Summarize the transcript","depends_on":["n1"],"tool_hints":[]}
+                        ]
+                    }"#
+                    .to_string(),
+                    tool_calls: vec![],
+                    stop_reason: None,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                })
+            }
+        }
+
+        let planner = GoalPlanner::new(Box::new(MockProvider));
+        let plan = planner
+            .plan("summarize this video", &[])
+            .await
+            .expect("plan");
+        assert_eq!(plan.title, "Summarize Video");
+        assert_eq!(plan.nodes.len(), 2);
+        assert_eq!(plan.nodes[0].tool_hints, vec!["shell", "web_fetch"]);
+        assert!(plan.nodes[1].tool_hints.is_empty());
+        assert_eq!(plan.nodes[1].depends_on, vec!["n1"]);
+    }
+
+    #[tokio::test]
+    async fn goal_planner_includes_tool_catalog_in_prompt() {
+        use agentzero_core::ChatResult;
+        use async_trait::async_trait;
+        use std::sync::{Arc, Mutex};
+
+        struct CapturingProvider {
+            captured: Arc<Mutex<String>>,
+        }
+
+        #[async_trait]
+        impl Provider for CapturingProvider {
+            async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult> {
+                *self.captured.lock().expect("lock poisoned") = prompt.to_string();
+                Ok(ChatResult {
+                    output_text: r#"{"title":"T","nodes":[]}"#.to_string(),
+                    tool_calls: vec![],
+                    stop_reason: None,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                })
+            }
+        }
+
+        let captured = Arc::new(Mutex::new(String::new()));
+        let provider = CapturingProvider {
+            captured: Arc::clone(&captured),
+        };
+        let planner = GoalPlanner::new(Box::new(provider));
+
+        let tools = vec![
+            ToolSummary {
+                name: "shell".to_string(),
+                description: "Execute a shell command".to_string(),
+            },
+            ToolSummary {
+                name: "web_fetch".to_string(),
+                description: "Fetch a URL".to_string(),
+            },
+        ];
+
+        planner.plan("test goal", &tools).await.expect("plan");
+
+        let prompt = captured.lock().expect("lock poisoned").clone();
+        assert!(
+            prompt.contains("- shell: Execute a shell command"),
+            "prompt should include tool catalog"
+        );
+        assert!(
+            prompt.contains("- web_fetch: Fetch a URL"),
+            "prompt should include tool catalog"
+        );
+        assert!(
+            prompt.contains("Goal: test goal"),
+            "prompt should include the goal"
+        );
     }
 
     #[test]

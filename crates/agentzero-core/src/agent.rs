@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::common::privacy_helpers::{is_network_tool, resolve_boundary};
 use crate::loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 use crate::security::redaction::redact_text;
@@ -331,6 +333,16 @@ fn memory_to_messages(entries: &[MemoryEntry]) -> Vec<ConversationMessage> {
         .collect()
 }
 
+/// Trait for providing additional tools at runtime (mid-session).
+///
+/// Implemented by registries that allow agents to create new tools during
+/// execution. The agent queries this source on each tool loop iteration
+/// to discover newly registered tools.
+pub trait ToolSource: Send + Sync {
+    /// Return any additional tools that should be available to the agent.
+    fn additional_tools(&self) -> Vec<Box<dyn Tool>>;
+}
+
 pub struct Agent {
     config: AgentConfig,
     provider: Box<dyn Provider>,
@@ -341,6 +353,7 @@ pub struct Agent {
     metrics: Option<Box<dyn MetricsSink>>,
     loop_detection_config: Option<LoopDetectionConfig>,
     tool_selector: Option<Box<dyn ToolSelector>>,
+    extra_tool_source: Option<Arc<dyn ToolSource>>,
 }
 
 impl Agent {
@@ -360,6 +373,7 @@ impl Agent {
             metrics: None,
             loop_detection_config: None,
             tool_selector: None,
+            extra_tool_source: None,
         }
     }
 
@@ -389,17 +403,43 @@ impl Agent {
         self
     }
 
+    /// Attach a dynamic tool source for mid-session tool registration.
+    ///
+    /// The agent queries this source on each tool loop iteration to discover
+    /// newly registered tools (e.g. from [`DynamicToolRegistry`]).
+    pub fn with_tool_source(mut self, source: Arc<dyn ToolSource>) -> Self {
+        self.extra_tool_source = Some(source);
+        self
+    }
+
     /// Add a tool to this agent after construction.
     pub fn add_tool(&mut self, tool: Box<dyn Tool>) {
         self.tools.push(tool);
     }
 
-    /// Build tool definitions for all registered tools that have an input schema.
+    /// Build tool definitions for all registered tools that have an input schema,
+    /// including any dynamically registered tools from the extra tool source.
     fn build_tool_definitions(&self) -> Vec<ToolDefinition> {
-        self.tools
+        let mut defs: Vec<ToolDefinition> = self
+            .tools
             .iter()
             .filter_map(|tool| ToolDefinition::from_tool(&**tool))
-            .collect()
+            .collect();
+
+        // Merge in dynamically registered tools (mid-session additions).
+        if let Some(ref source) = self.extra_tool_source {
+            let extra = source.additional_tools();
+            for tool in &extra {
+                if let Some(def) = ToolDefinition::from_tool(&**tool) {
+                    // Avoid duplicates (a dynamic tool might shadow a static one).
+                    if !defs.iter().any(|d| d.name == def.name) {
+                        defs.push(def);
+                    }
+                }
+            }
+        }
+
+        defs
     }
 
     /// Check if any registered tools have schemas (can participate in structured tool use).

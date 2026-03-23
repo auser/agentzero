@@ -387,6 +387,8 @@ pub struct ToolSecurityPolicy {
     pub enable_claude_code: bool,
     /// Enable CLI harness tools (Codex, Gemini, OpenCode CLI delegation).
     pub enable_cli_harness: bool,
+    /// Enable dynamic tool creation at runtime (tool_create tool).
+    pub enable_dynamic_tools: bool,
 }
 
 impl ToolSecurityPolicy {
@@ -465,6 +467,7 @@ impl ToolSecurityPolicy {
             enable_canvas: false,
             enable_claude_code: false,
             enable_cli_harness: false,
+            enable_dynamic_tools: false,
         }
     }
 }

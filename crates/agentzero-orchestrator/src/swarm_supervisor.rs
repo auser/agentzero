@@ -242,6 +242,7 @@ mod tests {
                     depends_on: vec![],
                     file_scopes: vec!["src/research.rs".to_string()],
                     sandbox_level: "worktree".to_string(),
+                    tool_hints: vec![],
                 },
                 PlannedNode {
                     id: "n2".to_string(),
@@ -250,6 +251,7 @@ mod tests {
                     depends_on: vec!["n1".to_string()],
                     file_scopes: vec!["src/main.rs".to_string()],
                     sandbox_level: "worktree".to_string(),
+                    tool_hints: vec![],
                 },
             ],
         }
@@ -285,6 +287,7 @@ mod tests {
                     depends_on: vec![],
                     file_scopes: vec![],
                     sandbox_level: "worktree".to_string(),
+                    tool_hints: vec![],
                 },
                 PlannedNode {
                     id: "b".to_string(),
@@ -293,6 +296,7 @@ mod tests {
                     depends_on: vec![],
                     file_scopes: vec![],
                     sandbox_level: "worktree".to_string(),
+                    tool_hints: vec![],
                 },
                 PlannedNode {
                     id: "c".to_string(),
@@ -301,6 +305,7 @@ mod tests {
                     depends_on: vec!["a".to_string(), "b".to_string()],
                     file_scopes: vec![],
                     sandbox_level: "worktree".to_string(),
+                    tool_hints: vec![],
                 },
             ],
         };
@@ -366,6 +371,7 @@ mod tests {
                 depends_on: vec![],
                 file_scopes: vec![],
                 sandbox_level: "worktree".to_string(),
+                tool_hints: vec![],
             }],
         };
         let dispatcher: Arc<dyn StepDispatcher> = Arc::new(MockDispatcher);

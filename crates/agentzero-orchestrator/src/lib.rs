@@ -34,7 +34,9 @@ pub use event_bus::{
     BusEvent, EventBus, EventReceiver, FileBackedEventBus, InMemoryEventBus, PersistedEvent,
 };
 pub use fanout::{execute_fanout, FanOutResult, FanOutStep};
-pub use goal_planner::{parse_planner_response, PlannedNode, PlannedWorkflow, GOAL_PLANNER_PROMPT};
+pub use goal_planner::{
+    parse_planner_response, GoalPlanner, PlannedNode, PlannedWorkflow, GOAL_PLANNER_PROMPT,
+};
 pub use gossip::{GossipConfig, GossipEventBus};
 pub use job_store::{EventKind, EventLog, JobRecord, JobStore, RunEvent};
 pub use lanes::{LaneConfig, LaneManager, LaneReceivers, WorkItem, WorkResult};

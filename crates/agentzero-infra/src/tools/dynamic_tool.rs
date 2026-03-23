@@ -1,0 +1,642 @@
+//! Dynamic tools — runtime-created tools that persist across sessions.
+//!
+//! A [`DynamicTool`] wraps an execution strategy (LLM, shell, HTTP, or
+//! composite) and implements the [`Tool`] trait. Tools are stored in
+//! `.agentzero/dynamic-tools.json` (encrypted) via [`DynamicToolRegistry`]
+//! and loaded automatically on startup.
+
+use agentzero_core::{Tool, ToolContext, ToolResult, ToolSource};
+use agentzero_storage::EncryptedJsonStore;
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+/// Persistent definition of a dynamic tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DynamicToolDef {
+    /// Unique tool identifier (e.g. `"whisper_transcribe"`).
+    pub name: String,
+    /// Human-readable description for LLM tool selection.
+    pub description: String,
+    /// How this tool executes.
+    pub strategy: DynamicToolStrategy,
+    /// Optional JSON Schema for structured input.
+    #[serde(default)]
+    pub input_schema: Option<serde_json::Value>,
+    /// Unix timestamp when this tool was created.
+    pub created_at: u64,
+}
+
+/// Execution strategy for a dynamic tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DynamicToolStrategy {
+    /// Delegate to an LLM with a specialized system prompt.
+    Llm { system_prompt: String },
+    /// Execute a shell command template. `{{input}}` is replaced with the
+    /// tool input at execution time.
+    Shell { command_template: String },
+    /// Call an HTTP endpoint.
+    Http {
+        url: String,
+        method: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+    /// Chain existing tools sequentially: each step's output becomes the
+    /// next step's input.
+    Composite { steps: Vec<CompositeStep> },
+}
+
+/// A step in a composite tool chain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompositeStep {
+    /// Tool name to invoke.
+    pub tool_name: String,
+    /// Optional input override (if absent, uses previous step's output).
+    #[serde(default)]
+    pub input_override: Option<String>,
+}
+
+// ── DynamicTool (Tool trait impl) ────────────────────────────────────────────
+
+/// A runtime-created tool wrapping a [`DynamicToolStrategy`].
+pub struct DynamicTool {
+    /// Leaked for `&'static str` lifetime requirement on `Tool::name()`.
+    name: &'static str,
+    /// Leaked for `&'static str` lifetime requirement on `Tool::description()`.
+    description: &'static str,
+    /// The execution strategy.
+    strategy: DynamicToolStrategy,
+    /// Optional JSON Schema.
+    schema: Option<serde_json::Value>,
+}
+
+impl DynamicTool {
+    /// Create a `DynamicTool` from a persistent definition.
+    ///
+    /// Uses `Box::leak` for name/description to satisfy the `Tool` trait's
+    /// `&'static str` lifetime requirement (same pattern as MCP tools).
+    pub fn from_def(def: &DynamicToolDef) -> Self {
+        Self {
+            name: Box::leak(def.name.clone().into_boxed_str()),
+            description: Box::leak(def.description.clone().into_boxed_str()),
+            strategy: def.strategy.clone(),
+            schema: def.input_schema.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for DynamicTool {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn description(&self) -> &'static str {
+        self.description
+    }
+
+    fn input_schema(&self) -> Option<serde_json::Value> {
+        self.schema.clone()
+    }
+
+    async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+        match &self.strategy {
+            DynamicToolStrategy::Shell { command_template } => {
+                let cmd = command_template.replace("{{input}}", input);
+                let output = tokio::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&cmd)
+                    .output()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("shell execution failed: {e}"))?;
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+
+                if output.status.success() {
+                    Ok(ToolResult {
+                        output: stdout.to_string(),
+                    })
+                } else {
+                    Err(anyhow::anyhow!(
+                        "command exited with {}: {}",
+                        output.status,
+                        stderr
+                    ))
+                }
+            }
+
+            DynamicToolStrategy::Http {
+                url,
+                method,
+                headers,
+            } => {
+                let client = reqwest::Client::new();
+                let mut req = match method.to_uppercase().as_str() {
+                    "POST" => client.post(url),
+                    "PUT" => client.put(url),
+                    "DELETE" => client.delete(url),
+                    "PATCH" => client.patch(url),
+                    _ => client.get(url),
+                };
+                for (k, v) in headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+                req = req.body(input.to_string());
+
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("HTTP request failed: {e}"))?;
+                let text = resp
+                    .text()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("failed to read HTTP response: {e}"))?;
+                Ok(ToolResult { output: text })
+            }
+
+            DynamicToolStrategy::Llm { system_prompt } => {
+                // LLM strategy returns the system prompt + input as guidance.
+                // Actual LLM execution is handled by the agent loop — the tool
+                // output instructs the agent what to do with the input.
+                Ok(ToolResult {
+                    output: format!(
+                        "[Dynamic LLM tool — system prompt below]\n\n{system_prompt}\n\n[Input]\n{input}"
+                    ),
+                })
+            }
+
+            DynamicToolStrategy::Composite { steps } => {
+                let mut current_input = input.to_string();
+                for step in steps {
+                    let step_input = step.input_override.as_deref().unwrap_or(&current_input);
+                    // Composite tools describe the pipeline; actual tool
+                    // invocation is up to the agent. Return the plan.
+                    current_input =
+                        format!("[Step: {} with input: {}]", step.tool_name, step_input);
+                }
+                Ok(ToolResult {
+                    output: current_input,
+                })
+            }
+        }
+    }
+}
+
+// ── DynamicToolRegistry ──────────────────────────────────────────────────────
+
+/// Persistent store for dynamic tool definitions.
+const DYNAMIC_TOOLS_FILE: &str = "dynamic-tools.json";
+
+/// Wrapper type for serde — `EncryptedJsonStore` needs a single top-level type.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct DynamicToolsData {
+    tools: Vec<DynamicToolDef>,
+}
+
+/// Registry for runtime-created tools. Persists definitions to encrypted JSON
+/// and implements [`ToolSource`] so the agent can pick up new tools mid-session.
+pub struct DynamicToolRegistry {
+    defs: Arc<RwLock<Vec<DynamicToolDef>>>,
+    store: EncryptedJsonStore,
+}
+
+impl DynamicToolRegistry {
+    /// Open or create the registry in the given data directory.
+    pub fn open(data_dir: &Path) -> anyhow::Result<Self> {
+        let store = EncryptedJsonStore::in_config_dir(data_dir, DYNAMIC_TOOLS_FILE)?;
+        let data: DynamicToolsData = store.load_or_default()?;
+        Ok(Self {
+            defs: Arc::new(RwLock::new(data.tools)),
+            store,
+        })
+    }
+
+    /// Register a new dynamic tool definition. Persists to disk and returns
+    /// the tool ready for use.
+    pub async fn register(&self, def: DynamicToolDef) -> anyhow::Result<Box<dyn Tool>> {
+        let tool = DynamicTool::from_def(&def);
+
+        let mut defs = self.defs.write().await;
+        // Replace if tool with same name already exists.
+        defs.retain(|d| d.name != def.name);
+        defs.push(def);
+        self.persist(&defs)?;
+        drop(defs);
+
+        Ok(Box::new(tool))
+    }
+
+    /// Load all persisted tools as `Box<dyn Tool>`.
+    pub async fn load_all(&self) -> Vec<Box<dyn Tool>> {
+        let defs = self.defs.read().await;
+        defs.iter()
+            .map(|d| Box::new(DynamicTool::from_def(d)) as Box<dyn Tool>)
+            .collect()
+    }
+
+    /// List all registered tool definitions.
+    pub async fn list(&self) -> Vec<DynamicToolDef> {
+        self.defs.read().await.clone()
+    }
+
+    /// Remove a dynamic tool by name. Returns `true` if found.
+    pub async fn remove(&self, name: &str) -> anyhow::Result<bool> {
+        let mut defs = self.defs.write().await;
+        let len_before = defs.len();
+        defs.retain(|d| d.name != name);
+        let removed = defs.len() < len_before;
+        if removed {
+            self.persist(&defs)?;
+        }
+        Ok(removed)
+    }
+
+    /// Export a single tool definition as shareable JSON.
+    pub async fn export_tool(&self, name: &str) -> anyhow::Result<Option<String>> {
+        let defs = self.defs.read().await;
+        let def = defs.iter().find(|d| d.name == name);
+        match def {
+            Some(d) => {
+                let json = serde_json::to_string_pretty(d)
+                    .map_err(|e| anyhow::anyhow!("failed to serialize tool: {e}"))?;
+                Ok(Some(json))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Export all tool definitions as a shareable JSON array.
+    pub async fn export_all(&self) -> anyhow::Result<String> {
+        let defs = self.defs.read().await;
+        serde_json::to_string_pretty(&*defs)
+            .map_err(|e| anyhow::anyhow!("failed to serialize tools: {e}"))
+    }
+
+    /// Import tool definitions from a JSON string (single def or array).
+    pub async fn import_tools(&self, json: &str) -> anyhow::Result<Vec<String>> {
+        // Try array first, then single object.
+        let imported: Vec<DynamicToolDef> =
+            if let Ok(arr) = serde_json::from_str::<Vec<DynamicToolDef>>(json) {
+                arr
+            } else {
+                let single: DynamicToolDef = serde_json::from_str(json)
+                    .map_err(|e| anyhow::anyhow!("failed to parse tool definition: {e}"))?;
+                vec![single]
+            };
+
+        let mut names = Vec::new();
+        for def in imported {
+            names.push(def.name.clone());
+            self.register(def).await?;
+        }
+        Ok(names)
+    }
+
+    fn persist(&self, defs: &[DynamicToolDef]) -> anyhow::Result<()> {
+        let data = DynamicToolsData {
+            tools: defs.to_vec(),
+        };
+        self.store.save(&data)
+    }
+}
+
+// ── ToolSource impl ──────────────────────────────────────────────────────────
+
+/// Blocking impl — reads the current defs and creates tool instances.
+impl ToolSource for DynamicToolRegistry {
+    fn additional_tools(&self) -> Vec<Box<dyn Tool>> {
+        // Use `try_read` to avoid blocking the async runtime.
+        match self.defs.try_read() {
+            Ok(defs) => defs
+                .iter()
+                .map(|d| Box::new(DynamicTool::from_def(d)) as Box<dyn Tool>)
+                .collect(),
+            Err(_) => vec![], // Lock contention — return empty (transient).
+        }
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_secs()
+    }
+
+    fn test_data_dir() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "agentzero-dynamic-tools-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn shell_def(name: &str, cmd: &str) -> DynamicToolDef {
+        DynamicToolDef {
+            name: name.to_string(),
+            description: format!("Test tool: {name}"),
+            strategy: DynamicToolStrategy::Shell {
+                command_template: cmd.to_string(),
+            },
+            input_schema: None,
+            created_at: now_secs(),
+        }
+    }
+
+    #[test]
+    fn dynamic_tool_def_serde_roundtrip() {
+        let def = shell_def("echo_tool", "echo {{input}}");
+        let json = serde_json::to_string(&def).expect("serialize");
+        let parsed: DynamicToolDef = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.name, "echo_tool");
+        if let DynamicToolStrategy::Shell { command_template } = &parsed.strategy {
+            assert_eq!(command_template, "echo {{input}}");
+        } else {
+            panic!("expected Shell strategy");
+        }
+    }
+
+    #[test]
+    fn dynamic_tool_def_serde_all_strategies() {
+        let llm = DynamicToolDef {
+            name: "llm_tool".to_string(),
+            description: "LLM tool".to_string(),
+            strategy: DynamicToolStrategy::Llm {
+                system_prompt: "You are a helpful assistant".to_string(),
+            },
+            input_schema: None,
+            created_at: now_secs(),
+        };
+        let json = serde_json::to_string(&llm).expect("serialize");
+        assert!(json.contains(r#""type":"llm""#));
+
+        let http = DynamicToolDef {
+            name: "http_tool".to_string(),
+            description: "HTTP tool".to_string(),
+            strategy: DynamicToolStrategy::Http {
+                url: "https://api.example.com".to_string(),
+                method: "POST".to_string(),
+                headers: HashMap::from([("Authorization".to_string(), "Bearer xxx".to_string())]),
+            },
+            input_schema: None,
+            created_at: now_secs(),
+        };
+        let json = serde_json::to_string(&http).expect("serialize");
+        assert!(json.contains(r#""type":"http""#));
+
+        let composite = DynamicToolDef {
+            name: "pipe_tool".to_string(),
+            description: "Pipeline tool".to_string(),
+            strategy: DynamicToolStrategy::Composite {
+                steps: vec![
+                    CompositeStep {
+                        tool_name: "shell".to_string(),
+                        input_override: None,
+                    },
+                    CompositeStep {
+                        tool_name: "read_file".to_string(),
+                        input_override: Some("output.txt".to_string()),
+                    },
+                ],
+            },
+            input_schema: None,
+            created_at: now_secs(),
+        };
+        let json = serde_json::to_string(&composite).expect("serialize");
+        assert!(json.contains(r#""type":"composite""#));
+    }
+
+    #[test]
+    fn dynamic_tool_from_def_has_correct_metadata() {
+        let def = shell_def("my_tool", "ls");
+        let tool = DynamicTool::from_def(&def);
+        assert_eq!(tool.name(), "my_tool");
+        assert_eq!(tool.description(), "Test tool: my_tool");
+        assert!(tool.input_schema().is_none());
+    }
+
+    #[tokio::test]
+    async fn shell_tool_executes_command() {
+        let def = shell_def("echo_test", "echo hello-world");
+        let tool = DynamicTool::from_def(&def);
+        let ctx = ToolContext::new("/tmp".to_string());
+        let result = tool.execute("", &ctx).await.expect("execute");
+        assert_eq!(result.output.trim(), "hello-world");
+    }
+
+    #[tokio::test]
+    async fn shell_tool_substitutes_input() {
+        let def = shell_def("echo_input", "echo {{input}}");
+        let tool = DynamicTool::from_def(&def);
+        let ctx = ToolContext::new("/tmp".to_string());
+        let result = tool.execute("greetings", &ctx).await.expect("execute");
+        assert_eq!(result.output.trim(), "greetings");
+    }
+
+    #[tokio::test]
+    async fn shell_tool_returns_error_on_failure() {
+        let def = shell_def("fail_tool", "exit 1");
+        let tool = DynamicTool::from_def(&def);
+        let ctx = ToolContext::new("/tmp".to_string());
+        let err = tool.execute("", &ctx).await;
+        assert!(err.is_err(), "should fail on non-zero exit");
+    }
+
+    #[tokio::test]
+    async fn llm_tool_returns_prompt_and_input() {
+        let def = DynamicToolDef {
+            name: "llm_test".to_string(),
+            description: "LLM test".to_string(),
+            strategy: DynamicToolStrategy::Llm {
+                system_prompt: "Summarize this.".to_string(),
+            },
+            input_schema: None,
+            created_at: now_secs(),
+        };
+        let tool = DynamicTool::from_def(&def);
+        let ctx = ToolContext::new("/tmp".to_string());
+        let result = tool.execute("some text", &ctx).await.expect("execute");
+        assert!(result.output.contains("Summarize this."));
+        assert!(result.output.contains("some text"));
+    }
+
+    #[tokio::test]
+    async fn registry_register_and_load() {
+        let dir = test_data_dir();
+        let registry = DynamicToolRegistry::open(&dir).expect("open");
+
+        let def = shell_def("test_echo", "echo hi");
+        let tool = registry.register(def).await.expect("register");
+        assert_eq!(tool.name(), "test_echo");
+
+        let all = registry.load_all().await;
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name(), "test_echo");
+    }
+
+    #[tokio::test]
+    async fn registry_persists_across_reopen() {
+        let dir = test_data_dir();
+
+        // First session: register a tool.
+        {
+            let registry = DynamicToolRegistry::open(&dir).expect("open");
+            let def = shell_def("persistent_tool", "echo persist");
+            registry.register(def).await.expect("register");
+        }
+
+        // Second session: tool should still be there.
+        {
+            let registry = DynamicToolRegistry::open(&dir).expect("reopen");
+            let all = registry.load_all().await;
+            assert_eq!(all.len(), 1);
+            assert_eq!(all[0].name(), "persistent_tool");
+        }
+    }
+
+    #[tokio::test]
+    async fn registry_remove_tool() {
+        let dir = test_data_dir();
+        let registry = DynamicToolRegistry::open(&dir).expect("open");
+
+        registry
+            .register(shell_def("to_remove", "echo x"))
+            .await
+            .expect("register");
+
+        let removed = registry.remove("to_remove").await.expect("remove");
+        assert!(removed);
+
+        let all = registry.load_all().await;
+        assert!(all.is_empty());
+
+        // Removing again returns false.
+        let removed_again = registry.remove("to_remove").await.expect("remove");
+        assert!(!removed_again);
+    }
+
+    #[tokio::test]
+    async fn registry_replace_existing_tool() {
+        let dir = test_data_dir();
+        let registry = DynamicToolRegistry::open(&dir).expect("open");
+
+        registry
+            .register(shell_def("replaceable", "echo v1"))
+            .await
+            .expect("register v1");
+
+        registry
+            .register(shell_def("replaceable", "echo v2"))
+            .await
+            .expect("register v2");
+
+        let all = registry.list().await;
+        assert_eq!(all.len(), 1, "should replace, not duplicate");
+        if let DynamicToolStrategy::Shell { command_template } = &all[0].strategy {
+            assert_eq!(command_template, "echo v2");
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_source_returns_additional_tools() {
+        let dir = test_data_dir();
+        let registry = DynamicToolRegistry::open(&dir).expect("open");
+
+        registry
+            .register(shell_def("src_tool", "echo source"))
+            .await
+            .expect("register");
+
+        let tools = registry.additional_tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "src_tool");
+    }
+
+    #[tokio::test]
+    async fn export_single_tool() {
+        let dir = test_data_dir();
+        let registry = DynamicToolRegistry::open(&dir).expect("open");
+        registry
+            .register(shell_def("exportable", "echo export"))
+            .await
+            .expect("register");
+
+        let json = registry
+            .export_tool("exportable")
+            .await
+            .expect("export")
+            .expect("should find tool");
+
+        assert!(json.contains("exportable"));
+        assert!(json.contains("echo export"));
+
+        // Should parse back cleanly.
+        let _: DynamicToolDef = serde_json::from_str(&json).expect("parse exported JSON");
+    }
+
+    #[tokio::test]
+    async fn export_all_tools() {
+        let dir = test_data_dir();
+        let registry = DynamicToolRegistry::open(&dir).expect("open");
+        registry
+            .register(shell_def("tool_a", "echo a"))
+            .await
+            .expect("register a");
+        registry
+            .register(shell_def("tool_b", "echo b"))
+            .await
+            .expect("register b");
+
+        let json = registry.export_all().await.expect("export all");
+        let parsed: Vec<DynamicToolDef> = serde_json::from_str(&json).expect("parse");
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn import_single_tool() {
+        let dir = test_data_dir();
+        let registry = DynamicToolRegistry::open(&dir).expect("open");
+
+        let json = serde_json::to_string(&shell_def("imported", "echo hi")).expect("serialize");
+        let names = registry.import_tools(&json).await.expect("import");
+        assert_eq!(names, vec!["imported"]);
+
+        let all = registry.load_all().await;
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name(), "imported");
+    }
+
+    #[tokio::test]
+    async fn import_array_of_tools() {
+        let dir = test_data_dir();
+        let registry = DynamicToolRegistry::open(&dir).expect("open");
+
+        let defs = vec![shell_def("imp_a", "echo a"), shell_def("imp_b", "echo b")];
+        let json = serde_json::to_string(&defs).expect("serialize");
+        let names = registry.import_tools(&json).await.expect("import");
+        assert_eq!(names, vec!["imp_a", "imp_b"]);
+
+        let all = registry.load_all().await;
+        assert_eq!(all.len(), 2);
+    }
+}

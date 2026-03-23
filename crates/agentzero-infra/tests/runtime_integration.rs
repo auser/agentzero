@@ -52,6 +52,7 @@ fn static_execution(response: &str) -> RuntimeExecution {
         tool_selector: None,
         source_channel: None,
         sender_id: None,
+        dynamic_registry: None,
     }
 }
 
@@ -77,6 +78,7 @@ fn streaming_execution(response: &str) -> RuntimeExecution {
         tool_selector: None,
         source_channel: None,
         sender_id: None,
+        dynamic_registry: None,
     }
 }
 
@@ -179,6 +181,7 @@ async fn run_agent_once_records_audit_events() {
         tool_selector: None,
         source_channel: None,
         sender_id: None,
+        dynamic_registry: None,
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "test".to_string())
@@ -212,6 +215,7 @@ async fn run_agent_once_provider_error_propagates() {
         tool_selector: None,
         source_channel: None,
         sender_id: None,
+        dynamic_registry: None,
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hello".to_string())
@@ -418,6 +422,7 @@ async fn full_loop_agent_with_tool_call_round_trip() {
         tool_selector: None,
         source_channel: None,
         sender_id: None,
+        dynamic_registry: None,
     };
 
     let output = run_agent_with_runtime(

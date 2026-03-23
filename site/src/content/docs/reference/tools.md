@@ -3,7 +3,7 @@ title: Tools & Plugins
 description: Built-in tools, security policy, WASM plugin system, and skills.
 ---
 
-AgentZero ships with 50+ built-in tools and supports extension via WASM plugins, process plugins, MCP servers, and skills. Every tool enforces **fail-closed security** — capabilities are denied unless explicitly enabled. All tools implement `input_schema()` for structured tool-use APIs (Anthropic `tool_use`, OpenAI function calling).
+AgentZero ships with 50+ built-in tools and supports extension via WASM plugins, process plugins, MCP servers, skills, and **dynamic tools** (runtime-created tools that persist across sessions). Every tool enforces **fail-closed security** — capabilities are denied unless explicitly enabled. All tools implement `input_schema()` for structured tool-use APIs (Anthropic `tool_use`, OpenAI function calling).
 
 ## Tool Tiers
 
@@ -82,7 +82,8 @@ The default build includes the **Extended** tier. To include all tools, enable t
 | `schedule` | Schedule one-time tasks | `[cron]` |
 | `composio` | Composio integration | `enable_composio` |
 | `pushover` | Pushover notifications | `enable_pushover` |
-| `agent_manage` | Create, list, update, or delete persistent named agents | `enable_agent_manage` |
+| `agent_manage` | Create, list, update, or delete persistent named agents. Supports `create_from_description` for NL agent definitions. | `enable_agent_manage` |
+| `tool_create` | Create, list, delete, export, or import dynamic tools at runtime. Supports shell, HTTP, LLM, and composite strategies. | `enable_dynamic_tools` |
 | `proposal_create` | Create autopilot proposals for agent-driven work | `[autopilot]` |
 | `proposal_vote` | Approve or reject autopilot proposals | `[autopilot]` |
 | `mission_status` | Query autopilot mission status | `[autopilot]` |
@@ -572,6 +573,64 @@ module_hash_policy = "warn"  # warn or enforce
 - SHA-256 integrity: verified on every install and load
 
 For the full ABI specification, host callbacks, and manifest schema, see the [Plugin API Reference](/agentzero/reference/plugin-api/).
+
+---
+
+## Dynamic Tools
+
+Dynamic tools are created at runtime by agents and **persist across sessions**. Over time, the system accumulates a library of tools it invented — each encrypted at rest in `.agentzero/dynamic-tools.json`.
+
+### How It Works
+
+An agent can create a new tool mid-session using the `tool_create` tool:
+
+```
+Agent: "I need a tool that transcribes audio files using Whisper"
+→ tool_create creates a shell-strategy dynamic tool: whisper_transcribe
+→ Command template: whisper {{input}} --output_format txt
+→ Available immediately and in all future sessions
+```
+
+### Execution Strategies
+
+| Strategy | Description | Example |
+|---|---|---|
+| **Shell** | Execute a shell command with `{{input}}` substitution | `whisper {{input}} --output_format txt` |
+| **HTTP** | Call an HTTP endpoint | `POST https://api.example.com/v1/analyze` |
+| **LLM** | Delegate to an LLM with a specialized system prompt | Code reviewer, summarizer |
+| **Composite** | Chain existing tools sequentially | Download → Transcribe → Summarize |
+
+### Sharing Tools
+
+Dynamic tools can be exported and shared between AgentZero instances:
+
+```
+Agent: "Export the whisper_transcribe tool"
+→ Returns JSON definition that can be imported on another machine
+
+Agent: "Import this tool definition: { ... }"
+→ Registers the tool immediately
+```
+
+### Configuration
+
+Enable dynamic tool creation in `agentzero.toml`:
+
+```toml
+[agent]
+enable_dynamic_tools = true
+```
+
+### Security
+
+- Only **root agents** (depth=0) can create tools — sub-agents cannot
+- Shell-strategy tools are validated against the `ShellPolicy`
+- HTTP-strategy tools are validated against the `UrlAccessPolicy`
+- All definitions are encrypted at rest via `EncryptedJsonStore`
+
+### Persistence
+
+Dynamic tools survive restarts. The system loads all persisted tools from `.agentzero/dynamic-tools.json` at startup and makes them available alongside built-in tools.
 
 ---
 

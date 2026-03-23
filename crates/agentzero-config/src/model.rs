@@ -589,6 +589,9 @@ pub struct AgentSettings {
     /// Enable CLI harness tools (Codex, Gemini, OpenCode CLI delegation).
     #[serde(default)]
     pub enable_cli_harness: bool,
+    /// Enable dynamic tool creation at runtime (tool_create tool).
+    #[serde(default)]
+    pub enable_dynamic_tools: Option<bool>,
 }
 
 fn default_tool_timeout_ms() -> u64 {
@@ -622,6 +625,7 @@ impl Default for AgentSettings {
             enable_self_config: false,
             enable_claude_code: false,
             enable_cli_harness: false,
+            enable_dynamic_tools: None,
         }
     }
 }

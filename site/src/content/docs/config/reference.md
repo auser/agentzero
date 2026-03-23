@@ -50,6 +50,11 @@ loop_detection_failure_streak = 3
 # Enable the agent_manage tool (create/list/update/delete persistent agents)
 enable_agent_manage = false
 
+# Enable dynamic tool creation at runtime (tool_create tool).
+# When enabled, agents can create new tools mid-session that persist across restarts.
+# Created tools are stored encrypted in .agentzero/dynamic-tools.json.
+enable_dynamic_tools = false
+
 [agent.hooks]
 enabled = false
 timeout_ms = 250

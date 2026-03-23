@@ -137,6 +137,25 @@ description: AgentZero development roadmap — completed milestones and future d
 - **Tool call timeline** — Color-coded sequential timeline in run detail panel
 - **Regression detection** — `FileModificationTracker` detects when agents modify the same file in a delegation tree; warnings surface via event bus and dashboard banner
 
+### Autonomous Agent Swarms (Sprint 72)
+
+- **Parallel execution** — Ready-queue executor with `tokio::JoinSet` replaces level-based batching
+- **Sandboxed isolation** — `WorktreeSandbox` (git worktree per agent), `ContainerSandbox` (Docker), `MicroVmSandbox` (Firecracker)
+- **Cross-agent awareness** — `SwarmContext` injects sibling task descriptions and file scopes
+- **Dead agent recovery** — `RecoveryMonitor` with heartbeat timeout and automatic re-dispatch
+- **Goal decomposition** — `GoalPlanner` types and `SwarmSupervisor` for orchestrating planned workflows
+- **CLI + Gateway** — `agentzero swarm "goal"` and `POST /v1/swarm`
+
+### Self-Evolving Agent System (Sprint 73)
+
+- **NL goal decomposition** — `GoalPlanner::plan()` calls LLM with tool catalog, produces multi-agent DAGs with per-node `tool_hints`
+- **Dynamic tools** — Runtime-created tools (shell, HTTP, LLM, composite strategies) that persist encrypted across sessions. Export/import for sharing.
+- **`tool_create` tool** — LLM-callable tool for creating dynamic tools mid-session from natural language descriptions
+- **NL agent definitions** — `create_from_description` action derives name, system prompt, keywords, and allowed tools from plain English
+- **Tool catalog learning** — `RecipeStore` records successful tool combos, boosts them on matching future goals via `HintedToolSelector`
+- **`ToolSource` trait** — Mid-session tool discovery so newly created tools are visible without restart
+- **Persistence** — `.agentzero/dynamic-tools.json`, `.agentzero/agents.json`, `.agentzero/tool-recipes.json` (all encrypted at rest)
+
 ## Planned
 
 ### Registry Repo, Audio Streaming & Image Generation (Sprint 31)

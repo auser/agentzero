@@ -12,7 +12,7 @@ use agentzero_core::routing::{
 };
 use agentzero_core::{
     Agent, AgentConfig, AuditEvent, AuditSink, HookEvent, HookFailureMode, HookSink, MemoryStore,
-    Provider, RuntimeMetrics, Tool, ToolContext, UserMessage,
+    Provider, RuntimeMetrics, Tool, ToolContext, ToolSource, UserMessage,
 };
 use agentzero_providers::{find_models_for_provider, find_provider, model_capabilities};
 use agentzero_storage::memory::SqliteMemoryStore;
@@ -80,6 +80,8 @@ pub struct RuntimeExecution {
     pub source_channel: Option<String>,
     /// Sender identity for per-sender rate limiting.
     pub sender_id: Option<String>,
+    /// Optional dynamic tool registry for mid-session tool creation.
+    pub dynamic_registry: Option<std::sync::Arc<crate::tools::dynamic_tool::DynamicToolRegistry>>,
 }
 
 struct AuditHookSink {
@@ -158,6 +160,9 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             agentzero_providers::compute_cost_microdollars(&pricing, input_tokens, output_tokens)
         }) as std::sync::Arc<dyn Fn(u64, u64) -> u64 + Send + Sync>
     });
+
+    // Clone the key before it's moved into the primary provider.
+    let key_for_dynamic_tools = key.clone();
 
     let primary_provider: Box<dyn agentzero_core::Provider> =
         if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
@@ -241,6 +246,45 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         default_tools_with_store(&tool_policy, router, delegate_agents, req.agent_store)?;
     // Append any extra tools (e.g. FFI-registered tools).
     tools.extend(req.extra_tools);
+
+    // Load persisted dynamic tools and register the tool_create tool.
+    let dynamic_registry = if tool_policy.enable_dynamic_tools {
+        let data_dir = req.workspace_root.join(".agentzero");
+        match crate::tools::dynamic_tool::DynamicToolRegistry::open(&data_dir) {
+            Ok(registry) => {
+                let registry = std::sync::Arc::new(registry);
+                // Load all previously created dynamic tools.
+                let dynamic_tools = registry.additional_tools();
+                let count = dynamic_tools.len();
+                tools.extend(dynamic_tools);
+                if count > 0 {
+                    tracing::info!(count, "loaded persisted dynamic tools");
+                }
+                // Register the tool_create tool so agents can create new ones.
+                // Reuse the already-constructed primary provider via a clone-friendly wrapper.
+                let provider_for_create: std::sync::Arc<dyn agentzero_core::Provider> =
+                    std::sync::Arc::from(agentzero_providers::build_provider_with_transport(
+                        &config.provider.kind,
+                        config.provider.base_url.clone(),
+                        key_for_dynamic_tools.clone(),
+                        config.provider.model.clone(),
+                        transport_config.clone(),
+                    ));
+                tools.push(Box::new(crate::tools::tool_create::ToolCreateTool::new(
+                    std::sync::Arc::clone(&registry),
+                    provider_for_create,
+                )));
+                Some(registry)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to open dynamic tool registry");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let audit_policy = load_audit_policy(&req.workspace_root, &req.config_path)?;
     let audit_path = audit_policy.path.clone();
 
@@ -370,7 +414,74 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         },
         source_channel: None,
         sender_id: None,
+        dynamic_registry,
     })
+}
+
+/// Build just a [`Provider`] from config, without tools/memory/audit.
+///
+/// Useful for lightweight LLM callers like the [`GoalPlanner`] that need a
+/// provider but don't need the full agent runtime.
+pub async fn build_provider_from_config(
+    config_path: &std::path::Path,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+    profile_override: Option<&str>,
+) -> anyhow::Result<Box<dyn Provider>> {
+    let mut config = load(config_path)?;
+
+    if let Some(kind) = provider_override {
+        config.provider.kind = kind.to_string();
+        if let Some(meta) = local_provider_meta(kind) {
+            config.provider.base_url = meta.default_base_url.to_string();
+        } else if let Some(descriptor) = find_provider(kind) {
+            if let Some(url) = descriptor.default_base_url {
+                config.provider.base_url = url.to_string();
+            }
+        }
+    }
+    if let Some(model) = model_override {
+        config.provider.model = model.to_string();
+    }
+
+    resolve_base_url_from_catalog(&mut config);
+
+    let key = resolve_api_key(
+        config_path,
+        &mut config,
+        profile_override,
+        provider_override.is_some(),
+    )
+    .await?;
+
+    let transport_config = agentzero_providers::TransportConfig {
+        timeout_ms: config.provider.transport.timeout_ms,
+        max_retries: config.provider.transport.max_retries,
+        circuit_breaker_threshold: config.provider.transport.circuit_breaker_threshold,
+        circuit_breaker_reset_ms: config.provider.transport.circuit_breaker_reset_ms,
+    };
+
+    let provider: Box<dyn Provider> =
+        if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
+            agentzero_providers::build_provider_with_privacy(
+                &config.provider.kind,
+                config.provider.base_url,
+                key,
+                config.provider.model,
+                transport_config,
+                &config.privacy.mode,
+            )?
+        } else {
+            agentzero_providers::build_provider_with_transport(
+                &config.provider.kind,
+                config.provider.base_url,
+                key,
+                config.provider.model,
+                transport_config,
+            )
+        };
+
+    Ok(provider)
 }
 
 pub async fn run_agent_once(req: RunAgentRequest) -> anyhow::Result<RunAgentOutput> {
@@ -435,6 +546,9 @@ pub fn run_agent_streaming(
         }
         if let Some(selector) = execution.tool_selector {
             agent = agent.with_tool_selector(selector);
+        }
+        if let Some(registry) = execution.dynamic_registry {
+            agent = agent.with_tool_source(registry);
         }
 
         let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
@@ -1219,6 +1333,7 @@ mod tests {
             tool_selector: None,
             source_channel: None,
             sender_id: None,
+            dynamic_registry: None,
         }
     }
 

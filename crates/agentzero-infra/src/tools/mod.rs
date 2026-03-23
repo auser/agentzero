@@ -2,11 +2,13 @@
 mod agent_manage;
 #[cfg(feature = "tools-full")]
 mod config_manage;
+pub mod dynamic_tool;
 mod mcp;
 #[cfg(feature = "tools-full")]
 mod plugin_scaffold;
 #[cfg(feature = "tools-full")]
 mod skill_manage;
+pub mod tool_create;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
 

@@ -323,6 +323,100 @@ See [examples/business-office/](https://github.com/auser/agentzero/tree/main/exa
 
 ---
 
+## Autonomous Swarms
+
+Give AgentZero a natural language goal and it autonomously decomposes it into a parallel agent swarm. Each agent gets only the tools it needs.
+
+### CLI
+
+```bash
+agentzero swarm "summarize this video, generate a thumbnail, and write a script"
+```
+
+The `GoalPlanner` uses an LLM to decompose the goal into a multi-agent DAG:
+
+1. **video_downloader** (tools: `shell`, `web_fetch`) — downloads the video
+2. **transcriber** (tools: `shell`) — runs Whisper via `whisper {{input}}`
+3. **thumbnail_generator** (tools: `image_gen`, `shell`) — generates a thumbnail
+4. **summarizer** (depends on: transcriber) — summarizes the transcript (LLM only)
+5. **script_writer** (depends on: summarizer) — writes a polished script
+
+Nodes 1-3 run in parallel. Nodes 4-5 are sequential. Each agent receives only its `tool_hints` — not the full tool set.
+
+### Gateway
+
+```bash
+curl -X POST http://localhost:3000/v1/swarm \
+  -H "Content-Type: application/json" \
+  -d '{"goal": "summarize this video"}'
+```
+
+### How It Works
+
+1. **GoalPlanner** sends the goal + available tool catalog to the LLM
+2. LLM returns a `PlannedWorkflow` with per-node `tool_hints`
+3. `SwarmSupervisor` compiles the workflow into an `ExecutionPlan`
+4. Each agent node gets a `HintedToolSelector` that filters tools to its hints
+5. Nodes execute in parallel via `tokio::JoinSet`, respecting dependency ordering
+6. Results are collected and merged
+
+### Pre-planned Workflows
+
+You can also provide a pre-generated plan:
+
+```bash
+agentzero swarm --plan workflow.json "execute this plan"
+```
+
+---
+
+## Natural Language Agent Definitions
+
+Define persistent agents from plain English. The system derives name, system prompt, keywords, and tools automatically.
+
+```
+"Create an agent that reviews my GitHub PRs daily and posts summaries to Slack"
+```
+
+The `agent_manage create_from_description` action:
+1. Sends the description to an LLM with existing agents for dedup awareness
+2. LLM derives: `name: "pr_reviewer"`, `keywords: ["pr", "review", "github"]`, `allowed_tools: ["shell", "read_file", "web_fetch", "git_operations"]`, `suggested_schedule: "0 9 * * *"`
+3. Creates an `AgentRecord` in the encrypted agent store
+4. The agent persists across sessions and is auto-routed to when future messages match its keywords
+
+### Configuration
+
+```toml
+[agent]
+enable_agent_manage = true
+enable_dynamic_tools = true    # needed for the LLM call in create_from_description
+```
+
+---
+
+## Tool Catalog Learning
+
+The system remembers which tool combinations worked for what kinds of goals. Over time, this builds an institutional memory that makes future runs faster and more accurate.
+
+### How It Works
+
+1. After a successful swarm or agent run, a **recipe** is recorded: `{goal_summary, tools_used, success}`
+2. Recipes are stored encrypted in `.agentzero/tool-recipes.json`
+3. On future goals, the `HintedToolSelector` queries the recipe store
+4. Tools from matching recipes are **boosted** in the selection priority
+
+### Selection Priority
+
+The `HintedToolSelector` combines three signals:
+
+1. **Explicit hints** — from `GoalPlanner` per-node `tool_hints`
+2. **Recipe matches** — Jaccard similarity on goal keywords → boost previously successful tools
+3. **Keyword fallback** — TF-IDF matching on tool descriptions
+
+This means "summarize this podcast" in Week 2 automatically picks up `whisper_transcribe` (a dynamic tool created in Week 1 for video summarization) because the recipe store matches on "summarize" + "transcribe".
+
+---
+
 ## Observability
 
 When running multiple agents, visibility into what each agent is doing becomes critical. AgentZero provides built-in observability through the web dashboard and API.

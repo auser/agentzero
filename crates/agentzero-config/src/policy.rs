@@ -108,6 +108,7 @@ pub fn load_tool_security_policy(
         enable_canvas: false, // Canvas is injected by gateway, not config-driven yet
         enable_claude_code: config.agent.enable_claude_code,
         enable_cli_harness: config.agent.enable_cli_harness,
+        enable_dynamic_tools: config.agent.enable_dynamic_tools.unwrap_or(false),
     };
 
     // Privacy enforcement: "private" and "local_only" modes disable outbound

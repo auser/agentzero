@@ -27,7 +27,7 @@ pub mod validation;
 /// instead of adding a separate `tracing` dependency.
 pub use tracing;
 
-pub use agent::Agent;
+pub use agent::{Agent, ToolSource};
 pub use canvas::{Canvas, CanvasFrame, CanvasStore, CanvasSummary};
 pub use event_bus::{Event, EventBus, EventSubscriber, FileBackedBus, InMemoryBus};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};

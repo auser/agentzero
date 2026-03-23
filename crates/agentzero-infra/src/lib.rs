@@ -12,6 +12,7 @@ pub mod runtime;
 pub mod sender_rate_limiter;
 #[cfg(feature = "telemetry")]
 pub mod telemetry;
+pub mod tool_recipes;
 pub mod tool_selection;
 pub mod tools;
 

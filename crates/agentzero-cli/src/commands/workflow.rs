@@ -5,7 +5,10 @@
 //! JSON file or from the persistent store.
 
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_infra::runtime::{run_agent_once, RunAgentRequest};
+use agentzero_infra::runtime::{
+    build_runtime_execution, run_agent_once, run_agent_with_runtime, RunAgentRequest,
+};
+use agentzero_infra::tool_selection::{HintedToolSelector, KeywordToolSelector};
 use agentzero_orchestrator::workflow_executor::{
     compile, execute, ExecutionPlan, ExecutionStep, NodeStatus, NodeType, StepDispatcher,
 };
@@ -373,7 +376,7 @@ impl StepDispatcher for CliStepDispatcher {
         let req = RunAgentRequest {
             workspace_root: self.workspace_root.clone(),
             config_path: self.config_path.clone(),
-            message,
+            message: message.clone(),
             provider_override: step.config.provider.clone(),
             model_override: step.config.model.clone(),
             profile_override: None,
@@ -383,7 +386,28 @@ impl StepDispatcher for CliStepDispatcher {
             memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
         };
 
-        let output = run_agent_once(req).await?;
+        // Extract tool_hints from step metadata for per-node tool filtering.
+        let tool_hints: Vec<String> = step
+            .metadata
+            .get("tool_hints")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        if tool_hints.is_empty() {
+            // No hints — use default tool selection (all tools).
+            let output = run_agent_once(req).await?;
+            return Ok(output.response_text);
+        }
+
+        // Build execution with hinted tool selector.
+        let workspace_root = req.workspace_root.clone();
+        let mut execution = build_runtime_execution(req).await?;
+        execution.tool_selector = Some(Box::new(HintedToolSelector {
+            hints: tool_hints,
+            recipes: None,
+            fallback: KeywordToolSelector::default(),
+        }));
+        let output = run_agent_with_runtime(execution, workspace_root, message).await?;
         Ok(output.response_text)
     }
 

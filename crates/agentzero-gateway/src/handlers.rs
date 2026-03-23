@@ -3366,6 +3366,7 @@ pub(crate) async fn swarm_execute(
                     .and_then(|v| v.as_str())
                     .unwrap_or("worktree")
                     .to_string(),
+                tool_hints: vec![],
             }],
         }
     } else {

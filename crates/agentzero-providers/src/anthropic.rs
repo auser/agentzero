@@ -389,7 +389,7 @@ fn extract_system_from_messages(messages: &[ConversationMessage]) -> Option<Stri
 }
 
 fn to_anthropic_messages(messages: &[ConversationMessage]) -> Vec<Message> {
-    messages
+    let raw: Vec<Message> = messages
         .iter()
         .filter_map(|msg| match msg {
             // System messages are extracted separately for the Anthropic API payload.
@@ -462,7 +462,31 @@ fn to_anthropic_messages(messages: &[ConversationMessage]) -> Vec<Message> {
                 }]),
             }),
         })
-        .collect()
+        .collect();
+
+    // Merge consecutive messages with the same role — Anthropic requires alternating roles.
+    let mut merged: Vec<Message> = Vec::with_capacity(raw.len());
+    for msg in raw {
+        if let Some(last) = merged.last_mut() {
+            if last.role == msg.role {
+                // Merge into the previous message by combining content blocks.
+                let prev_blocks = match &last.content {
+                    MessageContent::Text(t) => vec![InputContentBlock::Text { text: t.clone() }],
+                    MessageContent::Blocks(b) => b.clone(),
+                };
+                let new_blocks = match &msg.content {
+                    MessageContent::Text(t) => vec![InputContentBlock::Text { text: t.clone() }],
+                    MessageContent::Blocks(b) => b.clone(),
+                };
+                let mut combined = prev_blocks;
+                combined.extend(new_blocks);
+                last.content = MessageContent::Blocks(combined);
+                continue;
+            }
+        }
+        merged.push(msg);
+    }
+    merged
 }
 
 fn parse_output_text(body: &str) -> anyhow::Result<String> {
@@ -810,6 +834,13 @@ impl Provider for AnthropicProvider {
             };
 
             log_request("anthropic", &url, &self.model);
+            if let Ok(req_body) = serde_json::to_string(&payload) {
+                tracing::debug!(
+                    body_len = req_body.len(),
+                    "anthropic complete_with_tools payload (first 2000): {}",
+                    &req_body[..req_body.len().min(2000)]
+                );
+            }
             let start = Instant::now();
             let max_retries = self.config.max_retries;
 

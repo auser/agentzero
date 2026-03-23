@@ -4,9 +4,8 @@
 //! into a workflow graph and executes it using the swarm supervisor.
 
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_orchestrator::{
-    parse_planner_response, NodeStatus, PlannedWorkflow, SwarmSupervisor,
-};
+use agentzero_infra::runtime::build_provider_from_config;
+use agentzero_orchestrator::{parse_planner_response, GoalPlanner, NodeStatus, SwarmSupervisor};
 use async_trait::async_trait;
 
 use super::workflow::build_cli_dispatcher;
@@ -24,6 +23,7 @@ impl AgentZeroCommand for SwarmCommand {
 
 /// Options for the swarm command (parsed from CLI args by clap in cli.rs).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SwarmOptions {
     pub goal: String,
     pub plan_file: Option<std::path::PathBuf>,
@@ -37,23 +37,17 @@ async fn cmd_swarm(ctx: &CommandContext, opts: SwarmOptions) -> anyhow::Result<(
             .map_err(|e| anyhow::anyhow!("failed to read plan file: {e}"))?;
         parse_planner_response(&raw)?
     } else {
-        // Use the goal to create a simple single-agent plan.
-        // In production, this would call the GoalPlanner with an LLM to decompose.
-        // For now, wrap the goal in a single agent node.
+        // Decompose the goal into a multi-agent workflow using the GoalPlanner.
         eprintln!("Goal: {}", opts.goal);
         eprintln!("Decomposing goal into agent tasks...\n");
 
-        PlannedWorkflow {
-            title: opts.goal.clone(),
-            nodes: vec![agentzero_orchestrator::PlannedNode {
-                id: "agent-1".to_string(),
-                name: "executor".to_string(),
-                task: opts.goal.clone(),
-                depends_on: vec![],
-                file_scopes: vec![],
-                sandbox_level: opts.sandbox_level.clone(),
-            }],
-        }
+        let provider = build_provider_from_config(&ctx.config_path, None, None, None).await?;
+        let planner = GoalPlanner::new(provider);
+
+        // Build tool summaries so the planner can assign tool_hints per node.
+        let tool_summaries = build_tool_summaries_for_planner(&ctx.config_path)?;
+
+        planner.plan(&opts.goal, &tool_summaries).await?
     };
 
     eprintln!("Workflow: {}", plan.title);
@@ -150,4 +144,30 @@ async fn cmd_swarm(ctx: &CommandContext, opts: SwarmOptions) -> anyhow::Result<(
     }
 
     Ok(())
+}
+
+/// Build lightweight tool summaries from config for the goal planner.
+///
+/// Loads the security policy and builds tool names + descriptions without
+/// constructing full tool instances. Uses `default_tools_with_store` with a
+/// no-op agent store, then extracts `ToolSummary` from each tool.
+fn build_tool_summaries_for_planner(
+    config_path: &std::path::Path,
+) -> anyhow::Result<Vec<agentzero_core::ToolSummary>> {
+    let workspace_root = config_path.parent().unwrap_or(std::path::Path::new("."));
+    let policy = agentzero_config::load_tool_security_policy(workspace_root, config_path)?;
+    let tools = agentzero_infra::tools::default_tools_with_store(&policy, None, None, None)?;
+    Ok(tools
+        .iter()
+        .filter_map(|t| {
+            let desc = t.description();
+            if desc.is_empty() {
+                return None;
+            }
+            Some(agentzero_core::ToolSummary {
+                name: t.name().to_string(),
+                description: desc.to_string(),
+            })
+        })
+        .collect())
 }

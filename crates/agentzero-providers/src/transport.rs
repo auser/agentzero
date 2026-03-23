@@ -381,6 +381,14 @@ pub(crate) fn extract_error_type(body: &str) -> Option<String> {
 
 pub(crate) fn map_status_error(status: StatusCode, body: &str) -> anyhow::Error {
     let message = extract_error_message(body).unwrap_or_else(|| "no error message".to_string());
+    // Log full body when the error message is unhelpfully terse.
+    if message.len() < 20 {
+        tracing::error!(
+            status = status.as_u16(),
+            body = %body,
+            "provider error details"
+        );
+    }
     let error_type = extract_error_type(body);
     let type_suffix = error_type
         .as_deref()
