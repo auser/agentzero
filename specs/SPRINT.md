@@ -2163,9 +2163,9 @@ Give AgentZero a natural language goal and let it autonomously decompose into a 
 
 Higher-security sandbox backends for server and untrusted execution.
 
-- [ ] **`ContainerSandbox`** — Docker/Podman container per agent. Bind-mount worktree. Network policy, memory/CPU limits, seccomp profile.
-- [ ] **`MicroVmSandbox`** — Firecracker/Cloud Hypervisor microVM per agent. Full kernel isolation. ~125ms boot.
-- [ ] **Sandbox level config** — `[swarm] sandbox = "worktree" | "container" | "microvm"`. Per-node override in workflow graph.
+- [x] **`ContainerSandbox`** — Docker/Podman container per agent. Bind-mount worktree from `WorktreeSandbox`. `ContainerConfig`: runtime, image, memory/CPU limits, network toggle. Security: `--cap-drop=ALL`, `--read-only`, tmpfs for /tmp and /sandbox, `--network=none` by default. `build_run_args()` generates full Docker CLI args. 4 tests.
+- [x] **`MicroVmSandbox`** — Firecracker/Cloud Hypervisor microVM per agent. `MicroVmConfig`: kernel/rootfs paths, memory_mb, vcpus, binary path. Generates Firecracker JSON config, starts daemon with API socket. `is_available()` checks binary existence. 3 tests.
+- [x] **`SandboxLevel` enum** — `Worktree | Container | MicroVm` with `Default` (Worktree), `Display`, `FromStr`, serde. Per-node override via `sandbox_level` field in `PlannedNode`. 2 tests.
 
 ### Acceptance Criteria
 

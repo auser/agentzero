@@ -42,7 +42,8 @@ pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use presence::{PresenceRecord, PresenceStatus, PresenceStore};
 pub use recovery::{RecoveryAction, RecoveryActionType, RecoveryConfig, RecoveryMonitor};
 pub use sandbox::{
-    AgentOutput, AgentSandbox, AgentTask, SandboxConfig, SandboxHandle, WorktreeSandbox,
+    AgentOutput, AgentSandbox, AgentTask, ContainerConfig, ContainerSandbox, MicroVmConfig,
+    MicroVmSandbox, SandboxConfig, SandboxHandle, SandboxLevel, WorktreeSandbox,
 };
 pub use swarm::{build_event_bus, build_swarm, build_swarm_with_presence};
 pub use swarm_context::{AgentAssignment, AgentAssignmentStatus, SiblingContext, SwarmContext};

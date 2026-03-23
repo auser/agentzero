@@ -24,6 +24,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+which = "8.0.2"
 
 [dev-dependencies]
 agentzero-testkit = { workspace = true }
