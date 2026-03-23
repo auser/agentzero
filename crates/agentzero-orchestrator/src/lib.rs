@@ -15,6 +15,7 @@ pub mod job_store;
 pub mod lanes;
 pub mod loop_detection;
 pub mod presence;
+pub mod recovery;
 pub mod sandbox;
 pub mod swarm;
 pub mod swarm_context;
@@ -36,6 +37,7 @@ pub use job_store::{EventKind, EventLog, JobRecord, JobStore, RunEvent};
 pub use lanes::{LaneConfig, LaneManager, LaneReceivers, WorkItem, WorkResult};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use presence::{PresenceRecord, PresenceStatus, PresenceStore};
+pub use recovery::{RecoveryAction, RecoveryActionType, RecoveryConfig, RecoveryMonitor};
 pub use sandbox::{
     AgentOutput, AgentSandbox, AgentTask, SandboxConfig, SandboxHandle, WorktreeSandbox,
 };

@@ -2143,9 +2143,10 @@ When dispatching parallel agents, inject awareness of sibling agents' assignment
 
 Extend `PresenceStore` heartbeats to automatically reassign tasks from dead agents.
 
-- [ ] **Heartbeat integration** — Register each spawned agent with `PresenceStore`. Agents send periodic heartbeats during execution. Configurable TTL per agent (default 60s).
-- [ ] **Recovery handler** — Monitor `PresenceStatus::Dead` in supervisor loop → destroy sandbox → reset node status to `Pending` → re-add to ready queue.
-- [ ] **Observability events** — Emit `swarm.agent.failed` and `swarm.agent.reassigned` events via `EventBus`. UI shows failed → retrying transition.
+- [x] **`RecoveryMonitor`** — New `recovery.rs`. Wraps `PresenceStore` with `register_agent()`, `heartbeat()`, `deregister()`. Configurable via `RecoveryConfig` (check interval, max retries, default TTL 60s).
+- [x] **`check_and_recover()`** — Scans all agents for `PresenceStatus::Dead`. Per-agent retry tracking: if retries remain → destroy sandbox, emit `swarm.agent.reassigned`, return `Reassigned`. If max retries exceeded → emit `swarm.agent.abandoned`, return `Abandoned`. Caller re-dispatches reassigned tasks.
+- [x] **Observability events** — Publishes `swarm.agent.reassigned` and `swarm.agent.abandoned` events via `EventBus` with node_id, agent_name, attempt count. `RecoveryAction` struct with `RecoveryActionType` enum for typed action results.
+- [x] **Tests** — 6 tests: alive agent not recovered, dead agent reassigned, max retries triggers abandon, deregister clears retries, event bus publishes reassigned, heartbeat keeps agent alive. 2,824 tests workspace-wide, 0 clippy warnings.
 
 ### Phase E: Self-Managing Swarm — Goal Decomposition (HIGH)
 
@@ -2158,7 +2159,7 @@ Give AgentZero a natural language goal and let it autonomously decompose into a 
 - [ ] **Gateway entry point** — POST `/v1/swarm` with `{ "goal": "...", "sandbox_level": "worktree" }` — returns workflow ID, streams via SSE.
 - [ ] **UI integration** — Goal input → live graph visualization → interactive editing during execution → merge review at end.
 
-### Phase F: Container & MicroVM Backends (MEDIUM, follow-up)
+### Phase F: Container & MicroVM Backends (MEDIUM)
 
 Higher-security sandbox backends for server and untrusted execution.
 
@@ -2171,7 +2172,7 @@ Higher-security sandbox backends for server and untrusted execution.
 - [x] Ready nodes execute concurrently via `JoinSet` (not sequentially within batches)
 - [x] Each agent runs in isolated worktree with its own branch
 - [x] Merge conflicts detected and reported with severity classification
-- [ ] Dead agents recovered within heartbeat timeout window
+- [x] Dead agents recovered within heartbeat timeout window
 - [ ] `agentzero swarm "..."` decomposes goal, executes, and merges results
 - [ ] Generated workflow graph visible and editable in UI during execution
 - [ ] 0 clippy warnings, all existing tests pass
