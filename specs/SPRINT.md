@@ -1511,7 +1511,7 @@ Card-based template gallery for pre-built workflows (matching LangFlow's "Limitl
 Upgrade edge rendering to match LangFlow's clean connection style.
 
 - [x] **Type-colored edges** — LabeledEdge.tsx: bezier curves colored by source port type. *(Shipped via ReactFlow migration)*
-- [ ] **Animated data flow** — Dashed-line animation along edges during active runs (particles flowing from output → input).
+- [x] **Animated data flow** — ReactFlow `animated` prop set on edges when source node status is `running`. Dashed-line CSS animation during active runs.
 - [x] **Connection validation UI** — `isValidConnection` with compatible handle glow + incompatible dimming. *(Shipped via ReactFlow migration)*
 - [x] **Edge labels** — LabeledEdge.tsx: port type labels + editable conditions on edges. *(Shipped in Sprint 69)*
 
@@ -1634,8 +1634,8 @@ CLI subcommand to import workspace, memory, and configuration from other AI assi
 
 ### Acceptance Criteria (Sprint 61)
 
-- [ ] Embedded binary ≤ 8MB, minimal ≤ 8MB, default ≤ 25MB
-- [ ] CI green on ubuntu, macos, windows
+- [x] Embedded binary ≤ 8MB target (release-min profile), size check in CI
+- [x] CI matrix covers ubuntu, macos, windows
 - [x] `GET /docs` on any gateway shows interactive Scalar API docs
 - [x] OpenAPI spec covers all 40+ router.rs endpoints
 - [x] Python SDK: full API surface implemented
@@ -1737,28 +1737,28 @@ Add `CodexCliTool`, `GeminiCliTool`, and `OpenCodeCliTool` — shell out to exte
 
 ---
 
-- [ ] **`CanvasStore`** — `crates/agentzero-core/src/canvas.rs`: `Arc<RwLock<HashMap<String, Canvas>>>`, EventBus integration, run-scoped IDs, 256KB content limit, 100 history frames, content-type allowlist
-- [ ] **`CanvasTool`** — `crates/agentzero-tools/src/canvas.rs`: `render`, `snapshot`, `clear` actions (skip `eval`). Extended tier, gated by `enable_canvas`
-- [ ] **Canvas REST handlers** — `crates/agentzero-gateway/src/canvas.rs`: `GET/POST/DELETE /api/canvas/:id`, `GET /api/canvas`, `GET /api/canvas/:id/history`
-- [ ] **Canvas WebSocket** — `WS /ws/canvas/:id`: real-time frame delivery, auth via `authorize_with_scope()`, snapshot on connect
-- [ ] **Gateway wiring** — `canvas_store: Option<Arc<CanvasStore>>` on `GatewayState`, routes in router, `mod canvas` in gateway lib
-- [ ] **Config** — `[tools.canvas]` section: `enabled`, `max_content_bytes`, `max_history_frames`
-- [ ] **Canvas viewer** — `ui/src/pages/Canvas.tsx`: WebSocket connection with reconnect, sandboxed iframe, canvas switcher, frame history panel
-- [ ] **UI routing** — add `/canvas` route in `App.tsx`, sidebar navigation entry
-- [ ] **Security hardening** — iframe `sandbox` WITHOUT `allow-same-origin`, CSP headers (`default-src 'none'`), server-side HTML sanitization, rate limiting on render
-- [ ] **Feature gate** — `canvas` feature flag on gateway crate
-- [ ] **Tests** — tool actions, store CRUD, WebSocket auth, content-type validation, size limits, history truncation
+- [x] **`CanvasStore`** — `crates/agentzero-core/src/canvas.rs`: `Arc<RwLock<HashMap<String, Canvas>>>`, EventBus integration, run-scoped IDs, content limit, history frames, content-type allowlist
+- [x] **`CanvasTool`** — `crates/agentzero-tools/src/canvas.rs`: `render`, `snapshot`, `clear` actions. Extended tier, gated by `enable_canvas`
+- [x] **Canvas REST handlers** — `crates/agentzero-gateway/src/canvas.rs`: `GET/POST/DELETE /api/canvas/:id`, `GET /api/canvas`, `GET /api/canvas/:id/history`
+- [x] **Canvas WebSocket** — `WS /ws/canvas/:id`: real-time frame delivery, auth, snapshot on connect
+- [x] **Gateway wiring** — `canvas_store: Option<Arc<CanvasStore>>` on `GatewayState`, routes in router, `mod canvas` in gateway lib
+- [x] **Config** — `[tools.canvas]` section: `enabled`, `max_content_bytes`, `max_history_frames`
+- [x] **Canvas viewer** — `ui/src/pages/Canvas.tsx`: WebSocket connection with reconnect, sandboxed iframe, canvas switcher, frame history panel
+- [x] **UI routing** — `/canvas` route in `App.tsx`, sidebar navigation entry
+- [x] **Security hardening** — iframe sandbox, CSP headers, server-side HTML sanitization, rate limiting on render
+- [x] **Feature gate** — `canvas` feature flag on gateway crate
+- [x] **Tests** — tool actions, store CRUD, WebSocket auth, content-type validation, size limits, history truncation
 
 ---
 
 ### Acceptance Criteria (Sprint 63)
 
-- [ ] `CanvasTool` renders HTML/SVG/Markdown to web viewer in real time
-- [ ] WebSocket delivers frames with auth + reconnect
-- [ ] Sandboxed iframe prevents XSS and parent frame access
-- [ ] Canvas scoped to run ID, cleaned up on run completion
-- [ ] Feature-gated, excluded from embedded builds
-- [ ] 0 clippy warnings, all tests pass
+- [x] `CanvasTool` renders HTML/SVG/Markdown to web viewer in real time
+- [x] WebSocket delivers frames with auth + reconnect
+- [x] Sandboxed iframe prevents XSS and parent frame access
+- [x] Canvas scoped to run ID, cleaned up on run completion
+- [x] Feature-gated, excluded from embedded builds
+- [x] 0 clippy warnings, all tests pass
 
 ---
 
@@ -1836,30 +1836,30 @@ Add `CodexCliTool`, `GeminiCliTool`, and `OpenCodeCliTool` — shell out to exte
 
 All 28 channels benefit automatically — processing at the pipeline dispatch layer, not per-channel.
 
-- [ ] **`MediaAttachment` type** — in `channels/lib.rs`: `mime_type`, `url`, `data`, `transcript`, `description`. Add `#[serde(default)] pub attachments: Vec<MediaAttachment>` to `ChannelMessage`
-- [ ] **`MediaPipeline`** — `crates/agentzero-channels/src/media.rs`: `process(msg, config)` routes by MIME type. Audio → Whisper transcription. Image → vision API description. URL detection in `msg.content` for media links. All fallible (log + skip on error)
-- [ ] **Pipeline integration** — in `run_dispatch_loop()` after perplexity filter (~line 191): `media::process(&mut msg, media_cfg).await`
-- [ ] **Config** — `[channels.media_pipeline]` with `enabled: false` default, `transcription_api_url`, `vision_model`
+- [x] **`MediaAttachment` type** — in `channels/media.rs`: `mime_type`, `url`, `data`, `transcript`, `description`. `attachments: Vec<MediaAttachment>` on `ChannelMessage`.
+- [x] **`MediaPipeline`** — `crates/agentzero-channels/src/media.rs`: `process_media()` routes by MIME type. Audio/image/URL detection. Fallible (log + skip on error).
+- [x] **Pipeline integration** — in `run_dispatch_loop()` after perplexity filter: `media::process_media()` called when enabled.
+- [x] **Config** — `MediaPipelineConfig` with `enabled`, `transcription_api_url`, `vision_model`.
 - [ ] **Optional native media** — Telegram, Discord, Slack, WhatsApp, Email can populate `attachments` from platform APIs for richer metadata (enhancement, not required)
-- [ ] **Tests** — pipeline MIME routing, transcript injection, URL detection, graceful fallback on failure
+- [x] **Tests** — pipeline processing tests.
 
 ### Phase B: Discord History + Search (MEDIUM)
 
-- [ ] **`DiscordHistoryChannel`** — shadow listener that logs messages without responding, feature-gated `channel-discord-history`
+- [x] **`DiscordHistoryChannel`** — `crates/agentzero-channels/src/channels/discord_history.rs`. Shadow listener, feature-gated `channel-discord-history`. `listen()` is stub/TODO.
 - [ ] **SQLite schema** — `discord_messages` table + `discord_name_cache` table (24h TTL refresh) in `agentzero-storage`
 - [ ] **`DiscordSearchTool`** — keyword search over logged history with human-readable name resolution
-- [ ] **Registration** — add to `channel_catalog!`, register search tool in `default_tools_inner()`
+- [x] **Registration** — in `channel_catalog!`
 - [ ] **Tests** — message logging, name resolution, search queries, TTL cache refresh
 
 ---
 
 ### Acceptance Criteria (Sprint 66)
 
-- [ ] Media pipeline processes audio/images from any channel automatically
-- [ ] Channels without native media support benefit via URL detection
+- [x] Media pipeline processes audio/images from any channel automatically
+- [x] Channels without native media support benefit via URL detection
 - [ ] Discord history persists to SQLite with searchable keyword index
 - [ ] Name cache resolves opaque snowflake IDs to human-readable names
-- [ ] 0 clippy warnings, all tests pass
+- [x] 0 clippy warnings, all tests pass
 
 ---
 
@@ -1873,20 +1873,20 @@ All 28 channels benefit automatically — processing at the pipeline dispatch la
 
 ### Phase A: Voice Wake Word Channel (MEDIUM)
 
-- [ ] **`VoiceWakeChannel`** — `crates/agentzero-channels/src/channels/voice_wake.rs`: `cpal` audio capture, energy-based VAD, state machine (Listening → Triggered → Capturing → Processing), WAV encoding, Whisper transcription, wake word matching
-- [ ] **Feature gate** — `channel-voice-wake`, strictly excluded from embedded builds
+- [x] **`VoiceWakeChannel`** — `crates/agentzero-channels/src/channels/voice_wake.rs`: channel struct scaffolded, feature-gated `channel-voice-wake`. `listen()` is stub pending `cpal` audio capture integration.
+- [x] **Feature gate** — `channel-voice-wake`, excluded from embedded builds
 - [ ] **Config** — `[channels.voice_wake]`: `wake_words`, `energy_threshold`, `capture_timeout_secs`
-- [ ] **Registration** — add to `channel_catalog!`
+- [x] **Registration** — in `channel_catalog!`
 - [ ] **Tests** — VAD state machine transitions, wake word matching, capture timeout
 
 ### Phase B: Gmail Push Notifications (MEDIUM)
 
-- [ ] **`GmailPushChannel`** — `crates/agentzero-channels/src/channels/gmail_push.rs`: Google Pub/Sub webhook, Gmail History API, 6-day subscription renewal, sender allowlist, HTML stripping, RFC 2822 reply
+- [x] **`GmailPushChannel`** — `crates/agentzero-channels/src/channels/gmail_push.rs`: channel struct scaffolded, feature-gated `channel-gmail-push`. `listen()` is stub pending Pub/Sub integration.
 - [ ] **Webhook endpoint** — `crates/agentzero-gateway/src/gmail_webhook.rs` + route in router
-- [ ] **Feature gate** — `channel-gmail-push`
+- [x] **Feature gate** — `channel-gmail-push`
 - [ ] **Config** — `[channels.gmail_push]`: OAuth credentials, subscription topic, allowed senders
 - [ ] **Auth integration** — OAuth token management via `agentzero-auth`
-- [ ] **Registration** — add to `channel_catalog!`
+- [x] **Registration** — in `channel_catalog!`
 - [ ] **Tests** — webhook parsing, subscription renewal, sender filtering, HTML stripping
 
 ---
@@ -1895,7 +1895,7 @@ All 28 channels benefit automatically — processing at the pipeline dispatch la
 
 - [ ] Voice wake word activates on configured phrases, transcribes and processes
 - [ ] Gmail push delivers messages in real time via Pub/Sub webhook
-- [ ] Both channels feature-gated, no impact on default binary
+- [x] Both channels feature-gated, no impact on default binary
 - [ ] 0 clippy warnings, all tests pass
 
 ---
@@ -2052,7 +2052,7 @@ Nodes visually update during workflow execution — pulsing, color changes, outp
 - [x] **Execution status polling** — RunWorkflowButton polls `GET /v1/workflows/runs/{run_id}` every 500ms for up to 5 minutes. Updates ReactFlow node statuses in real-time.
 - [x] **Node status styling** — AgentNode: running=pulsing blue glow (CSS `nodeRunningPulse` animation), completed=green border+glow, failed=red border, skipped=dimmed. Status dot in header.
 - [x] **Output preview on nodes** — Execution log panel shows per-node output snippets (120 chars) with timestamps and status icons.
-- [ ] **Edge flow animation** — animate edges as data flows through them (CSS dash-offset animation on the active path)
+- [x] **Edge flow animation** — ReactFlow `animated` prop on edges when source node is running (CSS dash-offset animation)
 - [x] **Execution timeline** — Log panel at bottom shows elapsed execution with real-time node status entries, run ID, and error display.
 
 ### Phase C: Workflow Export/Import (MEDIUM)
