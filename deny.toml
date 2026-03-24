@@ -15,4 +15,10 @@ ignore = [
     "RUSTSEC-2025-0141",
     # lru 0.12.5 IterMut unsoundness via ratatui — awaiting ratatui upgrade
     "RUSTSEC-2026-0002",
+    # rustls CRL distribution point matching — awaiting rustls upgrade
+    "RUSTSEC-2026-0049",
+    # tar-rs PAX size header — awaiting tar/zip upgrade
+    "RUSTSEC-2026-0067",
+    # tar-rs unpack_in symlink chmod — awaiting tar/zip upgrade
+    "RUSTSEC-2026-0068",
 ]
