@@ -407,7 +407,7 @@ mod tests {
             Some(v) => std::env::set_var("TURSO_AUTH_TOKEN", v),
             None => std::env::remove_var("TURSO_AUTH_TOKEN"),
         }
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[cfg(not(feature = "memory-turso"))]
@@ -431,7 +431,7 @@ mod tests {
             .to_string()
             .contains("built without `memory-turso` feature"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -473,7 +473,7 @@ mod tests {
         .await
         .expect("memory list should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -507,7 +507,7 @@ mod tests {
             .to_string()
             .contains("refusing to clear all memory without --yes"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -540,7 +540,7 @@ mod tests {
         .await
         .expect("list on empty db should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -572,6 +572,6 @@ mod tests {
         .await
         .expect("clear on empty db should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

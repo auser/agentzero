@@ -142,9 +142,9 @@ jobs:
       - name: install cross
         run: cargo install cross --locked
       - name: cross build (aarch64)
-        run: cross build --workspace --target aarch64-unknown-linux-gnu
+        run: cross build --workspace --target aarch64-unknown-linux-gnu --features vendored-openssl
       - name: cross test (aarch64)
-        run: cross test --workspace --target aarch64-unknown-linux-gnu
+        run: cross test --workspace --target aarch64-unknown-linux-gnu --features vendored-openssl
 
   # e2e-ollama: removed from CI — small local models (llama3.2 3B) are too
   # nondeterministic for reliable tool-use assertions. The tests remain in

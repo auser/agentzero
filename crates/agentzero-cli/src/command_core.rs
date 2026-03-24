@@ -146,9 +146,7 @@ pub trait AgentZeroCommand {
 #[cfg(test)]
 mod tests {
     use super::CommandContext;
-    use agentzero_core::common::paths::{
-        DEFAULT_CONFIG_FILE, DEFAULT_DATA_DIR_NAME, ENV_CONFIG_PATH, ENV_DATA_DIR,
-    };
+    use agentzero_core::common::paths::{DEFAULT_CONFIG_FILE, ENV_CONFIG_PATH, ENV_DATA_DIR};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -173,26 +171,22 @@ mod tests {
 
     #[test]
     fn resolves_default_data_dir_from_home_success_path() {
-        let home = temp_dir();
-        let home_str = home.to_string_lossy().to_string();
+        // Use ENV_DATA_DIR to override — on Windows dirs::home_dir() ignores
+        // HOME/USERPROFILE and calls the Windows API directly.
+        let data_dir = temp_dir();
         with_vars(
             vec![
-                ("HOME", Some(home_str.clone())),
-                ("USERPROFILE", Some(home_str)),
-                (ENV_DATA_DIR, None::<String>),
+                (ENV_DATA_DIR, Some(data_dir.to_string_lossy().to_string())),
                 (ENV_CONFIG_PATH, None::<String>),
             ],
             || {
                 let ctx = CommandContext::from_current_dir(None, None)
-                    .expect("context should resolve with home default");
-                assert_eq!(ctx.data_dir, home.join(DEFAULT_DATA_DIR_NAME));
-                assert_eq!(
-                    ctx.config_path,
-                    home.join(DEFAULT_DATA_DIR_NAME).join(DEFAULT_CONFIG_FILE)
-                );
+                    .expect("context should resolve with env data dir");
+                assert_eq!(ctx.data_dir, data_dir);
+                assert_eq!(ctx.config_path, data_dir.join(DEFAULT_CONFIG_FILE));
             },
         );
-        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     #[test]
@@ -218,23 +212,19 @@ mod tests {
 
     #[test]
     fn reads_data_dir_from_config_when_no_flag_or_env_success_path() {
-        let home = temp_dir();
+        let dir = temp_dir();
         let configured_dir = temp_dir();
-        let config_dir = home.join(DEFAULT_DATA_DIR_NAME);
-        fs::create_dir_all(&config_dir).expect("config dir should be created");
+        let config_path = dir.join("agentzero.toml");
         let safe_dir = configured_dir.display().to_string().replace('\\', "/");
-        fs::write(
-            config_dir.join("agentzero.toml"),
-            format!("data_dir = \"{safe_dir}\"\n"),
-        )
-        .expect("config file should be written");
-        let home_str = home.to_string_lossy().to_string();
+        fs::write(&config_path, format!("data_dir = \"{safe_dir}\"\n"))
+            .expect("config file should be written");
         with_vars(
             vec![
-                ("HOME", Some(home_str.clone())),
-                ("USERPROFILE", Some(home_str)),
                 (ENV_DATA_DIR, None::<String>),
-                (ENV_CONFIG_PATH, None::<String>),
+                (
+                    ENV_CONFIG_PATH,
+                    Some(config_path.to_string_lossy().to_string()),
+                ),
             ],
             || {
                 let ctx =
@@ -242,24 +232,22 @@ mod tests {
                 assert_eq!(ctx.data_dir, configured_dir);
             },
         );
-        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_dir_all(configured_dir);
     }
 
     #[test]
     fn invalid_config_toml_returns_error_negative_path() {
-        let home = temp_dir();
-        let config_dir = home.join(DEFAULT_DATA_DIR_NAME);
-        fs::create_dir_all(&config_dir).expect("config dir should be created");
-        fs::write(config_dir.join(DEFAULT_CONFIG_FILE), "not-toml = [")
-            .expect("invalid config should be written");
-        let home_str = home.to_string_lossy().to_string();
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        fs::write(&config_path, "not-toml = [").expect("invalid config should be written");
         with_vars(
             vec![
-                ("HOME", Some(home_str.clone())),
-                ("USERPROFILE", Some(home_str)),
                 (ENV_DATA_DIR, None::<String>),
-                (ENV_CONFIG_PATH, None::<String>),
+                (
+                    ENV_CONFIG_PATH,
+                    Some(config_path.to_string_lossy().to_string()),
+                ),
             ],
             || {
                 let err = CommandContext::from_current_dir(None, None)
@@ -267,6 +255,6 @@ mod tests {
                 assert!(err.to_string().contains("failed to parse"));
             },
         );
-        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(dir);
     }
 }
