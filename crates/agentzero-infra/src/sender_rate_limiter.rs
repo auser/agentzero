@@ -32,11 +32,13 @@ impl SenderRateLimiter {
     /// Returns `Ok(())` if allowed, `Err(reason)` if rate limited.
     pub fn check(&self, sender_id: &str) -> Result<(), String> {
         let now = Instant::now();
-        let cutoff = now - self.window;
+        let cutoff = now.checked_sub(self.window);
 
         let mut entry = self.windows.entry(sender_id.to_string()).or_default();
-        // Remove expired entries
-        entry.retain(|t| *t > cutoff);
+        // Remove expired entries (if cutoff is None, system uptime < window so keep all)
+        if let Some(cutoff) = cutoff {
+            entry.retain(|t| *t > cutoff);
+        }
 
         if entry.len() >= self.max_per_hour as usize {
             return Err(format!(
@@ -52,11 +54,16 @@ impl SenderRateLimiter {
     /// Get current action count for a sender (excluding expired entries).
     pub fn current_count(&self, sender_id: &str) -> usize {
         let now = Instant::now();
-        let cutoff = now - self.window;
+        let cutoff = now.checked_sub(self.window);
 
         self.windows
             .get(sender_id)
-            .map(|entry| entry.iter().filter(|t| **t > cutoff).count())
+            .map(|entry| {
+                entry
+                    .iter()
+                    .filter(|t| cutoff.map_or(true, |c| **t > c))
+                    .count()
+            })
             .unwrap_or(0)
     }
 }
