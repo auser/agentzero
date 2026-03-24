@@ -49,8 +49,6 @@ cargo audit \
   --ignore RUSTSEC-2025-0141 \
   --ignore RUSTSEC-2026-0002 \
   --ignore RUSTSEC-2026-0049 \
-  --ignore RUSTSEC-2026-0067 \
-  --ignore RUSTSEC-2026-0068
 
 cargo deny check advisories
 
