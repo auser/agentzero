@@ -2,8 +2,8 @@
 # Publish publishable workspace crates to crates.io in topological order.
 # Used by the release workflow — assumes CARGO_REGISTRY_TOKEN is set.
 #
-# Most crates have publish = false (distributed via GitHub Releases only).
-# Only library crates intended for external consumption are published here.
+# All library sub-crates are published as internal implementation details.
+# The top-level `agentzero` facade crate is the public API.
 set -euo pipefail
 
 # Seconds to wait after each publish for crates.io index propagation.
@@ -43,10 +43,36 @@ publish() {
   sleep "${PUBLISH_WAIT}"
 }
 
-# ── Tier 1: leaf crate (no internal deps) ────────────────────────────────────
+# ── Tier 1: leaf crates (no internal deps) ───────────────────────────────────
 publish agentzero-core
+publish agentzero-plugin-sdk
 
-# ── Tier 2: depend on core ───────────────────────────────────────────────────
-publish agentzero-plugin-sdk   # -> core
+# ── Tier 2: depend only on core ──────────────────────────────────────────────
+publish agentzero-storage       # -> core
+publish agentzero-providers     # -> core
+publish agentzero-autopilot     # -> core
+publish agentzero-plugins       # no internal deps
+
+# ── Tier 3: depend on tier 1-2 ──────────────────────────────────────────────
+publish agentzero-tools         # -> core, providers, storage
+publish agentzero-auth          # -> storage
+
+# ── Tier 4: depend on tier 1-3 ──────────────────────────────────────────────
+publish agentzero-config        # -> core, tools
+publish agentzero-channels      # -> core, config, storage
+
+# ── Tier 5: orchestration layer ──────────────────────────────────────────────
+publish agentzero-infra         # -> auth, config, core, tools, storage, providers
+publish agentzero-orchestrator  # -> channels, config, core, infra, storage, tools
+
+# ── Tier 6: server + UI ─────────────────────────────────────────────────────
+publish agentzero-gateway       # -> config, core, infra, storage, channels, orchestrator, providers, tools
+publish agentzero-config-ui     # -> config, core, orchestrator
+
+# ── Tier 7: CLI ──────────────────────────────────────────────────────────────
+publish agentzero-cli           # -> nearly everything
+
+# ── Tier 8: facade ───────────────────────────────────────────────────────────
+publish agentzero               # -> all of the above
 
 echo "==> All crates published successfully."

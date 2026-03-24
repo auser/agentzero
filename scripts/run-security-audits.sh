@@ -39,17 +39,10 @@ if ! command -v cargo-deny >/dev/null 2>&1; then
   exit 1
 fi
 
-# cargo-deny handles advisory checking with the ignore list in deny.toml.
-# cargo-audit runs without ignore support, so we pass --ignore for each
-# advisory that is tracked in deny.toml as an upstream transitive dep.
+# Ignore advisories for transitive deps we cannot update yet.
+# Keep this list in sync with deny.toml [advisories].ignore.
 cargo audit \
-  --ignore RUSTSEC-2024-0436 \
-  --ignore RUSTSEC-2025-0057 \
-  --ignore RUSTSEC-2025-0134 \
-  --ignore RUSTSEC-2025-0141 \
-  --ignore RUSTSEC-2026-0002 \
-  --ignore RUSTSEC-2026-0049 \
-
+  --ignore RUSTSEC-2026-0049
 cargo deny check advisories
 
 echo "PASS: security audits completed"

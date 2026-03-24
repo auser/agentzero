@@ -141,7 +141,7 @@ ${BOLD}OPTIONS${NC}
     ${GREEN}-v${NC}, ${GREEN}--version${NC} ${UNDERLINE}VERSION${NC}     Install specific version ${DIM}[default: latest]${NC}
     ${GREEN}-d${NC}, ${GREEN}--dir${NC} ${UNDERLINE}DIR${NC}             Install directory ${DIM}[default: ~/.local/bin]${NC}
     ${GREEN}-c${NC}, ${GREEN}--channel${NC} ${UNDERLINE}CHANNEL${NC}     Release channel: stable, nightly ${DIM}[default: stable]${NC}
-        ${GREEN}--variant${NC} ${UNDERLINE}VARIANT${NC}        Build variant: default, server, minimal ${DIM}[default: interactive]${NC}
+        ${GREEN}--variant${NC} ${UNDERLINE}VARIANT${NC}        Build variant: default, server, minimal, lite ${DIM}[default: interactive]${NC}
     ${GREEN}-f${NC}, ${GREEN}--force${NC}                Force reinstall even if already installed
     ${GREEN}-q${NC}, ${GREEN}--quiet${NC}                Suppress non-essential output
     ${GREEN}-V${NC}, ${GREEN}--verbose${NC}              Enable debug output
@@ -157,7 +157,7 @@ ${BOLD}OPTIONS${NC}
 ${BOLD}ENVIRONMENT${NC}
     ${CYAN}AGENTZERO_INSTALL_DIR${NC}    Override install directory
     ${CYAN}AGENTZERO_VERSION${NC}        Override version to install
-    ${CYAN}AGENTZERO_VARIANT${NC}        Build variant: default, server, minimal
+    ${CYAN}AGENTZERO_VARIANT${NC}        Build variant: default, server, minimal, lite
     ${CYAN}GITHUB_TOKEN${NC}             GitHub API token (avoids rate limits in CI/Docker)
     ${CYAN}NO_COLOR${NC}                 Disable colored output (standard)
 
@@ -176,6 +176,9 @@ ${BOLD}EXAMPLES${NC}
 
     ${DIM}# Install server variant to /usr/local/bin${NC}
     curl -fsSL https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh | bash -s -- --variant server -d /usr/local/bin
+
+    ${DIM}# Install lite gateway for Raspberry Pi / edge devices${NC}
+    curl -fsSL https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh | bash -s -- --variant lite
 
     ${DIM}# Build from source${NC}
     curl -fsSL https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh | bash -s -- --from-source
@@ -302,8 +305,8 @@ parse_args() {
   # Validate variant if explicitly set
   if [[ -n "$VARIANT" ]]; then
     case "$VARIANT" in
-      default|server|minimal) ;;
-      *) error "Unknown variant: ${VARIANT}. Supported: default, server, minimal" ;;
+      default|server|minimal|lite) ;;
+      *) error "Unknown variant: ${VARIANT}. Supported: default, server, minimal, lite" ;;
     esac
   fi
 
@@ -541,6 +544,7 @@ resolve_variant() {
   if [[ -n "$VARIANT" ]]; then
     debug "Using variant: ${VARIANT}"
     success "Variant: ${BOLD}${VARIANT}${NC}"
+    [[ "$VARIANT" == "lite" ]] && BINARY_NAME="agentzero-lite"
     return
   fi
 
@@ -558,6 +562,7 @@ resolve_variant() {
   printf "    ${BOLD_GREEN}1)${NC} ${BOLD}default${NC}  — Full installation (~19MB) with TUI, WASM plugins, gateway\n" >&2
   printf "    ${BOLD_BLUE}2)${NC} ${BOLD}server${NC}   — Server/headless (~7MB) with plugins + gateway, no TUI\n" >&2
   printf "    ${BOLD_CYAN}3)${NC} ${BOLD}minimal${NC}  — Lean runtime (~5MB) for embedded and CI\n" >&2
+  printf "    ${BOLD_MAGENTA}4)${NC} ${BOLD}lite${NC}     — Gateway-only (~3MB) for Raspberry Pi and edge devices\n" >&2
   printf "\n" >&2
   printf "  ${DIM}Selection [1]:${NC} " >&2
 
@@ -574,6 +579,9 @@ resolve_variant() {
     3|minimal)
       VARIANT="minimal"
       ;;
+    4|lite)
+      VARIANT="lite"
+      ;;
     *)
       warn "Invalid selection '${answer}', using default."
       VARIANT="default"
@@ -581,6 +589,7 @@ resolve_variant() {
   esac
 
   success "Variant: ${BOLD}${VARIANT}${NC}"
+  [[ "$VARIANT" == "lite" ]] && BINARY_NAME="agentzero-lite"
 }
 
 # Build the artifact name matching the release workflow convention
@@ -591,11 +600,13 @@ build_artifact_name() {
   if [[ "$PLATFORM" == "windows" ]]; then
     ext=".exe"
   fi
+  local bin_name="${BINARY_NAME}"
   case "$VARIANT" in
     server)  suffix="-server" ;;
     minimal) suffix="-minimal" ;;
+    lite)    bin_name="agentzero-lite" ;;
   esac
-  echo "${BINARY_NAME}-v${version}-${PLATFORM}-${ARCH}${suffix}${ext}"
+  echo "${bin_name}-v${version}-${PLATFORM}-${ARCH}${suffix}${ext}"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -916,6 +927,10 @@ build_from_source() {
         info "${DIM}[dry-run]${NC} Would clone ${REPO} and build from source (server)"
         info "${DIM}[dry-run]${NC} cargo build -p ${BINARY_NAME} --profile release-min --no-default-features --features memory-sqlite,plugins,gateway,tls-rustls"
         ;;
+      lite)
+        info "${DIM}[dry-run]${NC} Would clone ${REPO} and build from source (lite)"
+        info "${DIM}[dry-run]${NC} cargo build -p agentzero-lite --profile release-min"
+        ;;
       *)
         info "${DIM}[dry-run]${NC} Would clone ${REPO} and build from source"
         info "${DIM}[dry-run]${NC} cargo build -p ${BINARY_NAME} --release"
@@ -948,6 +963,12 @@ build_from_source() {
         error "Build failed. Check the output above for errors."
       fi
       ARTIFACT_PATH="${src_dir}/target/release-min/${BINARY_NAME}"
+      ;;
+    lite)
+      if ! (cd "$src_dir" && cargo build -p agentzero-lite --profile release-min 2>&1); then
+        error "Build failed. Check the output above for errors."
+      fi
+      ARTIFACT_PATH="${src_dir}/target/release-min/agentzero-lite"
       ;;
     *)
       if ! (cd "$src_dir" && cargo build -p "$BINARY_NAME" --release 2>&1); then

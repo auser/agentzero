@@ -9,7 +9,6 @@ repository = "https://github.com/auser/agentzero"
 homepage = "https://github.com/auser/agentzero"
 keywords = ["agent", "cli", "ai", "runtime", "llm"]
 categories = ["command-line-utilities", "development-tools"]
-publish = false
 autobins = false
 
 [features]
@@ -27,9 +26,9 @@ memory-turso = ["agentzero-cli/memory-turso"]
 rag = ["agentzero-cli/rag"]
 hardware = ["agentzero-cli/hardware"]
 channels-standard = ["agentzero-cli/channels-standard"]
-plugins = ["agentzero-cli/plugins"]
+plugins = ["dep:agentzero-plugins", "agentzero-cli/plugins"]
 plugin-dev = ["agentzero-cli/plugin-dev"]
-gateway = ["agentzero-cli/gateway"]
+gateway = ["dep:agentzero-gateway", "agentzero-cli/gateway"]
 tui = ["agentzero-cli/tui"]
 wasm-jit = ["agentzero-cli/wasm-jit"]
 tls-rustls = ["agentzero-cli/tls-rustls"]
@@ -41,10 +40,24 @@ document-tools = ["agentzero-cli/document-tools"]
 local-model = ["agentzero-cli/local-model"]
 config-ui = ["agentzero-cli/config-ui"]
 
+[lib]
+name = "agentzero"
+path = "src/lib.rs"
+
 [dependencies]
 anyhow.workspace = true
 agentzero-cli = { workspace = true }
 agentzero-core = { workspace = true }
+agentzero-config = { workspace = true }
+agentzero-providers = { workspace = true }
+agentzero-tools = { workspace = true }
+agentzero-infra = { workspace = true }
+agentzero-orchestrator = { workspace = true }
+agentzero-storage = { workspace = true }
+agentzero-auth = { workspace = true }
+agentzero-channels = { workspace = true }
+agentzero-gateway = { workspace = true, optional = true }
+agentzero-plugins = { workspace = true, optional = true }
 tokio.workspace = true
 
 [[bin]]

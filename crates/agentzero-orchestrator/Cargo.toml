@@ -4,9 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description.workspace = true
+description = "Multi-agent coordination, swarm, and pipeline management for AgentZero"
 repository.workspace = true
-publish = false
 
 [dependencies]
 agentzero-channels = { workspace = true }

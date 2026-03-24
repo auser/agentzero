@@ -28,7 +28,7 @@ You also need an API key from at least one AI provider (OpenRouter, OpenAI, Anth
 curl -fsSL https://raw.githubusercontent.com/auser/agentzero/main/scripts/install.sh | bash
 ```
 
-This auto-detects your platform and installs to `~/.cargo/bin` (or `~/.local/bin`). Options:
+This auto-detects your platform and prompts you to choose a variant (default, server, minimal, or lite). Options:
 
 ```bash
 # Install a specific version
@@ -36,6 +36,10 @@ curl -fsSL ... | bash -s -- --version 0.2.0
 
 # Install to a custom directory
 curl -fsSL ... | bash -s -- --dir /usr/local/bin
+
+# Install a specific variant (skip the interactive prompt)
+curl -fsSL ... | bash -s -- --variant lite    # gateway-only for Raspberry Pi
+curl -fsSL ... | bash -s -- --variant minimal # lean runtime for CI
 
 # Install shell completions (bash, zsh, fish)
 curl -fsSL ... | bash -s -- --completions zsh
