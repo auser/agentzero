@@ -939,7 +939,7 @@ mod tests {
         assert!(content.contains("allowed_root = \"./workspace\""));
         assert!(content.contains("allowed_commands = [\"ls\", \"pwd\"]"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -968,7 +968,7 @@ mod tests {
         assert!(stdout.contains("Config already exists"));
         assert!(stdout.contains("Aborted. Existing config was left unchanged."));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

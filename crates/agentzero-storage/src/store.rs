@@ -187,7 +187,7 @@ mod tests {
         let disk = fs::read_to_string(store.path()).expect("stored payload should be readable");
         assert!(!disk.contains("secret"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -212,7 +212,7 @@ mod tests {
         let disk = fs::read_to_string(store.path()).expect("migrated payload should be readable");
         assert!(!disk.contains("\"plain\""));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -224,7 +224,7 @@ mod tests {
         let loaded: Option<TestData> = store.load_optional().expect("load should succeed");
         assert!(loaded.is_none());
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

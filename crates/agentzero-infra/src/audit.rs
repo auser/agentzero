@@ -90,7 +90,7 @@ mod tests {
         let content = fs::read_to_string(&path).expect("audit file should be readable");
         assert!(content.contains("tool_execute_start"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -106,6 +106,6 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

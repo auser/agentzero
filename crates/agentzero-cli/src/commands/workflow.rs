@@ -536,7 +536,7 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert!(edges.is_empty());
 
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -565,7 +565,7 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert_eq!(edges.len(), 1);
 
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -585,7 +585,7 @@ mod tests {
         // Should not error on empty store
         let result = cmd_list(&ctx).await;
         assert!(result.is_ok());
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -617,7 +617,7 @@ mod tests {
         assert_eq!(workflows.len(), 1);
         assert_eq!(workflows[0].name, "import-test");
 
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -631,6 +631,6 @@ mod tests {
 
         let result = cmd_export(&ctx, "wf-nonexistent".to_string(), None).await;
         assert!(result.is_err());
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 }

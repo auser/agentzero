@@ -127,7 +127,7 @@ mod tests {
         store.remove("my_skill").expect("remove should succeed");
         assert!(store.list().expect("list should succeed").is_empty());
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -143,6 +143,6 @@ mod tests {
             .expect_err("duplicate install should fail");
         assert!(err.to_string().contains("already installed"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

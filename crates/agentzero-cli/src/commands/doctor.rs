@@ -280,7 +280,7 @@ mod tests {
         let outcome = probe_models_from_cache(&dir, "openai");
         assert!(matches!(outcome, ModelProbeOutcome::Ok(1)));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -288,7 +288,7 @@ mod tests {
         let dir = temp_dir();
         let outcome = probe_models_from_cache(&dir, "openai");
         assert!(matches!(outcome, ModelProbeOutcome::Error(_)));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -310,7 +310,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].id.as_deref(), Some("1"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -324,6 +324,6 @@ mod tests {
 
         run_traces_query(&ctx, None, None, None, 20).expect("traces query should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

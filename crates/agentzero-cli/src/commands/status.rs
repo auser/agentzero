@@ -66,7 +66,7 @@ mod tests {
             .await
             .expect("status with valid config should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -90,6 +90,6 @@ mod tests {
             .expect_err("unsupported backend should fail");
         assert!(err.to_string().contains("unsupported"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

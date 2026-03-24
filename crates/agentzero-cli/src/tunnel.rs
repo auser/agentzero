@@ -180,7 +180,7 @@ mod tests {
         let stopped = store.stop("default").expect("stop should succeed");
         assert!(!stopped.active);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -193,6 +193,6 @@ mod tests {
             .expect_err("invalid remote should fail");
         assert!(err.to_string().contains("remote target"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

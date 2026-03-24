@@ -305,7 +305,7 @@ mod tests {
             );
         }
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -320,7 +320,7 @@ mod tests {
             .expect_err("invalid json should fail");
         assert!(err.to_string().contains("valid JSON"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

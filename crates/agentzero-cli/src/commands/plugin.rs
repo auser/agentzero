@@ -755,7 +755,7 @@ mod tests {
         .await
         .expect("validate should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -777,7 +777,7 @@ mod tests {
         .expect_err("missing manifest should fail");
         assert!(err.to_string().contains("No such file") || err.to_string().contains("os error"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -800,7 +800,7 @@ mod tests {
         .await
         .expect("remove should succeed for missing plugin");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -824,7 +824,7 @@ mod tests {
         .expect_err("empty plugin id should fail");
         assert!(err.to_string().contains("plugin id cannot be empty"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -870,7 +870,7 @@ mod tests {
         .await
         .expect("plugin dev preflight loop should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -895,6 +895,6 @@ mod tests {
         .expect_err("zero iterations should fail");
         assert!(err.to_string().contains("--iterations >= 1"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

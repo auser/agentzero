@@ -1011,7 +1011,7 @@ mod tests {
             .await
             .expect("auth status should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -1034,7 +1034,7 @@ mod tests {
         .expect_err("using missing profile should fail");
         assert!(err.to_string().contains("auth profile not found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -1066,7 +1066,7 @@ mod tests {
         assert_eq!(status.active_profile.as_deref(), Some("default"));
         assert_eq!(status.active_provider.as_deref(), Some("openai-codex"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -1091,7 +1091,7 @@ mod tests {
             .to_string()
             .contains("No OpenAI Codex auth profile found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -1127,7 +1127,7 @@ mod tests {
         .await
         .expect("refresh should succeed for existing openai-codex profile");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -1152,7 +1152,7 @@ mod tests {
             .to_string()
             .contains("supports --provider openai-codex, anthropic, or gemini"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -1183,7 +1183,7 @@ mod tests {
         let listed = manager.list_profiles().expect("profiles should load");
         assert!(listed.is_empty());
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -1205,7 +1205,7 @@ mod tests {
         .await
         .expect("missing logout still succeeds with not-found message");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

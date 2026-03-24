@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(status.host.as_deref(), Some("0.0.0.0"));
         assert_eq!(status.port, Some(9090));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
             .expect_err("stopping without start should fail");
         assert!(err.to_string().contains("not running"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -315,7 +315,7 @@ mod tests {
         assert!(status.running);
         assert_eq!(status.pid, Some(my_pid));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -326,7 +326,7 @@ mod tests {
         let status = manager.status().expect("status should succeed");
         assert!(!status.running);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

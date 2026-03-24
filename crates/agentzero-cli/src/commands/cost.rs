@@ -98,7 +98,7 @@ mod tests {
             .await
             .expect("reset should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -114,7 +114,7 @@ mod tests {
             .await
             .expect("status on empty store should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -155,6 +155,6 @@ mod tests {
         assert_eq!(summary.total_tokens, 300);
         assert!((summary.total_usd - 0.03).abs() < f64::EPSILON);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

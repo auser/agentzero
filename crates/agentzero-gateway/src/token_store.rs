@@ -76,8 +76,9 @@ mod tests {
         let path = unique_temp_file("missing");
         let loaded = load_paired_tokens(Some(&path)).expect("missing token store should be ok");
         assert!(loaded.is_empty());
-        fs::remove_dir_all(path.parent().expect("temp dir should exist"))
-            .expect("temp dir should be removed");
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
     }
 
     #[test]
@@ -98,7 +99,8 @@ mod tests {
         assert!(!disk.contains("token-2"));
 
         clear_paired_tokens(Some(&path)).expect("cleanup should succeed");
-        fs::remove_dir_all(path.parent().expect("temp dir should exist"))
-            .expect("temp dir should be removed");
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
     }
 }

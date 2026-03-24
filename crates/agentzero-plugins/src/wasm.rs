@@ -2128,7 +2128,7 @@ mod tests {
             .to_string()
             .contains("host call `env::log` is not allowed"));
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2163,7 +2163,7 @@ mod tests {
             .preflight_with_policy(&container, &policy)
             .expect("allowlisted import should pass");
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2193,7 +2193,7 @@ mod tests {
             .to_string()
             .contains("exceeds size policy"));
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2229,7 +2229,7 @@ mod tests {
             .expect("execution should succeed");
         assert_eq!(result.status_code, 7);
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2262,7 +2262,7 @@ mod tests {
             .to_string()
             .contains("missing or incompatible entrypoint"));
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2296,7 +2296,7 @@ mod tests {
             .to_string()
             .contains("failed to instantiate plugin module"));
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2341,7 +2341,7 @@ mod tests {
             "unexpected timeout error: {err_text}"
         );
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     // =======================================================================
@@ -2424,7 +2424,7 @@ mod tests {
         assert_eq!(result.output, "echo:ok");
         assert!(result.error.is_none());
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2459,7 +2459,7 @@ mod tests {
             "unexpected error: {err}"
         );
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2529,7 +2529,7 @@ mod tests {
         assert_eq!(result.output, "logged");
         assert!(result.error.is_none());
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2578,7 +2578,7 @@ mod tests {
             "unexpected error: {err}"
         );
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2629,7 +2629,7 @@ mod tests {
             "unexpected error: {err}"
         );
 
-        fs::remove_file(path).expect("temp wasm file should be removed");
+        let _ = fs::remove_file(path);
     }
 
     // =======================================================================

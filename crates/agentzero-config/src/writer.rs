@@ -262,7 +262,7 @@ mod tests {
         let result = read_and_merge(&config_path, &[]);
         assert!(result.is_ok(), "empty merge should succeed");
 
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -279,7 +279,7 @@ mod tests {
         let content = fs::read_to_string(&config_path).expect("read should succeed");
         assert_eq!(content, "# updated");
 
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -297,7 +297,7 @@ mod tests {
         // Most recent first
         assert_eq!(backups[0].timestamp, "20260316T130000Z");
 
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -495,7 +495,7 @@ mod tests {
         assert!(lib_rs.contains("declare_tool!"));
         assert!(lib_rs.contains("dns_lookup"));
 
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -521,7 +521,7 @@ mod tests {
             .expect_err("duplicate should fail");
         assert!(err.to_string().contains("already exists"));
 
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -536,7 +536,7 @@ mod tests {
             .expect("list should succeed");
         assert!(result.output.contains("No plugins directory"));
 
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -551,6 +551,6 @@ mod tests {
             .await
             .expect_err("sub-agent should be blocked");
         assert!(err.to_string().contains("not available to sub-agents"));
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 }

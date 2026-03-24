@@ -337,7 +337,7 @@ mod tests {
             .await
             .expect_err("dashboard should fail in non-tty test env");
         assert!(err.to_string().contains("requires a TTY"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

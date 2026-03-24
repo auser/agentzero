@@ -1026,7 +1026,7 @@ mod tests {
             assert_eq!(key, "sk-test");
         });
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1046,7 +1046,7 @@ mod tests {
             assert_eq!(key, "tok-from-profile");
         });
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1067,7 +1067,7 @@ mod tests {
             assert_eq!(key, "sk-env");
         });
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1082,7 +1082,7 @@ mod tests {
             assert!(key.is_empty(), "local provider key should be empty string");
         });
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1098,7 +1098,7 @@ mod tests {
             assert_eq!(key, "sk-local");
         });
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1113,7 +1113,7 @@ mod tests {
             assert!(err.to_string().contains("missing API key"));
         });
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1132,7 +1132,7 @@ mod tests {
             }
         });
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

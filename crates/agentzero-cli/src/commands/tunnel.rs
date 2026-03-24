@@ -108,7 +108,7 @@ mod tests {
         .await
         .expect("status should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -133,7 +133,7 @@ mod tests {
         .expect_err("invalid protocol should fail");
         assert!(err.to_string().contains("unsupported protocol"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -155,7 +155,7 @@ mod tests {
         .expect_err("stop missing tunnel should fail");
         assert!(err.to_string().contains("not found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -179,6 +179,6 @@ mod tests {
         .await
         .expect("ssh protocol should be accepted");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

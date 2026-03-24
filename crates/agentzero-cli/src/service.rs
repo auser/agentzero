@@ -119,7 +119,7 @@ mod tests {
         assert!(status.installed);
         assert!(!status.running);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -132,7 +132,7 @@ mod tests {
             .expect_err("start should fail when service is not installed");
         assert!(err.to_string().contains("service is not installed"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -145,7 +145,7 @@ mod tests {
             .expect_err("restart should fail when service is not installed");
         assert!(err.to_string().contains("service is not installed"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -160,6 +160,6 @@ mod tests {
         assert!(!status.installed);
         assert!(!status.running);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

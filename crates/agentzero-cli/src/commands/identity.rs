@@ -161,7 +161,7 @@ mod tests {
         .await
         .expect("get should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -197,7 +197,7 @@ mod tests {
         .expect_err("invalid role should fail");
         assert!(err.to_string().contains("snake_case"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -220,7 +220,7 @@ mod tests {
         .expect_err("get missing identity should fail");
         assert!(err.to_string().contains("not found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -253,6 +253,6 @@ mod tests {
         let agent = identities.get("agent-1").expect("agent should exist");
         assert_eq!(agent.display_name, "Worker Agent");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

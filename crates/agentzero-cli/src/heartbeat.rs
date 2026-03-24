@@ -84,7 +84,7 @@ mod tests {
         assert_eq!(record.component, "daemon");
         assert_eq!(record.last_seen_epoch_seconds, 123);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -95,6 +95,6 @@ mod tests {
         let record = store.get("channels").expect("get should succeed");
         assert!(record.is_none());
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

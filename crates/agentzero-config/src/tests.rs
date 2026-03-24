@@ -76,7 +76,7 @@ fn loads_typed_config_from_toml_file() {
         assert_eq!(cfg.security.allowed_commands, vec!["echo".to_string()]);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn loads_user_configured_hook_settings() {
         assert_eq!(cfg.agent.max_prompt_chars, 4096);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn loads_legacy_onboard_field_names() {
         assert_eq!(cfg.memory.sqlite_path, "./legacy.db");
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn env_overrides_file_values() {
         });
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn dotenv_chain_overrides_in_order() {
         });
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -208,7 +208,7 @@ fn process_env_overrides_dotenv_files() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -227,7 +227,7 @@ fn load_env_var_reads_from_dotenv_when_process_env_missing() {
         });
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn load_env_var_prefers_process_env_over_dotenv() {
         });
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -281,8 +281,8 @@ fn cwd_dotenv_overrides_config_dir_dotenv() {
     });
 
     std::env::set_current_dir(&original_dir).expect("should restore cwd");
-    fs::remove_dir_all(config_dir).expect("config temp dir should be removed");
-    fs::remove_dir_all(cwd_dir).expect("cwd temp dir should be removed");
+    let _ = fs::remove_dir_all(config_dir);
+    let _ = fs::remove_dir_all(cwd_dir);
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn allows_enabled_mcp_without_allowed_servers() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -328,7 +328,7 @@ fn rejects_invalid_hook_error_mode_negative_path() {
             .contains("on_error_default"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -351,7 +351,7 @@ fn rejects_empty_allowlist_in_non_dev_mode() {
             .contains("security.allowed_commands"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -370,7 +370,7 @@ fn allows_empty_allowlist_in_dev_mode() {
         assert!(cfg.security.allowed_commands.is_empty());
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -393,7 +393,7 @@ fn rejects_relative_allowed_root_traversal_escape() {
             .contains("must not contain parent directory traversal"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -416,7 +416,7 @@ fn rejects_unsupported_provider_url_scheme() {
             .contains("scheme must be http or https"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -439,7 +439,7 @@ fn rejects_zero_request_timeout() {
             .contains("agent.request_timeout_ms"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -462,7 +462,7 @@ fn rejects_zero_memory_window_size() {
             .contains("agent.memory_window_size"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -485,7 +485,7 @@ fn rejects_zero_max_prompt_chars() {
             .contains("agent.max_prompt_chars"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -508,7 +508,7 @@ fn rejects_zero_shell_max_output_bytes() {
             .contains("security.shell.max_output_bytes"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -531,7 +531,7 @@ fn rejects_zero_write_file_max_write_bytes() {
             .contains("security.write_file.max_write_bytes"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -557,7 +557,7 @@ fn loads_config_backed_tool_policy() {
         assert_eq!(policy.allowed_mcp_servers, vec!["filesystem".to_string()]);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -577,7 +577,7 @@ fn loads_enabled_audit_policy() {
         assert!(audit.path.ends_with("audit/events.log"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -600,7 +600,7 @@ fn rejects_enabled_audit_policy_with_empty_path() {
             .contains("security.audit.path"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 // --- Phase A3-A6 deserialization tests ---
@@ -623,7 +623,7 @@ fn parses_observability_config() {
         assert_eq!(cfg.observability.otel_service_name, "myservice");
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -645,7 +645,7 @@ fn parses_research_config() {
         assert_eq!(cfg.research.keywords, vec!["find", "search"]);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -666,7 +666,7 @@ fn parses_runtime_config_with_wasm() {
         assert_eq!(cfg.runtime.wasm.memory_limit_mb, 32);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -687,7 +687,7 @@ fn parses_browser_config() {
         assert_eq!(cfg.browser.allowed_domains, vec!["example.com"]);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -709,7 +709,7 @@ fn parses_web_search_config() {
         assert_eq!(cfg.web_search.max_results, 10);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -731,7 +731,7 @@ fn parses_cost_config() {
         assert_eq!(cfg.cost.warn_at_percent, 90);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -751,7 +751,7 @@ fn parses_identity_config() {
         assert_eq!(cfg.identity.aieos_path, Some("/etc/aieos.json".to_string()));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -776,7 +776,7 @@ fn parses_model_provider_profiles() {
         assert_eq!(profile.model, Some("llama3".to_string()));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -799,7 +799,7 @@ fn parses_model_routes() {
         assert_eq!(cfg.model_routes[0].max_tokens, Some(4096));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -821,7 +821,7 @@ fn parses_embedding_routes() {
         assert_eq!(cfg.embedding_routes[0].dimensions, Some(1536));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -847,7 +847,7 @@ fn parses_query_classification() {
         assert_eq!(cfg.query_classification.rules[0].priority, 10);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -872,7 +872,7 @@ fn parses_delegate_agent_config() {
         assert_eq!(coder.allowed_tools, vec!["shell", "read_file"]);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 // --- Negative-path tests ---
@@ -897,7 +897,7 @@ fn rejects_invalid_provider_temperature() {
             .contains("default_temperature"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -920,7 +920,7 @@ fn rejects_invalid_provider_api() {
             .contains("provider_api"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 // --- Masking test ---
@@ -947,7 +947,7 @@ fn masked_config_redacts_api_keys() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 // --- Phase D: Channel config tests ---
@@ -1009,7 +1009,7 @@ sample_rate = 0.8
         assert!((tg_ack.sample_rate - 0.8).abs() < f64::EPSILON);
     });
 
-    fs::remove_dir_all(dir).expect("cleanup");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1033,7 +1033,7 @@ fn channels_config_defaults_are_reasonable() {
         assert!(cfg.channels_config.ack_reaction.is_empty());
     });
 
-    fs::remove_dir_all(dir).expect("cleanup");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1080,7 +1080,7 @@ contains_none = ["test"]
         assert_eq!(rule1.contains_none, vec!["test"]);
     });
 
-    fs::remove_dir_all(dir).expect("cleanup");
+    let _ = fs::remove_dir_all(dir);
 }
 
 // --- Phase B7: Shell config tests ---
@@ -1101,7 +1101,7 @@ fn shell_context_aware_parsing_defaults_to_true() {
         assert!(cfg.security.shell.context_aware_parsing);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1120,7 +1120,7 @@ fn shell_context_aware_parsing_can_be_disabled() {
         assert!(!cfg.security.shell.context_aware_parsing);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 // --- D2: Approval persistence tests ---
@@ -1140,7 +1140,7 @@ fn update_auto_approve_creates_section_from_empty_file() {
     assert!(content.contains("shell"));
     assert!(content.contains("browser"));
 
-    fs::remove_dir_all(dir).expect("cleanup");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1161,7 +1161,7 @@ fn update_auto_approve_preserves_other_sections() {
     assert!(content.contains("[autonomy]"));
     assert!(content.contains("shell"));
 
-    fs::remove_dir_all(dir).expect("cleanup");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1177,7 +1177,7 @@ fn update_auto_approve_overwrites_existing_list() {
     assert!(content.contains("new_tool"));
     assert!(!content.contains("old_tool"));
 
-    fs::remove_dir_all(dir).expect("cleanup");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1192,7 +1192,7 @@ fn update_auto_approve_empty_list_clears() {
     let content = fs::read_to_string(&config_path).expect("file should be readable");
     assert!(content.contains("auto_approve = []"));
 
-    fs::remove_dir_all(dir).expect("cleanup");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1215,7 +1215,7 @@ fn resolve_local_provider_defaults_overrides_cloud_base_url_for_ollama() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1237,7 +1237,7 @@ fn resolve_local_provider_defaults_overrides_cloud_base_url_for_lmstudio() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1259,7 +1259,7 @@ fn resolve_local_provider_defaults_preserves_explicit_base_url() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1281,7 +1281,7 @@ fn resolve_local_provider_defaults_does_not_affect_cloud_providers() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1317,7 +1317,7 @@ fn resolve_local_provider_defaults_all_local_providers_resolve() {
         });
     }
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1339,7 +1339,7 @@ fn normalize_base_url_strips_trailing_v1() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1361,7 +1361,7 @@ fn normalize_base_url_strips_trailing_v1_with_slash() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1383,7 +1383,7 @@ fn normalize_base_url_preserves_url_without_v1() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 // --- Policy flag coverage ---
@@ -1424,7 +1424,7 @@ fn enable_git_derived_from_allowed_commands() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1443,7 +1443,7 @@ fn enable_web_search_from_config() {
         assert!(policy.enable_web_search);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1463,7 +1463,7 @@ fn enable_browser_from_config() {
         assert!(policy.enable_browser_open);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1486,7 +1486,7 @@ fn cidr_parse_error_returns_err() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1495,7 +1495,7 @@ fn absolute_allowed_root_is_accepted() {
     let dir = temp_dir();
     let config_path = dir.join("agentzero.toml");
     // Use the temp dir as the absolute allowed_root (it exists and is canonical).
-    let abs_root = dir.to_string_lossy().to_string();
+    let abs_root = dir.to_string_lossy().to_string().replace('\\', "/");
     fs::write(
         &config_path,
         format!("[security]\nallowed_root = \"{abs_root}\"\nallowed_commands = [\"echo\"]\n"),
@@ -1510,7 +1510,7 @@ fn absolute_allowed_root_is_accepted() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1533,7 +1533,7 @@ fn rejects_gateway_port_zero() {
             .contains("gateway.port"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1556,7 +1556,7 @@ fn rejects_empty_gateway_host() {
             .contains("gateway.host"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1579,7 +1579,7 @@ fn rejects_public_host_without_allow_public_bind() {
             .contains("allow_public_bind"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1602,7 +1602,7 @@ fn rejects_invalid_autonomy_level() {
             .contains("autonomy.level"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1625,7 +1625,7 @@ fn rejects_zero_max_cost_per_day() {
             .contains("max_cost_per_day_cents"));
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 // --- Privacy config tests ---
@@ -1656,7 +1656,7 @@ fn privacy_defaults_to_off_when_section_absent() {
         assert_eq!(cfg.privacy.key_rotation.rotation_interval_secs, 604_800);
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1711,7 +1711,7 @@ key_store_path = "/tmp/keys"
         assert_eq!(cfg.privacy.key_rotation.key_store_path, "/tmp/keys");
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1735,7 +1735,7 @@ fn privacy_rejects_invalid_mode() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1761,7 +1761,7 @@ fn privacy_rejects_cloud_provider_in_local_only_mode() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1781,7 +1781,7 @@ fn privacy_allows_local_provider_in_local_only_mode() {
         assert_eq!(cfg.provider.kind, "ollama");
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1807,7 +1807,7 @@ fn privacy_enforce_local_provider_blocks_cloud() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1831,7 +1831,7 @@ fn privacy_rejects_invalid_handshake_pattern() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1865,7 +1865,7 @@ fn privacy_all_five_modes_accepted() {
             assert_eq!(cfg.privacy.mode, *mode);
         });
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }
 
@@ -1892,7 +1892,7 @@ fn privacy_local_only_rejects_non_localhost_base_url() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -1929,7 +1929,7 @@ fn privacy_local_only_network_tools_disabled() {
         );
     });
 
-    fs::remove_dir_all(dir).expect("temp dir should be removed");
+    let _ = fs::remove_dir_all(dir);
 }
 
 // --- Privacy "private" mode (Sprint 48 Phase A) ---

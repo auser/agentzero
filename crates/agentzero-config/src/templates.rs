@@ -258,13 +258,10 @@ mod tests {
         let root = Path::new("/tmp/workspace");
         let paths = template_paths_for_workspace(root);
         assert_eq!(paths.len(), TEMPLATE_LOAD_ORDER.len());
-        assert_eq!(paths[0].to_string_lossy(), "/tmp/workspace/IDENTITY.md");
+        assert_eq!(paths[0], root.join("IDENTITY.md"));
         assert_eq!(
-            paths
-                .last()
-                .expect("last path should exist")
-                .to_string_lossy(),
-            "/tmp/workspace/USER.md"
+            *paths.last().expect("last path should exist"),
+            root.join("USER.md")
         );
     }
 

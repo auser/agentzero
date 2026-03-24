@@ -227,7 +227,7 @@ mod tests {
         assert!(result.output.contains("dry_run=false"));
         let content = fs::read_to_string(dir.join("note.txt")).expect("written file should exist");
         assert_eq!(content, "hello");
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -244,7 +244,7 @@ mod tests {
 
         assert!(result.output.contains("dry_run=true"));
         assert!(!dir.join("note.txt").exists());
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -265,7 +265,7 @@ mod tests {
             .expect_err("overwrite=false should fail when file exists")
             .to_string()
             .contains("overwrite=true"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -283,7 +283,7 @@ mod tests {
 
         let content = fs::read_to_string(&target).expect("target should be readable");
         assert_eq!(content, "new");
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -302,7 +302,7 @@ mod tests {
             .expect_err("traversal should be denied")
             .to_string()
             .contains("path traversal is not allowed"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     // B7: Hard-link guard tests
@@ -329,7 +329,7 @@ mod tests {
             .expect_err("hard-linked file should be rejected")
             .to_string()
             .contains("hard link"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     // B7: Sensitive file detection tests
@@ -350,7 +350,7 @@ mod tests {
             .expect_err("sensitive file should be blocked")
             .to_string()
             .contains("refusing to write sensitive file"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -370,7 +370,7 @@ mod tests {
         assert!(result.output.contains("dry_run=false"));
         let content = fs::read_to_string(dir.join(".env")).expect("written file should exist");
         assert_eq!(content, "SECRET=x");
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -392,6 +392,6 @@ mod tests {
             .expect_err("oversized content should fail")
             .to_string()
             .contains("content is too large"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

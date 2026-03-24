@@ -138,7 +138,7 @@ mod tests {
         .await
         .expect("remove should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -179,7 +179,7 @@ mod tests {
         .await
         .expect("resume should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -201,7 +201,7 @@ mod tests {
         .expect_err("removing missing task should fail");
         assert!(err.to_string().contains("not found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -225,7 +225,7 @@ mod tests {
         .expect_err("updating missing task should fail");
         assert!(err.to_string().contains("not found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -247,6 +247,6 @@ mod tests {
         .expect_err("pausing missing task should fail");
         assert!(err.to_string().contains("not found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

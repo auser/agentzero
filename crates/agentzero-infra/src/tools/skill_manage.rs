@@ -224,7 +224,7 @@ mod tests {
             .expect("list should succeed");
         assert!(result.output.contains("code_review"));
 
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -239,6 +239,6 @@ mod tests {
             .await
             .expect_err("sub-agent should be blocked");
         assert!(err.to_string().contains("not available to sub-agents"));
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 }

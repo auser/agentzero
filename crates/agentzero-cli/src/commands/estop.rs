@@ -331,7 +331,7 @@ mod tests {
         .await
         .expect("resume should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -362,7 +362,7 @@ mod tests {
         .expect_err("resume without engage should fail");
 
         assert!(err.to_string().contains("not engaged"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -416,7 +416,7 @@ mod tests {
         .await
         .expect("resume with valid OTP should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -462,7 +462,7 @@ mod tests {
         .expect_err("resume without OTP should fail");
 
         assert!(err.to_string().contains("OTP code required"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -508,6 +508,6 @@ mod tests {
         .expect_err("resume with wrong OTP should fail");
 
         assert!(err.to_string().contains("invalid OTP code"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

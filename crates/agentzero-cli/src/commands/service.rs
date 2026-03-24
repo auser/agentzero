@@ -89,7 +89,7 @@ mod tests {
             .await
             .expect("uninstall should succeed");
 
-        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     #[tokio::test]
@@ -106,7 +106,7 @@ mod tests {
             .expect_err("restart should fail without install");
         assert!(err.to_string().contains("service is not installed"));
 
-        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     #[tokio::test]
@@ -131,7 +131,7 @@ mod tests {
             .await
             .expect("uninstall should succeed");
 
-        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     #[tokio::test]
@@ -148,6 +148,6 @@ mod tests {
             .expect_err("stop without install should fail");
         assert!(err.to_string().contains("service is not installed"));
 
-        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(data_dir);
     }
 }

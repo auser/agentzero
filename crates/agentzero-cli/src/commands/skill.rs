@@ -208,7 +208,7 @@ mod tests {
         .await
         .expect("test should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -230,7 +230,7 @@ mod tests {
         .expect_err("remove missing should fail");
         assert!(err.to_string().contains("not installed"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -246,7 +246,7 @@ mod tests {
             .await
             .expect("list on empty store should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -272,7 +272,7 @@ mod tests {
             .await
             .expect("list after install should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -303,7 +303,7 @@ mod tests {
         assert!(manifest.contains("test_skill"));
         assert!(manifest.contains("rust"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -329,7 +329,7 @@ mod tests {
         .expect_err("skill new into existing dir should fail");
         assert!(err.to_string().contains("already exists"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -362,7 +362,7 @@ mod tests {
         .await
         .expect("audit should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -385,7 +385,7 @@ mod tests {
         .expect_err("audit missing skill should fail");
         assert!(err.to_string().contains("not installed"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -401,6 +401,6 @@ mod tests {
             .await
             .expect("templates list should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

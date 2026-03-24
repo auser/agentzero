@@ -160,7 +160,7 @@ mod tests {
         store.remove("backup").expect("remove should succeed");
         assert!(store.list().expect("list should succeed").is_empty());
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -174,7 +174,7 @@ mod tests {
             .add("backup", "0 * * * *", "agentzero status")
             .expect_err("duplicate add should fail");
         assert!(err.to_string().contains("already exists"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

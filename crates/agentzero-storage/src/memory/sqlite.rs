@@ -774,7 +774,7 @@ mod tests {
         assert_eq!(recent[0].content, "second");
         assert_eq!(recent[1].content, "third");
 
-        fs::remove_file(db_path).expect("test db should be removed");
+        let _ = fs::remove_file(db_path);
     }
 
     #[tokio::test]
@@ -806,8 +806,8 @@ mod tests {
             .expect("append should succeed");
         assert!(db_path.exists(), "db file should exist after open");
 
-        fs::remove_file(&db_path).expect("test db should be removed");
-        fs::remove_dir_all(base).expect("temp dirs should be removed");
+        let _ = fs::remove_file(&db_path);
+        let _ = fs::remove_dir_all(base);
     }
 
     #[tokio::test]
@@ -849,7 +849,7 @@ mod tests {
             );
         }
 
-        fs::remove_file(db_path).expect("test db should be removed");
+        let _ = fs::remove_file(db_path);
     }
 
     #[tokio::test]
@@ -889,7 +889,7 @@ mod tests {
             "data encrypted with key A should not be accessible after recreate"
         );
 
-        fs::remove_file(db_path).expect("test db should be removed");
+        let _ = fs::remove_file(db_path);
     }
 
     #[tokio::test]
@@ -940,7 +940,7 @@ mod tests {
             );
         }
 
-        fs::remove_file(db_path).expect("test db should be removed");
+        let _ = fs::remove_file(db_path);
     }
 
     #[tokio::test]

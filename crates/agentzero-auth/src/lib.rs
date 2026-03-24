@@ -902,7 +902,7 @@ mod tests {
         assert_eq!(status.active_provider.as_deref(), Some("openrouter"));
         assert_eq!(status.total_profiles, 1);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -925,7 +925,7 @@ mod tests {
             .expect("oauth profile should exist");
         assert_eq!(profile.provider, "openai-codex");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -943,7 +943,7 @@ mod tests {
         assert!(status.active_token_expires_at_epoch_secs.is_some());
         assert!(status.active_has_refresh_token);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -955,7 +955,7 @@ mod tests {
             .expect_err("empty token should fail");
         assert!(err.to_string().contains("token must not be empty"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -967,7 +967,7 @@ mod tests {
             .expect_err("missing profile should fail");
         assert!(err.to_string().contains("not found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -979,7 +979,7 @@ mod tests {
             .expect_err("refresh on missing profile should fail");
         assert!(err.to_string().contains("not found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -997,7 +997,7 @@ mod tests {
         assert_eq!(result.profile, "default");
         assert_eq!(result.status, RefreshStatus::Valid);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1013,7 +1013,7 @@ mod tests {
             .expect("lookup should succeed");
         assert!(result.is_none());
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1037,7 +1037,7 @@ mod tests {
         assert_eq!(listed[0].provider, "anthropic");
         assert_eq!(listed[0].name, "backup");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1053,7 +1053,7 @@ mod tests {
             .expect("remove should succeed");
         assert!(!removed);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1084,7 +1084,7 @@ mod tests {
             .expect("load after clear should succeed")
             .is_none());
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1114,7 +1114,7 @@ mod tests {
             CredentialSource::ExplicitProfile("default".to_string())
         );
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1133,7 +1133,7 @@ mod tests {
         assert_eq!(cred.provider, "openrouter");
         assert_eq!(cred.source, CredentialSource::ProviderMatch);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1156,7 +1156,7 @@ mod tests {
             CredentialSource::ActiveProfile("default".to_string())
         );
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1169,7 +1169,7 @@ mod tests {
             .expect("resolve should succeed");
         assert!(result.is_none());
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1182,7 +1182,7 @@ mod tests {
             .expect_err("missing profile should fail");
         assert!(err.to_string().contains("not found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     // --- Token health tests ---
@@ -1259,7 +1259,7 @@ mod tests {
         assert_eq!(oauth_health.health, super::TokenHealth::Valid);
         assert!(oauth_health.has_refresh_token);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1272,7 +1272,7 @@ mod tests {
             .expect("ensure should succeed");
         assert!(result.is_none());
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1289,7 +1289,7 @@ mod tests {
             .expect("token should be returned");
         assert_eq!(token, "sk-valid");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     // --- Gemini OAuth ---
@@ -1316,7 +1316,7 @@ mod tests {
         let manager = AuthManager::in_config_dir(&dir).expect("manager should construct");
         let migrated = manager.migrate_if_needed().expect("migrate should succeed");
         assert!(!migrated);
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1331,6 +1331,6 @@ mod tests {
         // Second call should return false.
         let migrated = manager.migrate_if_needed().expect("migrate should succeed");
         assert!(!migrated);
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

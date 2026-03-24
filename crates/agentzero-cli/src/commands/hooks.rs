@@ -82,7 +82,7 @@ mod tests {
             .await
             .expect("list should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -104,7 +104,7 @@ mod tests {
         .expect_err("enabling missing hook should fail");
         assert!(err.to_string().contains("unknown hook"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -126,7 +126,7 @@ mod tests {
         .expect_err("disabling missing hook should fail");
         assert!(err.to_string().contains("unknown hook"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -148,6 +148,6 @@ mod tests {
         .expect_err("testing missing hook should fail");
         assert!(err.to_string().contains("unknown hook"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

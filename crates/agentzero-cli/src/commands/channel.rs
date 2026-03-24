@@ -297,7 +297,7 @@ mod tests {
             .await
             .expect("channel list should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -385,7 +385,7 @@ mod tests {
             .iter()
             .any(|channel| channel == "telegram"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -413,7 +413,7 @@ mod tests {
             .iter()
             .any(|channel| channel == "discord"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -452,7 +452,7 @@ mod tests {
             .iter()
             .any(|channel| channel == "telegram"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -492,6 +492,6 @@ mod tests {
         let on_disk = fs::read_to_string(store.path()).expect("stored payload should be readable");
         assert!(!on_disk.contains("telegram"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

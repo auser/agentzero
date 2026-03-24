@@ -237,8 +237,8 @@ mod tests {
         .expect("migration import should succeed");
         assert!(data_dir.join("agentzero.toml").exists());
 
-        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
-        fs::remove_dir_all(source_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(data_dir);
+        let _ = fs::remove_dir_all(source_dir);
     }
 
     #[tokio::test]
@@ -255,7 +255,7 @@ mod tests {
             .expect_err("rollback without history should fail");
         assert!(err.to_string().contains("no previous version"));
 
-        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     #[tokio::test]
@@ -278,7 +278,7 @@ mod tests {
         .expect_err("missing source should fail");
         assert!(err.to_string().contains("does not exist"));
 
-        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     #[test]

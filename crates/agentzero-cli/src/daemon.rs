@@ -381,7 +381,7 @@ mod tests {
         assert!(!stopped.running);
         assert_eq!(stopped.host.as_deref(), Some("127.0.0.1"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -399,7 +399,7 @@ mod tests {
             .expect_err("second start should fail");
         assert!(err.to_string().contains("already running"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -420,7 +420,7 @@ mod tests {
             "stale state should be auto-corrected to not running"
         );
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -445,7 +445,7 @@ mod tests {
         assert_eq!(status.port, Some(9090));
         assert_eq!(status.pid, Some(my_pid));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

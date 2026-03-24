@@ -212,7 +212,7 @@ mod tests {
             .expect("read_file should succeed");
 
         assert_eq!(result.output, "hello");
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -234,7 +234,7 @@ mod tests {
             .expect_err("binary should be rejected")
             .to_string()
             .contains("binary files are not allowed"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -257,8 +257,8 @@ mod tests {
             .expect_err("traversal should be denied")
             .to_string()
             .contains("path traversal is not allowed"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
-        fs::remove_dir_all(sibling).expect("sibling temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(sibling);
     }
 
     #[tokio::test]
@@ -284,7 +284,7 @@ mod tests {
             .expect_err("oversized file should be rejected")
             .to_string()
             .contains("file is too large"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -306,7 +306,7 @@ mod tests {
             .expect_err("invalid utf8 should be treated as binary")
             .to_string()
             .contains("binary files are not allowed"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     // B7: Hard-link guard tests
@@ -333,7 +333,7 @@ mod tests {
             .expect_err("hard-linked file should be rejected")
             .to_string()
             .contains("hard link"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     // B7: Sensitive file detection tests
@@ -354,7 +354,7 @@ mod tests {
             .expect_err("sensitive file should be blocked")
             .to_string()
             .contains("refusing to read sensitive file"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -372,7 +372,7 @@ mod tests {
             .expect("sensitive file should be allowed when configured");
 
         assert!(result.output.contains("SECRET_KEY=abc123"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[cfg(unix)]
@@ -402,7 +402,7 @@ mod tests {
             .to_string()
             .contains("path is outside allowed root"));
 
-        fs::remove_dir_all(allowed_root).expect("allowed root temp dir should be removed");
-        fs::remove_dir_all(outside_root).expect("outside root temp dir should be removed");
+        let _ = fs::remove_dir_all(allowed_root);
+        let _ = fs::remove_dir_all(outside_root);
     }
 }

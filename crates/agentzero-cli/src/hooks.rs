@@ -136,7 +136,7 @@ mod tests {
         let disabled = store.disable("before_run").expect("disable should succeed");
         assert!(!disabled.enabled);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -147,7 +147,7 @@ mod tests {
             .enable("unknown")
             .expect_err("unknown hook should fail");
         assert!(err.to_string().contains("unknown hook"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -160,6 +160,6 @@ mod tests {
         assert!(names.contains(&"before_plugin_call".to_string()));
         assert!(names.contains(&"after_plugin_call".to_string()));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

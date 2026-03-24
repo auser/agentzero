@@ -176,7 +176,7 @@ mod tests {
         .await
         .expect("low-risk evaluate should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -204,7 +204,7 @@ mod tests {
         .expect_err("high-risk evaluate without decision should fail");
         assert!(err.to_string().contains("approval required"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -231,7 +231,7 @@ mod tests {
         .await
         .expect("high-risk evaluate with allow decision should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -259,7 +259,7 @@ mod tests {
         .expect_err("deny decision should return error");
         assert!(err.to_string().contains("denied"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -287,6 +287,6 @@ mod tests {
         .expect_err("decision without approver should fail");
         assert!(err.to_string().contains("--approver is required"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

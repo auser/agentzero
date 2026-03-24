@@ -469,7 +469,7 @@ mod tests {
                 && check.message.contains("daemon heartbeat is stale")
         }));
 
-        fs::remove_dir_all(workspace).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
@@ -497,6 +497,6 @@ mod tests {
                 && check.message.contains("daemon heartbeat is fresh")
         }));
 
-        fs::remove_dir_all(workspace).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(workspace);
     }
 }

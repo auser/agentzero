@@ -154,7 +154,7 @@ mod tests {
         .await
         .expect_err("should fail without a reachable provider");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -179,7 +179,7 @@ mod tests {
         .await
         .expect_err("missing config should fail");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -248,6 +248,6 @@ mod tests {
         .await
         .expect_err("should fail without a reachable provider (streaming)");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

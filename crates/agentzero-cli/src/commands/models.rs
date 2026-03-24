@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(cached.provider, "openai");
         assert_eq!(cached.models, models);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -527,7 +527,7 @@ mod tests {
             .expect_err("invalid json should fail");
         assert!(err.to_string().contains("failed to parse model cache"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -541,7 +541,7 @@ mod tests {
             .expect("cache should be fresh");
         assert_eq!(fresh.models, models);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -563,7 +563,7 @@ model = "old-model"
         assert!(updated.contains("model = \"new-model\""));
         assert!(updated.contains("kind = \"openai\""));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -576,7 +576,7 @@ model = "old-model"
             .expect_err("invalid toml should fail");
         assert!(err.to_string().contains("failed to parse config"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

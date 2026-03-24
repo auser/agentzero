@@ -241,7 +241,7 @@ mod tests {
             .await
             .expect("get should succeed");
         assert!(!result.output.is_empty());
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -264,7 +264,7 @@ mod tests {
 
         let content = fs::read_to_string(dir.join("agentzero.toml")).expect("read");
         assert!(content.contains("test-bot"));
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -280,6 +280,6 @@ mod tests {
             .await
             .expect_err("sub-agent should be blocked");
         assert!(err.to_string().contains("not available to sub-agents"));
-        fs::remove_dir_all(dir).expect("cleanup");
+        let _ = fs::remove_dir_all(dir);
     }
 }

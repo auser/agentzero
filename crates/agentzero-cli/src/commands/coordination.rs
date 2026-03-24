@@ -95,7 +95,7 @@ mod tests {
             .await
             .expect("status should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -111,7 +111,7 @@ mod tests {
             .await
             .expect("status on empty store should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -143,6 +143,6 @@ mod tests {
         assert_eq!(status.active_workers, 3);
         assert_eq!(status.queued_tasks, 7);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

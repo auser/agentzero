@@ -223,7 +223,7 @@ mod tests {
             assert!(err.to_string().contains("built without `rag` feature"));
         }
 
-        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     #[tokio::test]
@@ -250,7 +250,7 @@ mod tests {
             .to_string()
             .contains("requires non-empty --text or --file"));
 
-        fs::remove_dir_all(data_dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(data_dir);
     }
 
     #[test]

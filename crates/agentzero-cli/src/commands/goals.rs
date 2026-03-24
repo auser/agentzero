@@ -121,7 +121,7 @@ mod tests {
             .await
             .expect("list should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -143,7 +143,7 @@ mod tests {
         .expect_err("missing goal should fail");
         assert!(err.to_string().contains("not found"));
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -159,7 +159,7 @@ mod tests {
             .await
             .expect("list on empty store should succeed");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -200,7 +200,7 @@ mod tests {
         let goal = goals.get("g1").expect("goal should exist");
         assert_eq!(goal.title, "Updated title");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
@@ -240,6 +240,6 @@ mod tests {
         .await
         .expect("completing already-done goal should succeed (idempotent)");
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 }

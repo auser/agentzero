@@ -121,7 +121,7 @@ mod tests {
         let key = StorageKey::from_config_dir(&dir).expect("key should load");
         assert_eq!(key.as_bytes(), [42_u8; 32]);
 
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -131,7 +131,7 @@ mod tests {
         let err =
             StorageKey::from_config_dir(&dir).expect_err("invalid key file should return error");
         assert!(err.to_string().contains("failed to parse key file"));
-        fs::remove_dir_all(dir).expect("temp dir should be removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
