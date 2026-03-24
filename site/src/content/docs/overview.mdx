@@ -1,11 +1,11 @@
 ---
 title: Overview
-description: "Fast, small, and fully autonomous AI personal assistant infrastructure. ANY OS, ANY PLATFORM — deploy anywhere, swap anything."
+description: "Self-growing AI agent infrastructure. Describe tools and agents in plain English — the system assembles, remembers, and gets smarter over time."
 ---
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-AgentZero is **fast, small, and fully autonomous AI personal assistant infrastructure**, built entirely in Rust. ANY OS, ANY PLATFORM — deploy anywhere, swap anything.
+AgentZero is **self-growing AI agent infrastructure** built entirely in Rust. Describe what you need in plain English — the system creates tools, defines agents, assembles swarms, and **remembers what works**. Every session makes the next one smarter.
 
 :::note
 AgentZero is under active development. The architecture is stable but individual features may change between releases.
@@ -13,26 +13,27 @@ AgentZero is under active development. The architecture is stable but individual
 
 ## Why AgentZero
 
-- **Deploy anywhere.** A single native binary runs on Linux, macOS, and Windows — 8 platform targets, CI-tested on all three OS families. Docker multi-arch for containers. 4.5 MB embedded binary for resource-constrained devices.
-- **Swap anything.** LLM providers, storage backends, tools, and channels are all swappable through trait interfaces. 37+ providers, 25+ channels, 58+ tools. Your agent logic stays the same.
-- **Fully autonomous.** Three autonomy levels, autopilot with cap gates and missions, cron scheduling, multi-agent delegation and swarm coordination. Agents propose, approve, and execute work independently.
-- **ANY PLATFORM.** Client SDKs for Python, TypeScript, Swift, and Kotlin talk to the gateway over HTTP/WebSocket. OpenAI-compatible API works with any existing client library. Interactive API docs at `/docs` on every deployment.
+- **Self-growing.** Every tool created, agent defined, and recipe learned persists encrypted across sessions. The system compounds — tools from week 1 accelerate goals in week 4.
+- **Natural language tools.** Describe a missing tool in conversation. The system creates it (shell, HTTP, LLM, or composite strategy), registers it immediately, and persists it forever. Export and share tools between instances.
+- **NL agent definitions.** Say "an agent that reviews my PRs daily" and the system derives name, system prompt, keywords, allowed tools, and schedule automatically. Agents are stored encrypted and auto-routed to by keywords.
+- **Autonomous swarms.** Give a goal, get a parallel agent DAG. Each node gets only the tools it needs via per-node tool hints. Sandboxed execution with conflict detection and dead agent recovery.
+- **Deploy anywhere.** A single native binary runs on Linux, macOS, and Windows — 8 platform targets, Docker multi-arch. 4.5 MB embedded binary.
 - **Secure by default.** Encrypted storage, allowlists, policy gates, audit logging, secret redaction, and emergency stop. Fail-closed from day one.
 
 ## Features
 
 <CardGrid>
-  <Card title="ANY OS" icon="rocket">
-    Linux (x86, ARM, musl), macOS (Intel, Apple Silicon), Windows. CI-tested on all three. Docker multi-arch.
+  <Card title="Self-Growing" icon="star">
+    Tools, agents, and recipes persist encrypted. The system learns what works and reuses it. Month 2 is smarter than month 1.
   </Card>
-  <Card title="ANY PLATFORM" icon="puzzle">
-    Client SDKs for Python, TypeScript, Swift, Kotlin. OpenAI-compatible API. Interactive Scalar docs at /docs.
+  <Card title="NL Tools & Agents" icon="rocket">
+    Describe tools and agents in plain English. Created mid-session, persisted forever, searchable and shareable.
   </Card>
-  <Card title="Swap Anything" icon="random">
-    Provider, MemoryStore, Tool, and Channel are all traits. 37+ LLM providers, 25+ channels, 2 storage backends.
+  <Card title="Autonomous Swarms" icon="puzzle">
+    Give a goal. The system decomposes it into a parallel agent DAG with per-node tool filtering and sandboxed execution.
   </Card>
-  <Card title="Fully Autonomous" icon="star">
-    Three autonomy levels, autopilot with cap gates and missions, cron scheduling, multi-agent delegation.
+  <Card title="Catalog Learning" icon="random">
+    Successful tool combos are recorded as recipes. Future goals matching similar patterns get the right tools instantly.
   </Card>
   <Card title="Small & Fast" icon="approve-check">
     4.5 MB embedded binary. Millisecond cold starts. Async Tokio runtime with streaming SSE and WebSocket output.

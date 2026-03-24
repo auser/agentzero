@@ -5,7 +5,7 @@ import "../styles/landing.css";
 const base = import.meta.env.BASE_URL;
 
 const commands = [
-  { cmd: "agentzero onboard --interactive", hint: "Generate config and credentials" },
+  { cmd: 'agentzero swarm "summarize this video"', hint: "Goal decomposes into a parallel agent swarm" },
   { cmd: 'agentzero agent -m "hello"', hint: "Run the agent loop" },
   { cmd: 'agentzero agent --stream -m "hello"', hint: "Stream output in real-time" },
   { cmd: "agentzero gateway", hint: "Start the HTTP gateway" },
@@ -13,10 +13,10 @@ const commands = [
 ];
 
 const features = [
-  { title: "ANY OS", desc: "Linux (x86, ARM, musl), macOS (Intel, Apple Silicon), Windows. CI-tested on all three. Docker multi-arch." },
-  { title: "ANY PLATFORM", desc: "Client SDKs for Python, TypeScript, Swift, and Kotlin talk to the gateway. OpenAI-compatible API works with any HTTP client." },
-  { title: "Swap Anything", desc: "LLM providers, storage backends, tools, and channels are all swappable through trait interfaces. No lock-in." },
-  { title: "Fully Autonomous", desc: "Three autonomy levels, autopilot with cap gates and reaction matrices, cron scheduling, multi-agent delegation." },
+  { title: "Self-Growing", desc: "Every tool created, agent defined, and recipe learned persists encrypted across sessions. The system compounds — week 1 tools accelerate week 4 goals." },
+  { title: "Natural Language Tools", desc: "Describe a tool in plain English. The system creates it (shell, HTTP, LLM, or composite), registers it immediately, and persists it forever." },
+  { title: "NL Agent Definitions", desc: "Say 'an agent that reviews my PRs daily' — name, system prompt, keywords, tools, and schedule are derived automatically." },
+  { title: "Autonomous Swarms", desc: "Give a goal, get a parallel agent DAG. Each node gets only the tools it needs. Sandboxed execution with conflict detection." },
   { title: "Small & Fast", desc: "4.5 MB embedded binary. Millisecond cold starts. Async Tokio runtime with streaming output." },
   { title: "Secure by Default", desc: "Encrypted storage, allowlists, policy gates, audit logging, secret redaction. Fail-closed from day one." },
   { title: "Plugin Sandbox", desc: "WASM plugins run in a bounded sandbox with integrity verification and resource limits." },
@@ -37,22 +37,22 @@ const metrics = [
 ];
 
 const differentiators = [
+  { title: "Self-Growing Runtime", desc: "Tools, agents, and recipes persist encrypted and compound over time. The system you use in month 2 is smarter than month 1 — automatically." },
+  { title: "NL Tool Creation", desc: "Describe a missing tool in conversation. The system creates it (shell, HTTP, LLM, composite), makes it available immediately, and persists it across sessions." },
+  { title: "Catalog Learning", desc: "Successful tool combos are recorded as recipes. Future goals matching similar patterns get the right tools instantly — no manual configuration." },
   { title: "Single Binary", desc: "One static binary, zero runtime dependencies. 4.5 MB embedded, 18 MB full. Download and run." },
   { title: "Rust Memory Safety", desc: "No GC pauses, no null pointers, no data races. Compile-time guarantees eliminate entire classes of bugs." },
   { title: "Security First", desc: "TOTP approval, secret leak detection, encrypted storage, and tool-level policy gates — all built in." },
-  { title: "Client SDKs", desc: "Thin HTTP/WebSocket SDKs for Python, TypeScript, Swift, and Kotlin. Any platform that can make HTTP calls can control AgentZero." },
-  { title: "OpenAI-Compatible", desc: "Drop-in /v1/chat/completions endpoint. Existing OpenAI client libraries work out of the box." },
   { title: "37+ Providers", desc: "OpenAI, Anthropic, Google, Ollama, local llama.cpp, and 30+ more. Swap providers with a config change." },
   { title: "8 Platform Targets", desc: "Linux (x86/ARM/musl), macOS (Intel/Apple Silicon), Windows. CI-tested on all three OS families." },
-  { title: "Interactive API Docs", desc: "Every gateway ships Scalar API docs at /docs. Explore and test all 40+ endpoints from the browser." },
   { title: "MCP + A2A", desc: "Model Context Protocol for tool interop. Google A2A for agent-to-agent communication. Standards-first." },
-  { title: "Autonomous Agents", desc: "Three autonomy levels, autopilot with cap gates and missions, cron scheduling, multi-agent delegation and swarm coordination." },
+  { title: "Autonomous Swarms", desc: "Give a goal in plain English. The system decomposes it into a parallel agent DAG, each node sandboxed with only the tools it needs." },
 ];
 
 const pillars = [
-  { title: "Swap Anything", items: ["Provider trait (37+ LLMs)", "MemoryStore trait (SQLite, Turso)", "Tool trait (58+ built-in)", "Channel trait (25+ platforms)"] },
-  { title: "Deploy Anywhere", items: ["8 native binary targets", "Docker multi-arch", "Gateway + REST API", "Client SDKs (Py/TS/Swift/Kt)"] },
-  { title: "Fully Autonomous", items: ["3 autonomy levels", "Autopilot + cap gates", "Cron scheduling", "Multi-agent delegation", "WASM plugin sandbox"] },
+  { title: "Self-Growing", items: ["NL tool creation (persists forever)", "NL agent definitions (auto-routed)", "Recipe learning (compounds over time)", "Export/import tools between instances"] },
+  { title: "Swap Anything", items: ["Provider trait (37+ LLMs)", "MemoryStore trait (SQLite, Turso)", "Tool trait (58+ built-in + dynamic)", "Channel trait (25+ platforms)"] },
+  { title: "Fully Autonomous", items: ["Goal decomposition to agent swarms", "Per-node tool filtering", "Sandboxed parallel execution", "Dead agent recovery", "WASM plugin sandbox"] },
 ];
 ---
 
@@ -60,8 +60,8 @@ const pillars = [
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AgentZero — Fast, Small, Extensible, Fully Autonomous AI Personal Assistant Infrastructure</title>
-    <meta name="description" content="Fast, small, extensible, and fully autonomous AI personal assistant infrastructure in Rust — secure by design, configured in conversation, controlled from a slick real-time UI. Advanced natural language memory, encrypted storage, and WASM plugin support. Any OS, any platform, deploy anywhere, swap anything." />
+    <title>AgentZero — Self-Growing AI Agent Infrastructure in Rust</title>
+    <meta name="description" content="Self-growing AI agent infrastructure in Rust. Describe tools and agents in plain English — the system assembles, remembers, and gets smarter over time. Encrypted persistence, 58+ built-in tools, WASM plugins, multi-agent swarms. Any OS, any platform." />
     <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
   </head>
   <body class="az-page">
@@ -109,10 +109,10 @@ const pillars = [
       <section class="az-hero">
         <div class="az-hero-inner">
           <div class="az-hero-text">
-            <p class="az-eyebrow">AI PERSONAL ASSISTANT INFRASTRUCTURE</p>
-            <h1>Fast. Small. Extensible.<br />Fully Autonomous. <span class="az-accent">100% Rust.</span></h1>
-            <p class="az-lead">Secure by design. Configured in conversation. Controlled from a slick real-time UI.</p>
-            <p class="az-sub">Advanced natural language memory, encrypted storage, and WASM plugin support. Any OS, any platform — deploy anywhere, swap anything. 🦀</p>
+            <p class="az-eyebrow">SELF-GROWING AI AGENT INFRASTRUCTURE</p>
+            <h1>Describe it. It builds itself.<br /><span class="az-accent">And remembers.</span></h1>
+            <p class="az-lead">Define agents and tools in plain English. The system self-assembles, persists everything, and gets smarter over time.</p>
+            <p class="az-sub">Say "summarize this video" and it decomposes the goal, creates missing tools, executes in parallel, and remembers what worked. Next time, it's faster. All encrypted, all Rust. 🦀</p>
             <div class="az-hero-actions">
               <a href={`${base}overview/`} class="az-btn az-btn-primary">Read the docs</a>
               <a href="https://github.com/auser/agentzero" class="az-btn az-btn-secondary" target="_blank" rel="noopener">GitHub</a>
