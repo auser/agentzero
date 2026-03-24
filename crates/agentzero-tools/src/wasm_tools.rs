@@ -301,7 +301,10 @@ mod tests {
         let ctx = ToolContext::new(dir.to_string_lossy().to_string());
         let result = WasmModuleTool
             .execute(
-                &format!(r#"{{"op": "inspect", "path": "{}"}}"#, path.display()),
+                &format!(
+                    r#"{{"op": "inspect", "path": "{}"}}"#,
+                    path.display().to_string().replace('\\', "/")
+                ),
                 &ctx,
             )
             .await
@@ -357,7 +360,7 @@ mod tests {
             .execute(
                 &format!(
                     r#"{{"module": "{}", "function": "run"}}"#,
-                    wasm_path.display()
+                    wasm_path.display().to_string().replace('\\', "/")
                 ),
                 &ctx,
             )
