@@ -82,6 +82,9 @@ pub struct RuntimeExecution {
     pub sender_id: Option<String>,
     /// Optional dynamic tool registry for mid-session tool creation.
     pub dynamic_registry: Option<std::sync::Arc<crate::tools::dynamic_tool::DynamicToolRegistry>>,
+    /// Optional task manager for background delegation. When present, `cancel_all()`
+    /// is called on session teardown to cascade-cancel orphaned background tasks.
+    pub task_manager: Option<std::sync::Arc<agentzero_tools::TaskManager>>,
 }
 
 struct AuditHookSink {
@@ -415,6 +418,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         source_channel: None,
         sender_id: None,
         dynamic_registry,
+        task_manager: None,
     })
 }
 
@@ -603,6 +607,7 @@ pub async fn run_agent_with_runtime(
     let privacy_boundary = execution.config.privacy_boundary.clone();
     let cost_config = execution.cost_config.clone();
     let data_dir = execution.data_dir.clone();
+    let task_manager = execution.task_manager.clone();
     let mut agent = Agent::new(
         execution.config,
         execution.provider,
@@ -644,6 +649,11 @@ pub async fn run_agent_with_runtime(
                 warn!(error = %e, "failed to persist cost tracking");
             }
         }
+    }
+
+    // Session teardown: cancel all background delegation tasks to prevent orphans.
+    if let Some(ref tm) = task_manager {
+        tm.cancel_all().await;
     }
 
     Ok(RunAgentOutput {
@@ -1334,6 +1344,7 @@ mod tests {
             source_channel: None,
             sender_id: None,
             dynamic_registry: None,
+            task_manager: None,
         }
     }
 
