@@ -5,6 +5,18 @@ use serde::{Deserialize, Serialize};
 pub struct SopStep {
     pub title: String,
     pub completed: bool,
+    /// Step kind: Execute (normal) or Checkpoint (requires approval).
+    #[serde(default)]
+    pub kind: crate::sop::types::SopStepKind,
+    /// Optional JSON schema for step input validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<crate::sop::types::StepSchema>,
+    /// Optional JSON schema for step output validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<crate::sop::types::StepSchema>,
+    /// Step output value (populated after execution).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -26,6 +38,10 @@ pub fn create_plan(id: &str, steps: &[&str]) -> anyhow::Result<SopPlan> {
         .map(|title| SopStep {
             title: (*title).to_string(),
             completed: false,
+            kind: Default::default(),
+            input_schema: None,
+            output_schema: None,
+            output: None,
         })
         .collect::<Vec<_>>();
 

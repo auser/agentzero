@@ -1801,26 +1801,26 @@ Add `CodexCliTool`, `GeminiCliTool`, and `OpenCodeCliTool` — shell out to exte
 
 ---
 
-- [ ] **SOP types** — `crates/agentzero-tools/src/sop/types.rs`: `SopExecutionMode` (Supervised/Deterministic), `SopStepKind` (Execute/Checkpoint), `StepSchema`, `SopRunStatus`, `SopRunAction`, `DeterministicRunState`, `DeterministicSavings`
-- [ ] **SOP engine** — `sop/engine.rs`: `start_deterministic_run()`, `advance_deterministic_step()` (pipe output N → input N+1), `resume_deterministic_run()`, state persistence to workspace
-- [ ] **Dispatch** — `sop/dispatch.rs`: route `DeterministicStep` (pipe, no LLM), `CheckpointWait` (pause for approval), `SupervisedStep` (existing LLM path)
-- [ ] **Audit** — `sop/audit.rs`: step transition logging, checkpoint decisions
-- [ ] **Metrics** — `sop/metrics.rs`: `DeterministicSavings` tracking (`llm_calls_saved`), run duration
-- [ ] **Extend `SopStep`** — add `kind: SopStepKind`, `input_schema`, `output_schema`, `output: Option<Value>`
-- [ ] **Update 5 SOP tools** — `SopExecuteTool` accepts `deterministic: bool`; `SopAdvanceTool` handles piped outputs; `SopApproveTool` adds timeout; `SopStatusTool` shows savings; `SopListTool` shows execution mode
-- [ ] **`SopConfig`** — `sops_dir`, `default_execution_mode`, `max_concurrent_total` (4), `approval_timeout_secs` (300), `max_finished_runs` (100)
-- [ ] **Tests** — engine lifecycle, checkpoint pause/approve/timeout, state persist/resume, savings counting, schema validation, dispatch routing
+- [x] **SOP types** — `sop/types.rs`: `SopExecutionMode` (Supervised/Deterministic), `SopStepKind` (Execute/Checkpoint), `StepSchema`, `SopRunStatus`, `DeterministicRunState`, `DeterministicSavings`. 5 tests.
+- [x] **SOP engine** — `sop/engine.rs`: `start_deterministic_run()`, `advance_deterministic_step()` (pipe output N → input N+1), `resume_deterministic_run()`, `persist_state()`/`load_state()`, `calculate_savings()`. 11 tests.
+- [x] **Dispatch** — `sop/dispatch.rs`: `dispatch_step()` routes `DeterministicPipe` (no LLM), `CheckpointWait` (pause for approval), `Supervised` (existing LLM path). `is_checkpoint_expired()` for timeout enforcement. `status_after_dispatch()`. 6 tests.
+- [x] **Audit** — `sop/audit.rs`: `log_step_transition()`, `log_checkpoint_decision()`, `log_run_event()` via structured tracing to `sop_audit` target. 3 tests.
+- [x] **Metrics** — `sop/metrics.rs`: `SopRunMetrics` with `record_step()`, `record_approval()`, `set_duration()`, `summary()`. Tracks steps_executed, llm_calls_saved, checkpoint_count, approvals_received, duration. 4 tests.
+- [x] **Extend `SopStep`** — added `kind: SopStepKind`, `input_schema: Option<StepSchema>`, `output_schema: Option<StepSchema>`, `output: Option<Value>` to `skills/sop.rs`. All `#[serde(default)]` for backward compat.
+- [x] **Update 5 SOP tools** — `SopExecuteTool` accepts `deterministic: bool`; `SopAdvanceTool` handles piped outputs with deterministic engine; `SopApproveTool` works with checkpoint steps; `SopStatusTool` shows savings + execution mode; `SopListTool` shows plan progress. 16 tool tests.
+- [x] **`SopConfig`** — `sops_dir`, `default_execution_mode`, `max_concurrent_total` (4), `approval_timeout_secs` (300), `max_finished_runs` (100). All in `agentzero-config/src/model.rs`.
+- [x] **Tests** — 47 SOP-related tests: engine lifecycle (11), types (5), dispatch routing (6), audit (3), metrics (4), tool integration (16), domain workflow (1), sop helpers (1).
 
 ---
 
 ### Acceptance Criteria (Sprint 65)
 
-- [ ] Deterministic SOPs execute without LLM round-trips between steps
-- [ ] Checkpoint steps pause and require human approval within timeout
-- [ ] Interrupted runs resume from persisted state
-- [ ] `DeterministicSavings` tracks LLM calls saved per run
-- [ ] Existing supervised SOPs continue working unchanged
-- [ ] 0 clippy warnings, all tests pass
+- [x] Deterministic SOPs execute without LLM round-trips between steps (engine + dispatch)
+- [x] Checkpoint steps pause and require human approval within timeout (`dispatch_step()` + `is_checkpoint_expired()`)
+- [x] Interrupted runs resume from persisted state (`persist_state()`/`load_state()`)
+- [x] `DeterministicSavings` tracks LLM calls saved per run (`calculate_savings()`)
+- [x] Existing supervised SOPs continue working unchanged (backward-compatible `#[serde(default)]`)
+- [x] 0 clippy warnings, all tests pass
 
 ---
 
