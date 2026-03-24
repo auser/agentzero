@@ -4,6 +4,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::sync::Arc;
+#[allow(unused_imports)]
+use std::time::Duration;
 
 /// Per-channel instance config from TOML `[channels.<name>]` sections.
 /// Uses a common structure with optional fields; each channel type consumes
@@ -46,6 +48,96 @@ pub struct ChannelInstanceConfig {
     /// Empty string means inherit from `[channels] default_privacy_boundary`.
     #[serde(default)]
     pub privacy_boundary: String,
+    /// Per-channel HTTP proxy override (e.g. "http://proxy:8080").
+    /// Falls back to global proxy if not set.
+    #[serde(default)]
+    pub http_proxy: Option<String>,
+    /// Per-channel HTTPS proxy override.
+    #[serde(default)]
+    pub https_proxy: Option<String>,
+    /// Per-channel SOCKS proxy override (e.g. "socks5://127.0.0.1:1080").
+    #[serde(default)]
+    pub socks_proxy: Option<String>,
+    /// Per-channel no-proxy bypass list. If non-empty, overrides the global list.
+    #[serde(default)]
+    pub no_proxy: Vec<String>,
+}
+
+impl ChannelInstanceConfig {
+    /// Returns `true` if any per-channel proxy is configured.
+    pub fn has_proxy(&self) -> bool {
+        self.http_proxy.is_some() || self.https_proxy.is_some() || self.socks_proxy.is_some()
+    }
+}
+
+/// Build a `reqwest::Client` with proxy settings from a channel config.
+///
+/// If the config has proxy fields set, they are applied to the client builder.
+/// SOCKS proxy is applied as `reqwest::Proxy::all` (requires reqwest `socks` feature
+/// to actually connect; without it, the URL is accepted but connections will fail).
+#[cfg(any(
+    feature = "channel-telegram",
+    feature = "channel-discord",
+    feature = "channel-slack",
+    feature = "channel-mattermost",
+    feature = "channel-matrix",
+    feature = "channel-whatsapp",
+    feature = "channel-signal",
+    feature = "channel-lark",
+    feature = "channel-feishu",
+    feature = "channel-dingtalk",
+    feature = "channel-qq-official",
+    feature = "channel-nextcloud-talk",
+    feature = "channel-sms",
+    feature = "channel-clawdtalk",
+    feature = "channel-linq",
+    feature = "channel-wati",
+    feature = "channel-napcat",
+    feature = "channel-acp",
+))]
+pub fn build_channel_client(
+    config: &ChannelInstanceConfig,
+    timeout_secs: u64,
+) -> Result<reqwest::Client, String> {
+    // When per-channel proxy is set, disable system proxy and use only explicit ones.
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .no_proxy();
+
+    // Build the no_proxy bypass matcher (applied to each proxy rule).
+    let no_proxy_matcher = if config.no_proxy.is_empty() {
+        None
+    } else {
+        reqwest::NoProxy::from_string(&config.no_proxy.join(","))
+    };
+
+    // Apply SOCKS proxy (covers all traffic).
+    if let Some(ref socks) = config.socks_proxy {
+        let mut proxy = reqwest::Proxy::all(socks)
+            .map_err(|e| format!("invalid socks_proxy URL '{socks}': {e}"))?;
+        proxy = proxy.no_proxy(no_proxy_matcher.clone());
+        builder = builder.proxy(proxy);
+    }
+
+    // Apply HTTP proxy.
+    if let Some(ref http) = config.http_proxy {
+        let mut proxy = reqwest::Proxy::http(http)
+            .map_err(|e| format!("invalid http_proxy URL '{http}': {e}"))?;
+        proxy = proxy.no_proxy(no_proxy_matcher.clone());
+        builder = builder.proxy(proxy);
+    }
+
+    // Apply HTTPS proxy.
+    if let Some(ref https) = config.https_proxy {
+        let mut proxy = reqwest::Proxy::https(https)
+            .map_err(|e| format!("invalid https_proxy URL '{https}': {e}"))?;
+        proxy = proxy.no_proxy(no_proxy_matcher.clone());
+        builder = builder.proxy(proxy);
+    }
+
+    builder
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))
 }
 
 /// Register channels into `registry` based on the provided per-channel configs.
@@ -96,8 +188,11 @@ pub fn build_channel_instance(
                 .bot_token
                 .as_ref()
                 .ok_or("telegram requires bot_token")?;
-            let channel =
+            let mut channel =
                 super::TelegramChannel::new(bot_token.clone(), config.allowed_users.clone());
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 40)?);
+            }
             Ok(Some(Arc::new(channel)))
         }
         #[cfg(feature = "channel-discord")]
@@ -106,8 +201,11 @@ pub fn build_channel_instance(
                 .bot_token
                 .as_ref()
                 .ok_or("discord requires bot_token")?;
-            let channel =
+            let mut channel =
                 super::DiscordChannel::new(bot_token.clone(), config.allowed_users.clone());
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 30)?);
+            }
             Ok(Some(Arc::new(channel)))
         }
         #[cfg(feature = "channel-slack")]
@@ -116,12 +214,15 @@ pub fn build_channel_instance(
                 .bot_token
                 .as_ref()
                 .ok_or("slack requires bot_token")?;
-            let channel = super::SlackChannel::new(
+            let mut channel = super::SlackChannel::new(
                 bot_token.clone(),
                 config.app_token.clone(),
                 config.channel_id.clone(),
                 config.allowed_users.clone(),
             );
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 30)?);
+            }
             Ok(Some(Arc::new(channel)))
         }
         _ => Ok(None),
@@ -144,8 +245,11 @@ fn register_one(
                 .bot_token
                 .as_ref()
                 .ok_or("telegram requires bot_token")?;
-            let channel =
+            let mut channel =
                 super::TelegramChannel::new(bot_token.clone(), config.allowed_users.clone());
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 40)?);
+            }
             registry.register(Arc::new(channel));
             Ok(true)
         }
@@ -156,8 +260,11 @@ fn register_one(
                 .bot_token
                 .as_ref()
                 .ok_or("discord requires bot_token")?;
-            let channel =
+            let mut channel =
                 super::DiscordChannel::new(bot_token.clone(), config.allowed_users.clone());
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 30)?);
+            }
             registry.register(Arc::new(channel));
             Ok(true)
         }
@@ -168,12 +275,15 @@ fn register_one(
                 .bot_token
                 .as_ref()
                 .ok_or("slack requires bot_token")?;
-            let channel = super::SlackChannel::new(
+            let mut channel = super::SlackChannel::new(
                 bot_token.clone(),
                 config.app_token.clone(),
                 config.channel_id.clone(),
                 config.allowed_users.clone(),
             );
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 30)?);
+            }
             registry.register(Arc::new(channel));
             Ok(true)
         }
@@ -185,12 +295,15 @@ fn register_one(
                 .as_ref()
                 .ok_or("mattermost requires base_url")?;
             let token = config.token.as_ref().ok_or("mattermost requires token")?;
-            let channel = super::MattermostChannel::new(
+            let mut channel = super::MattermostChannel::new(
                 base_url.clone(),
                 token.clone(),
                 config.channel_id.clone(),
                 config.allowed_users.clone(),
             );
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 30)?);
+            }
             registry.register(Arc::new(channel));
             Ok(true)
         }
@@ -206,12 +319,15 @@ fn register_one(
                 .as_ref()
                 .ok_or("matrix requires access_token")?;
             let room_id = config.room_id.clone().unwrap_or_default();
-            let channel = super::MatrixChannel::new(
+            let mut channel = super::MatrixChannel::new(
                 homeserver.clone(),
                 access_token.clone(),
                 room_id,
                 config.allowed_users.clone(),
             );
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 40)?);
+            }
             registry.register(Arc::new(channel));
             Ok(true)
         }
@@ -298,12 +414,15 @@ fn register_one(
                 .as_ref()
                 .ok_or("whatsapp requires channel_id (phone_number_id)")?;
             let verify_token = config.token.clone().unwrap_or_default();
-            let channel = super::WhatsappChannel::new(
+            let mut channel = super::WhatsappChannel::new(
                 access_token.clone(),
                 phone_number_id.clone(),
                 verify_token,
                 config.allowed_users.clone(),
             );
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 30)?);
+            }
             registry.register(Arc::new(channel));
             Ok(true)
         }
@@ -322,12 +441,15 @@ fn register_one(
                 .from_number
                 .as_ref()
                 .ok_or("sms requires from_number")?;
-            let channel = super::SmsChannel::new(
+            let mut channel = super::SmsChannel::new(
                 account_sid.clone(),
                 auth_token.clone(),
                 from_number.clone(),
                 config.allowed_users.clone(),
             );
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 30)?);
+            }
             registry.register(Arc::new(channel));
             Ok(true)
         }
@@ -403,6 +525,44 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(cfg.privacy_boundary, "local_only");
+    }
+
+    #[test]
+    fn channel_instance_config_proxy_defaults_none() {
+        let cfg = ChannelInstanceConfig::default();
+        assert!(cfg.http_proxy.is_none());
+        assert!(cfg.https_proxy.is_none());
+        assert!(cfg.socks_proxy.is_none());
+        assert!(cfg.no_proxy.is_empty());
+    }
+
+    #[test]
+    fn channel_instance_config_with_proxy() {
+        let cfg = ChannelInstanceConfig {
+            http_proxy: Some("http://proxy:8080".into()),
+            socks_proxy: Some("socks5://127.0.0.1:1080".into()),
+            no_proxy: vec!["localhost".into()],
+            ..Default::default()
+        };
+        assert_eq!(cfg.http_proxy.as_deref(), Some("http://proxy:8080"));
+        assert_eq!(cfg.socks_proxy.as_deref(), Some("socks5://127.0.0.1:1080"));
+        assert_eq!(cfg.no_proxy, vec!["localhost"]);
+    }
+
+    #[test]
+    fn channel_instance_config_proxy_deserializes() {
+        let json_str = r#"{
+            "bot_token": "test-token",
+            "http_proxy": "http://proxy:8080",
+            "socks_proxy": "socks5://127.0.0.1:1080",
+            "no_proxy": ["localhost", "*.internal"]
+        }"#;
+        let cfg: ChannelInstanceConfig = serde_json::from_str(json_str).expect("should parse JSON");
+        assert_eq!(cfg.bot_token.as_deref(), Some("test-token"));
+        assert_eq!(cfg.http_proxy.as_deref(), Some("http://proxy:8080"));
+        assert!(cfg.https_proxy.is_none());
+        assert_eq!(cfg.socks_proxy.as_deref(), Some("socks5://127.0.0.1:1080"));
+        assert_eq!(cfg.no_proxy, vec!["localhost", "*.internal"]);
     }
 
     #[cfg(feature = "channel-whatsapp")]

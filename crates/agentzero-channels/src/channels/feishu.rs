@@ -37,6 +37,11 @@ mod impl_ {
             }
         }
 
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         async fn get_tenant_token(&self) -> anyhow::Result<String> {
             let body = serde_json::json!({
                 "app_id": self.app_id,

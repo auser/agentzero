@@ -171,6 +171,13 @@ All code must follow idiomatic Rust. These are not suggestions — they are mand
   - **Explain the "why"**: when proposing a solution, articulate why this approach solves the root cause and why simpler/narrower fixes are insufficient.
 - If the proper fix is large, scope it explicitly and propose a phased plan — but never substitute a band-aid for phase 1.
 
+### 14) UI quality gates (must pass before merge)
+
+- `cd ui && npx eslint 'src/**/*.tsx'` — zero errors allowed
+- `cd ui && npx prettier --check 'src/**/*.tsx'` — zero formatting violations
+- **ESLint is mandatory for UI code**: Agents must run ESLint on all `.tsx` files after every UI code change and fix all errors before committing. Warnings should be addressed when practical. Do not leave ESLint errors for later — they block all other work.
+- **Prettier is mandatory for UI code**: All `.tsx` files must be formatted with Prettier. Run `npx prettier --write 'src/**/*.tsx'` to auto-fix formatting issues before committing.
+
 ## Preferred PR Checklist
 
 - [ ] Functionality implemented
@@ -179,3 +186,4 @@ All code must follow idiomatic Rust. These are not suggestions — they are mand
 - [ ] `specs/SPRINT.md` task + acceptance updated
 - [ ] Docs updated (`docs/COMMANDS.md`/README and `site/` webapp as needed)
 - [ ] `fmt`, `clippy`, and `test` all pass
+- [ ] UI: `eslint` and `prettier` pass on all `.tsx` files (if UI changed)

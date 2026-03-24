@@ -20,10 +20,13 @@ regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+which = "8.0.2"
 
 [dev-dependencies]
 agentzero-testkit = { workspace = true }
+tempfile = "3.27.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 toml.workspace = true

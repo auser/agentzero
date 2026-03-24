@@ -12,8 +12,10 @@ pub mod group_reply;
 pub mod image_markers;
 pub mod interruption;
 pub mod leak_guard;
+pub mod media;
 pub mod outbound;
 pub mod pipeline;
+pub mod streaming;
 
 pub use channels::channel_setup::{
     build_channel_instance, register_configured_channels, ChannelInstanceConfig,
@@ -46,6 +48,10 @@ pub struct ChannelMessage {
     /// Empty string means inherit the global privacy mode.
     #[serde(default)]
     pub privacy_boundary: String,
+    /// Media attachments (images, audio, video) on this message.
+    /// Populated by media-aware channels or by the media pipeline.
+    #[serde(default)]
+    pub attachments: Vec<crate::media::MediaAttachment>,
 }
 
 /// A message to send through a channel (outbound).
@@ -329,6 +335,32 @@ impl ChannelRegistry {
 }
 
 // ---------------------------------------------------------------------------
+// Fallback notification
+// ---------------------------------------------------------------------------
+
+/// Append a fallback notification footer to response text if a provider
+/// fallback occurred during this request.
+///
+/// Reads the task-local `FALLBACK_INFO` set by `FallbackProvider`. If a
+/// cross-provider fallback happened, appends a brief notice to the response
+/// so the user knows which provider actually served the request.
+pub fn append_fallback_footer(response: String) -> String {
+    agentzero_providers::FALLBACK_INFO
+        .try_with(|cell| {
+            let info = cell.borrow();
+            if let Some(ref fi) = *info {
+                format!(
+                    "{}\n\n_Response from {} — primary provider unavailable_",
+                    response, fi.actual_provider
+                )
+            } else {
+                response.clone()
+            }
+        })
+        .unwrap_or(response)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -361,6 +393,7 @@ mod tests {
                 timestamp: 123,
                 thread_ts: None,
                 privacy_boundary: String::new(),
+                attachments: Vec::new(),
             })
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))
@@ -396,6 +429,7 @@ mod tests {
             timestamp: 999,
             thread_ts: Some("thread-1".into()),
             privacy_boundary: String::new(),
+            attachments: Vec::new(),
         };
 
         let json = serde_json::to_string(&msg).expect("serialize should succeed");
@@ -517,6 +551,7 @@ mod tests {
             timestamp: 0,
             thread_ts: None,
             privacy_boundary: "local_only".to_string(),
+            attachments: Vec::new(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ChannelMessage = serde_json::from_str(&json).unwrap();
@@ -596,5 +631,52 @@ mod tests {
             .await
             .expect("should return delivery");
         assert!(delivery.accepted);
+    }
+
+    // --- Fallback footer tests ---
+
+    #[tokio::test]
+    async fn append_fallback_footer_with_info() {
+        use agentzero_providers::{FallbackInfo, FALLBACK_INFO};
+
+        FALLBACK_INFO
+            .scope(
+                std::cell::RefCell::new(Some(FallbackInfo {
+                    original_provider: "anthropic".to_string(),
+                    actual_provider: "openai".to_string(),
+                })),
+                async {
+                    let result = append_fallback_footer("Hello world".to_string());
+                    assert!(
+                        result.contains("Hello world"),
+                        "should preserve original text"
+                    );
+                    assert!(result.contains("openai"), "should mention actual provider");
+                    assert!(
+                        result.contains("primary provider unavailable"),
+                        "should include fallback notice"
+                    );
+                },
+            )
+            .await;
+    }
+
+    #[tokio::test]
+    async fn append_fallback_footer_without_info() {
+        use agentzero_providers::FALLBACK_INFO;
+
+        FALLBACK_INFO
+            .scope(std::cell::RefCell::new(None), async {
+                let result = append_fallback_footer("Hello world".to_string());
+                assert_eq!(result, "Hello world", "should return text unchanged");
+            })
+            .await;
+    }
+
+    #[test]
+    fn append_fallback_footer_outside_task_local() {
+        // When called outside a FALLBACK_INFO scope, should return text unchanged.
+        let result = append_fallback_footer("No fallback context".to_string());
+        assert_eq!(result, "No fallback context");
     }
 }

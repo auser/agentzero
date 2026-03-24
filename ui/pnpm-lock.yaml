@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@auser/workflow-graph-react':
+        specifier: 1.2.4
+        version: 1.2.4(@auser/workflow-graph-web@1.2.4)(react@19.2.4)
+      '@auser/workflow-graph-web':
+        specifier: 1.2.4
+        version: 1.2.4
       '@radix-ui/react-accordion':
         specifier: ^1.2.12
         version: 1.2.12(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -125,6 +131,17 @@ importers:
         version: 8.0.0(@types/node@24.12.0)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)
 
 packages:
+
+  '@auser/workflow-graph-react@1.2.4':
+    resolution: {integrity: sha512-zABpRj7LjawauWePe1dJwQftQ67gGm3QLrNewOvsbAOV8vPSdGCMtiiZPr2UbGrfTB0MQ4F/BTyhU78Q0+GVZg==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@auser/workflow-graph-web': ^0.4.0
+      react: ^18.0.0 || ^19.0.0
+
+  '@auser/workflow-graph-web@1.2.4':
+    resolution: {integrity: sha512-dXqw+T9u0HpW0bojarrCDPkZj27Zh9vAv/IWlfpKBW/sADPz+h2Hl+h5YJ2prume2u+JXJpVVU0E4eimbn+/6w==}
+    engines: {node: '>=18'}
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -2338,6 +2355,13 @@ packages:
         optional: true
 
 snapshots:
+
+  '@auser/workflow-graph-react@1.2.4(@auser/workflow-graph-web@1.2.4)(react@19.2.4)':
+    dependencies:
+      '@auser/workflow-graph-web': 1.2.4
+      react: 19.2.4
+
+  '@auser/workflow-graph-web@1.2.4': {}
 
   '@babel/code-frame@7.29.0':
     dependencies:

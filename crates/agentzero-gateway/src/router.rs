@@ -1,12 +1,20 @@
 use crate::a2a::{a2a_rpc, agent_card};
+use crate::canvas::{
+    canvas_history, delete_canvas as delete_canvas_handler, get_canvas, list_canvases, post_canvas,
+    ws_canvas,
+};
 use crate::handlers::{
-    agent_stats, agents_list, api_chat, api_fallback, async_submit, create_agent, create_cron,
-    dashboard, delete_agent, delete_cron, emergency_stop, forget_memory, get_agent, get_config,
-    get_tools, health, health_live, health_ready, job_cancel, job_events, job_list, job_result,
-    job_status, job_transcript, legacy_webhook, list_approvals, list_cron, list_memory,
-    mcp_message, metrics, openapi_spec, pair, ping, recall_memory, sse_events, sse_run_stream,
-    tool_execute, topology, update_agent, update_config, update_cron, v1_chat_completions,
-    v1_models, webhook, webhook_with_agent, ws_chat, ws_run_subscribe,
+    agent_stats, agents_list, api_chat, api_fallback, async_submit, cancel_workflow_run,
+    create_agent, create_cron, create_template, create_workflow, dashboard, delete_agent,
+    delete_cron, delete_template, delete_workflow, emergency_stop, execute_workflow,
+    export_workflow, forget_memory, get_agent, get_config, get_template, get_tools, get_workflow,
+    get_workflow_run, health, health_live, health_ready, import_workflow, job_cancel, job_events,
+    job_list, job_result, job_status, job_transcript, legacy_webhook, list_approvals, list_cron,
+    list_memory, list_templates, list_workflows, mcp_message, metrics, openapi_spec, pair, ping,
+    recall_memory, resume_workflow_run, sse_events, sse_run_stream, stream_workflow_run,
+    swarm_execute, tool_execute, topology, update_agent, update_config, update_cron,
+    update_template, update_workflow, v1_chat_completions, v1_models, webhook, webhook_with_agent,
+    ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -52,6 +60,36 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
             get(get_agent).patch(update_agent).delete(delete_agent),
         )
         .route("/v1/agents/:agent_id/stats", get(agent_stats))
+        .route("/v1/workflows", get(list_workflows).post(create_workflow))
+        .route(
+            "/v1/workflows/runs/:run_id",
+            get(get_workflow_run).delete(cancel_workflow_run),
+        )
+        .route(
+            "/v1/workflows/runs/:run_id/resume",
+            post(resume_workflow_run),
+        )
+        .route(
+            "/v1/workflows/runs/:run_id/stream",
+            get(stream_workflow_run),
+        )
+        .route(
+            "/v1/workflows/:id",
+            get(get_workflow)
+                .patch(update_workflow)
+                .delete(delete_workflow),
+        )
+        .route("/v1/workflows/:id/execute", post(execute_workflow))
+        .route("/v1/workflows/:id/export", get(export_workflow))
+        .route("/v1/workflows/import", post(import_workflow))
+        .route("/v1/swarm", post(swarm_execute))
+        .route("/v1/templates", get(list_templates).post(create_template))
+        .route(
+            "/v1/templates/:id",
+            get(get_template)
+                .patch(update_template)
+                .delete(delete_template),
+        )
         .route("/v1/topology", get(topology))
         .route("/v1/hooks/:channel/:agent_id", post(webhook_with_agent))
         .route("/v1/events", get(sse_events))
@@ -69,8 +107,18 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/memory/forget", post(forget_memory))
         .route("/v1/approvals", get(list_approvals))
         .route("/v1/openapi.json", get(openapi_spec))
+        .route("/docs", get(api_docs_handler))
         .route("/ws/chat", get(ws_chat))
         .route("/ws/runs/:run_id", get(ws_run_subscribe))
+        .route("/api/canvas", get(list_canvases))
+        .route(
+            "/api/canvas/:id",
+            get(get_canvas)
+                .post(post_canvas)
+                .delete(delete_canvas_handler),
+        )
+        .route("/api/canvas/:id/history", get(canvas_history))
+        .route("/ws/canvas/:id", get(ws_canvas))
         .route("/api/*path", get(api_fallback));
 
     // Noise Protocol handshake and transport routes (privacy feature).
@@ -157,6 +205,14 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
     }
 
     router.with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// Interactive API documentation (Scalar)
+// ---------------------------------------------------------------------------
+
+async fn api_docs_handler() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("api_docs.html"))
 }
 
 // ---------------------------------------------------------------------------

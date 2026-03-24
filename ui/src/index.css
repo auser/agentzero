@@ -33,6 +33,71 @@
 @layer base {
   * {
     border-color: hsl(var(--border));
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+  /* ReactFlow edge selection styling */
+  .react-flow__edge.selected .react-flow__edge-path {
+    stroke: #a855f7 !important;
+    stroke-width: 3px !important;
+  }
+  .react-flow__edge-path {
+    cursor: pointer;
+  }
+  /* When dragging a connection — only compatible targets glow, others disabled */
+  .react-flow.connecting-active .react-flow__handle {
+    opacity: 0.12;
+    pointer-events: none;
+    transition: opacity 0.15s, box-shadow 0.15s;
+  }
+  .react-flow.connecting-active .react-flow__handle.connecting {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .react-flow.connecting-active .react-flow__handle[data-compatible="true"] {
+    opacity: 1;
+    pointer-events: auto;
+    animation: handle-glow 1.2s ease-in-out infinite;
+  }
+  .react-flow.connecting-active .react-flow__node {
+    opacity: 0.5;
+    transition: opacity 0.15s;
+  }
+  .react-flow.connecting-active .react-flow__node:has(.react-flow__handle[data-compatible="true"]),
+  .react-flow.connecting-active .react-flow__node:has(.react-flow__handle.connecting) {
+    opacity: 1;
+  }
+  .react-flow.connecting-active .react-flow__handle.connectingto:not([data-compatible="true"]) {
+    background: inherit !important;
+    box-shadow: none !important;
+    opacity: 0.12 !important;
+    pointer-events: none !important;
+  }
+  .react-flow__handle.connectingto[data-compatible="true"],
+  .react-flow__handle.connectingto:not(.connecting-active *) {
+    background: #22c55e !important;
+    box-shadow: 0 0 12px #22c55e;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    animation: none !important;
+  }
+  @keyframes handle-glow {
+    0%, 100% { box-shadow: 0 0 3px currentColor; }
+    50% { box-shadow: 0 0 14px currentColor, 0 0 6px currentColor; }
   }
   body {
     background-color: hsl(var(--background));
@@ -46,4 +111,10 @@
     display: flex;
     flex-direction: column;
   }
+}
+
+/* Pulsing glow animation for running workflow nodes */
+@keyframes nodeRunningPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.01); }
 }

@@ -40,6 +40,11 @@ mod impl_ {
             }
         }
 
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         /// Get the bot's own user ID via auth.test.
         async fn get_bot_user_id(&self) -> anyhow::Result<String> {
             let resp = self
@@ -181,6 +186,7 @@ mod impl_ {
                             timestamp: helpers::now_epoch_secs(),
                             thread_ts,
                             privacy_boundary: String::new(),
+                            attachments: Vec::new(),
                         };
 
                         if tx.send(channel_msg).await.is_err() {
@@ -300,6 +306,7 @@ mod impl_ {
                     timestamp: helpers::now_epoch_secs(),
                     thread_ts,
                     privacy_boundary: String::new(),
+                    attachments: Vec::new(),
                 };
 
                 if tx.send(channel_msg).await.is_err() {

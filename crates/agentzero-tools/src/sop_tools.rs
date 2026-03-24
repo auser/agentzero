@@ -1,4 +1,8 @@
 use crate::skills::sop::{self, SopPlan};
+#[cfg(feature = "tools-extended")]
+use crate::sop::engine::SopEngine;
+#[cfg(feature = "tools-extended")]
+use crate::sop::types::SopStepKind;
 use agentzero_core::{Tool, ToolContext, ToolResult};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
@@ -153,6 +157,20 @@ impl Tool for SopStatusTool {
             .ok_or_else(|| anyhow!("SOP not found: {}", req.id))?;
 
         let mut lines = vec![format!("sop_id={}", plan.id)];
+
+        // Check for deterministic run state.
+        #[cfg(feature = "tools-extended")]
+        {
+            let det_state = SopEngine::load_state(&req.id, &ctx.workspace_root).await?;
+            if let Some(ref ds) = det_state {
+                let savings = SopEngine::calculate_savings(ds);
+                lines.push(format!(
+                    "  execution_mode=deterministic current_step={} steps_executed={} llm_calls_saved={}",
+                    ds.current_step, savings.steps_executed, savings.llm_calls_saved
+                ));
+            }
+        }
+
         for (i, step) in plan.steps.iter().enumerate() {
             let approval_key = SopStore::approval_key(&plan.id, i);
             let needs_approval = store.approvals.contains_key(&approval_key);
@@ -227,6 +245,44 @@ impl Tool for SopAdvanceTool {
                 "step {} requires approval before it can be advanced",
                 req.step_index
             ));
+        }
+
+        // Check if a deterministic run state exists for this plan.
+        #[cfg(feature = "tools-extended")]
+        {
+            let det_state = SopEngine::load_state(&req.id, &ctx.workspace_root).await?;
+            if let Some(mut ds) = det_state {
+                let plan_ref = store
+                    .plans
+                    .get(&req.id)
+                    .ok_or_else(|| anyhow!("SOP not found: {}", req.id))?;
+                let step_kinds = vec![SopStepKind::Execute; plan_ref.steps.len()];
+                let det_status = SopEngine::advance_deterministic_step(
+                    &mut ds,
+                    plan_ref,
+                    serde_json::json!({"step_index": req.step_index, "status": "completed"}),
+                    &step_kinds,
+                )?;
+                SopEngine::persist_state(&ds, &ctx.workspace_root).await?;
+
+                // Also mark the step completed in the regular plan.
+                {
+                    let plan = store
+                        .plans
+                        .get_mut(&req.id)
+                        .ok_or_else(|| anyhow!("SOP not found: {}", req.id))?;
+                    sop::advance_step(plan, req.step_index)?;
+                }
+                store.save(&ctx.workspace_root).await?;
+
+                let title = &store.plans[&req.id].steps[req.step_index].title;
+                return Ok(ToolResult {
+                    output: format!(
+                        "advanced sop={} step={} title=\"{title}\" mode=deterministic det_status={det_status:?}",
+                        req.id, req.step_index
+                    ),
+                });
+            }
         }
 
         {
@@ -330,6 +386,9 @@ struct SopExecuteInput {
     steps: Vec<String>,
     #[serde(default)]
     approval_required: Vec<usize>,
+    /// Run in deterministic mode (bypass LLM for step transitions).
+    #[serde(default)]
+    deterministic: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -351,7 +410,8 @@ impl Tool for SopExecuteTool {
             "properties": {
                 "id": { "type": "string", "description": "Unique SOP plan ID" },
                 "steps": { "type": "array", "items": { "type": "string" }, "description": "List of step titles" },
-                "approval_required": { "type": "array", "items": { "type": "integer" }, "description": "Indices of steps requiring human approval" }
+                "approval_required": { "type": "array", "items": { "type": "integer" }, "description": "Indices of steps requiring human approval" },
+                "deterministic": { "type": "boolean", "description": "Run in deterministic mode (bypass LLM for step transitions)", "default": false }
             },
             "required": ["id", "steps"],
             "additionalProperties": false
@@ -393,15 +453,29 @@ impl Tool for SopExecuteTool {
         }
 
         let step_count = plan.steps.len();
+
+        // If deterministic mode, create and persist deterministic run state.
+        #[cfg(feature = "tools-extended")]
+        let mode_label = if req.deterministic {
+            let det_state = SopEngine::start_deterministic_run(&plan);
+            SopEngine::persist_state(&det_state, &ctx.workspace_root).await?;
+            "deterministic"
+        } else {
+            "supervised"
+        };
+        #[cfg(not(feature = "tools-extended"))]
+        let mode_label = "supervised";
+
         store.plans.insert(req.id.clone(), plan);
         store.save(&ctx.workspace_root).await?;
 
         Ok(ToolResult {
             output: format!(
-                "created sop={} steps={} approval_required={}",
+                "created sop={} steps={} approval_required={} mode={}",
                 req.id,
                 step_count,
-                req.approval_required.len()
+                req.approval_required.len(),
+                mode_label
             ),
         })
     }
@@ -806,6 +880,65 @@ mod tests {
             .await
             .expect_err("approving completed step should fail");
         assert!(err.to_string().contains("already completed"));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(feature = "tools-extended")]
+    #[tokio::test]
+    async fn sop_execute_deterministic_creates_run_state() {
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        let result = SopExecuteTool
+            .execute(
+                r#"{"id": "det-plan", "steps": ["a", "b", "c"], "deterministic": true}"#,
+                &ctx,
+            )
+            .await
+            .expect("execute should succeed");
+        assert!(result.output.contains("mode=deterministic"));
+
+        // Verify the deterministic state file exists.
+        let state_path = dir
+            .join(".agentzero")
+            .join("sop_runs")
+            .join("det-plan.json");
+        assert!(state_path.exists(), "deterministic state file should exist");
+
+        // Read and verify the state.
+        let data = fs::read_to_string(&state_path).expect("should read state file");
+        let state: crate::sop::types::DeterministicRunState =
+            serde_json::from_str(&data).expect("should parse state");
+        assert_eq!(state.plan_id, "det-plan");
+        assert_eq!(state.current_step, 0);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(feature = "tools-extended")]
+    #[tokio::test]
+    async fn sop_status_shows_deterministic_info() {
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        // Create a deterministic SOP.
+        SopExecuteTool
+            .execute(
+                r#"{"id": "det-status", "steps": ["x", "y"], "deterministic": true}"#,
+                &ctx,
+            )
+            .await
+            .expect("execute should succeed");
+
+        // Status should show deterministic execution mode.
+        let result = SopStatusTool
+            .execute(r#"{"id": "det-status"}"#, &ctx)
+            .await
+            .expect("status should succeed");
+        assert!(result.output.contains("execution_mode=deterministic"));
+        assert!(result.output.contains("current_step=0"));
+        assert!(result.output.contains("steps_executed=0"));
 
         fs::remove_dir_all(dir).ok();
     }

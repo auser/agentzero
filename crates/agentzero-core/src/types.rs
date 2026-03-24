@@ -427,6 +427,69 @@ pub struct StreamChunk {
 /// Convenience alias for the sender half of a streaming channel.
 pub type StreamSink = tokio::sync::mpsc::UnboundedSender<StreamChunk>;
 
+/// Accumulates incremental tool call deltas from streaming responses into
+/// complete `ToolUseRequest` objects. Shared across provider implementations
+/// to avoid duplicating accumulation logic.
+#[derive(Debug, Default)]
+pub struct StreamToolCallAccumulator {
+    /// In-flight tool calls: `(index, id, name, arguments_json_buffer)`.
+    pending: Vec<(usize, String, String, String)>,
+}
+
+impl StreamToolCallAccumulator {
+    /// Create a new empty accumulator.
+    pub fn new() -> Self {
+        Self {
+            pending: Vec::new(),
+        }
+    }
+
+    /// Process a streaming tool call delta. Call this for each
+    /// `ToolCallDelta` received during streaming.
+    pub fn process_delta(&mut self, delta: &ToolCallDelta) {
+        // Find or create the accumulator entry for this index.
+        if let Some(entry) = self
+            .pending
+            .iter_mut()
+            .find(|(idx, _, _, _)| *idx == delta.index)
+        {
+            // Update id/name if provided (first chunk for this index).
+            if let Some(ref id) = delta.id {
+                entry.1 = id.clone();
+            }
+            if let Some(ref name) = delta.name {
+                entry.2 = name.clone();
+            }
+            entry.3.push_str(&delta.arguments_delta);
+        } else {
+            self.pending.push((
+                delta.index,
+                delta.id.clone().unwrap_or_default(),
+                delta.name.clone().unwrap_or_default(),
+                delta.arguments_delta.clone(),
+            ));
+        }
+    }
+
+    /// Consume the accumulator and produce finished tool use requests.
+    pub fn finish(mut self) -> Vec<ToolUseRequest> {
+        self.pending.sort_by_key(|(idx, _, _, _)| *idx);
+        self.pending
+            .into_iter()
+            .map(|(_, id, name, args)| {
+                let input = serde_json::from_str(&args)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                ToolUseRequest { id, name, input }
+            })
+            .collect()
+    }
+
+    /// Whether any tool calls have been accumulated.
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ToolContext {
     pub workspace_root: String,
@@ -483,6 +546,9 @@ pub struct ToolContext {
     /// Path to the agentzero.toml config file (for self-configuration tools).
     #[serde(default)]
     pub config_path: Option<String>,
+    /// Sender identity for per-sender rate limiting (e.g., Telegram user ID, Discord channel).
+    #[serde(default)]
+    pub sender_id: Option<String>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -522,6 +588,7 @@ impl std::fmt::Debug for ToolContext {
             )
             .field("max_tokens", &self.max_tokens)
             .field("max_cost_microdollars", &self.max_cost_microdollars)
+            .field("sender_id", &self.sender_id)
             .finish()
     }
 }
@@ -547,6 +614,7 @@ impl ToolContext {
             cost_microdollars: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             max_tokens: 0,
             max_cost_microdollars: 0,
+            sender_id: None,
         }
     }
 
@@ -885,6 +953,13 @@ pub enum AgentError {
 
 #[async_trait]
 pub trait Provider: Send + Sync {
+    /// Whether this provider supports native streaming. Used by channels to
+    /// decide whether to create draft messages for token-by-token updates.
+    /// Defaults to `false`; override in providers that implement real streaming.
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
     async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult>;
     async fn complete_with_reasoning(
         &self,
@@ -945,6 +1020,52 @@ pub trait Provider: Send + Sync {
         });
         Ok(result)
     }
+}
+
+/// Parse an ISO-8601 datetime string (as returned by SQLite's `datetime()`)
+/// into a unix epoch timestamp in seconds. Supports `YYYY-MM-DD HH:MM:SS` format.
+fn parse_iso_to_epoch(s: &str) -> Option<i64> {
+    // SQLite's datetime(created_at, 'unixepoch') produces "YYYY-MM-DD HH:MM:SS"
+    let mut parts = s.split(' ');
+    let date = parts.next()?;
+    let time = parts.next()?;
+    let mut d = date.splitn(3, '-');
+    let year: i64 = d.next()?.parse().ok()?;
+    let month: i64 = d.next()?.parse().ok()?;
+    let day: i64 = d.next()?.parse().ok()?;
+    let mut t = time.splitn(3, ':');
+    let hour: i64 = t.next()?.parse().ok()?;
+    let min: i64 = t.next()?.parse().ok()?;
+    let sec: i64 = t.next()?.parse().ok()?;
+
+    // Days from year 1970 using a simplified calculation (no leap-second accuracy needed).
+    let mut days: i64 = 0;
+    for y in 1970..year {
+        days += if is_leap(y) { 366 } else { 365 };
+    }
+    let month_days = [
+        31,
+        if is_leap(year) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    for m in 0..(month - 1) as usize {
+        days += month_days.get(m).copied().unwrap_or(30) as i64;
+    }
+    days += day - 1;
+    Some(days * 86400 + hour * 3600 + min * 60 + sec)
+}
+
+fn is_leap(y: i64) -> bool {
+    y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
 }
 
 #[async_trait]
@@ -1067,6 +1188,33 @@ pub trait MemoryStore: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Query recent entries within a time range (unix seconds).
+    ///
+    /// Both `since` and `until` are optional — omit either to leave that bound open.
+    /// Default implementation over-fetches via `recent()` and filters in-memory
+    /// by parsing the ISO-8601 `created_at` field; backends should override with
+    /// an optimized SQL query.
+    async fn recent_for_timerange(
+        &self,
+        since: Option<i64>,
+        until: Option<i64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let all = self.recent(limit * 4).await?;
+        Ok(all
+            .into_iter()
+            .filter(|e| {
+                let ts = e.created_at.as_deref().and_then(parse_iso_to_epoch);
+                match ts {
+                    Some(t) => since.map_or(true, |s| t >= s) && until.map_or(true, |u| t <= u),
+                    // Entries without timestamps pass if no bounds are set.
+                    None => since.is_none() && until.is_none(),
+                }
+            })
+            .take(limit)
+            .collect())
+    }
+
     /// Append a memory entry with an associated embedding vector.
     ///
     /// Default implementation ignores the embedding and delegates to `append()`.
@@ -1104,6 +1252,145 @@ pub trait MemoryStore: Send + Sync {
         // Sort descending by similarity.
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         Ok(scored.into_iter().take(limit).map(|(_, e)| e).collect())
+    }
+}
+
+/// Blanket implementation allowing `Arc<dyn MemoryStore>` to be used anywhere
+/// a `Box<dyn MemoryStore>` is expected (via `Box::new(arc.clone())`).
+///
+/// This enables a single store instance to be shared across multiple agents
+/// — e.g. the coordinator creates one `SqliteMemoryStore` and wraps it in
+/// `Arc`, then each agent receives `Box::new(arc.clone())`.
+#[async_trait]
+impl<T: MemoryStore + ?Sized> MemoryStore for std::sync::Arc<T> {
+    async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
+        (**self).append(entry).await
+    }
+
+    async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self).recent(limit).await
+    }
+
+    async fn recent_for_boundary(
+        &self,
+        limit: usize,
+        boundary: &str,
+        source_channel: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self)
+            .recent_for_boundary(limit, boundary, source_channel)
+            .await
+    }
+
+    async fn recent_for_conversation(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self)
+            .recent_for_conversation(conversation_id, limit)
+            .await
+    }
+
+    async fn fork_conversation(&self, from_id: &str, new_id: &str) -> anyhow::Result<()> {
+        (**self).fork_conversation(from_id, new_id).await
+    }
+
+    async fn list_conversations(&self) -> anyhow::Result<Vec<String>> {
+        (**self).list_conversations().await
+    }
+
+    async fn gc_expired(&self) -> anyhow::Result<u64> {
+        (**self).gc_expired().await
+    }
+
+    async fn recent_for_org(&self, org_id: &str, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self).recent_for_org(org_id, limit).await
+    }
+
+    async fn recent_for_org_conversation(
+        &self,
+        org_id: &str,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self)
+            .recent_for_org_conversation(org_id, conversation_id, limit)
+            .await
+    }
+
+    async fn recent_for_agent(
+        &self,
+        agent_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self).recent_for_agent(agent_id, limit).await
+    }
+
+    async fn recent_for_agent_conversation(
+        &self,
+        agent_id: &str,
+        conversation_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self)
+            .recent_for_agent_conversation(agent_id, conversation_id, limit)
+            .await
+    }
+
+    async fn list_conversations_for_agent(&self, agent_id: &str) -> anyhow::Result<Vec<String>> {
+        (**self).list_conversations_for_agent(agent_id).await
+    }
+
+    async fn recent_for_timerange(
+        &self,
+        since: Option<i64>,
+        until: Option<i64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self).recent_for_timerange(since, until, limit).await
+    }
+
+    async fn append_with_embedding(
+        &self,
+        entry: MemoryEntry,
+        embedding: Vec<f32>,
+    ) -> anyhow::Result<()> {
+        (**self).append_with_embedding(entry, embedding).await
+    }
+
+    async fn semantic_recall(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self).semantic_recall(query_embedding, limit).await
+    }
+}
+
+/// In-memory [`MemoryStore`] for ephemeral agents (workflow steps, delegates).
+///
+/// Entries live only for the lifetime of this struct — nothing is persisted to
+/// disk. Useful when an agent does not need cross-session memory (e.g. a
+/// short-lived workflow step that runs once and produces output).
+#[derive(Default)]
+pub struct EphemeralMemory {
+    entries: std::sync::Mutex<Vec<MemoryEntry>>,
+}
+
+#[async_trait]
+impl MemoryStore for EphemeralMemory {
+    async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
+        self.entries
+            .lock()
+            .expect("ephemeral memory lock poisoned")
+            .push(entry);
+        Ok(())
+    }
+
+    async fn recent(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+        let entries = self.entries.lock().expect("ephemeral memory lock poisoned");
+        Ok(entries.iter().rev().take(limit).cloned().collect())
     }
 }
 
@@ -1618,5 +1905,11 @@ mod tests {
         let reason = ctx2.budget_exceeded();
         assert!(reason.is_some());
         assert!(reason.unwrap().contains("cost budget exceeded"));
+    }
+
+    #[test]
+    fn tool_context_sender_id_defaults_to_none() {
+        let ctx = ToolContext::new("/tmp/test".to_string());
+        assert!(ctx.sender_id.is_none(), "sender_id should default to None");
     }
 }

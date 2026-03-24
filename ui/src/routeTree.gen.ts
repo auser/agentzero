@@ -11,7 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as WorkflowsIndexRouteImport } from './routes/workflows/index'
 import { Route as ToolsIndexRouteImport } from './routes/tools/index'
+import { Route as TemplatesIndexRouteImport } from './routes/templates/index'
 import { Route as ScheduleIndexRouteImport } from './routes/schedule/index'
 import { Route as RunsIndexRouteImport } from './routes/runs/index'
 import { Route as ModelsIndexRouteImport } from './routes/models/index'
@@ -21,8 +23,10 @@ import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as ConfigIndexRouteImport } from './routes/config/index'
 import { Route as ChatIndexRouteImport } from './routes/chat/index'
 import { Route as ChannelsIndexRouteImport } from './routes/channels/index'
+import { Route as CanvasIndexRouteImport } from './routes/canvas/index'
 import { Route as ApprovalsIndexRouteImport } from './routes/approvals/index'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
+import { Route as WorkflowsWorkflowIdRouteImport } from './routes/workflows/$workflowId'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -34,9 +38,19 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WorkflowsIndexRoute = WorkflowsIndexRouteImport.update({
+  id: '/workflows/',
+  path: '/workflows/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ToolsIndexRoute = ToolsIndexRouteImport.update({
   id: '/tools/',
   path: '/tools/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplatesIndexRoute = TemplatesIndexRouteImport.update({
+  id: '/templates/',
+  path: '/templates/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ScheduleIndexRoute = ScheduleIndexRouteImport.update({
@@ -84,6 +98,11 @@ const ChannelsIndexRoute = ChannelsIndexRouteImport.update({
   path: '/channels/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CanvasIndexRoute = CanvasIndexRouteImport.update({
+  id: '/canvas/',
+  path: '/canvas/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApprovalsIndexRoute = ApprovalsIndexRouteImport.update({
   id: '/approvals/',
   path: '/approvals/',
@@ -94,12 +113,19 @@ const AgentsIndexRoute = AgentsIndexRouteImport.update({
   path: '/agents/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WorkflowsWorkflowIdRoute = WorkflowsWorkflowIdRouteImport.update({
+  id: '/workflows/$workflowId',
+  path: '/workflows/$workflowId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/workflows/$workflowId': typeof WorkflowsWorkflowIdRoute
   '/agents/': typeof AgentsIndexRoute
   '/approvals/': typeof ApprovalsIndexRoute
+  '/canvas/': typeof CanvasIndexRoute
   '/channels/': typeof ChannelsIndexRoute
   '/chat/': typeof ChatIndexRoute
   '/config/': typeof ConfigIndexRoute
@@ -109,13 +135,17 @@ export interface FileRoutesByFullPath {
   '/models/': typeof ModelsIndexRoute
   '/runs/': typeof RunsIndexRoute
   '/schedule/': typeof ScheduleIndexRoute
+  '/templates/': typeof TemplatesIndexRoute
   '/tools/': typeof ToolsIndexRoute
+  '/workflows/': typeof WorkflowsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/workflows/$workflowId': typeof WorkflowsWorkflowIdRoute
   '/agents': typeof AgentsIndexRoute
   '/approvals': typeof ApprovalsIndexRoute
+  '/canvas': typeof CanvasIndexRoute
   '/channels': typeof ChannelsIndexRoute
   '/chat': typeof ChatIndexRoute
   '/config': typeof ConfigIndexRoute
@@ -125,14 +155,18 @@ export interface FileRoutesByTo {
   '/models': typeof ModelsIndexRoute
   '/runs': typeof RunsIndexRoute
   '/schedule': typeof ScheduleIndexRoute
+  '/templates': typeof TemplatesIndexRoute
   '/tools': typeof ToolsIndexRoute
+  '/workflows': typeof WorkflowsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/workflows/$workflowId': typeof WorkflowsWorkflowIdRoute
   '/agents/': typeof AgentsIndexRoute
   '/approvals/': typeof ApprovalsIndexRoute
+  '/canvas/': typeof CanvasIndexRoute
   '/channels/': typeof ChannelsIndexRoute
   '/chat/': typeof ChatIndexRoute
   '/config/': typeof ConfigIndexRoute
@@ -142,15 +176,19 @@ export interface FileRoutesById {
   '/models/': typeof ModelsIndexRoute
   '/runs/': typeof RunsIndexRoute
   '/schedule/': typeof ScheduleIndexRoute
+  '/templates/': typeof TemplatesIndexRoute
   '/tools/': typeof ToolsIndexRoute
+  '/workflows/': typeof WorkflowsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/login'
+    | '/workflows/$workflowId'
     | '/agents/'
     | '/approvals/'
+    | '/canvas/'
     | '/channels/'
     | '/chat/'
     | '/config/'
@@ -160,13 +198,17 @@ export interface FileRouteTypes {
     | '/models/'
     | '/runs/'
     | '/schedule/'
+    | '/templates/'
     | '/tools/'
+    | '/workflows/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
+    | '/workflows/$workflowId'
     | '/agents'
     | '/approvals'
+    | '/canvas'
     | '/channels'
     | '/chat'
     | '/config'
@@ -176,13 +218,17 @@ export interface FileRouteTypes {
     | '/models'
     | '/runs'
     | '/schedule'
+    | '/templates'
     | '/tools'
+    | '/workflows'
   id:
     | '__root__'
     | '/'
     | '/login'
+    | '/workflows/$workflowId'
     | '/agents/'
     | '/approvals/'
+    | '/canvas/'
     | '/channels/'
     | '/chat/'
     | '/config/'
@@ -192,14 +238,18 @@ export interface FileRouteTypes {
     | '/models/'
     | '/runs/'
     | '/schedule/'
+    | '/templates/'
     | '/tools/'
+    | '/workflows/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  WorkflowsWorkflowIdRoute: typeof WorkflowsWorkflowIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   ApprovalsIndexRoute: typeof ApprovalsIndexRoute
+  CanvasIndexRoute: typeof CanvasIndexRoute
   ChannelsIndexRoute: typeof ChannelsIndexRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ConfigIndexRoute: typeof ConfigIndexRoute
@@ -209,7 +259,9 @@ export interface RootRouteChildren {
   ModelsIndexRoute: typeof ModelsIndexRoute
   RunsIndexRoute: typeof RunsIndexRoute
   ScheduleIndexRoute: typeof ScheduleIndexRoute
+  TemplatesIndexRoute: typeof TemplatesIndexRoute
   ToolsIndexRoute: typeof ToolsIndexRoute
+  WorkflowsIndexRoute: typeof WorkflowsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -228,11 +280,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/workflows/': {
+      id: '/workflows/'
+      path: '/workflows'
+      fullPath: '/workflows/'
+      preLoaderRoute: typeof WorkflowsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tools/': {
       id: '/tools/'
       path: '/tools'
       fullPath: '/tools/'
       preLoaderRoute: typeof ToolsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/templates/': {
+      id: '/templates/'
+      path: '/templates'
+      fullPath: '/templates/'
+      preLoaderRoute: typeof TemplatesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/schedule/': {
@@ -298,6 +364,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChannelsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/canvas/': {
+      id: '/canvas/'
+      path: '/canvas'
+      fullPath: '/canvas/'
+      preLoaderRoute: typeof CanvasIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/approvals/': {
       id: '/approvals/'
       path: '/approvals'
@@ -312,14 +385,23 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/workflows/$workflowId': {
+      id: '/workflows/$workflowId'
+      path: '/workflows/$workflowId'
+      fullPath: '/workflows/$workflowId'
+      preLoaderRoute: typeof WorkflowsWorkflowIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  WorkflowsWorkflowIdRoute: WorkflowsWorkflowIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   ApprovalsIndexRoute: ApprovalsIndexRoute,
+  CanvasIndexRoute: CanvasIndexRoute,
   ChannelsIndexRoute: ChannelsIndexRoute,
   ChatIndexRoute: ChatIndexRoute,
   ConfigIndexRoute: ConfigIndexRoute,
@@ -329,7 +411,9 @@ const rootRouteChildren: RootRouteChildren = {
   ModelsIndexRoute: ModelsIndexRoute,
   RunsIndexRoute: RunsIndexRoute,
   ScheduleIndexRoute: ScheduleIndexRoute,
+  TemplatesIndexRoute: TemplatesIndexRoute,
   ToolsIndexRoute: ToolsIndexRoute,
+  WorkflowsIndexRoute: WorkflowsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

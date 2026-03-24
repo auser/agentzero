@@ -1,0 +1,635 @@
+/**
+ * Workflow topology visualization powered by ReactFlow.
+ * Supports drag-drop from palette, port-to-port connections,
+ * Cmd+K command palette, and localStorage persistence.
+ */
+import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  MiniMap,
+  useNodesState,
+  useEdgesState,
+  ReactFlowProvider,
+  SelectionMode,
+  useReactFlow,
+  type Node,
+  type Edge,
+} from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
+
+import { AgentNode } from '@/components/workflows/AgentNode'
+import { ProviderNode } from '@/components/workflows/ProviderNode'
+import { GroupNode } from '@/components/workflows/GroupNode'
+import { LabeledEdge } from '@/components/workflows/LabeledEdge'
+import { NodeDetailPanel } from '@/components/workflows/NodeDetailPanel'
+import { CommandPalette } from '@/components/workflows/CommandPalette'
+import { useCommandPalette } from '@/lib/hooks/useCommandPalette'
+import { CreateAgentDialog } from '@/components/workflows/CreateAgentDialog'
+import { ConfigPanel } from '@/components/workflows/ConfigPanel'
+import { CanvasContextMenu } from '@/components/dashboard/CanvasContextMenu'
+import { useWorkflowPersistence } from '@/components/dashboard/useWorkflowPersistence'
+import { useNodeActions } from '@/components/dashboard/useNodeActions'
+import { useUndoRedo } from '@/components/dashboard/useUndoRedo'
+import { RunWorkflowButton } from '@/components/workflows/RunWorkflowButton'
+import { TemplateGallery } from '@/components/workflows/TemplateGallery'
+import { SaveTemplateDialog } from '@/components/workflows/SaveTemplateDialog'
+import { CreateNodeTypeDialog } from '@/components/workflows/CreateNodeTypeDialog'
+import { EmptyCanvasState } from '@/components/workflows/EmptyCanvasState'
+import { getDefinition } from '@/lib/node-definitions'
+import { useNodeDefinitions } from '@/lib/hooks/useNodeDefinitions'
+import type { WorkflowTemplate } from '@/lib/workflow-templates'
+import { templatesApi } from '@/lib/api/templates'
+import { getKeyBindingActions, getShortcutActions, matchesKey, type CanvasAction } from '@/lib/canvas-actions'
+
+interface WorkflowTopologyProps {
+  fullHeight?: boolean
+  readOnly?: boolean
+  /** When provided, loads this specific workflow instead of the default. */
+  workflowId?: string
+}
+
+const edgeTypes = {
+  default: LabeledEdge,
+}
+
+function WorkflowTopologyInner({ fullHeight = false, readOnly = false, workflowId: workflowIdProp }: WorkflowTopologyProps) {
+  // Dynamic nodeTypes — rebuilds when custom definitions are added/removed
+  const definitions = useNodeDefinitions()
+  const nodeTypes = useMemo(() => ({
+    ...Object.fromEntries(definitions.map((d) => [d.type, AgentNode])),
+    provider: ProviderNode,
+    group: GroupNode,
+  }), [definitions])
+  const reactFlowInstance = useReactFlow()
+  const queryClient = useQueryClient()
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+  const [createAgentOpen, setCreateAgentOpen] = useState(false)
+  const [configPanelOpen, setConfigPanelOpen] = useState(false)
+  const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false)
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
+  const [createNodeTypeOpen, setCreateNodeTypeOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const cmdK = useCommandPalette()
+
+  const { persistState, handleClear, workflowId } = useWorkflowPersistence(setNodes, setEdges, workflowIdProp)
+  const { push: pushHistory, undo, redo } = useUndoRedo(setNodes, setEdges)
+
+  // Push history snapshot on every persist (debounced saves also capture undo state)
+  const persistWithHistory = useCallback(() => {
+    const currentNodes = nodes
+    const currentEdges = edges
+    pushHistory(currentNodes, currentEdges)
+    persistState()
+  }, [nodes, edges, pushHistory, persistState])
+
+  const {
+    handleNodesChange,
+    handleEdgesChange,
+    handleConnect,
+    handleDragOver,
+    handleDrop,
+    handleCmdKSelect,
+    isValidConnection,
+    onConnectStart,
+    onConnectEnd,
+  } = useNodeActions(setNodes, setEdges, onNodesChange, onEdgesChange, persistWithHistory)
+
+  const handleNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
+    // Groups handle their own double-click (rename)
+    if (node.type === 'group') return
+    setSelectedNodeId(node.id)
+  }, [])
+
+  const handlePaneClick = useCallback(() => {
+    setSelectedNodeId(null)
+  }, [])
+
+  // Detach from group when dragged outside, attach when dragged into a group
+  const handleNodeDragStop = useCallback((_: React.MouseEvent, draggedNode: Node) => {
+    if (draggedNode.type === 'group') return
+    const allNodes = reactFlowInstance.getNodes()
+
+    // ── Detach: child dragged outside parent ──
+    if (draggedNode.parentId) {
+      const parent = reactFlowInstance.getNode(draggedNode.parentId)
+      if (parent) {
+        const pw = (parent.measured?.width ?? parent.style?.width ?? 300) as number
+        const ph = (parent.measured?.height ?? parent.style?.height ?? 200) as number
+        const outside =
+          draggedNode.position.x < -20 || draggedNode.position.y < -20 ||
+          draggedNode.position.x > pw + 20 || draggedNode.position.y > ph + 20
+        if (outside) {
+          setNodes((nds) =>
+            nds.map((n) =>
+              n.id === draggedNode.id
+                ? {
+                    ...n,
+                    parentId: undefined,
+                    expandParent: undefined,
+                    position: {
+                      x: draggedNode.position.x + parent.position.x,
+                      y: draggedNode.position.y + parent.position.y,
+                    },
+                  }
+                : n,
+            ),
+          )
+          return
+        }
+      }
+    }
+
+    // ── Attach: free node dragged into a group ──
+    if (!draggedNode.parentId) {
+      const absX = draggedNode.position.x
+      const absY = draggedNode.position.y
+      for (const group of allNodes) {
+        if (group.type !== 'group' || group.id === draggedNode.id) continue
+        if ((group.data as Record<string, unknown>).collapsed) continue
+        const gw = (group.measured?.width ?? group.style?.width ?? 300) as number
+        const gh = (group.measured?.height ?? group.style?.height ?? 200) as number
+        if (
+          absX > group.position.x && absX < group.position.x + gw &&
+          absY > group.position.y && absY < group.position.y + gh
+        ) {
+          setNodes((nds) =>
+            nds.map((n) =>
+              n.id === draggedNode.id
+                ? {
+                    ...n,
+                    parentId: group.id,
+                    expandParent: true,
+                    position: {
+                      x: absX - group.position.x,
+                      y: absY - group.position.y,
+                    },
+                  }
+                : n,
+            ),
+          )
+          return
+        }
+      }
+    }
+  }, [reactFlowInstance, setNodes])
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY })
+  }, [])
+
+  // ── Group selected nodes (Ctrl/Cmd+G) ──
+  const handleGroupSelected = useCallback(() => {
+    const selected = nodes.filter((n) => n.selected && n.type !== 'group')
+    if (selected.length < 2) return
+
+    // Compute bounding box of selected nodes
+    const PADDING = 40
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const n of selected) {
+      const x = n.position.x
+      const y = n.position.y
+      const w = (n.measured?.width ?? n.width ?? 260) as number
+      const h = (n.measured?.height ?? n.height ?? 200) as number
+      if (x < minX) minX = x
+      if (y < minY) minY = y
+      if (x + w > maxX) maxX = x + w
+      if (y + h > maxY) maxY = y + h
+    }
+
+    const groupId = `group_${Date.now()}`
+    const groupNode: Node = {
+      id: groupId,
+      type: 'group',
+      position: { x: minX - PADDING, y: minY - PADDING },
+      style: {
+        width: maxX - minX + PADDING * 2,
+        height: maxY - minY + PADDING * 2,
+      },
+      data: { name: 'Group', nodeType: 'group', collapsed: false },
+    }
+
+    // Re-parent selected nodes: position becomes relative to group
+    setNodes((nds) => {
+      const updated = nds.map((n) => {
+        if (selected.find((s) => s.id === n.id)) {
+          return {
+            ...n,
+            parentId: groupId,
+            expandParent: true,
+            position: {
+              x: n.position.x - (minX - PADDING),
+              y: n.position.y - (minY - PADDING),
+            },
+            selected: false,
+          }
+        }
+        return n
+      })
+      // Insert group node BEFORE its children (ReactFlow requires parent first)
+      return [groupNode, ...updated]
+    })
+    persistWithHistory()
+  }, [nodes, setNodes, persistWithHistory])
+
+  // ── Ungroup (Ctrl/Cmd+Shift+G) ──
+  const handleUngroupSelected = useCallback(() => {
+    const selectedGroups = nodes.filter((n) => n.selected && n.type === 'group')
+    if (selectedGroups.length === 0) return
+
+    const groupIds = new Set(selectedGroups.map((g) => g.id))
+
+    setNodes((nds) => {
+      const updated = nds
+        .filter((n) => !groupIds.has(n.id)) // Remove group nodes
+        .map((n) => {
+          if (n.parentId && groupIds.has(n.parentId)) {
+            // Find the group to convert relative position back to absolute
+            const group = selectedGroups.find((g) => g.id === n.parentId)
+            const gx = group?.position.x ?? 0
+            const gy = group?.position.y ?? 0
+            return {
+              ...n,
+              parentId: undefined,
+              expandParent: undefined,
+              position: {
+                x: n.position.x + gx,
+                y: n.position.y + gy,
+              },
+            }
+          }
+          return n
+        })
+      return updated
+    })
+    persistWithHistory()
+  }, [nodes, setNodes, persistWithHistory])
+
+  // ── Load a workflow template onto the canvas ──
+  const handleTemplateSelect = useCallback((template: WorkflowTemplate) => {
+    const templateNodes = template.nodes.map((n) => ({
+      id: n.id,
+      type: n.data.nodeType,
+      position: n.position,
+      data: n.data,
+    }))
+    const templateEdges = template.edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
+      data: e.data,
+    }))
+    setNodes(templateNodes)
+    setEdges(templateEdges)
+    setTemplateGalleryOpen(false)
+    persistWithHistory()
+  }, [setNodes, setEdges, persistWithHistory])
+
+  // ── Pick up a template passed via sessionStorage (e.g. from /templates page) ──
+  useEffect(() => {
+    const raw = sessionStorage.getItem('agentzero-load-template')
+    if (!raw) return
+    sessionStorage.removeItem('agentzero-load-template')
+    try {
+      const template = JSON.parse(raw) as WorkflowTemplate
+      handleTemplateSelect(template)
+    } catch { /* invalid JSON — ignore */ }
+  }, [handleTemplateSelect])
+
+  // Save current canvas as a template — always persists locally, also tries API
+  const handleSaveAsTemplate = useCallback(async (name: string, description: string) => {
+    const currentNodes = reactFlowInstance.getNodes()
+    const currentEdges = reactFlowInstance.getEdges()
+    const templateNodes = currentNodes.map((n) => ({
+      id: n.id, type: n.type ?? n.data?.nodeType ?? 'agent',
+      position: n.position, data: n.data as Record<string, unknown>,
+    }))
+    const templateEdges = currentEdges.map((e) => ({
+      id: e.id, source: e.source, target: e.target,
+      sourceHandle: e.sourceHandle ?? 'output',
+      targetHandle: e.targetHandle ?? 'input',
+      data: e.data,
+    }))
+    const desc = description || `Custom template with ${currentNodes.length} nodes`
+
+    // Always save locally so it's immediately available
+    const { saveLocalTemplate } = await import('@/lib/template-store')
+    saveLocalTemplate({
+      id: `custom_${Date.now()}`,
+      name,
+      description: desc,
+      category: 'custom',
+      nodeCount: currentNodes.length,
+      nodes: templateNodes as WorkflowTemplate['nodes'],
+      edges: templateEdges as WorkflowTemplate['edges'],
+      savedAt: Date.now(),
+    })
+
+    // Also try the API
+    try {
+      await templatesApi.create({ name, description: desc, category: 'custom', layout: { nodes: templateNodes, edges: templateEdges } })
+      void queryClient.invalidateQueries({ queryKey: ['templates'] })
+    } catch { /* API unavailable — local save is sufficient */ }
+
+    setSaveTemplateOpen(false)
+  }, [reactFlowInstance, queryClient])
+
+  // Action handlers — shared between keyboard shortcuts and context menu.
+  // Keys match the `id` field in canvas-actions.ts.
+  const actionHandlers: Record<string, () => void> = useMemo(() => ({
+    'command-palette': () => cmdK.setOpen(true),
+    'group': handleGroupSelected,
+    'ungroup': handleUngroupSelected,
+    'zoom-to-fit': () => reactFlowInstance.fitView({ padding: 0.2, duration: 300 }),
+    'shortcuts-panel': () => setShortcutsOpen((v) => !v),
+    'save-template': () => setSaveTemplateOpen(true),
+    'templates': () => setTemplateGalleryOpen(true),
+    'create-node-type': () => setCreateNodeTypeOpen(true),
+    'clear-all': handleClear,
+    'run-workflow': () => {
+      // Trigger the run button click programmatically
+      const btn = document.querySelector<HTMLButtonElement>('[data-run-workflow]')
+      btn?.click()
+    },
+  }), [cmdK, handleGroupSelected, handleUngroupSelected, reactFlowInstance, handleClear])
+
+  // Context menu handlers — same map, consumed by <CanvasContextMenu>
+  const contextMenuHandlers = actionHandlers
+
+  // Data-driven keyboard handler
+  const keyActions = useMemo(() => getKeyBindingActions(), [])
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (readOnly) return
+    // Escape always closes open panels
+    if (e.key === 'Escape') {
+      if (shortcutsOpen) { e.preventDefault(); setShortcutsOpen(false); return }
+    }
+    for (const action of keyActions) {
+      if (matchesKey(action, e)) {
+        e.preventDefault()
+        actionHandlers[action.id]?.()
+        return
+      }
+    }
+  }, [readOnly, keyActions, actionHandlers, shortcutsOpen])
+
+  // Keyboard listener for group/ungroup
+  useEffect(() => {
+    if (readOnly) return
+    const handler = (e: KeyboardEvent) => handleKeyDown(e)
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [readOnly, handleKeyDown])
+
+  return (
+    <div
+      className={fullHeight ? 'h-full flex flex-col relative' : readOnly ? 'h-full relative' : 'relative'}
+      onContextMenu={readOnly ? undefined : handleContextMenu}
+    >
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onNodesChange={readOnly ? undefined : handleNodesChange}
+        onEdgesChange={readOnly ? undefined : handleEdgesChange}
+        onConnect={readOnly ? undefined : handleConnect}
+        onConnectStart={readOnly ? undefined : onConnectStart}
+        onConnectEnd={readOnly ? undefined : onConnectEnd}
+        onNodeDoubleClick={readOnly ? undefined : handleNodeDoubleClick}
+        onNodeDragStop={readOnly ? undefined : handleNodeDragStop}
+        onPaneClick={readOnly ? undefined : handlePaneClick}
+        onDrop={readOnly ? undefined : handleDrop}
+        onDragOver={readOnly ? undefined : handleDragOver}
+        fitView
+        deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
+        edgesReconnectable={!readOnly}
+        elementsSelectable={!readOnly}
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
+        nodesFocusable
+        selectNodesOnDrag={false}
+        selectionMode={SelectionMode.Partial}
+        panOnDrag={!readOnly}
+        zoomOnScroll={!readOnly}
+        className="bg-background"
+        colorMode="dark"
+        defaultEdgeOptions={{ style: { strokeWidth: 2 }, selectable: !readOnly, focusable: !readOnly }}
+        edgesFocusable={!readOnly}
+        isValidConnection={isValidConnection}
+        proOptions={{ hideAttribution: true }}
+        style={fullHeight ? { flex: 1 } : { height: readOnly ? '100%' : 400 }}
+      >
+        <Background />
+        {!readOnly && (
+          <Controls>
+            <button
+              onClick={undo}
+              title="Undo (Cmd+Z)"
+              style={{
+                width: 26, height: 26, display: 'flex', alignItems: 'center',
+                justifyContent: 'center', background: 'transparent', border: 'none',
+                color: '#737373', cursor: 'pointer', fontSize: 14,
+              }}
+            >
+              ↩
+            </button>
+            <button
+              onClick={redo}
+              title="Redo (Cmd+Shift+Z)"
+              style={{
+                width: 26, height: 26, display: 'flex', alignItems: 'center',
+                justifyContent: 'center', background: 'transparent', border: 'none',
+                color: '#737373', cursor: 'pointer', fontSize: 14,
+              }}
+            >
+              ↪
+            </button>
+          </Controls>
+        )}
+        {!readOnly && (
+          <MiniMap
+            nodeColor={(node) => {
+              const def = getDefinition((node.data as Record<string, unknown>).nodeType as string)
+              return def?.headerColor ?? '#4b5563'
+            }}
+            style={{ background: '#1a1a2e' }}
+          />
+        )}
+      </ReactFlow>
+
+      {!readOnly && nodes.length === 0 && (
+        <EmptyCanvasState
+          onOpenGallery={() => setTemplateGalleryOpen(true)}
+          onStartScratch={() => cmdK.setOpen(true)}
+        />
+      )}
+
+      {!readOnly && (
+        <TemplateGallery
+          open={templateGalleryOpen}
+          onClose={() => setTemplateGalleryOpen(false)}
+          onSelect={handleTemplateSelect}
+        />
+      )}
+
+      {!readOnly && <RunWorkflowButton workflowId={workflowId} />}
+
+      {/* Top-left toolbar — templates, zoom-to-fit, save template */}
+      {!readOnly && (
+        <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 20, display: 'flex', gap: 6 }}>
+          <button
+            onClick={() => setTemplateGalleryOpen(true)}
+            title="Browse workflow templates"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '8px 14px', background: '#1C1C1E', color: '#A3A3A3',
+              border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8,
+              fontSize: 12, fontWeight: 500, fontFamily: "'JetBrains Mono', monospace",
+              cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+            }}
+          >
+            <span style={{ fontSize: 14 }}>&#x2B1A;</span>
+            Templates
+          </button>
+          <button
+            onClick={() => reactFlowInstance.fitView({ padding: 0.2, duration: 300 })}
+            title="Zoom to fit all nodes"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36, background: '#1C1C1E', color: '#A3A3A3',
+              border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8,
+              fontSize: 16, cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+            }}
+          >
+            &#x2922;
+          </button>
+          {nodes.length > 0 && !saveTemplateOpen && (
+            <button
+              onClick={() => setSaveTemplateOpen(true)}
+              title="Save current workflow as a template"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '8px 14px', background: '#1C1C1E', color: '#A3A3A3',
+                border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8,
+                fontSize: 12, fontWeight: 500, fontFamily: "'JetBrains Mono', monospace",
+                cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              }}
+            >
+              Save Template
+            </button>
+          )}
+          {saveTemplateOpen && null /* modal rendered below */}
+        </div>
+      )}
+
+      {!readOnly && <ConfigPanel open={configPanelOpen} onClose={() => setConfigPanelOpen(false)} />}
+
+      {!readOnly && (
+        <CommandPalette
+          open={cmdK.open}
+          onClose={cmdK.onClose}
+          onSelect={handleCmdKSelect}
+          onCreateAgent={() => setCreateAgentOpen(true)}
+        />
+      )}
+
+      {!readOnly && (
+        <CreateAgentDialog
+          open={createAgentOpen}
+          onClose={() => setCreateAgentOpen(false)}
+        />
+      )}
+
+      {contextMenu && (
+        <CanvasContextMenu
+          position={contextMenu}
+          handlers={contextMenuHandlers}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      <NodeDetailPanel
+        nodeId={selectedNodeId}
+        onClose={handlePaneClick}
+      />
+
+      <SaveTemplateDialog
+        open={saveTemplateOpen}
+        nodeCount={nodes.length}
+        onSave={handleSaveAsTemplate}
+        onClose={() => setSaveTemplateOpen(false)}
+      />
+
+      <CreateNodeTypeDialog
+        open={createNodeTypeOpen}
+        onClose={() => setCreateNodeTypeOpen(false)}
+      />
+
+      {/* Keyboard shortcuts panel */}
+      {shortcutsOpen && (
+        <div
+          style={{
+            position: 'absolute', inset: 0, zIndex: 50,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          }}
+          onClick={() => setShortcutsOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 420, background: '#1C1C1E', borderRadius: 14,
+              border: '1px solid rgba(255,255,255,0.06)',
+              fontFamily: "'JetBrains Mono', monospace",
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)',
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#E5E5E5' }}>Keyboard Shortcuts</span>
+              <button
+                onClick={() => setShortcutsOpen(false)}
+                style={{ background: 'none', border: 'none', color: '#737373', cursor: 'pointer', fontSize: 16 }}
+              >&#x2715;</button>
+            </div>
+            <div style={{ padding: '12px 20px 20px' }}>
+              {getShortcutActions().map((action: CanvasAction) => (
+                <div key={action.id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.02)',
+                }}>
+                  <span style={{ fontSize: 12, color: '#A3A3A3' }}>{action.label}</span>
+                  <kbd style={{
+                    fontSize: 11, color: '#E5E5E5', background: '#0F0F11',
+                    padding: '3px 8px', borderRadius: 5,
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}>{action.shortcut}</kbd>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function WorkflowTopology(props: WorkflowTopologyProps) {
+  return (
+    <ReactFlowProvider>
+      <WorkflowTopologyInner {...props} />
+    </ReactFlowProvider>
+  )
+}

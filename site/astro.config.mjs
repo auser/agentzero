@@ -36,6 +36,7 @@ export default defineConfig({
         {
           label: "Guides",
           items: [
+            { label: "Client SDKs", slug: "guides/sdks" },
             { label: "Provider Setup", slug: "guides/providers" },
             { label: "Gateway Deployment", slug: "guides/deployment" },
             { label: "Production Setup", slug: "guides/production" },
@@ -46,7 +47,7 @@ export default defineConfig({
             { label: "Daily Usage", slug: "guides/daily-usage" },
             { label: "Testing", slug: "guides/testing" },
             { label: "Plugin Authoring", slug: "guides/plugins" },
-            { label: "FFI Bindings", slug: "guides/ffi-bindings" },
+            { label: "FFI Bindings (deprecated)", slug: "guides/ffi-bindings" },
             { label: "Android", slug: "guides/android" },
             { label: "Raspberry Pi", slug: "guides/raspberry-pi" },
           ],

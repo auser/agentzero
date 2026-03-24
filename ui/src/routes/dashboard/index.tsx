@@ -1,19 +1,19 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { healthApi } from '@/lib/api/health'
-import { agentsApi } from '@/lib/api/agents'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { runsApi } from '@/lib/api/runs'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { StatusBadge } from '@/components/shared/StatusBadge'
-import { CostDisplay } from '@/components/shared/CostDisplay'
+import { healthApi } from '@/lib/api/health'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { RegressionBanner } from '@/components/shared/RegressionBanner'
 import { Button } from '@/components/ui/button'
 import { Link } from '@tanstack/react-router'
-import { MessageSquare, PlayCircle, AlertTriangle, Activity } from 'lucide-react'
+import { MessageSquare, PlayCircle, AlertTriangle, GitBranch, WifiOff } from 'lucide-react'
 import { useState } from 'react'
-import { formatDistanceToNow } from 'date-fns'
-import { TopologyGraph } from '@/components/dashboard/TopologyGraph'
-import { RegressionBanner } from '@/components/shared/RegressionBanner'
+import { WorkflowTopology } from '@/components/dashboard/WorkflowTopology'
+import { SystemHealthBar } from '@/components/dashboard/SystemHealthBar'
+import { AgentStatusPanel } from '@/components/dashboard/AgentStatusPanel'
+import { ActiveRunsTimeline } from '@/components/dashboard/ActiveRunsTimeline'
+import { ScheduleOverview } from '@/components/dashboard/ScheduleOverview'
+import { ChannelStatus } from '@/components/dashboard/ChannelStatus'
 
 export const Route = createFileRoute('/dashboard/')({
   component: DashboardPage,
@@ -23,27 +23,11 @@ function DashboardPage() {
   const [estopOpen, setEstopOpen] = useState(false)
   const queryClient = useQueryClient()
 
-  const { data: health } = useQuery({
+  const { data: health, isError: gatewayDown } = useQuery({
     queryKey: ['health'],
     queryFn: () => healthApi.get(),
-    refetchInterval: 30_000,
-    retry: false,
-  })
-
-  const { data: agents } = useQuery({
-    queryKey: ['agents'],
-    queryFn: () => agentsApi.list(),
-  })
-
-  const { data: activeRuns } = useQuery({
-    queryKey: ['runs', { status: 'running' }],
-    queryFn: () => runsApi.list('running'),
     refetchInterval: 5_000,
-  })
-
-  const { data: allRuns } = useQuery({
-    queryKey: ['runs'],
-    queryFn: () => runsApi.list(),
+    retry: false,
   })
 
   const estopMutation = useMutation({
@@ -51,28 +35,55 @@ function DashboardPage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['runs'] }),
   })
 
-  const recentRuns = allRuns?.data.slice(0, 5) ?? []
-  const activeAgents = agents?.data.filter((a) => a.status === 'active').length ?? 0
-  const totalCost = allRuns?.data.reduce((sum, r) => sum + (r.cost_microdollars ?? 0), 0) ?? 0
+  if (gatewayDown && !health) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+        <WifiOff className="h-16 w-16 text-muted-foreground/20 mb-4" />
+        <h2 className="text-lg font-semibold mb-1">Gateway Offline</h2>
+        <p className="text-sm text-muted-foreground mb-4 max-w-md">
+          Cannot connect to the AgentZero gateway. Make sure it&apos;s running and accessible.
+        </p>
+        <code className="text-xs text-muted-foreground/60 bg-muted/30 px-3 py-1.5 rounded font-mono">
+          agentzero gateway --port 42617
+        </code>
+      </div>
+    )
+  }
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="space-y-5 max-w-7xl">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Dashboard</h1>
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">Dashboard</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Monitor your agent workflows and system health
+          </p>
+        </div>
         <div className="flex gap-2">
           <Link to="/chat">
-            <Button variant="outline" size="sm">
-              <MessageSquare className="h-4 w-4 mr-2" />
-              New Chat
+            <Button variant="outline" size="sm" className="h-8 text-xs">
+              <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
+              Chat
             </Button>
           </Link>
+          <Link to="/runs">
+            <Button variant="outline" size="sm" className="h-8 text-xs">
+              <PlayCircle className="h-3.5 w-3.5 mr-1.5" />
+              Run
+            </Button>
+          </Link>
+          <Button variant="outline" size="sm" className="h-8 text-xs" disabled>
+            <GitBranch className="h-3.5 w-3.5 mr-1.5" />
+            Workflow
+          </Button>
           <Button
             variant="outline"
             size="sm"
-            className="border-red-800/50 text-red-400 hover:bg-red-950/50"
+            className="h-8 text-xs border-red-800/40 text-red-400 hover:bg-red-950/30 hover:border-red-700/50"
             onClick={() => setEstopOpen(true)}
           >
-            <AlertTriangle className="h-4 w-4 mr-2" />
+            <AlertTriangle className="h-3.5 w-3.5 mr-1.5" />
             E-Stop
           </Button>
         </div>
@@ -80,108 +91,34 @@ function DashboardPage() {
 
       <RegressionBanner />
 
-      <TopologyGraph />
+      {/* Metrics row */}
+      <SystemHealthBar />
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
-              Gateway
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {health
-              ? <StatusBadge status={health.status} />
-              : <StatusBadge status="closed" />}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
-              Active Agents
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{activeAgents}</p>
-            <p className="text-xs text-muted-foreground">{agents?.total ?? 0} total</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs text-muted-foreground font-medium uppercase tracking-wide flex items-center gap-1">
-              <Activity className="h-3 w-3" /> Running
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{activeRuns?.total ?? 0}</p>
-            <Link to="/runs" className="text-xs text-primary hover:underline">View runs →</Link>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
-              Total Cost
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">
-              <CostDisplay microdollars={totalCost} />
-            </p>
-          </CardContent>
-        </Card>
+      {/* Workflow snapshot (read-only preview) */}
+      <div className="rounded-lg border border-border/50 bg-card overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-border/50">
+          <span className="text-sm font-medium text-muted-foreground">Workflow Topology</span>
+          <Link to="/workflows" className="text-xs text-primary hover:underline">
+            Open Editor →
+          </Link>
+        </div>
+        <div style={{ height: 300 }}>
+          <WorkflowTopology readOnly />
+        </div>
       </div>
 
-      {/* Recent runs */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm">Recent Runs</CardTitle>
-            <Link to="/runs" className="text-xs text-primary hover:underline">View all</Link>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {recentRuns.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-6">No runs yet</p>
-          ) : (
-            <div className="space-y-2">
-              {recentRuns.map((run) => (
-                <div key={run.run_id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
-                  <div className="space-y-0.5 min-w-0 flex-1 mr-4">
-                    <p className="text-xs font-mono text-muted-foreground truncate">{run.run_id}</p>
-                    <p className="text-xs text-muted-foreground">{run.agent_id}</p>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <CostDisplay microdollars={run.cost_microdollars} className="text-xs text-muted-foreground" />
-                    <StatusBadge status={run.status} />
-                    <span className="text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(run.accepted_at), { addSuffix: true })}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Middle row: agents */}
+      <AgentStatusPanel />
 
-      {/* Quick actions */}
-      <div className="flex gap-3">
-        <Link to="/chat">
-          <Button>
-            <MessageSquare className="h-4 w-4 mr-2" />
-            Open Chat
-          </Button>
-        </Link>
-        <Link to="/runs">
-          <Button variant="outline">
-            <PlayCircle className="h-4 w-4 mr-2" />
-            Submit Run
-          </Button>
-        </Link>
+      {/* Bottom row: runs (wide) + schedules & channels (narrow) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <ActiveRunsTimeline />
+        </div>
+        <div className="space-y-4">
+          <ScheduleOverview />
+          <ChannelStatus />
+        </div>
       </div>
 
       <ConfirmDialog

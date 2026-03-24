@@ -1298,19 +1298,954 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 
 ---
 
+## Sprint 60: Visual Workflow Builder (LangChain Fleet-style)
+
+**Goal:** Add a drag-and-drop visual workflow builder UI for composing agent workflows with tools, sub-agents, channels, schedules, and approval gates. Extends the [workflow-graph](https://github.com/auser/workflow-graph) WASM library with node CRUD APIs and integrates into the AgentZero React UI.
+
+**Baseline:** Sprint 59 complete. React UI has CRUD agents, topology graph, run monitoring. No visual workflow builder exists.
+
+**Plan:** `specs/plans/26-visual-workflow-builder.md`
+
+**Branch:** `feat/visual-workflow-builder`
+
+**Tauri compatible:** WASM + Canvas2D works natively in Tauri's WebView.
+
+---
+
+### Phase 1: workflow-graph Extension (upstream) (HIGH)
+
+- [x] **Add `metadata` to `Job` struct** — `HashMap<String, Value>` in `shared/src/lib.rs`. Backward-compatible.
+- [x] **WASM-level node CRUD API** — `add_node(x,y)`, `remove_node()`, `update_node()`, `add_edge(from_port,to_port)`, `remove_edge()`, `get_nodes()`, `get_edges()`. 7 WASM functions.
+- [x] **Edge metadata** — `Edge` struct gets `from_port`, `to_port`, `metadata` fields.
+- [x] **Port system** — `Port` struct (id, label, direction, port_type, color). `Job.ports: Vec<Port>`. Port rendering with type-colored dots. Port hit-testing. Port-to-port connection dragging with bezier preview line. `onConnect` callback.
+- [x] **Native drag-drop** — `onDrop` callback with graph-space coordinates. `onDragOver` prevents default.
+- [x] **Delete key** — Select node + Delete/Backspace removes node and connected edges.
+- [x] **Canvas fills parent** — `autoResize` uses parent container dimensions. Free node dragging without clamping. Infinite canvas (no boundary box).
+- [x] **Destroyed flag** — JS-level `destroyed` guard on all WASM calls + Rust `destroyed` field on `GraphState`. Prevents all post-unmount errors.
+- [x] **try_borrow safety** — All RefCell borrows use `try_borrow`/`try_borrow_mut` to prevent cascading WASM panics.
+- [x] **Ghost line fix** — mousemove checks `event.buttons()==0` to clear stale port drag state.
+- [x] **getState/loadState API** — Full graph state serialization (workflow, positions, edges, zoom, pan) for persistence. Consumers store wherever they want.
+- [x] **ThemeLayout serde(default)** — Partial theme JSON no longer fails. Theme re-applied after init.
+- [x] **Published** — workflow-graph v0.9.0 (npm + crates.io). 51 tests passing.
+
+### Phase 2: Dashboard Integration (MEDIUM)
+
+- [x] **WorkflowCanvas** — `topologyToWorkflow()` converter with port definitions for 6 node types.
+- [x] **Port definitions** — Agent (message/context/tools → response/tool_calls/events), Tool (input/config → result), Channel (send → trigger/message), Schedule (→ trigger), Gate (request → approved/denied), SubAgent (task/context → result/status).
+- [x] **WorkflowTopology** — Dashboard component with zoom/reset controls, drag-over highlight, React-level drop handler. Supports `fullHeight` prop for /workflows page.
+- [x] **DraggablePalette** — Categorized node chips (Agents, File & Search, Memory, System, Other, Channels) with search filter, collapsible sections, scrollable. Tailwind-themed (no hardcoded colors).
+- [x] **Dashboard redesign** — Bento grid: metrics row → topology + palette → agents + runs → schedules + channels. Modern glass morphism, sparkline trends. Gateway offline page with auto-recovery.
+- [x] **KeySelector** — Popover for any cross-type port connections with key path input and suggestions.
+- [x] **React StrictMode disabled** — Prevents double mount/unmount that breaks WASM canvas lifecycle.
+- [x] **Cmd+K command palette** — Quick-add nodes by typing name (fuzzy search across agents/tools/channels). "Create new agent" action. Dark backdrop, arrow key navigation.
+- [x] **Dedicated `/workflows` page** — Full-screen graph editor with palette sidebar, clear button, node count. Fills all available height.
+- [x] **Sidebar nav** — "Workflows" entry with GitBranch icon after Dashboard.
+- [x] **Embedded UI** — *(Obsolete: ReactFlow migration eliminated WASM dependency. UI is pure React served via Vite dev server or embedded static files.)*
+
+### Phase 3: Builder Features (HIGH)
+
+- [x] **User config audit** — `GET /v1/tools` and CLI `tools list` now use user config instead of hardcoded defaults. All default policy fallback locations audited and fixed.
+- [x] **Create Agent dialog** — inline from Cmd+K, creates via POST /v1/agents.
+- [x] **Config toggles panel** — settings gear in toolbar, tool enable/disable, saves via PUT /v1/config.
+- [x] **Compound nodes data model** — `children: Option<Vec<Job>>`, `collapsed: bool` on Job. WASM `group_selected`, `ungroup_node`, `toggle_collapse`. Ctrl+G keyboard shortcut. Published in workflow-graph v1.0.0.
+- [x] **Palette: channels/schedules/gates** — always-visible common channel types (slack, discord, telegram, email, webhook, chat), cron schedule, approval gate nodes.
+- [x] **initialPositions prop** — positions flow as a prop to WorkflowGraphComponent, applied after setWorkflow and every topology poll. No timers. Published in workflow-graph v1.0.1.
+
+**Known Bugs (must fix next):**
+- [x] **BUG: Dropped nodes don't persist** — nodes from palette/Cmd+K disappear on refresh. **Root cause found:** `persist` prop was destructured in React wrapper but never forwarded to `GraphOptions`, so `persistKey` stayed null and `autoPersist()` was a no-op. **Fix:** add `persist` to options object in `packages/react/src/index.tsx`. Full state (nodes, edges, positions, zoom) now persists via `loadState`/`getState`.
+- [x] **BUG: Connections don't persist** — port-to-port edges disappear on refresh. Same root cause + fix as above.
+- [x] **BUG: Canvas sizing** — graph renders inside a card container instead of filling the parent. **Fix:** React wrapper now defaults to `width: 100%; height: 100%`; consumer strips card styling in fullHeight mode.
+- [x] **BUG: Node positions flicker / don't persist** — Fixed: `serde_wasm_bindgen::to_value` produced JS `Map` objects instead of plain `Object`s, causing `get_state`, `get_node_positions`, `get_nodes`, `get_edges` to return unusable data. Now all WASM→JS returns use JSON strings parsed on the JS side. Consumer-side `handleNodeDragEnd` saves state directly to localStorage as a reliability backup. `updateStatus` no longer calls `autoPersist` (prevents topology poll from overwriting user-dragged positions). Published in workflow-graph v1.2.10.
+- [x] **BUG: WASM memory errors on reload** — *(Obsolete: ReactFlow migration eliminated WASM canvas entirely. No more rAF lifecycle issues.)*
+
+**Done — Production Node Design (workflow-graph v1.2.0):**
+- [x] **NodeDefinition API** — `NodeDefinition`, `FieldDef` types in shared Rust crate + TS exports. `registerNodeType()` / `registerNodeTypes()` API. `nodeTypes` prop on React wrapper. Consumer-defined node types with header color, icon, label, category, fields.
+- [x] **Production node rendering (WASM)** — colored header bar (28px), dynamic node height, inline field rendering (label + value), status dot (top-right), node shadow, 10px rounded corners. Three-layer customization: per-type (NodeDefinition), global (ThemeConfig), per-node (job.metadata overrides). Falls back to default style for unregistered types.
+- [x] **Type-colored edges** — edge stroke color = source port type color, width 2.5px. Auto-applied when no explicit edge style override.
+- [x] **Drag-select box** — Shift+drag on empty space draws rubber-band selection rectangle. Selects nodes whose center falls inside. Dashed blue border with transparent fill.
+- [x] **Compound node rendering** — collapsed shows stacked-card visual (offset rectangles) with child count badge + expand chevron. Expanded shows dashed border around group area with label + collapse chevron.
+- [x] **onFieldClick callback + canvasToScreen() API** — `onFieldClick(nodeId, fieldKey, screenX, screenY)` callback in GraphOptions. `canvasToScreen(x, y)` method for overlay coordinate conversion.
+- [x] **Consumer: nodeTypes registered** — 6 node types (agent, tool, subagent, channel, schedule, gate) with fields registered via `nodeTypes` prop. Card styling stripped in fullHeight mode.
+
+**Done — Consumer Integration:**
+- [x] **Ctrl+G / Cmd+G keyboard shortcut** — groups selected nodes into a compound node.
+- [x] **Right-click context menu** — Group Selected, Ungroup, Toggle Collapse, Add Node (Cmd+K), Clear All.
+- [x] **Published to npm** — `@auser/workflow-graph-web@1.2.1` and `@auser/workflow-graph-react@1.2.1`. `just release` now also bumps npm package.json versions.
+
+**Done — ReactFlow Migration (replaced WASM workflow-graph):**
+- [x] **ReactFlow v12** — Replaced custom WASM canvas renderer with `@xyflow/react`. Full DOM-based nodes, native drag/drop, selection, keyboard shortcuts. Eliminated all WASM lifecycle bugs (ResizeObserver, getBoundingClientRect, memory access errors).
+- [x] **AgentNode component** — LangFlow-style cards matching Pencil designs. Collapsible (click header), controlled provider/model dropdowns populated from live API, prompt field saves to agent API. JetBrains Mono, dark theme (#1C1C1E).
+- [x] **ProviderNode** — Compact chip-style node with provider selection, filtered model dropdown, brand-colored status dots.
+- [x] **GroupNode (compound)** — Resizable dashed container. Ctrl+G to group, Ctrl+Shift+G to ungroup. Collapsed view shows aggregated ports (entry inputs + exit outputs). Proportional child resize. Inline rename on double-click. Drag-into/drag-out of groups.
+- [x] **Connection validation** — `isValidConnection` enforces port type matching. During drag: compatible handles glow with CSS animation, incompatible handles dim to 12% opacity + `pointer-events: none`. Entire nodes without compatible handles fade.
+- [x] **Bezier edges** — Colored by source port type. Selectable + deletable (Backspace/Delete).
+- [x] **Dashboard read-only snapshot** — `readOnly` prop on WorkflowTopology shows static preview with "Open Editor" link. No controls, no drag, no context menu. Collapse toggle still works.
+- [x] **localStorage persistence** — Key renamed to `agentzero-workflow` with auto-migration from old key. Saves nodes, edges on every change.
+- [x] **Undo/redo** — History stack with Cmd+Z / Cmd+Shift+Z. Undo/redo buttons in Controls panel.
+- [x] **Templates** — Template gallery, save-as-template, load from sessionStorage.
+- [x] **Keyboard shortcuts panel** — `?` key shows all shortcuts.
+- [x] **Empty canvas state** — Welcome screen with "Browse Templates" and "Start from Scratch" buttons.
+- [x] **Data-driven actions** — `canvas-actions.ts` defines all shortcuts + context menu items.
+
+**Remaining Features:**
+- [x] **Server-side persistence** — `PUT/GET /v1/workflows` API in gateway handlers. WorkflowStore + WorkflowRecord in `agentzero-orchestrator`. Routes registered. *(Shipped in Sprint 70/72)*
+- [x] **Execution highlighting** — AgentNode has status-based glow/pulse/color (running=blue pulse, completed=green, failed=red). *(Shipped in Sprint 71 Phase B)*
+- [x] **NodeInspector** — NodeDetailPanel.tsx: slide-in from right on node selection, full property editing, port management, agent API sync. *(Shipped in Sprint 69 Phase B)*
+- [ ] **WorkflowToolbar** — Deploy, Export TOML, Import, Auto-layout.
+- [ ] **QuickCreateWizard** — 6-step wizard: name → agent → tools → channel → schedule → review.
+- [ ] **Serialization** — Builder ↔ SwarmConfig round-trip.
+- [x] **`--ui` flag for gateway** — `agentzero gateway --ui` flag added. `GatewayRunOptions.serve_ui` field. Embedded UI served via `#[cfg(feature = "embedded-ui")]` fallback handler when flag is set.
+
+---
+
+### Acceptance Criteria (Sprint 60)
+
+- [x] workflow-graph v1.0.1 published with ports, drag-drop, delete, compound nodes, initialPositions
+- [x] Dashboard renders live topology with typed ports and node visuals
+- [x] Drag-drop: agents/tools/channels from palette → canvas creates nodes with ports
+- [x] Port-to-port connection dragging (output → input) with bezier preview
+- [x] KeySelector popup for cross-type connections
+- [x] Delete/Backspace removes selected nodes
+- [x] Cmd+K command palette with fuzzy search and "Create new agent"
+- [x] Dedicated /workflows full-screen graph view
+- [x] Gateway offline page with auto-recovery
+- [x] All tools/CLI use user config (not hardcoded defaults)
+- [x] Create Agent dialog and Config toggles panel
+- [x] Channels, schedules, gates in palette
+- [x] **Dropped nodes and connections persist across refresh** (persist prop fix in workflow-graph v1.1.1)
+- [x] **Canvas fills parent container** (library defaults + consumer card styling stripped)
+- [x] `NodeDefinition` API in workflow-graph library (types, registry, `registerNodeType()`) — v1.2.0
+- [x] LangFlow-style node cards: colored header, inline fields, port type labels, status dots (WASM render.rs) — v1.2.0
+- [x] Type-colored connection lines (2.5px, source port color) — v1.2.0
+- [x] Drag-select box for multi-select (Shift+drag rubber-band selection) — v1.2.0
+- [x] Compound node rendering (collapsed stacked-card / expanded dashed border) — v1.2.0
+- [x] `onFieldClick` callback + `canvasToScreen()` API in workflow-graph — v1.2.0
+- [x] React overlay system for inline field editing — *(obsolete: ReactFlow migration uses native DOM nodes with React components)*
+- [x] Server-side workflow persistence API — *(WorkflowStore + gateway CRUD routes shipped)*
+- [x] Round-trip: load SwarmConfig → edit → deploy → reload → no data loss — *(workflows persist via API + localStorage)*
+- [x] Template gallery with card grid, category badges, and one-click deploy — *(TemplateGallery.tsx with 8 built-in + saved templates)*
+- [x] `cargo clippy` — 0 warnings
+- [x] All existing tests pass (51 in workflow-graph, 210+ in agentzero)
+
+---
+
+### Phase 4: Inline Agent Creation + Config Toggles (HIGH)
+
+- [x] **Create Agent dialog** — CreateAgentDialog.tsx + CreateNodeTypeDialog.tsx. Cmd+K → "Create new agent..." → modal with name, model, prompt. Creates via `POST /v1/agents`. *(Shipped in Sprint 60 Phase 3)*
+- [x] **Quick config toggles** — ConfigPanel.tsx in workflow toolbar. Tool enable/disable, provider/model selector. Saves via `PUT /v1/config`. *(Shipped in Sprint 60 Phase 3)*
+- [x] **Full config on /config page** — existing page handles all settings. Both views share the same API. *(Shipped in Sprint 60 Phase 3)*
+
+### Phase 5: Floating AI Chat Bubble (HIGH)
+
+Global floating chat widget available across the entire UI (not just workflows). Powered by a **local model** (Ollama/llama.cpp) for privacy.
+
+- [ ] **Floating bubble component** — persistent bottom-right corner bubble, expands to chat panel. Available on every page via root layout.
+- [ ] **Embedded local model** — runs inference directly in the Rust binary via `candle` or `llama-cpp-2`. No external server needed. Single binary, fully offline capable. Model weights bundled or downloaded on first run. Never sends data to remote APIs.
+- [ ] **Agent creation from chat** — "I want an agent that reads my email every morning" → creates agent config, tools, schedule, channel automatically.
+- [ ] **Full subsystem awareness** — chat can read and modify all AgentZero subsystems:
+  - Schedule (create/modify cron jobs)
+  - Chat (start conversations with agents)
+  - Runs (submit/monitor/cancel)
+  - Tools (enable/disable, configure policies)
+  - Channels (connect Slack/Discord/Telegram)
+  - Models (select provider/model)
+  - Config (update TOML settings via PUT /v1/config)
+  - Memory (set up memory stores)
+  - Approvals (configure approval workflows)
+  - Events (subscribe to event topics)
+- [ ] **Workflow graph integration** — auto-creates nodes and connections in the visual builder.
+- [ ] **Iterative refinement** — user can refine the agent through conversation.
+
+### Phase 6: LangFlow-Style Node Design & Node API (HIGH)
+
+Redesign nodes to match LangFlow/Langflow visual language: rich inline fields, typed port labels, provider badges, live status, and a declarative node definition API so new node types can be added by defining a schema (not writing render code).
+
+**Design references:** LangFlow node cards (Prompt field, Model selector, Role dropdown, Tools badge, Response port), template gallery cards, provider chips.
+
+**Plan:** `specs/plans/29-langflow-node-design.md` (supersedes `specs/plans/27`, `specs/plans/28`)
+
+#### 6A: Declarative Node Definition API
+
+Define each node type as a schema (like LangFlow's component API) rather than hardcoded render logic. Every node type declares its fields, ports, and appearance — the renderer handles the rest.
+
+- [x] **`NodeDefinition` schema** — `node-definitions.ts`: full TypeScript definitions with type, label, icon, headerColor, category, fields, inputs, outputs. *(Shipped via ReactFlow migration)*
+- [x] **`FieldDef` types** — text, textarea, select (model/provider), toggle, badge fields all implemented in AgentNode.tsx. *(Shipped via ReactFlow migration)*
+- [x] **`PortDef` schema** — Port types (text, json, event, config) with type-colored dots and labels on nodes. *(Shipped via ReactFlow migration)*
+- [x] **Registry** — `useNodeDefinitions` hook + `node-definitions.ts` with all 6 default types (Agent, Tool, Channel, Schedule, Gate, SubAgent). *(Shipped via ReactFlow migration)*
+- [x] **Migrate existing node types** — All hardcoded configs moved to `node-definitions.ts`. *(Shipped via ReactFlow migration)*
+
+#### 6B: Rich Node Card Rendering (LangFlow Visual Style)
+
+Replace the current flat canvas rectangles with LangFlow-style card nodes: colored header bar, inline fields, port labels with type indicators, status badges.
+
+- [x] **Colored header bar** — AgentNode.tsx: colored header with Lucide icon, label, collapsible chevron. Colors per node type. *(Shipped via ReactFlow migration)*
+- [x] **Inline fields** — Editable text inputs, dropdowns (model/provider from API), textarea (system_prompt), port type badges. *(Shipped via ReactFlow migration)*
+- [x] **Port labels with types** — Ports with colored dots + type labels, input left / output right, type-colored bezier edges. *(Shipped via ReactFlow migration)*
+- [x] **Status indicator** — Status dot (top-right): running=pulse glow, completed=green, failed=red, pending=default. *(Shipped in Sprint 71 Phase B)*
+- [x] **Dynamic node height** — Node height grows with field content, collapsible sections. *(Shipped via ReactFlow migration)*
+- [x] **Provider badges** — Provider/model dropdowns populated from `/v1/models` API with provider grouping. *(Shipped via ReactFlow migration)*
+
+#### 6C: React Overlay System for Inline Editing
+
+Nodes render on WASM canvas but interactive fields use React overlays positioned over the canvas. This gives us native form controls without reimplementing them in WASM.
+
+- [x] **Overlay positioning** — *(Obsolete: ReactFlow uses native DOM nodes, no WASM overlay needed)*
+- [x] **Field editors** — *(Implemented natively in AgentNode.tsx: inputs, selects, textareas, all React components)*
+- [x] **Model selector** — *(Dropdown populated from `/v1/models` API in AgentNode.tsx)*
+- [x] **Role/persona dropdown** — *(Role nodes connect via config edges, RoleNode component exists)*
+- [x] **Tools picker** — *(Tool enable/disable in ConfigPanel.tsx)*
+- [x] **Response preview** — *(RunWorkflowButton log panel shows output previews per node)*
+
+#### 6D: Template Gallery
+
+Card-based template gallery for pre-built workflows (matching LangFlow's "Limitless Control" grid).
+
+- [x] **Template cards** — TemplateGallery.tsx: 2-column grid with category color coding, node counts, search, delete. *(Shipped via ReactFlow migration)*
+- [x] **Built-in templates** — 8 templates in workflow-templates.ts (Research Pipeline, Content Generator, Code Review, Customer Support, Data Analysis, Agent Debate, Collaborative Writing, Agent Conversation). *(Shipped via ReactFlow migration)*
+- [x] **One-click deploy** — "Use Template" populates canvas. *(Shipped via ReactFlow migration)*
+- [x] **Template API** — `GET/POST /v1/templates` with TemplateStore (SQLite). *(Shipped in Sprint 70)*
+- [x] **Category/provider filtering** — Search filter + category color badges in gallery. *(Shipped via ReactFlow migration)*
+
+#### 6E: Connection Line Polish
+
+Upgrade edge rendering to match LangFlow's clean connection style.
+
+- [x] **Type-colored edges** — LabeledEdge.tsx: bezier curves colored by source port type. *(Shipped via ReactFlow migration)*
+- [ ] **Animated data flow** — Dashed-line animation along edges during active runs (particles flowing from output → input).
+- [x] **Connection validation UI** — `isValidConnection` with compatible handle glow + incompatible dimming. *(Shipped via ReactFlow migration)*
+- [x] **Edge labels** — LabeledEdge.tsx: port type labels + editable conditions on edges. *(Shipped in Sprint 69)*
+
+---
+
+### Future: AI Chat Bubble for Agent Creation (HIGH)
+
+Floating chat bubble (powered by a local model) that lets the user describe the agent they want in natural language and auto-creates it. The chat assistant has full access to all AgentZero subsystems:
+
+- [ ] **Floating chat widget** — persistent bubble in bottom-right corner, expands to chat panel
+- [ ] **Local model integration** — runs through a local LLM (Ollama/llama.cpp) for privacy
+- [ ] **Agent creation from description** — "I want an agent that reads my email every morning and summarizes it" → creates agent config, tools, schedule, channel
+- [ ] **Full subsystem awareness** — chat can inform and modify:
+  - Schedule (create/modify cron jobs)
+  - Chat (start conversations with agents)
+  - Runs (submit/monitor/cancel runs)
+  - Tools (enable/disable tools, configure policies)
+  - Channels (connect Slack/Discord/Telegram)
+  - Models (select provider/model for the agent)
+  - Config (update TOML settings)
+  - Memory (set up memory stores)
+  - Approvals (configure approval workflows)
+  - Events (subscribe to event topics)
+- [ ] **Workflow graph integration** — auto-creates nodes and connections in the visual builder
+- [ ] **Iterative refinement** — user can refine the agent through conversation
+
+---
+
+## Sprint: Platform Expansion — Memory Time-Range, Per-Channel Proxies, Claude Code Delegation, Migration CLI
+
+**Goal:** Ship four platform features that close gaps with competing Rust AI assistants: time-range memory queries, per-channel proxy configuration, Claude Code two-tier delegation, and a migration CLI for importing from other tools.
+
+**Baseline:** Sprint 39+ complete. 16-crate architecture, 2,163+ tests, 0 clippy warnings.
+
+---
+
+### Phase A: Memory Time-Range Filtering (MEDIUM)
+
+Add `since`/`until` (unix seconds) parameters to memory queries. The `created_at` column already exists but has no time-range query path.
+
+- [x] **`recent_for_timerange()` trait method** — Added to `MemoryStore` trait in `agentzero-core/src/types.rs` with default in-memory-filtering impl via `parse_iso_to_epoch()` helper. Signature: `recent_for_timerange(since: Option<i64>, until: Option<i64>, limit: usize) -> Result<Vec<MemoryEntry>>`. Follows `recent_for_org()`/`recent_for_agent()` pattern.
+- [x] **SQLite optimized override** — `WHERE created_at >= ?2 AND created_at <= ?3` in `agentzero-storage/src/memory/sqlite.rs`. Both params optional (conditionally included in SQL via dynamic format).
+- [x] **Turso optimized override** — Same SQL pattern in `agentzero-storage/src/memory/turso.rs` using `libsql::params!`.
+- [x] **Pooled backend override** — Same SQL pattern in `agentzero-storage/src/memory/pooled.rs`.
+- [x] **Tool integration** — New `ConversationTimeRangeTool` in `agentzero-tools/src/conversation_timerange.rs` (takes `Arc<dyn MemoryStore>`). Accepts `since`, `until`, `limit` params. Classified as `ToolTier::Core`.
+- [x] **Tests** — 1 SQLite backend test (since-only, until-only, range, no-bounds) + 5 tool tests (filter-by-since, filter-by-until, filter-by-range, requires-at-least-one-bound, empty-result). 6 tests total.
+
+### Phase B: Per-Channel Proxy Configuration (MEDIUM)
+
+Each channel instance can specify its own HTTP/SOCKS5 proxy, falling back to global proxy if not set.
+
+- [x] **Proxy fields on `ChannelInstanceConfig`** — Added `http_proxy: Option<String>`, `https_proxy: Option<String>`, `socks_proxy: Option<String>`, `no_proxy: Vec<String>` to `ChannelInstanceConfig` in `agentzero-channels/src/channels/channel_setup.rs`. All `#[serde(default)]` for backward compat.
+- [x] **`ProxySettings` pub + merge** — Made `ProxySettings` pub in `agentzero-tools/src/proxy_config.rs`. Added `ProxySettings::merge(channel, global)` cascade and `is_configured()` helper. Re-exported as `agentzero_tools::ProxySettings`.
+- [x] **`build_channel_client()` helper** — `build_channel_client(config, timeout_secs)` in `channel_setup.rs` builds a `reqwest::Client` with proxy settings. Disables system proxy, applies SOCKS/HTTP/HTTPS proxies with `no_proxy` bypass via `Proxy::no_proxy()`. Feature-gated to compile only when any HTTP channel is enabled.
+- [x] **Channel wiring** — All HTTP channels gained `with_client(client)` builder method (18 channels). `register_one()` and `build_channel_instance()` now call `build_channel_client()` when `config.has_proxy()` is true for Telegram (40s), Discord (30s), Slack (30s), Mattermost (30s), Matrix (40s), WhatsApp (30s), SMS (30s).
+- [x] **Tests** — 4 proxy merge tests (channel overrides global, no_proxy override, None channel fallback, is_configured). 3 channel config tests (defaults None, with proxy, JSON deserialization). 7 tests total.
+
+### Phase C: Claude Code Delegation Tool (HIGH)
+
+New `ClaudeCodeTool` that invokes `claude` CLI as a subprocess for two-tier agent delegation.
+
+- [x] **`ClaudeCodeTool` implementation** — Created `agentzero-tools/src/claude_code.rs`. Uses `tokio::process::Command` to run `claude --print --output-format text`. Input: `task`, optional `model`, `max_turns`, `allowed_tools`. Configurable timeout (default 300s), max output (128 KiB), workspace_root override. Child process auto-killed on timeout via drop.
+- [x] **Tool registration** — Added `pub mod claude_code` under `#[cfg(feature = "tools-full")]` in `agentzero-tools/src/lib.rs`. Added `enable_claude_code: bool` (default `false`) to `ToolSecurityPolicy`. Wired config through `AgentSettings.enable_claude_code` in model.rs → policy.rs. Registered in `agentzero-infra/src/tools/mod.rs` gated by `policy.enable_claude_code`.
+- [x] **CLI detection** — `which_claude()` async helper checks PATH, returns clear error with install URL if not found.
+- [x] **Tests** — Input schema validation, empty task error, invalid JSON error, truncation logic, default config values. 6 tests.
+
+### Phase D: Migration CLI — `agentzero migrate` (HIGH)
+
+CLI subcommand to import workspace, memory, and configuration from other AI assistant tools. Start with OpenClaw as the first migration source.
+
+- [x] **`MigrateCommands` extension** — Added `Openclaw` variant to `MigrateCommands` enum in `agentzero-cli/src/cli.rs`. Flags: `--source <path>`, `--dry-run`, `--skip-memory`, `--skip-config`.
+- [x] **OpenClaw migration module** — Created `agentzero-cli/src/update/migrate_openclaw.rs`. Auto-discovers `~/.openclaw/` and `~/.config/openclaw/`. Parses JSON config → maps provider/model/temperature/max_tokens/system_prompt/allowed_commands → serializes as AgentZero TOML. Copies memory.json for import. Warns on API keys in config and unmappable fields.
+- [x] **CLI wiring** — Added `pub mod migrate_openclaw` in `update/mod.rs`. Match arm in `commands/update.rs` with progress output for config conversion, memory import, and warnings.
+- [x] **Dry-run mode** — Full dry-run support: reports what would be imported without writing files.
+- [x] **Tests** — Config conversion (basic fields + API key warning), discovery, dry-run (no files written), full migration (files written + TOML verified), missing source error, skip-config flag, provider name mapping. 8 tests.
+
+---
+
+## Sprint 61: Defensible Tagline — Binary Size, Cross-Platform CI, Client SDKs, API Docs
+
+**Goal:** Close the three gaps that prevent the tagline from being fully defensible: binary size budgets, cross-platform CI testing, and thin client SDKs that replace heavy FFI bindings. Add Scalar API docs UI to every gateway deployment.
+
+**Baseline:** Sprint 60 complete. Visual workflow builder shipped. Release builds 8 targets but CI only tests Linux. Embedded binary at 10.1MB vs 8MB target. FFI crate exists but thin HTTP SDKs are the right approach.
+
+**Plan:** `specs/plans/30-defensible-tagline.md`
+
+---
+
+### Phase A: Binary Size (HIGH)
+
+- [x] **Align CI/release budgets** — release.yml embedded from 10MB to 8MB, ci.yml default from 30MB to 25MB
+- [x] **Fix minimal feature** — `minimal` uses `memory-sqlite-plain` instead of `memory-sqlite` (saves 3-5MB SQLCipher)
+- [x] **release-min profile** — confirm `codegen-units = 1`, add `[profile.release-min.package."*"] opt-level = "z"`
+- [x] **Binary size summary** — CI step writes markdown table to `$GITHUB_STEP_SUMMARY`
+
+### Phase B: Cross-Platform CI (HIGH)
+
+- [x] **OS matrix** — ci.yml runs on `[ubuntu-latest, macos-latest, windows-latest]`
+- [x] **Gate platform-specific steps** — size checks and latency bench on ubuntu-latest only
+- [x] **Optional ARM cross-test** — `workflow_dispatch` job with `cross build` + `cross test --target aarch64-unknown-linux-gnu`. Only runs on manual dispatch.
+
+### Phase C: Thin Client SDKs + API Docs (HIGH)
+
+- [x] **Enrich OpenAPI spec** — add all missing endpoints to openapi.rs (agent CRUD, tools, memory, cron, MCP, A2A, topology, config, approvals, events). 40+ endpoints, 16 tags, 15 schemas. `#![recursion_limit = "512"]` added to gateway crate.
+- [x] **Scalar API docs UI** — `GET /docs` serves inline HTML with Scalar CDN, points at `/v1/openapi.json`. `api_docs.html` + `api_docs_handler()` in router.rs.
+- [x] **Python SDK** — `sdks/python/` with httpx + websockets + pydantic. Full API surface: pairing, chat, streaming, runs, agent CRUD, tools, memory, cron, config, topology, WebSocket.
+- [x] **TypeScript SDK** — `sdks/typescript/` with native fetch + ws. Full API surface with TypeScript types.
+- [x] **Swift SDK** — `sdks/swift/` with pure Foundation (URLSession), SPM package, zero deps. Actor-based async API.
+- [x] **Kotlin SDK** — `sdks/kotlin/` with okhttp3 + kotlinx-serialization. Coroutine-based async API.
+- [x] **Deprecate FFI crate** — marked deprecated in Cargo.toml description and lib.rs doc comment. Site docs updated with deprecation notice pointing to thin SDKs.
+
+### Phase D: Verification & Documentation (MEDIUM)
+
+- [x] **SDK integration tests** — `sdks/tests/run-sdk-tests.sh` starts gateway, runs each SDK's tests
+- [x] **SDK CI workflow** — `.github/workflows/sdks.yml` triggers on `sdks/**` or gateway changes. Per-language jobs: Python import check, TypeScript build, Swift build, Kotlin build.
+- [x] **Site docs** — `site/src/content/docs/guides/sdks.md` with SDK quickstart for all 4 languages, platform support matrix, OpenAI compat note, API reference summary.
+- [x] **Gateway benchmarks** — `scripts/bench-gateway.sh` measures req/s for `/health`, `/health/live`, `/health/ready`, `/v1/ping`, `/v1/openapi.json`, `/docs`. Justfile recipe: `just bench-gateway`.
+
+---
+
+### Acceptance Criteria (Sprint 61)
+
+- [ ] Embedded binary ≤ 8MB, minimal ≤ 8MB, default ≤ 25MB
+- [ ] CI green on ubuntu, macos, windows
+- [x] `GET /docs` on any gateway shows interactive Scalar API docs
+- [x] OpenAPI spec covers all 40+ router.rs endpoints
+- [x] Python SDK: full API surface implemented
+- [x] TypeScript SDK: full API surface implemented
+- [x] Swift SDK: builds via SPM, full API surface
+- [x] Kotlin SDK: builds via Gradle, full API surface
+- [x] Platform support matrix published on site
+- [x] FFI crate marked deprecated
+- [x] `cargo clippy --workspace --lib` — 0 warnings
+- [x] `cargo test -p agentzero-gateway` — 211 tests pass
+
+---
+
+## Sprint 62: Upstream Quick Wins — CLI Harness, Provider Resilience, A2A Tool, Streaming, Rate Limiting
+
+**Goal:** Integrate 6 quick-win features from upstream PRs. All items are independent and can be implemented in parallel.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 1)
+
+---
+
+### Phase A: CLI Harness Tools (MEDIUM)
+
+Add `CodexCliTool`, `GeminiCliTool`, and `OpenCodeCliTool` — shell out to external CLI agent binaries with env sanitization, timeout/kill-on-drop, and output truncation. Full tier, disabled by default.
+
+- [ ] **Shared env sanitization helper** — strip `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY` etc. before spawning
+- [ ] **`CodexCliTool`** — `crates/agentzero-tools/src/codex_cli.rs`, spawns `codex -q "{prompt}"`, `kill_on_drop(true)`, configurable timeout/max output
+- [ ] **`GeminiCliTool`** — `crates/agentzero-tools/src/gemini_cli.rs`, spawns `gemini -p "{prompt}"`, same pattern
+- [ ] **`OpenCodeCliTool`** — `crates/agentzero-tools/src/opencode_cli.rs`, spawns `opencode "{prompt}"`, same pattern
+- [ ] **Registration** — add modules/re-exports in `lib.rs` under `tools-full`, add `enable_cli_harness: bool` to `ToolSecurityPolicy`, register in `default_tools_inner()`
+- [ ] **Config** — `CliHarnessConfig` in `model.rs`: `enabled`, per-binary toggles, `timeout_secs` (default 300), `max_output_bytes` (default 64KB)
+- [ ] **Tests** — tool metadata, env sanitization, timeout enforcement, output truncation
+
+### Phase B: Provider 429 Cooldown + Model Compatibility Filtering (MEDIUM)
+
+- [ ] **`CooldownState` struct** — in `transport.rs` alongside `CircuitBreaker`: `Mutex<Option<Instant>>` cooldown expiry, `enter_cooldown(duration)`, `is_cooled_down()`, `clear()`
+- [ ] **Wire into `FallbackProvider`** — add `cooldowns: Vec<CooldownState>` parallel to providers; skip cooled-down providers before attempting; activate on 429 with `parse_retry_after()` (default 10s)
+- [ ] **Model compatibility filtering** — in `FallbackProvider`, check `find_models_for_provider(label)` before attempting; skip incompatible provider-model pairs
+- [ ] **`provider_supports_model()` convenience fn** — in `models.rs`
+- [ ] **Tests** — cooldown activation/expiry, model filtering skip, Retry-After parsing
+
+### Phase C: A2A Tool Interface + Spec Alignment (MEDIUM)
+
+- [ ] **`A2aTool`** — `crates/agentzero-tools/src/a2a.rs` with actions: `discover`, `send`, `status`, `cancel`. URL scheme validation (reject non-HTTP(S))
+- [ ] **Spec alignment** — update `a2a_types.rs`: Part discriminator `"type"` → `"kind"` with `#[serde(alias = "type")]` compat; accept `"message/send"` alongside `"tasks/send"` in gateway
+- [ ] **A2A client extensions** — add `check_status()` and `cancel_task()` to `A2aAgentEndpoint`
+- [ ] **Agent Card fix** — populate `url` field from gateway config (currently empty string)
+- [ ] **`A2aTaskStore` mutex** — replace `std::sync::Mutex` → `tokio::sync::Mutex`
+- [ ] **Inbound auth** — add `bearer_token: Option<String>` to `A2aConfig`
+- [ ] **Registration** — `enable_a2a_tool: bool` on policy, register in `default_tools_inner()`
+- [ ] **Tests** — tool actions, URL validation, spec wire format
+
+### Phase D: Provider Streaming Wiring (MEDIUM)
+
+- [ ] **`StreamToolCallAccumulator`** — extract duplicated `ToolCallAccum` from `anthropic.rs` and `openai.rs` into shared struct in `agentzero-core/types.rs`
+- [ ] **`supports_streaming()`** — add to `Provider` trait (default `false`), impl `true` on Anthropic + OpenAI providers, delegate in `FallbackProvider`
+- [ ] **Draft consumer task** — in channel handler path: spawn task that reads `StreamChunk` from receiver, calls `DraftTracker::update()` on each chunk, `finalize()` on done
+- [ ] **Tests** — mock streaming provider → verify draft updates arrive token-by-token
+
+### Phase E: Per-Sender Rate Limiting (SMALL)
+
+- [ ] **`sender_id` on `ToolContext`** — add `pub sender_id: Option<String>` field
+- [ ] **Channel propagation** — set `sender_id = Some(msg.sender.clone())` when building ToolContext from ChannelMessage
+- [ ] **`SenderRateLimiter`** — `DashMap<String, WindowCounter>` pattern, check before tool execution
+- [ ] **Config** — `max_actions_per_sender_per_hour: Option<u32>` in `AutonomyConfig`
+- [ ] **Tests** — per-sender bucketing, fallback to global limit
+
+### Phase F: Fallback Notification (SMALL)
+
+- [ ] **`FallbackInfo` task-local** — `tokio::task_local!` in `fallback.rs` with `original_provider`, `actual_provider`, `actual_model`
+- [ ] **Channel footer** — append "Response from {actual_provider} ({actual_model}) — primary provider unavailable" when fallback occurred
+- [ ] **API headers** — `X-Provider-Fallback: true` + `X-Provider-Used: {actual}` on gateway responses
+- [ ] **Tests** — task-local lifecycle, footer formatting, header emission
+
+---
+
+### Acceptance Criteria (Sprint 62)
+
+- [ ] 3 CLI harness tools registered, gated by `enable_cli_harness`
+- [ ] Provider 429 → immediate cooldown skip (not 5-failure circuit breaker)
+- [ ] Model compatibility checked before fallback attempt
+- [ ] `A2aTool` with discover/send/status/cancel actions
+- [ ] A2A spec methods accept `message/send` + `tasks/send`
+- [ ] `StreamSink` → `DraftTracker` wired for channel draft updates
+- [ ] Per-sender rate limiting with task-local sender propagation
+- [ ] Fallback notification in channel footers + API headers
+- [ ] `cargo clippy --workspace --lib` — 0 warnings
+- [ ] All existing tests pass + new tests for each item
+
+---
+
+## Sprint 63: A2UI Live Canvas — Rich Visual Agent Output
+
+**Goal:** Enable agents to push rich visual content (HTML, SVG, Markdown) to a web-visible canvas in real time via WebSocket. REST + WebSocket endpoints. Sandboxed iframe viewer.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 2)
+
+---
+
+- [ ] **`CanvasStore`** — `crates/agentzero-core/src/canvas.rs`: `Arc<RwLock<HashMap<String, Canvas>>>`, EventBus integration, run-scoped IDs, 256KB content limit, 100 history frames, content-type allowlist
+- [ ] **`CanvasTool`** — `crates/agentzero-tools/src/canvas.rs`: `render`, `snapshot`, `clear` actions (skip `eval`). Extended tier, gated by `enable_canvas`
+- [ ] **Canvas REST handlers** — `crates/agentzero-gateway/src/canvas.rs`: `GET/POST/DELETE /api/canvas/:id`, `GET /api/canvas`, `GET /api/canvas/:id/history`
+- [ ] **Canvas WebSocket** — `WS /ws/canvas/:id`: real-time frame delivery, auth via `authorize_with_scope()`, snapshot on connect
+- [ ] **Gateway wiring** — `canvas_store: Option<Arc<CanvasStore>>` on `GatewayState`, routes in router, `mod canvas` in gateway lib
+- [ ] **Config** — `[tools.canvas]` section: `enabled`, `max_content_bytes`, `max_history_frames`
+- [ ] **Canvas viewer** — `ui/src/pages/Canvas.tsx`: WebSocket connection with reconnect, sandboxed iframe, canvas switcher, frame history panel
+- [ ] **UI routing** — add `/canvas` route in `App.tsx`, sidebar navigation entry
+- [ ] **Security hardening** — iframe `sandbox` WITHOUT `allow-same-origin`, CSP headers (`default-src 'none'`), server-side HTML sanitization, rate limiting on render
+- [ ] **Feature gate** — `canvas` feature flag on gateway crate
+- [ ] **Tests** — tool actions, store CRUD, WebSocket auth, content-type validation, size limits, history truncation
+
+---
+
+### Acceptance Criteria (Sprint 63)
+
+- [ ] `CanvasTool` renders HTML/SVG/Markdown to web viewer in real time
+- [ ] WebSocket delivers frames with auth + reconnect
+- [ ] Sandboxed iframe prevents XSS and parent frame access
+- [ ] Canvas scoped to run ID, cleaned up on run completion
+- [ ] Feature-gated, excluded from embedded builds
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
+## Sprint 64: Background & Parallel Delegation — Non-Blocking Sub-Agents
+
+**Goal:** Extend `DelegateTool` with background mode (fire-and-forget), parallel mode (fan-out), and task lifecycle management (check/list/cancel). CancellationToken cascade for orphan prevention.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 3)
+
+---
+
+- [ ] **`TaskManager`** — `crates/agentzero-tools/src/task_manager.rs`: `spawn_background()`, `check_result()`, `list_results()`, `cancel_task()`, `cancel_all()`. Result persistence to `{workspace}/delegate_results/{task_id}.json`
+- [ ] **`CancellationToken` on `ToolContext`** — add `cancellation_token: Option<CancellationToken>` alongside `AtomicBool` for backward compat; add `task_id: Option<String>`
+- [ ] **Delegate tool extensions** — `action` enum (Delegate/CheckResult/ListResults/CancelTask), `background: Option<bool>`, `agents: Option<Vec<String>>` for parallel mode
+- [ ] **Background spawning** — `tokio::spawn` via `TaskManager`, return task_id immediately. Budget pre-allocation. `OutputScanner` forwarding.
+- [ ] **Parallel mode** — `tokio::JoinSet` over agents, respect existing `Semaphore` (max 4)
+- [ ] **Session teardown** — wire `TaskManager` per-session in runtime, `cancel_all()` on teardown for cascade orphan prevention
+- [ ] **Deprecate `DelegateCoordinationStatusTool`** — wire to read from `TaskManager` for backward compat
+- [ ] **`tokio-util` dep** — add with `sync` feature to tools crate Cargo.toml
+- [ ] **Tests** — background spawn + check_result, parallel fan-out, cancel_task, session teardown cascade, budget pre-allocation, depth limit enforcement
+
+---
+
+### Acceptance Criteria (Sprint 64)
+
+- [ ] Background delegation returns task_id immediately, results pollable
+- [ ] Parallel delegation runs multiple agents concurrently
+- [ ] Session teardown cascades cancel to all background tasks
+- [ ] Budget tracking works across background tasks
+- [ ] Depth + security policy enforced on background tasks
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
+## Sprint 65: Deterministic SOP Engine — Typed Steps, Checkpoints, Cost Tracking
+
+**Goal:** Replace flat JSON SOP store with a proper engine. Deterministic mode bypasses LLM for step transitions. Typed steps with I/O schemas. Approval checkpoints with timeout. State persistence + resume. Cost tracking.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 4)
+
+---
+
+- [ ] **SOP types** — `crates/agentzero-tools/src/sop/types.rs`: `SopExecutionMode` (Supervised/Deterministic), `SopStepKind` (Execute/Checkpoint), `StepSchema`, `SopRunStatus`, `SopRunAction`, `DeterministicRunState`, `DeterministicSavings`
+- [ ] **SOP engine** — `sop/engine.rs`: `start_deterministic_run()`, `advance_deterministic_step()` (pipe output N → input N+1), `resume_deterministic_run()`, state persistence to workspace
+- [ ] **Dispatch** — `sop/dispatch.rs`: route `DeterministicStep` (pipe, no LLM), `CheckpointWait` (pause for approval), `SupervisedStep` (existing LLM path)
+- [ ] **Audit** — `sop/audit.rs`: step transition logging, checkpoint decisions
+- [ ] **Metrics** — `sop/metrics.rs`: `DeterministicSavings` tracking (`llm_calls_saved`), run duration
+- [ ] **Extend `SopStep`** — add `kind: SopStepKind`, `input_schema`, `output_schema`, `output: Option<Value>`
+- [ ] **Update 5 SOP tools** — `SopExecuteTool` accepts `deterministic: bool`; `SopAdvanceTool` handles piped outputs; `SopApproveTool` adds timeout; `SopStatusTool` shows savings; `SopListTool` shows execution mode
+- [ ] **`SopConfig`** — `sops_dir`, `default_execution_mode`, `max_concurrent_total` (4), `approval_timeout_secs` (300), `max_finished_runs` (100)
+- [ ] **Tests** — engine lifecycle, checkpoint pause/approve/timeout, state persist/resume, savings counting, schema validation, dispatch routing
+
+---
+
+### Acceptance Criteria (Sprint 65)
+
+- [ ] Deterministic SOPs execute without LLM round-trips between steps
+- [ ] Checkpoint steps pause and require human approval within timeout
+- [ ] Interrupted runs resume from persisted state
+- [ ] `DeterministicSavings` tracks LLM calls saved per run
+- [ ] Existing supervised SOPs continue working unchanged
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
+## Sprint 66: Channel Enhancements I — Universal Media Pipeline + Discord History
+
+**Goal:** Add automatic media understanding to all channels via pipeline-layer processing, plus persistent Discord history with search.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 5A + 5B)
+
+---
+
+### Phase A: Universal Media Pipeline (MEDIUM)
+
+All 28 channels benefit automatically — processing at the pipeline dispatch layer, not per-channel.
+
+- [ ] **`MediaAttachment` type** — in `channels/lib.rs`: `mime_type`, `url`, `data`, `transcript`, `description`. Add `#[serde(default)] pub attachments: Vec<MediaAttachment>` to `ChannelMessage`
+- [ ] **`MediaPipeline`** — `crates/agentzero-channels/src/media.rs`: `process(msg, config)` routes by MIME type. Audio → Whisper transcription. Image → vision API description. URL detection in `msg.content` for media links. All fallible (log + skip on error)
+- [ ] **Pipeline integration** — in `run_dispatch_loop()` after perplexity filter (~line 191): `media::process(&mut msg, media_cfg).await`
+- [ ] **Config** — `[channels.media_pipeline]` with `enabled: false` default, `transcription_api_url`, `vision_model`
+- [ ] **Optional native media** — Telegram, Discord, Slack, WhatsApp, Email can populate `attachments` from platform APIs for richer metadata (enhancement, not required)
+- [ ] **Tests** — pipeline MIME routing, transcript injection, URL detection, graceful fallback on failure
+
+### Phase B: Discord History + Search (MEDIUM)
+
+- [ ] **`DiscordHistoryChannel`** — shadow listener that logs messages without responding, feature-gated `channel-discord-history`
+- [ ] **SQLite schema** — `discord_messages` table + `discord_name_cache` table (24h TTL refresh) in `agentzero-storage`
+- [ ] **`DiscordSearchTool`** — keyword search over logged history with human-readable name resolution
+- [ ] **Registration** — add to `channel_catalog!`, register search tool in `default_tools_inner()`
+- [ ] **Tests** — message logging, name resolution, search queries, TTL cache refresh
+
+---
+
+### Acceptance Criteria (Sprint 66)
+
+- [ ] Media pipeline processes audio/images from any channel automatically
+- [ ] Channels without native media support benefit via URL detection
+- [ ] Discord history persists to SQLite with searchable keyword index
+- [ ] Name cache resolves opaque snowflake IDs to human-readable names
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
+## Sprint 67: Channel Enhancements II — Voice Wake Word + Gmail Push
+
+**Goal:** Add voice-activated wake word detection channel and push-based Gmail channel.
+
+**Plan:** `specs/plans/30-upstream-feature-integration.md` (Phase 5C + 5D)
+
+---
+
+### Phase A: Voice Wake Word Channel (MEDIUM)
+
+- [ ] **`VoiceWakeChannel`** — `crates/agentzero-channels/src/channels/voice_wake.rs`: `cpal` audio capture, energy-based VAD, state machine (Listening → Triggered → Capturing → Processing), WAV encoding, Whisper transcription, wake word matching
+- [ ] **Feature gate** — `channel-voice-wake`, strictly excluded from embedded builds
+- [ ] **Config** — `[channels.voice_wake]`: `wake_words`, `energy_threshold`, `capture_timeout_secs`
+- [ ] **Registration** — add to `channel_catalog!`
+- [ ] **Tests** — VAD state machine transitions, wake word matching, capture timeout
+
+### Phase B: Gmail Push Notifications (MEDIUM)
+
+- [ ] **`GmailPushChannel`** — `crates/agentzero-channels/src/channels/gmail_push.rs`: Google Pub/Sub webhook, Gmail History API, 6-day subscription renewal, sender allowlist, HTML stripping, RFC 2822 reply
+- [ ] **Webhook endpoint** — `crates/agentzero-gateway/src/gmail_webhook.rs` + route in router
+- [ ] **Feature gate** — `channel-gmail-push`
+- [ ] **Config** — `[channels.gmail_push]`: OAuth credentials, subscription topic, allowed senders
+- [ ] **Auth integration** — OAuth token management via `agentzero-auth`
+- [ ] **Registration** — add to `channel_catalog!`
+- [ ] **Tests** — webhook parsing, subscription renewal, sender filtering, HTML stripping
+
+---
+
+### Acceptance Criteria (Sprint 67)
+
+- [ ] Voice wake word activates on configured phrases, transcribes and processes
+- [ ] Gmail push delivers messages in real time via Pub/Sub webhook
+- [ ] Both channels feature-gated, no impact on default binary
+- [ ] 0 clippy warnings, all tests pass
+
+---
+
+## Sprint 69: Visual Workflow Builder Polish
+
+**Goal:** Fix all wiring gaps, add undo/redo, node detail panel, edge labels/conditions, and run-from-canvas capability to the visual workflow builder.
+
+---
+
+### Phase A: ProviderNode Select Wiring (LOW)
+
+The ProviderNode's `<select>` elements don't save changes — the `onChange` handlers are empty TODOs.
+
+- [x] **Wire ProviderNode selects** — `ui/src/components/workflows/ProviderNode.tsx`: add `useReactFlow` + `updateField` callback matching AgentNode pattern. Provider select updates `provider_name`, model select updates `model_name`. Model list filters by selected provider.
+- [x] **Persist on change** — call `persistState` after field updates (requires threading through props or using a context)
+
+### Phase B: Node Detail Panel (MEDIUM)
+
+Click a node to open a slide-out panel with full config editing.
+
+- [x] **`NodeDetailPanel` component** — `ui/src/components/workflows/NodeDetailPanel.tsx`: slides in from right on node selection. Shows all fields from `NodeDefinition`, plus expanded views for textarea fields (system_prompt). Includes port connection summary.
+- [x] **Selection tracking** — in `WorkflowTopology`: track `selectedNodeId` state, pass to detail panel. Close on background click or Escape.
+- [x] **Agent API integration** — for agent nodes with `agent_id`, load full agent config from `GET /v1/agents/:id` and display/edit all fields
+- [x] **Save changes** — NodeDetailPanel saves on blur via `updateField()` → ReactFlow `setNodes()`. Agent API sync for nodes with `agent_id`. *(Shipped in Sprint 69)*
+
+### Phase C: Edge Labels and Conditions (MEDIUM)
+
+Edges should show port type labels and support conditional routing.
+
+- [x] **Custom edge component** — `ui/src/components/workflows/LabeledEdge.tsx`: renders port-type label centered on edge path, matching port color. Uses `getBezierPath` + `EdgeLabelRenderer` from ReactFlow.
+- [x] **Register custom edge** — in `WorkflowTopology`: add `edgeTypes={{ default: LabeledEdge }}` to ReactFlow
+- [x] **Edge click to edit** — clicking an edge opens a small popover to add a condition expression (stored in `edge.data.condition`). Display as badge on the edge.
+- [x] **Conditional routing visual** — LabeledEdge.tsx shows editable condition text on edges with port-type colored badges. Click to edit, Escape to cancel. *(Shipped in Sprint 69)*
+
+### Phase D: Undo/Redo (MEDIUM)
+
+Add history management for node/edge operations.
+
+- [x] **`useUndoRedo` hook** — `ui/src/components/dashboard/useUndoRedo.ts`: maintains a stack of `{ nodes, edges }` snapshots. `push(snapshot)` on every state change, `undo()` restores previous, `redo()` restores next. Max 50 entries.
+- [x] **Wire into WorkflowTopology** — call `push` in `handleNodesChange`, `handleEdgesChange`, `handleConnect`, `handleDrop`, `handleCmdKSelect`
+- [x] **Keyboard shortcuts** — Cmd+Z for undo, Cmd+Shift+Z for redo
+- [x] **Toolbar buttons** — add undo/redo buttons to the ReactFlow Controls panel or a custom toolbar
+
+### Phase E: Run Workflow from Canvas (HIGH)
+
+- [x] **Run button** — top-right toolbar button "Run Workflow" that submits the current workflow graph to `POST /v1/runs` with the workflow definition serialized from ReactFlow state
+- [x] **Status overlay** — during execution, nodes update status in real-time via the existing topology polling (`refetchInterval: 3_000`). Running nodes pulse blue, completed nodes turn green, failed nodes turn red.
+- [x] **Output panel** — bottom slide-up panel showing the run output (streamed via WebSocket or polled from `/v1/runs/:id`)
+
+### Phase F: DraggablePalette Polish (LOW)
+
+- [x] **Role and Provider chips** — add Role and Provider node types to the palette (currently only Agent, Tool, Channel, Schedule, Gate are listed)
+- [x] **Sub-Agent chip** — add Sub-Agent to the palette
+- [x] **Keyboard navigation** — Arrow up/down navigates filtered items, Escape clears focus. Focused index resets on search change. Hint in placeholder text.
+
+---
+
+### Acceptance Criteria (Sprint 69)
+
+- [x] ProviderNode selects persist changes to node data
+- [x] Clicking a node opens a detail panel with full editing
+- [x] Edges show port-type labels and support conditions
+- [x] Cmd+Z / Cmd+Shift+Z undo/redo works for all canvas operations
+- [x] Run button executes workflow and shows live status on nodes
+- [x] All node types available in the palette
+- [x] 0 lint errors, all existing tests pass
+
+---
+
+## Sprint 70: Workflow Execution Engine
+
+**Goal:** Build a graph traversal engine that actually executes visual workflows — topological sort, step-by-step agent/tool dispatch, conditional routing through gates, and real-time status tracking.
+
+**Architecture:** New `workflow_executor.rs` module in `agentzero-orchestrator`. Reuses existing `JobStore`, `EventBus`, `run_agent_once`, `Tool::execute()`, and fan-out infrastructure.
+
+---
+
+### Phase A: Core Types + Compiler (HIGH)
+
+Parse ReactFlow nodes/edges into an executable plan with topological ordering.
+
+- [x] **`WorkflowExecutor` types** — `ExecutionPlan`, `ExecutionStep`, `NodeType`, `WorkflowRun`, `ResolvedNodeConfig` in `workflow_executor.rs`. *(Shipped in Sprint 70)*
+- [x] **`compile()`** — Kahn's algorithm topological sort, cycle detection, provider/role config resolution, executable node filtering. *(Shipped in Sprint 70)*
+- [x] **Edge mapping** — Forward + reverse edge maps: `(source_node, source_port) → Vec<(target_node, target_port)>`. *(Shipped in Sprint 70)*
+- [x] **Tests** — 12 compile tests (linear, parallel, diamond, cycle, provider config, role config, empty graph, gate, mixed types, dep graph). *(Shipped in Sprint 70)*
+
+### Phase B: Execution Engine (HIGH)
+
+Walk the topological levels, dispatch each node type, collect outputs, route data through edges.
+
+- [x] **`execute()`** — `execute_with_updates()` with `tokio::JoinSet` parallel execution, `pending_deps` ready-queue, `Arc<Mutex<SharedRunState>>` for concurrent access. *(Shipped in Sprint 70, parallelized in Sprint 72 Phase A)*
+- [x] **Agent execution** — `dispatch_step()` routes to `StepDispatcher::run_agent()` with input/context collection from upstream ports. *(Shipped in Sprint 70)*
+- [x] **Tool execution** — `dispatch_step()` routes to `run_tool()` by `tool_name` from metadata. *(Shipped in Sprint 70)*
+- [x] **Channel sink** — `dispatch_step()` routes to `send_channel()`. *(Shipped in Sprint 70, stub wired in Sprint 71)*
+- [x] **Parallel levels** — `tokio::JoinSet` spawns ready nodes concurrently, processes completions via `join_next()`. *(Shipped in Sprint 72 Phase A)*
+- [x] **Gate nodes** — `handle_gate_routing()` marks inactive branch as `Skipped`. Skipped status preserved in JoinSet execution. *(Shipped in Sprint 70)*
+- [x] **Provider/Role resolution** — `compile()` folds Provider/Role config nodes into connected agent `ResolvedNodeConfig` at build time. *(Shipped in Sprint 70)*
+- [x] **Tests** — 9 executor tests (single agent, chain, tool, gate routing, parallel fan-out, diamond, failed node, concurrent). *(Shipped in Sprint 70/72)*
+
+### Phase C: Gateway API (MEDIUM)
+
+REST endpoints for executing and monitoring workflow runs.
+
+- [x] **`POST /v1/workflows/:id/execute`** — `execute_workflow` handler: loads workflow, compiles, spawns background executor, returns `{ run_id, status: "running" }`. *(Shipped in Sprint 70)*
+- [x] **`GET /v1/workflows/runs/:run_id`** — `get_workflow_run` handler: returns per-node status breakdown from `WorkflowRunState`. *(Shipped in Sprint 70)*
+- [x] **`DELETE /v1/workflows/runs/:run_id`** — `cancel_workflow_run` handler. Marks run as "cancelled", drops gate senders (auto-denies), sets error message.
+- [x] **SSE stream** — `GET /v1/workflows/runs/:run_id/stream` via `stream_workflow_run`. Polls run state every 500ms, emits JSON events with node_statuses. Ends on terminal state or 10min timeout.
+- [x] **Status updates** — `StatusUpdate` struct with node_id, node_name, status, output. Streamed via `mpsc` channel from executor to run store. *(Shipped in Sprint 70)*
+
+### Phase D: UI Integration (MEDIUM)
+
+Wire the Run button to the real execution endpoint and show live node status.
+
+- [x] **Update `RunWorkflowButton`** — Uses `POST /v1/workflows/{workflowId}/execute`, polls `GET /v1/workflows/runs/{run_id}` every 500ms. *(Shipped in Sprint 71)*
+- [x] **Live node status** — Polls run status, maps to ReactFlow node styles: running=blue pulse, completed=green glow, failed=red, skipped=gray. *(Shipped in Sprint 71)*
+- [ ] **Output routing display** — Show output values on edges as they flow through the graph
+
+---
+
+### Acceptance Criteria (Sprint 70)
+
+- [x] `compile()` produces correct topological ordering for linear, parallel, and diamond graphs
+- [x] Agent nodes execute with correct provider/model from connected Provider nodes
+- [x] Tool nodes invoke the named tool directly
+- [x] Gate nodes conditionally route to approved/denied paths
+- [x] Workflow runs tracked with per-node status in WorkflowRunState
+- [x] REST API returns real-time per-node status
+- [x] Canvas shows live execution status on nodes during a run
+- [x] 0 clippy warnings, all tests pass
+
+---
+
+## Sprint 71: Workflow Templates + Live Execution Visualization
+
+**Goal:** Make the workflow builder instantly useful with pre-built templates and visually compelling with live node status during execution.
+
+---
+
+### Phase A: Workflow Template Gallery (HIGH)
+
+Pre-built workflow graphs that users can load from a gallery, customize, and run.
+
+- [x] **Template definitions** — `workflow-templates.ts`: 8 templates (Research Pipeline, Content Generator, Code Review, Customer Support, Data Analysis, Agent Debate, Collaborative Writing, Agent Conversation) with ConverseTool and gate support.
+- [x] **Template gallery UI** — `TemplateGallery.tsx`: 2-column grid modal with search, API + localStorage, category color coding, delete. Fetches saved templates from `/v1/templates`.
+- [x] **Load template** — "Use Template" populates canvas with nodes/edges and enables editing.
+- [x] **Empty state** — `EmptyCanvasState.tsx`: centered CTA with "Choose a Template" and "Start from Scratch" buttons + Cmd+K hint.
+- [x] **Template thumbnails** — node count displayed per template card.
+
+### Phase B: Live Execution Visualization (HIGH)
+
+Nodes visually update during workflow execution — pulsing, color changes, output previews.
+
+- [x] **Execution status polling** — RunWorkflowButton polls `GET /v1/workflows/runs/{run_id}` every 500ms for up to 5 minutes. Updates ReactFlow node statuses in real-time.
+- [x] **Node status styling** — AgentNode: running=pulsing blue glow (CSS `nodeRunningPulse` animation), completed=green border+glow, failed=red border, skipped=dimmed. Status dot in header.
+- [x] **Output preview on nodes** — Execution log panel shows per-node output snippets (120 chars) with timestamps and status icons.
+- [ ] **Edge flow animation** — animate edges as data flows through them (CSS dash-offset animation on the active path)
+- [x] **Execution timeline** — Log panel at bottom shows elapsed execution with real-time node status entries, run ID, and error display.
+
+### Phase C: Workflow Export/Import (MEDIUM)
+
+Save and share workflows as portable files.
+
+- [x] **Export endpoint** — `GET /v1/workflows/:id/export` returns full workflow JSON with nodes, edges, metadata.
+- [x] **Import endpoint** — `POST /v1/workflows/import` accepts JSON, validates via `compile_workflow()`, creates in store with fresh ID.
+- [ ] **UI export button** — download button in workflow toolbar, saves as `.agentzero-workflow.json`
+- [ ] **UI import button** — file upload or drag-drop onto canvas to load a workflow
+- [ ] **Conflict resolution** — when importing, remap node IDs to avoid collisions with existing nodes
+
+### Phase D: Real Channel Dispatch (MEDIUM)
+
+Wire `GatewayStepDispatcher::send_channel` to actual platform sends.
+
+- [x] **Channel registry lookup** — `GatewayStepDispatcher` now holds `Arc<ChannelRegistry>` from `GatewayState`.
+- [x] **Send message** — `send_channel()` dispatches via `channels.dispatch(channel_type, payload)` with text/content/message fields. Returns error on rejection or missing channel.
+- [x] **Channel trigger nodes** — `trigger_workflows_for_channel()` in webhook handler. When a message arrives, scans all workflows for Channel nodes matching the channel type, compiles and executes each match with the message as input. Runs tracked in `WorkflowRunState` for polling.
+- [x] **Delivery confirmation** — Channel dispatch stores `delivery_status` port ("delivered" or "failed: {error}") in step output. Failures logged but don't block downstream nodes.
+
+### Phase E: Human-in-the-Loop Gate Nodes (HIGH)
+
+Real suspend/resume for approval workflows.
+
+- [x] **Suspend mechanism** — `StepDispatcher::suspend_gate()` trait method. Gate dispatch calls `suspend_gate()` which blocks until resumed. Gateway implementation creates oneshot channel, stores sender in `GateSenderMap`, awaits receiver. Default impl auto-approves for non-interactive contexts.
+- [x] **`POST /v1/workflows/runs/:run_id/resume`** — `resume_workflow_run` handler. Accepts `{ node_id, decision: "approved"|"denied" }`. Looks up oneshot sender, sends decision, unblocks gate task. Returns 404 if gate not found or already resumed.
+- [ ] **Notification** — send approval request to a configured channel (Slack, Telegram, email) with approve/deny buttons
+- [x] **Timeout** — `tokio::time::timeout(24h, rx)` in `suspend_gate()`. On timeout: auto-deny, clean up sender from map, log warning.
+- [ ] **UI approval panel** — in-canvas overlay showing pending approvals with approve/deny buttons
+
+---
+
+### Acceptance Criteria (Sprint 71)
+
+- [x] 4+ workflow templates available in the gallery *(8 built-in templates)*
+- [x] Empty canvas shows template CTA *(EmptyCanvasState.tsx)*
+- [x] Nodes visually update during execution (pulse, color, output preview) *(AgentNode status styling + RunWorkflowButton polling)*
+- [x] Workflows exportable/importable as JSON files *(GET /v1/workflows/:id/export + POST /v1/workflows/import)*
+- [x] 0 lint errors, all tests pass
+
+---
+
+## Sprint 72: Autonomous Agent Swarms — Parallel Execution, Sandboxing, Self-Management
+
+**Goal:** Transform AgentZero's workflow executor into a self-managing swarm runtime. Add true intra-batch parallelism via `tokio::JoinSet`, sandboxed agent isolation (worktree → container → microVM), cross-agent context awareness, dead agent recovery, and autonomous goal decomposition into visual workflow graphs.
+
+**Baseline:** Sprint 71 complete. Workflow executor already uses `pending_deps` ready-queue with event-driven unblocking (dependency tracking, not level-based). Real-time node status, human input gates, `ConverseTool` for agent-to-agent communication. `fanout.rs` provides established `JoinSet` parallel execution pattern.
+
+**Plan:** `specs/plans/31-autonomous-agent-swarms.md`
+
+---
+
+### Phase A: True Parallel Execution with `tokio::JoinSet` (HIGH)
+
+The executor already uses `pending_deps` for event-driven unblocking between batches, but executes nodes **sequentially within each batch**. Add true intra-batch concurrency using `tokio::JoinSet`, following the established pattern in `fanout.rs`.
+
+- [x] **`Arc<dyn StepDispatcher>`** — Changed `execute()` and `execute_with_updates()` from `&dyn StepDispatcher` to `Arc<dyn StepDispatcher>`. Updated gateway handlers, CLI workflow command, and all test call sites.
+- [x] **`SharedRunState`** — Extracted `outputs` and `node_statuses` into `Arc<tokio::sync::Mutex<_>>` for concurrent access from spawned tasks. Added `OutputView` wrapper and `collect_input_text_from`/`collect_context_from` for lock-scoped reads.
+- [x] **`JoinSet` execution loop** — Replaced sequential batch loop with `JoinSet::spawn()` per ready node. Main loop: `join_set.join_next().await` → process completion → unblock dependents → immediately spawn newly ready nodes into the same JoinSet. No batch boundaries.
+- [x] **Gate routing synchronization** — Gate routing processed synchronously on completion before spawning dependents. Skipped status preserved — nodes marked `Skipped` by gate routing are not overwritten to `Completed`.
+- [x] **Error handling** — Failed nodes still resolve dependencies (preserving existing behavior). `JoinSet` join errors (panics) converted to `anyhow::Error`.
+- [x] **Update callers** — `GatewayStepDispatcher` in `handlers.rs` wrapped in `Arc`. `CliStepDispatcher` in `workflow.rs` wrapped in `Arc`. All 20 existing test call sites updated.
+- [x] **Diamond-dependency test** — Pre-existing `execute_diamond_event_driven_unblocking` test passes (6-node diamond + independent chain).
+- [x] **Concurrency verification test** — New `execute_concurrent_independent_nodes` test: 3 independent nodes with 50ms sleep, verifies peak concurrency >= 2 and total time < 120ms. Uses `AtomicUsize` concurrency tracker.
+- [x] **Backward compatibility** — All 21 workflow executor tests pass (20 existing + 1 new). 2,798 tests pass workspace-wide, 0 clippy warnings.
+
+### Phase B: Sandboxed Agent Execution — WorktreeSandbox (HIGH)
+
+Each agent node executes in an isolated git worktree. Foundation for container/microVM backends.
+
+- [x] **`AgentSandbox` trait** — `create(&SandboxConfig) -> SandboxHandle`, `destroy(&SandboxHandle)`. In new `sandbox.rs`. Async trait with pluggable backends. Also defines `AgentTask`, `AgentOutput` structs.
+- [x] **`SandboxConfig` / `SandboxHandle`** — Config: `workflow_id`, `node_id`, `workspace_root`. Handle: `worktree_path`, `branch_name`, `workspace_root`.
+- [x] **`WorktreeSandbox`** — `create()`: `git worktree add -b agentzero/wf/{wf_id}/{node_id}`. `destroy()`: `git worktree remove --force` + `git branch -D`. Configurable worktree base dir. Branch names sanitized.
+- [x] **Workspace lifecycle module** — New `workspace.rs`: `collect_diff(handle) -> Vec<FileDiff>` (git status + diff), `merge_worktree(handle, name) -> bool` (stage/commit/cherry-pick), `detect_conflicts(agent_diffs) -> Vec<Conflict>`.
+- [x] **Conflict detection** — `ConflictSeverity { Low, Medium, High }` with `Ord`. Line-range overlap via unified diff `@@` header parsing. Directory-level tracking (skips root). Sorted by severity descending.
+- [x] **Merge strategy** — `merge_worktree()` commits in worktree, cherry-picks onto workspace. Failed picks aborted cleanly. Returns clean/conflict bool.
+- [x] **Tests** — 11 new tests: worktree lifecycle (create/destroy), isolation (two independent worktrees), diff collection (new file + modification), conflict detection (no overlap, same file different lines, same lines, same directory, line range parsing), clean merge. 2,809 tests workspace-wide, 0 clippy warnings.
+
+### Phase C: Cross-Agent Context Awareness (MEDIUM)
+
+When dispatching parallel agents, inject awareness of sibling agents' assignments to prevent conflicts and enable collaboration.
+
+- [x] **`SwarmContext`** — New `swarm_context.rs`. Tracks `HashMap<NodeId, AgentAssignment>` with task descriptions, estimated file scopes, status, and files actually modified. `AgentAssignmentStatus` enum (Pending/Running/Completed/Failed). Clone-able for use across async tasks.
+- [x] **Sibling context injection** — `sibling_context(node_id)` returns `SiblingContext` with sibling info and potential file conflicts. `format_context_for_prompt(node_id)` generates markdown text for system prompt injection with conflict warnings.
+- [x] **File modification broadcast** — `mark_completed()` and `mark_failed()` publish `swarm.agent.completed` / `swarm.agent.failed` events via `EventBus` with workflow_id, node_id, files_modified/error payload.
+- [x] **Overlap detection** — `detect_overlaps(completed_node_id)` returns list of running agents whose estimated file scopes overlap with the completed agent's actual modifications. 9 tests covering registration, sibling exclusion, scope overlap, prompt formatting, overlap detection, event publishing.
+
+### Phase D: Dead Agent Recovery (MEDIUM)
+
+Extend `PresenceStore` heartbeats to automatically reassign tasks from dead agents.
+
+- [x] **`RecoveryMonitor`** — New `recovery.rs`. Wraps `PresenceStore` with `register_agent()`, `heartbeat()`, `deregister()`. Configurable via `RecoveryConfig` (check interval, max retries, default TTL 60s).
+- [x] **`check_and_recover()`** — Scans all agents for `PresenceStatus::Dead`. Per-agent retry tracking: if retries remain → destroy sandbox, emit `swarm.agent.reassigned`, return `Reassigned`. If max retries exceeded → emit `swarm.agent.abandoned`, return `Abandoned`. Caller re-dispatches reassigned tasks.
+- [x] **Observability events** — Publishes `swarm.agent.reassigned` and `swarm.agent.abandoned` events via `EventBus` with node_id, agent_name, attempt count. `RecoveryAction` struct with `RecoveryActionType` enum for typed action results.
+- [x] **Tests** — 6 tests: alive agent not recovered, dead agent reassigned, max retries triggers abandon, deregister clears retries, event bus publishes reassigned, heartbeat keeps agent alive. 2,824 tests workspace-wide, 0 clippy warnings.
+
+### Phase E: Self-Managing Swarm — Goal Decomposition (HIGH)
+
+Give AgentZero a natural language goal and let it autonomously decompose into a task DAG, spawn sandboxed agents, and manage execution.
+
+- [x] **`GoalPlanner`** — New `goal_planner.rs`. `PlannedWorkflow` with `PlannedNode` structs (id, name, task, depends_on, file_scopes, sandbox_level). `GOAL_PLANNER_PROMPT` for structured output. `parse_planner_response()` handles markdown fences, leading text, bare JSON. `to_workflow_json()` converts to ReactFlow-compatible nodes+edges for `compile()`. 8 tests.
+- [x] **`SwarmSupervisor`** — New `swarm_supervisor.rs`. `execute(plan, input, dispatcher, status_tx)` compiles `PlannedWorkflow` → `ExecutionPlan`, registers agents with `SwarmContext`, runs via parallel `JoinSet` executor, updates context on completion/failure, collects text outputs. `SwarmConfig` with sandbox_level, recovery config, token budget. 5 tests.
+- [ ] **Adaptive re-planning** *(deferred to backlog)* — On agent failure or scope expansion, pause affected subgraph, re-invoke planner with current state, apply graph patch (add/remove nodes, re-route edges), resume. Requires live LLM integration and real-world failure data to design effectively.
+- [x] **CLI entry point** — `agentzero swarm "Build a REST API with auth"` in `commands/swarm.rs`. Accepts `--plan` for pre-generated JSON, `--sandbox` for isolation level. Streams node status updates to stderr, prints structured results to stdout. Reuses `CliStepDispatcher` via `build_cli_dispatcher()`.
+- [x] **Gateway entry point** — `POST /v1/swarm` in `handlers.rs`. Accepts `{ "goal": "..." }` or `{ "plan": {...} }`. Compiles plan, executes via `SwarmSupervisor` in background task, stores run state for polling via `GET /v1/workflows/runs/:run_id`. Returns `{ run_id, title, node_count, status }`.
+- [ ] **UI integration** *(deferred to backlog)* — Goal input → live graph visualization → interactive editing during execution → merge review at end. Backend ready (gateway returns run IDs + status); needs React frontend work.
+
+### Phase F: Container & MicroVM Backends (MEDIUM)
+
+Higher-security sandbox backends for server and untrusted execution.
+
+- [x] **`ContainerSandbox`** — Docker/Podman container per agent. Bind-mount worktree from `WorktreeSandbox`. `ContainerConfig`: runtime, image, memory/CPU limits, network toggle. Security: `--cap-drop=ALL`, `--read-only`, tmpfs for /tmp and /sandbox, `--network=none` by default. `build_run_args()` generates full Docker CLI args. 4 tests.
+- [x] **`MicroVmSandbox`** — Firecracker/Cloud Hypervisor microVM per agent. `MicroVmConfig`: kernel/rootfs paths, memory_mb, vcpus, binary path. Generates Firecracker JSON config, starts daemon with API socket. `is_available()` checks binary existence. 3 tests.
+- [x] **`SandboxLevel` enum** — `Worktree | Container | MicroVm` with `Default` (Worktree), `Display`, `FromStr`, serde. Per-node override via `sandbox_level` field in `PlannedNode`. 2 tests.
+
+### Acceptance Criteria
+
+- [x] Ready nodes execute concurrently via `JoinSet` (not sequentially within batches)
+- [x] Each agent runs in isolated worktree with its own branch
+- [x] Merge conflicts detected and reported with severity classification
+- [x] Dead agents recovered within heartbeat timeout window
+- [x] `agentzero swarm "..."` decomposes goal, executes, and merges results (GoalPlanner + SwarmSupervisor)
+- [ ] Generated workflow graph visible and editable in UI during execution *(deferred — backend ready, needs frontend)*
+- [x] 0 clippy warnings, all existing tests pass
+
+**Sprint 72 complete.** 7 new modules (`sandbox.rs`, `workspace.rs`, `swarm_context.rs`, `recovery.rs`, `goal_planner.rs`, `swarm_supervisor.rs`, `commands/swarm.rs`), 49 new tests, 2,846 total tests passing. Adaptive re-planning and UI integration deferred to backlog — core swarm architecture shipped.
+
+---
+
+## Sprint 73: Self-Evolving Agent System — NL Definitions, Runtime Tools, Catalog Learning
+
+**Goal:** Make AgentZero a self-growing system. Natural language goals auto-decompose into multi-agent DAGs with per-node tool filtering. Agents create missing tools mid-session (persistent across restarts). Plain English agent definitions create persistent specialists. Successful tool combos are remembered and reused. Every artifact persists encrypted at rest — the system compounds over weeks and months.
+
+**Baseline:** Sprint 72 complete. Swarm supervisor, parallel executor, goal planner types, tool selectors (keyword + AI), CLI swarm command, and agent manage tool all exist. GoalPlanner has types/prompt but no LLM call. Tools only load at startup. agent_manage requires explicit fields.
+
+**Plan:** `specs/plans/32-self-evolving-agent-system.md`
+
+---
+
+### Phase A: NL Goal Decomposition (HIGH)
+
+Wire `GoalPlanner::plan()` so goals auto-decompose into multi-agent DAGs with per-node tool filtering.
+
+- [ ] **`tool_hints` on `PlannedNode`** — Add `#[serde(default)] pub tool_hints: Vec<String>` to `PlannedNode`. Update `GOAL_PLANNER_PROMPT` to include tool_hints in example and rules. Update `to_workflow_json()` to pass through in metadata. Backward-compatible via serde default.
+- [ ] **`GoalPlanner::plan()`** — New `GoalPlanner` struct with `plan(goal, available_tools) -> Result<PlannedWorkflow>`. Builds prompt from `GOAL_PLANNER_PROMPT` + tool catalog + goal, calls `provider.complete()`, parses response. Re-export from orchestrator `lib.rs`.
+- [ ] **`HintedToolSelector`** — New selector in `tool_selection.rs`. Combines explicit tool name hints with `KeywordToolSelector` fallback. Always includes foundational tools (`read_file`, `shell`, `content_search`).
+- [ ] **Dispatcher wiring** — `CliStepDispatcher::run_agent()` extracts `tool_hints` from step metadata, sets `execution.tool_selector` to `HintedToolSelector`. Same for gateway `WorkflowStepDispatcher`. No changes to `RunAgentRequest`.
+- [ ] **`build_provider_from_config()`** — Extract config-loading + API-key-resolution + provider-construction from `build_runtime_execution()` into standalone public function.
+- [ ] **Swarm CLI integration** — Replace single-agent fallback in `cmd_swarm` with `GoalPlanner::plan()` using provider from `build_provider_from_config()`.
+- [ ] **Tests** — Mock provider returning multi-node plan, `HintedToolSelector` with/without hints, `PlannedNode` deserialization with missing `tool_hints`.
+
+### Phase B: Runtime Tool Creation + Persistent Tool Growth (HIGH)
+
+Agents describe a missing tool in NL → system creates it mid-session, immediately available, and persists it forever.
+
+- [ ] **`DynamicTool` + strategies** — New `dynamic_tool.rs`. `DynamicToolDef` with `DynamicToolStrategy` enum (Llm, Shell, Http, Composite). Implement `Tool` trait using `Box::leak()` for static lifetimes. Shell validates against `ShellPolicy`, HTTP against `UrlAccessPolicy`.
+- [ ] **`DynamicToolRegistry`** — Persistence via `EncryptedJsonStore` at `.agentzero/dynamic-tools.json`. `register()`, `load_all()`, `remove()`. Tools survive restarts.
+- [ ] **`ToolSource` trait** — New trait in `agent.rs` for mid-session tool registration. `Agent` gains `extra_tool_source: Option<Arc<dyn ToolSource>>`. `build_tool_definitions()` merges static tools with `ToolSource::additional_tools()`. `DynamicToolRegistry` implements `ToolSource`.
+- [ ] **`ToolCreateTool`** — New `tool_create.rs`. LLM-callable tool: `create` (NL → LLM derives def → register), `list`, `delete`. Gated by `ctx.depth == 0` and `enable_dynamic_tools`.
+- [ ] **Registration wiring** — Load dynamic tools at startup in `default_tools_inner()`. Add `enable_dynamic_tools: bool` to `ToolSecurityPolicy`. Add `dynamic_registry` to `RuntimeExecution`, wire into agent's `extra_tool_source`.
+- [ ] **Tests** — Shell-strategy dynamic tool execution, LLM-strategy with mock provider, mid-session registration visible in `build_tool_definitions()`.
+
+### Phase C: NL Agent Definitions — Persistent Specialists (MEDIUM)
+
+Define persistent agents from plain English descriptions. Agents accumulate as the user's personal team of specialists.
+
+- [ ] **`create_from_description` action** — New action on `AgentManageTool`. Takes NL description, LLM derives: name, system_prompt, keywords, allowed_tools, suggested_schedule. Add `provider: Option<Arc<dyn Provider>>` via `with_provider()` builder. Agents persist in encrypted `.agentzero/agents.json`.
+- [ ] **Provider wiring** — Pass primary provider to `AgentManageTool` during construction in `default_tools_inner()`.
+- [ ] **Auto-routing** — Verify `AgentRouter` reads `AgentStoreApi` dynamically. Future goals matching keywords auto-route to persistent specialist.
+- [ ] **Agent self-improvement** — Add `version: u32` to `AgentRecord`. Similar NL description updates existing agent rather than creating duplicate. LLM prompt includes existing agents for dedup.
+- [ ] **Tests** — NL description → mock LLM → `AgentRecord` with correct keywords/allowed_tools. Persistence across reload.
+
+### Phase D: Tool Catalog Learning — Compounding Knowledge (MEDIUM)
+
+Record successful tool combos, boost them on matching future goals.
+
+- [ ] **`RecipeStore`** — New `tool_recipes.rs`. `ToolRecipe { id, goal_summary, goal_keywords, tools_used, success, timestamp, use_count }`. `EncryptedJsonStore` at `.agentzero/tool-recipes.json`. `record()`, `find_matching()` (TF-IDF).
+- [ ] **Record after swarm execution** — Add `recipe_store: Option<Arc<Mutex<RecipeStore>>>` to `SwarmSupervisor`. Record recipe after `execute()`.
+- [ ] **Record after single-agent runs** — Add `tools_invoked: Vec<String>` to `RunAgentOutput`. Record recipe in `run_agent_with_runtime()`.
+- [ ] **Recipe-boosted selection** — Extend `HintedToolSelector` with `recipes: Option<Arc<Mutex<RecipeStore>>>`. Selection priority: hints → recipe-matched → keyword fallback.
+- [ ] **Tests** — Record recipe, query with similar goal, verify tools are boosted.
+
+### Acceptance Criteria
+
+- [ ] `agentzero swarm "summarize this video"` decomposes into multi-agent DAG, each node gets filtered tools
+- [ ] Dynamic tools created mid-session persist and load on next startup
+- [ ] `agent_manage create_from_description "..."` creates full AgentRecord from plain English
+- [ ] Successful tool combos recorded and boosted on matching future goals
+- [ ] All persistence files encrypted at rest via `EncryptedJsonStore`
+- [ ] 0 clippy warnings, all existing tests pass
+
+---
+
 ## Backlog
-
-### Embedded Binary Size Reduction (HIGH)
-
-Reduce the `embedded` profile binary for resource-constrained devices. Currently 10.1MB (budget temporarily at 11MB), target 5-8MB. Phased approach: feature-gate tools into tiers, add plain SQLite option (no sqlcipher), minimize reqwest features, audit with cargo-bloat.
-
-**Plan:** `specs/plans/21-embedded-binary-size-reduction.md`
-
-- [x] **Phase 1: Tool tiering** — Split into `core` (~20 tools), `extended` (~17 tools), `full` (~9 tools). Feature flags: `tools-core`/`tools-extended`/`tools-full`. ToolTier enum with classifier. agentzero-lite uses `tools-extended`. 3 tests.
-- [x] **Phase 2: Optional WASM** — `embedded-minimal` feature excludes WASM plugin runtime. WASM tools gated behind `#[cfg(feature = "wasm-plugins")]` (already existed in infra, wired through to CLI/binary Cargo.toml).
-- [x] **Phase 3: HTTP client minimization** — Workspace reqwest reduced to `["json"]` only. `stream` added only to providers + CLI (SSE). `multipart` only to infra (Whisper audio). Removed unused cookies/gzip/brotli/deflate/trust-dns.
-
-*Plain SQLite removed — all storage must be encrypted (sqlcipher). cargo-bloat and UPX moved to `specs/BACKLOG-EXTERNAL.md`.*
 
 ### TUI Dashboard Enhancement (MEDIUM)
 

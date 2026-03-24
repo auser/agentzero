@@ -44,6 +44,8 @@ pub struct AgentZeroConfig {
     pub autopilot: AutopilotConfig,
     #[serde(default)]
     pub a2a: A2aConfig,
+    #[serde(default)]
+    pub sop: SopConfig,
 }
 
 impl AgentZeroConfig {
@@ -581,6 +583,15 @@ pub struct AgentSettings {
     /// Enable self-configuration tools (config_manage, skill_manage, plugin_scaffold).
     #[serde(default)]
     pub enable_self_config: bool,
+    /// Enable the Claude Code delegation tool (spawns `claude` CLI as subprocess).
+    #[serde(default)]
+    pub enable_claude_code: bool,
+    /// Enable CLI harness tools (Codex, Gemini, OpenCode CLI delegation).
+    #[serde(default)]
+    pub enable_cli_harness: bool,
+    /// Enable dynamic tool creation at runtime (tool_create tool).
+    #[serde(default)]
+    pub enable_dynamic_tools: Option<bool>,
 }
 
 fn default_tool_timeout_ms() -> u64 {
@@ -612,6 +623,9 @@ impl Default for AgentSettings {
             enable_agent_manage: false,
             enable_domain_tools: false,
             enable_self_config: false,
+            enable_claude_code: false,
+            enable_cli_harness: false,
+            enable_dynamic_tools: None,
         }
     }
 }
@@ -860,6 +874,9 @@ pub struct AutonomyConfig {
     pub non_cli_natural_language_approval_mode: String,
     pub non_cli_natural_language_approval_mode_by_channel: HashMap<String, String>,
     pub max_actions_per_hour: u32,
+    /// Maximum actions per sender per hour. If None, uses the global limit.
+    #[serde(default)]
+    pub max_actions_per_sender_per_hour: Option<u32>,
     pub max_cost_per_day_cents: u32,
     pub require_approval_for_medium_risk: bool,
     pub block_high_risk_commands: bool,
@@ -889,6 +906,7 @@ impl Default for AutonomyConfig {
             non_cli_natural_language_approval_mode: "direct".to_string(),
             non_cli_natural_language_approval_mode_by_channel: HashMap::new(),
             max_actions_per_hour: 200,
+            max_actions_per_sender_per_hour: None,
             max_cost_per_day_cents: 2000,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
@@ -2484,6 +2502,36 @@ fn default_autopilot_stale_threshold() -> u32 {
     30
 }
 
+// --- SOP (Standard Operating Procedure) configuration ---
+
+/// Configuration for SOP execution.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SopConfig {
+    /// Directory for SOP definitions.
+    pub sops_dir: String,
+    /// Default execution mode: "supervised" or "deterministic".
+    pub default_execution_mode: String,
+    /// Maximum concurrent SOP runs.
+    pub max_concurrent_total: u32,
+    /// Approval checkpoint timeout in seconds.
+    pub approval_timeout_secs: u64,
+    /// Maximum finished runs to retain.
+    pub max_finished_runs: u32,
+}
+
+impl Default for SopConfig {
+    fn default() -> Self {
+        Self {
+            sops_dir: "./sops".to_string(),
+            default_execution_mode: "supervised".to_string(),
+            max_concurrent_total: 4,
+            approval_timeout_secs: 300,
+            max_finished_runs: 100,
+        }
+    }
+}
+
 // --- A2A (Agent-to-Agent) protocol configuration ---
 
 /// Configuration for external A2A agents that this instance can call.
@@ -2492,6 +2540,8 @@ fn default_autopilot_stale_threshold() -> u32 {
 pub struct A2aConfig {
     /// Enable A2A protocol endpoints (/.well-known/agent.json and /a2a).
     pub enabled: bool,
+    /// Optional bearer token for authenticating incoming A2A requests.
+    pub bearer_token: Option<String>,
     /// External A2A agents to register as swarm participants.
     pub agents: HashMap<String, A2aAgentConfig>,
 }

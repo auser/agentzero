@@ -7,6 +7,7 @@
 pub mod a2a_types;
 pub mod agent;
 pub mod agent_store;
+pub mod canvas;
 pub mod common;
 pub mod delegation;
 pub mod embedding;
@@ -26,17 +27,19 @@ pub mod validation;
 /// instead of adding a separate `tracing` dependency.
 pub use tracing;
 
-pub use agent::Agent;
+pub use agent::{Agent, ToolSource};
+pub use canvas::{Canvas, CanvasFrame, CanvasStore, CanvasSummary};
 pub use event_bus::{Event, EventBus, EventSubscriber, FileBackedBus, InMemoryBus};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{
     AgentConfig, AgentEndpoint, AgentError, AnnounceMessage, AssistantMessage, AuditEvent,
     AuditSink, ChannelEndpoint, ChatResult, ContentPart, ConversationMessage, DepthPolicy,
-    DepthRule, HookEvent, HookFailureMode, HookPolicy, HookRiskTier, HookSink, JobStatus, Lane,
-    LoopAction, MemoryEntry, MemoryStore, MergeStrategy, MetricsSink, Provider, QueueMode,
-    ReasoningConfig, ResearchPolicy, ResearchTrigger, RunId, StopReason, StreamChunk, StreamSink,
-    SummarizationConfig, Tool, ToolCallDelta, ToolContext, ToolDefinition, ToolResult,
-    ToolResultMessage, ToolSelectionMode, ToolSelector, ToolSummary, ToolUseRequest, UserMessage,
+    DepthRule, EphemeralMemory, HookEvent, HookFailureMode, HookPolicy, HookRiskTier, HookSink,
+    JobStatus, Lane, LoopAction, MemoryEntry, MemoryStore, MergeStrategy, MetricsSink, Provider,
+    QueueMode, ReasoningConfig, ResearchPolicy, ResearchTrigger, RunId, StopReason, StreamChunk,
+    StreamSink, StreamToolCallAccumulator, SummarizationConfig, Tool, ToolCallDelta, ToolContext,
+    ToolDefinition, ToolResult, ToolResultMessage, ToolSelectionMode, ToolSelector, ToolSummary,
+    ToolUseRequest, UserMessage,
 };
 pub use validation::validate_json;

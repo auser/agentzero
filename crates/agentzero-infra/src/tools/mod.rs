@@ -2,11 +2,13 @@
 mod agent_manage;
 #[cfg(feature = "tools-full")]
 mod config_manage;
+pub mod dynamic_tool;
 mod mcp;
 #[cfg(feature = "tools-full")]
 mod plugin_scaffold;
 #[cfg(feature = "tools-full")]
 mod skill_manage;
+pub mod tool_create;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
 
@@ -33,10 +35,11 @@ pub use agentzero_tools::{
 // ── Extended tier re-exports ─────────────────────────────────────────
 #[cfg(feature = "tools-extended")]
 pub use agentzero_tools::{
-    AgentsIpcTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool, CronListTool, CronPauseTool,
-    CronRemoveTool, CronResumeTool, CronUpdateTool, GitOperationsTool, HttpRequestTool,
-    ModelRoutingConfigTool, ProxyConfigTool, ScheduleTool, SopAdvanceTool, SopApproveTool,
-    SopExecuteTool, SopListTool, SopStatusTool, UrlValidationTool, WebFetchTool, WebSearchTool,
+    A2aTool, AgentsIpcTool, CanvasTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool,
+    CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, DiscordSearchTool,
+    GitOperationsTool, HttpRequestTool, ModelRoutingConfigTool, ProxyConfigTool, ScheduleTool,
+    SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, UrlValidationTool,
+    WebFetchTool, WebSearchTool,
 };
 #[cfg(all(feature = "tools-extended", feature = "document-tools"))]
 pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
@@ -46,10 +49,11 @@ pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
 pub use agent_manage::AgentManageTool;
 #[cfg(feature = "tools-full")]
 pub use agentzero_tools::{
-    BrowserOpenTool, BrowserTool, ComposioTool, DomainCreateTool, DomainInfoTool, DomainLearnTool,
-    DomainLessonsTool, DomainListTool, DomainSearchTool, DomainUpdateTool, DomainVerifyTool,
-    DomainWorkflowTool, HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool,
-    ImageGenTool, PushoverTool, TtsTool, VideoGenTool, WasmModuleTool, WasmToolExecTool,
+    BrowserOpenTool, BrowserTool, CodexCliTool, ComposioTool, DomainCreateTool, DomainInfoTool,
+    DomainLearnTool, DomainLessonsTool, DomainListTool, DomainSearchTool, DomainUpdateTool,
+    DomainVerifyTool, DomainWorkflowTool, GeminiCliTool, HardwareBoardInfoTool,
+    HardwareMemoryMapTool, HardwareMemoryReadTool, ImageGenTool, OpenCodeCliTool, PushoverTool,
+    TtsTool, VideoGenTool, WasmModuleTool, WasmToolExecTool,
 };
 #[cfg(feature = "tools-full")]
 pub use config_manage::ConfigManageTool;
@@ -67,7 +71,7 @@ pub fn default_tools(
     router: Option<ModelRouter>,
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    default_tools_inner(policy, router, delegate_agents, None)
+    default_tools_inner(policy, router, delegate_agents, None, None)
 }
 
 /// Build the default tool set, optionally with an `AgentStore` for the
@@ -78,7 +82,22 @@ pub fn default_tools_with_store(
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
     agent_store: Option<Arc<dyn AgentStoreApi>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    default_tools_inner(policy, router, delegate_agents, agent_store)
+    default_tools_inner(policy, router, delegate_agents, agent_store, None)
+}
+
+/// Build the full default tool set with all optional stores.
+///
+/// This is the most complete variant — accepts both an `AgentStore` and a
+/// `CanvasStore` so the gateway (or any caller that has both) can register
+/// every available tool in a single call.
+pub fn default_tools_full(
+    policy: &ToolSecurityPolicy,
+    router: Option<ModelRouter>,
+    delegate_agents: Option<HashMap<String, DelegateConfig>>,
+    agent_store: Option<Arc<dyn AgentStoreApi>>,
+    canvas_store: Option<Arc<agentzero_core::CanvasStore>>,
+) -> anyhow::Result<Vec<Box<dyn Tool>>> {
+    default_tools_inner(policy, router, delegate_agents, agent_store, canvas_store)
 }
 
 fn default_tools_inner(
@@ -86,6 +105,7 @@ fn default_tools_inner(
     router: Option<ModelRouter>,
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
     agent_store: Option<Arc<dyn AgentStoreApi>>,
+    canvas_store: Option<Arc<agentzero_core::CanvasStore>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
     // ── Core tier tools (always compiled) ────────────────────────────
     let mut tools: Vec<Box<dyn Tool>> = vec![
@@ -120,6 +140,7 @@ fn default_tools_inner(
     #[cfg(feature = "tools-extended")]
     {
         tools.push(Box::new(CliDiscoveryTool));
+        tools.push(Box::new(DiscordSearchTool));
         tools.push(Box::new(ProxyConfigTool));
         tools.push(Box::new(SopListTool));
         tools.push(Box::new(SopStatusTool));
@@ -179,6 +200,16 @@ fn default_tools_inner(
 
         if policy.enable_code_interpreter {
             tools.push(Box::new(CodeInterpreterTool::default()));
+        }
+
+        if policy.enable_a2a_tool {
+            tools.push(Box::new(A2aTool));
+        }
+
+        if policy.enable_canvas {
+            if let Some(ref store) = canvas_store {
+                tools.push(Box::new(CanvasTool::new(Arc::clone(store))));
+            }
         }
 
         if let Some(ref r) = router {
@@ -259,6 +290,18 @@ fn default_tools_inner(
             tools.push(Box::new(SkillManageTool));
             tools.push(Box::new(PluginScaffoldTool));
         }
+
+        if policy.enable_claude_code {
+            tools.push(Box::new(
+                agentzero_tools::claude_code::ClaudeCodeTool::default(),
+            ));
+        }
+
+        if policy.enable_cli_harness {
+            tools.push(Box::new(CodexCliTool::default()));
+            tools.push(Box::new(GeminiCliTool::default()));
+            tools.push(Box::new(OpenCodeCliTool::default()));
+        }
     }
 
     #[cfg(feature = "wasm-plugins")]
@@ -302,7 +345,7 @@ fn default_tools_inner(
 
     // Suppress unused-variable warnings when tier features are disabled.
     #[cfg(not(feature = "tools-extended"))]
-    let _ = router;
+    let _ = (router, canvas_store);
     #[cfg(not(feature = "tools-full"))]
     let _ = agent_store;
 
@@ -327,7 +370,7 @@ pub fn default_tools_with_depth(
     depth: u8,
     depth_policy: &DepthPolicy,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    let all_tools = default_tools_inner(policy, router, delegate_agents, None)?;
+    let all_tools = default_tools_inner(policy, router, delegate_agents, None, None)?;
 
     if depth_policy.rules.is_empty() {
         return Ok(all_tools);

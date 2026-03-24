@@ -45,3 +45,5 @@ ui/.vite/
 
 # Keep nextest/cargo config tracked
 !.config/
+conversation-report.md
+debate-verdict.md

@@ -3,7 +3,7 @@ import {
   LayoutDashboard, MessageSquare, Bot, PlayCircle,
   Wrench, Radio, Cpu, Settings, Brain,
   CalendarClock, CheckSquare, Activity, AlertTriangle,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, GitBranch, PaintbrushIcon, LayoutTemplate,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -16,6 +16,8 @@ import { useQueryClient } from '@tanstack/react-query'
 
 const navItems = [
   { to: '/dashboard',  label: 'Dashboard',  icon: LayoutDashboard },
+  { to: '/workflows',  label: 'Workflows',  icon: GitBranch },
+  { to: '/templates',  label: 'Templates',  icon: LayoutTemplate },
   { to: '/chat',       label: 'Chat',        icon: MessageSquare },
   { to: '/agents',     label: 'Agents',      icon: Bot },
   { to: '/runs',       label: 'Runs',        icon: PlayCircle },
@@ -27,6 +29,7 @@ const navItems = [
   { to: '/schedule',   label: 'Schedule',    icon: CalendarClock },
   { to: '/approvals',  label: 'Approvals',   icon: CheckSquare },
   { to: '/events',     label: 'Events',      icon: Activity },
+  { to: '/canvas',     label: 'Canvas',      icon: PaintbrushIcon },
 ] as const
 
 export function Sidebar() {

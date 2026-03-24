@@ -4,8 +4,33 @@ use crate::token_store::save_paired_tokens;
 use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
+use agentzero_core::canvas::CanvasStore;
 use agentzero_core::{EventBus, MemoryStore};
-use agentzero_orchestrator::{AgentStore, JobStore, PresenceStore};
+use agentzero_orchestrator::{
+    AgentStore, JobStore, NodeStatus, PresenceStore, TemplateStore, WorkflowStore,
+};
+
+/// Type alias for the gate resume sender map to avoid clippy type_complexity.
+pub(crate) type GateSenderMap =
+    Arc<Mutex<HashMap<(String, String), tokio::sync::oneshot::Sender<String>>>>;
+
+use serde::Serialize;
+
+/// Snapshot of a workflow run's state, updated in real-time by the executor.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct WorkflowRunState {
+    pub run_id: String,
+    pub workflow_id: String,
+    pub status: String,
+    pub node_statuses: HashMap<String, NodeStatus>,
+    /// Per-node output text (populated on completion).
+    pub node_outputs: HashMap<String, String>,
+    /// Flattened outputs: "node_id:port" → value.
+    pub outputs: HashMap<String, serde_json::Value>,
+    pub started_at: u64,
+    pub finished_at: Option<u64>,
+    pub error: Option<String>,
+}
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::{
     collections::{HashMap, HashSet},
@@ -79,6 +104,17 @@ pub(crate) struct GatewayState {
     pub(crate) mcp_server: Option<Arc<agentzero_infra::mcp_server::McpServer>>,
     /// A2A task store for Agent-to-Agent protocol.
     pub(crate) a2a_tasks: crate::a2a::A2aTaskStore,
+    /// Canvas store for live canvas rendering.
+    pub(crate) canvas_store: Option<Arc<CanvasStore>>,
+    /// Workflow store for visual workflow definitions.
+    pub(crate) workflow_store: Option<Arc<WorkflowStore>>,
+    /// Template store for reusable workflow templates.
+    pub(crate) template_store: Option<Arc<TemplateStore>>,
+    /// In-flight workflow runs — updated in real-time as nodes execute.
+    pub(crate) workflow_runs: Arc<Mutex<HashMap<String, WorkflowRunState>>>,
+    /// Gate resume channels: `(run_id, node_id) → oneshot::Sender<decision>`.
+    /// Used by the resume endpoint to unblock suspended gate nodes.
+    pub(crate) gate_senders: GateSenderMap,
 }
 
 impl GatewayState {
@@ -130,7 +166,33 @@ impl GatewayState {
             agent_store: None,
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
+            canvas_store: None,
+            workflow_store: None,
+            template_store: None,
+            workflow_runs: Arc::new(Mutex::new(HashMap::new())),
+            gate_senders: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Set the canvas store for live canvas rendering.
+    #[allow(dead_code)]
+    pub(crate) fn with_canvas_store(mut self, store: Arc<CanvasStore>) -> Self {
+        self.canvas_store = Some(store);
+        self
+    }
+
+    /// Set the workflow store for visual workflow definitions.
+    #[allow(dead_code)]
+    pub(crate) fn with_workflow_store(mut self, store: Arc<WorkflowStore>) -> Self {
+        self.workflow_store = Some(store);
+        self
+    }
+
+    /// Set the template store for reusable workflow templates.
+    #[allow(dead_code)]
+    pub(crate) fn with_template_store(mut self, store: Arc<TemplateStore>) -> Self {
+        self.template_store = Some(store);
+        self
     }
 
     /// Set the distributed event bus for real-time event streaming.
@@ -346,6 +408,11 @@ impl GatewayState {
             agent_store: None,
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
+            canvas_store: None,
+            workflow_store: None,
+            template_store: None,
+            workflow_runs: Arc::new(Mutex::new(HashMap::new())),
+            gate_senders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -391,6 +458,11 @@ impl GatewayState {
             agent_store: None,
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
+            canvas_store: None,
+            workflow_store: None,
+            template_store: None,
+            workflow_runs: Arc::new(Mutex::new(HashMap::new())),
+            gate_senders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }

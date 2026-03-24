@@ -108,7 +108,12 @@ pub enum MessageRole {
 }
 
 /// A content part within a message.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The primary tag field is `"type"` for backward compatibility, but
+/// `"kind"` is also accepted during deserialization for forward compat
+/// with newer A2A spec drafts. We achieve this by implementing a custom
+/// deserializer that checks both `"kind"` and `"type"`.
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Part {
     #[serde(rename = "text")]
@@ -119,6 +124,44 @@ pub enum Part {
         #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
     },
+}
+
+impl<'de> serde::Deserialize<'de> for Part {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut map = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+
+        // Accept "kind" as an alias for "type" during deserialization.
+        if !map.contains_key("type") {
+            if let Some(kind_val) = map.remove("kind") {
+                map.insert("type".to_string(), kind_val);
+            }
+        }
+
+        let value = serde_json::Value::Object(map);
+
+        // Re-use a helper enum with the standard serde tag for actual parsing.
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "camelCase")]
+        enum PartHelper {
+            #[serde(rename = "text")]
+            Text { text: String },
+            #[serde(rename = "data")]
+            Data {
+                data: String,
+                #[serde(default)]
+                mime_type: Option<String>,
+            },
+        }
+
+        let helper: PartHelper = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        match helper {
+            PartHelper::Text { text } => Ok(Part::Text { text }),
+            PartHelper::Data { data, mime_type } => Ok(Part::Data { data, mime_type }),
+        }
+    }
 }
 
 impl Part {
@@ -260,6 +303,26 @@ mod tests {
         assert_eq!(user, MessageRole::User);
         let agent: MessageRole = serde_json::from_str("\"agent\"").expect("deserialize");
         assert_eq!(agent, MessageRole::Agent);
+    }
+
+    #[test]
+    fn part_deserializes_with_kind_alias() {
+        let json = serde_json::json!({"kind": "text", "text": "hello via kind"});
+        let part: Part = serde_json::from_value(json).expect("should deserialize kind alias");
+        match part {
+            Part::Text { text } => assert_eq!(text, "hello via kind"),
+            _ => panic!("expected Text part"),
+        }
+    }
+
+    #[test]
+    fn part_deserializes_with_type_tag() {
+        let json = serde_json::json!({"type": "text", "text": "hello via type"});
+        let part: Part = serde_json::from_value(json).expect("should deserialize type tag");
+        match part {
+            Part::Text { text } => assert_eq!(text, "hello via type"),
+            _ => panic!("expected Text part"),
+        }
     }
 
     #[test]

@@ -82,6 +82,12 @@ pub enum Commands {
         /// Clear all paired gateway tokens and generate a fresh pairing code.
         #[arg(long)]
         new_pairing: bool,
+        /// Serve the embedded web UI at the root path.
+        #[arg(long)]
+        ui: bool,
+        /// Disable authentication (open mode). For local development only.
+        #[arg(long)]
+        no_auth: bool,
     },
     /// Manage the background daemon process.
     Daemon {
@@ -302,6 +308,22 @@ pub enum Commands {
     Template {
         #[command(subcommand)]
         command: TemplateCommands,
+    },
+    /// Manage and execute visual workflows.
+    Workflow {
+        #[command(subcommand)]
+        command: crate::commands::workflow::WorkflowCommands,
+    },
+    /// Decompose a goal into agents and execute as a swarm.
+    Swarm {
+        /// Natural language goal to decompose and execute.
+        goal: String,
+        /// Path to a pre-generated plan JSON file.
+        #[arg(long, short)]
+        plan: Option<std::path::PathBuf>,
+        /// Sandbox isolation level: worktree, container, or microvm.
+        #[arg(long, default_value = "worktree")]
+        sandbox: String,
     },
     /// Inspect registered tool definitions and schemas.
     Tools {
@@ -588,6 +610,15 @@ pub enum DaemonCommands {
     },
     /// Stop the running daemon.
     Stop,
+    /// Stop and restart the daemon.
+    Restart {
+        /// Host interface to bind (default: previous or 127.0.0.1).
+        #[arg(long)]
+        host: Option<String>,
+        /// Port to bind (default: previous or 8080).
+        #[arg(short, long)]
+        port: Option<u16>,
+    },
     /// Show daemon status.
     Status {
         /// Emit machine-readable JSON output.
@@ -984,6 +1015,9 @@ pub enum AuthCommands {
         /// Use OAuth device-code flow (planned).
         #[arg(long)]
         device_code: bool,
+        /// Port for the OAuth callback listener (default: provider-specific).
+        #[arg(long)]
+        port: Option<u16>,
     },
     /// Complete OAuth by pasting redirect URL or auth code.
     PasteRedirect {
@@ -1119,6 +1153,21 @@ pub enum MigrateCommands {
         /// Validate and preview migration without writing files.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Import config, memory, and workspace from an OpenClaw installation.
+    Openclaw {
+        /// Override auto-discovery with an explicit source path.
+        #[arg(long)]
+        source: Option<String>,
+        /// Preview what would be imported without writing files.
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip memory import (only convert config).
+        #[arg(long)]
+        skip_memory: bool,
+        /// Skip config import (only import memory).
+        #[arg(long)]
+        skip_config: bool,
     },
 }
 

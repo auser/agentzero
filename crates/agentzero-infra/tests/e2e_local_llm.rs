@@ -153,6 +153,9 @@ async fn e2e_basic_completion() {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     };
 
     let output = run_agent_with_runtime(execution, workspace_root(), "Say hello.".to_string())
@@ -183,6 +186,9 @@ async fn e2e_agent_with_echo_tool() {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     };
 
     let output = run_agent_with_runtime(
@@ -225,6 +231,9 @@ async fn e2e_multi_turn_memory() {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     };
 
     let output1 = run_agent_with_runtime(
@@ -265,6 +274,9 @@ async fn e2e_multi_turn_memory() {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     };
 
     let output2 =

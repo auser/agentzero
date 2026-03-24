@@ -102,6 +102,24 @@ AgentZero provides three layers of observability:
 
 **Circuit Breaker** — Each Anthropic provider instance has a circuit breaker that tracks consecutive failures and transitions through closed/open/half-open states. State transitions are logged at `info!` level. The `CircuitBreakerStatus` struct exposes `state_label()` and `failure_count()` for health checks.
 
+## Self-Evolving Runtime
+
+AgentZero grows smarter over time through three persistence mechanisms:
+
+| Store | File | What It Remembers |
+|---|---|---|
+| **Dynamic Tools** | `.agentzero/dynamic-tools.json` | Tools created at runtime (shell, HTTP, LLM, composite strategies) |
+| **Agent Store** | `.agentzero/agents.json` | Persistent agents defined from natural language |
+| **Recipe Store** | `.agentzero/tool-recipes.json` | Successful tool combos indexed by goal keywords |
+
+All stores are encrypted at rest via `EncryptedJsonStore`. The system loads them at startup and updates them during execution. This means:
+
+- A tool created in session 1 is available in session 5
+- An agent defined last week routes messages automatically this week
+- A tool combo that worked for "video summarization" boosts the right tools for "podcast transcription"
+
+The `GoalPlanner` decomposes natural language goals into multi-agent DAGs, the `HintedToolSelector` combines planner hints + recipe matches + keyword matching, and the `ToolSource` trait enables mid-session tool discovery.
+
 ## See Also
 
 - [Security Boundaries](/agentzero/security/boundaries/) — Layered defense-in-depth model

@@ -379,6 +379,61 @@ impl MemoryStore for TursoMemoryStore {
         Ok(out)
     }
 
+    async fn recent_for_timerange(
+        &self,
+        since: Option<i64>,
+        until: Option<i64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let conn = self.conn.lock().await;
+        let now = now_epoch_secs();
+
+        // Build query with optional time bounds.
+        let since_clause = if since.is_some() {
+            "AND created_at >= ?3"
+        } else {
+            ""
+        };
+        let until_clause = match (since.is_some(), until.is_some()) {
+            (true, true) => "AND created_at <= ?4",
+            (false, true) => "AND created_at <= ?3",
+            _ => "",
+        };
+        let sql = format!(
+            "SELECT role, content, privacy_boundary, source_channel, conversation_id,
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id
+             FROM memory
+             WHERE (expires_at IS NULL OR expires_at > ?1)
+               {since_clause}
+               {until_clause}
+             ORDER BY id DESC LIMIT ?2"
+        );
+
+        let mut rows = match (since, until) {
+            (Some(s), Some(u)) => {
+                conn.query(&sql, libsql::params![now, limit as i64, s, u])
+                    .await
+            }
+            (Some(s), None) => {
+                conn.query(&sql, libsql::params![now, limit as i64, s])
+                    .await
+            }
+            (None, Some(u)) => {
+                conn.query(&sql, libsql::params![now, limit as i64, u])
+                    .await
+            }
+            (None, None) => conn.query(&sql, libsql::params![now, limit as i64]).await,
+        }
+        .context("failed to query time-range entries from Turso")?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.context("failed to read Turso row")? {
+            out.push(turso_row_to_entry(&row)?);
+        }
+        out.reverse();
+        Ok(out)
+    }
+
     async fn gc_expired(&self) -> anyhow::Result<u64> {
         let conn = self.conn.lock().await;
         let now = now_epoch_secs();

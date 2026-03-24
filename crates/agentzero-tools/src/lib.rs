@@ -82,7 +82,9 @@ pub fn tool_tier(name: &str) -> ToolTier {
         | "process"
         | "image_info"
         | "pdf_read"
-        | "screenshot" => ToolTier::Core,
+        | "screenshot"
+        | "conversation_timerange"
+        | "semantic_recall" => ToolTier::Core,
 
         // --- Extended tier: networking, git, cron, approval, IPC ---
         "web_search"
@@ -105,10 +107,13 @@ pub fn tool_tier(name: &str) -> ToolTier {
         | "sop_approve"
         | "sop_execute"
         | "cli_discovery"
+        | "discord_search"
         | "proxy_config"
         | "model_routing_config"
         | "docx_read"
-        | "html_extract" => ToolTier::Extended,
+        | "html_extract"
+        | "a2a"
+        | "canvas" => ToolTier::Extended,
 
         // --- Full tier: everything else ---
         _ => ToolTier::Full,
@@ -119,6 +124,7 @@ pub fn tool_tier(name: &str) -> ToolTier {
 pub mod apply_patch;
 pub mod autonomy;
 pub mod content_search;
+pub mod conversation_timerange;
 pub mod converse;
 pub mod delegate;
 pub mod delegate_coordination_status;
@@ -134,12 +140,17 @@ pub mod semantic_recall;
 pub mod shell;
 pub mod shell_parse;
 pub mod subagent_tools;
+pub mod task_manager;
 pub mod task_plan;
 pub mod write_file;
 
 // ── Extended tier modules (tools-extended or tools-full) ─────────────
 #[cfg(feature = "tools-extended")]
+pub mod a2a;
+#[cfg(feature = "tools-extended")]
 pub mod agents_ipc;
+#[cfg(feature = "tools-extended")]
+pub mod canvas;
 #[cfg(feature = "tools-extended")]
 pub mod cli_discovery;
 #[cfg(feature = "tools-extended")]
@@ -148,6 +159,8 @@ pub mod code_interpreter;
 pub mod cron_store;
 #[cfg(feature = "tools-extended")]
 pub mod cron_tools;
+#[cfg(feature = "tools-extended")]
+pub mod discord_search;
 #[cfg(all(feature = "tools-extended", feature = "document-tools"))]
 pub mod docx_read;
 #[cfg(feature = "tools-extended")]
@@ -162,6 +175,8 @@ pub mod model_routing_config;
 pub mod proxy_config;
 #[cfg(feature = "tools-extended")]
 pub mod schedule;
+#[cfg(feature = "tools-extended")]
+pub mod sop;
 #[cfg(feature = "tools-extended")]
 pub mod sop_tools;
 #[cfg(feature = "tools-extended")]
@@ -180,15 +195,23 @@ pub mod browser;
 #[cfg(feature = "tools-full")]
 pub mod browser_open;
 #[cfg(feature = "tools-full")]
+pub mod claude_code;
+#[cfg(feature = "tools-full")]
+pub mod codex_cli;
+#[cfg(feature = "tools-full")]
 pub mod composio;
 #[cfg(feature = "tools-full")]
 pub mod domain;
+#[cfg(feature = "tools-full")]
+pub mod gemini_cli;
 #[cfg(feature = "tools-full")]
 pub mod hardware;
 #[cfg(feature = "tools-full")]
 pub mod hardware_tools;
 #[cfg(feature = "tools-full")]
 pub mod media_gen;
+#[cfg(feature = "tools-full")]
+pub mod opencode_cli;
 #[cfg(feature = "tools-full")]
 pub mod pushover;
 #[cfg(feature = "tools-full")]
@@ -214,12 +237,17 @@ pub use read_file::{ReadFilePolicy, ReadFileTool};
 pub use screenshot::ScreenshotTool;
 pub use shell::{ShellPolicy, ShellTool};
 pub use subagent_tools::{SubAgentListTool, SubAgentManageTool, SubAgentSpawnTool};
+pub use task_manager::TaskManager;
 pub use task_plan::TaskPlanTool;
 pub use write_file::{WriteFilePolicy, WriteFileTool};
 
 // ── Extended tier re-exports ─────────────────────────────────────────
 #[cfg(feature = "tools-extended")]
+pub use a2a::A2aTool;
+#[cfg(feature = "tools-extended")]
 pub use agents_ipc::AgentsIpcTool;
+#[cfg(feature = "tools-extended")]
+pub use canvas::CanvasTool;
 #[cfg(feature = "tools-extended")]
 pub use cli_discovery::CliDiscoveryTool;
 #[cfg(feature = "tools-extended")]
@@ -228,6 +256,8 @@ pub use code_interpreter::{CodeInterpreterConfig, CodeInterpreterTool};
 pub use cron_tools::{
     CronAddTool, CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool,
 };
+#[cfg(feature = "tools-extended")]
+pub use discord_search::DiscordSearchTool;
 #[cfg(all(feature = "tools-extended", feature = "document-tools"))]
 pub use docx_read::DocxReadTool;
 #[cfg(feature = "tools-extended")]
@@ -239,7 +269,7 @@ pub use http_request::HttpRequestTool;
 #[cfg(feature = "tools-extended")]
 pub use model_routing_config::ModelRoutingConfigTool;
 #[cfg(feature = "tools-extended")]
-pub use proxy_config::ProxyConfigTool;
+pub use proxy_config::{ProxyConfigTool, ProxySettings};
 #[cfg(feature = "tools-extended")]
 pub use schedule::ScheduleTool;
 #[cfg(feature = "tools-extended")]
@@ -282,6 +312,8 @@ pub use browser::BrowserTool;
 #[cfg(feature = "tools-full")]
 pub use browser_open::BrowserOpenTool;
 #[cfg(feature = "tools-full")]
+pub use codex_cli::CodexCliTool;
+#[cfg(feature = "tools-full")]
 pub use composio::ComposioTool;
 #[cfg(feature = "tools-full")]
 pub use domain::{
@@ -289,9 +321,13 @@ pub use domain::{
     DomainSearchTool, DomainUpdateTool, DomainVerifyTool, DomainWorkflowTool,
 };
 #[cfg(feature = "tools-full")]
+pub use gemini_cli::GeminiCliTool;
+#[cfg(feature = "tools-full")]
 pub use hardware_tools::{HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool};
 #[cfg(feature = "tools-full")]
 pub use media_gen::{ImageGenTool, TtsTool, VideoGenTool};
+#[cfg(feature = "tools-full")]
+pub use opencode_cli::OpenCodeCliTool;
 #[cfg(feature = "tools-full")]
 pub use pushover::PushoverTool;
 #[cfg(feature = "tools-full")]
@@ -343,6 +379,16 @@ pub struct ToolSecurityPolicy {
     pub wasm_global_plugin_dir: Option<PathBuf>,
     pub wasm_project_plugin_dir: Option<PathBuf>,
     pub wasm_dev_plugin_dir: Option<PathBuf>,
+    /// Enable A2A (Agent-to-Agent) protocol tool for dynamic agent discovery and messaging.
+    pub enable_a2a_tool: bool,
+    /// Enable canvas tool for live rich content rendering.
+    pub enable_canvas: bool,
+    /// Enable Claude Code delegation tool (spawns `claude` CLI as subprocess).
+    pub enable_claude_code: bool,
+    /// Enable CLI harness tools (Codex, Gemini, OpenCode CLI delegation).
+    pub enable_cli_harness: bool,
+    /// Enable dynamic tool creation at runtime (tool_create tool).
+    pub enable_dynamic_tools: bool,
 }
 
 impl ToolSecurityPolicy {
@@ -417,6 +463,11 @@ impl ToolSecurityPolicy {
             wasm_global_plugin_dir: None,
             wasm_project_plugin_dir: None,
             wasm_dev_plugin_dir: None,
+            enable_a2a_tool: false,
+            enable_canvas: false,
+            enable_claude_code: false,
+            enable_cli_harness: false,
+            enable_dynamic_tools: false,
         }
     }
 }
@@ -456,6 +507,8 @@ mod tests {
             "image_info",
             "pdf_read",
             "screenshot",
+            "conversation_timerange",
+            "semantic_recall",
         ];
         for name in &core_tools {
             assert_eq!(
@@ -489,8 +542,11 @@ mod tests {
             "sop_approve",
             "sop_execute",
             "cli_discovery",
+            "discord_search",
             "proxy_config",
             "model_routing_config",
+            "a2a",
+            "canvas",
         ];
         for name in &extended_tools {
             assert_eq!(

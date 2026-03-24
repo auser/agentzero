@@ -21,6 +21,9 @@ async fn runtime_exec_uses_testkit_components_success_path() {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("."), "hello".to_string())
@@ -46,6 +49,9 @@ async fn runtime_exec_uses_testkit_components_negative_path() {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("."), "hello".to_string())

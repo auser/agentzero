@@ -40,6 +40,11 @@ mod impl_ {
             }
         }
 
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         fn api_url(&self, path: &str) -> String {
             format!("{}{}", self.base_url, path)
         }
@@ -130,6 +135,7 @@ mod impl_ {
                             timestamp: helpers::now_epoch_secs(),
                             thread_ts: None,
                             privacy_boundary: String::new(),
+                            attachments: Vec::new(),
                         };
                         if tx.send(channel_msg).await.is_err() {
                             return Ok(());

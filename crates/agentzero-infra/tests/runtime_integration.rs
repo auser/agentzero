@@ -50,6 +50,9 @@ fn static_execution(response: &str) -> RuntimeExecution {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     }
 }
 
@@ -73,6 +76,9 @@ fn streaming_execution(response: &str) -> RuntimeExecution {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     }
 }
 
@@ -173,6 +179,9 @@ async fn run_agent_once_records_audit_events() {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "test".to_string())
@@ -204,6 +213,9 @@ async fn run_agent_once_provider_error_propagates() {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hello".to_string())
@@ -408,6 +420,9 @@ async fn full_loop_agent_with_tool_call_round_trip() {
         cost_config: Default::default(),
         data_dir: std::path::PathBuf::from("/tmp"),
         tool_selector: None,
+        source_channel: None,
+        sender_id: None,
+        dynamic_registry: None,
     };
 
     let output = run_agent_with_runtime(

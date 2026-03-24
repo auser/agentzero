@@ -8,16 +8,20 @@ use tokio::fs;
 
 const PROXY_FILE: &str = ".agentzero/proxy.json";
 
+/// Proxy configuration for HTTP/HTTPS/SOCKS protocols.
+///
+/// Used both for global proxy settings (stored in `proxy.json`) and
+/// per-channel proxy overrides in `ChannelInstanceConfig`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct ProxySettings {
+pub struct ProxySettings {
     #[serde(default)]
-    http_proxy: Option<String>,
+    pub http_proxy: Option<String>,
     #[serde(default)]
-    https_proxy: Option<String>,
+    pub https_proxy: Option<String>,
     #[serde(default)]
-    socks_proxy: Option<String>,
+    pub socks_proxy: Option<String>,
     #[serde(default)]
-    no_proxy: Vec<String>,
+    pub no_proxy: Vec<String>,
 }
 
 impl ProxySettings {
@@ -44,6 +48,38 @@ impl ProxySettings {
         fs::write(&path, data)
             .await
             .context("failed to write proxy config")
+    }
+
+    /// Merge a channel-level proxy override with a global fallback.
+    ///
+    /// For each field, the channel value takes precedence if set; otherwise
+    /// the global value is used. The `no_proxy` list is taken from channel
+    /// if non-empty, otherwise from global.
+    pub fn merge(channel: Option<&ProxySettings>, global: &ProxySettings) -> ProxySettings {
+        match channel {
+            None => global.clone(),
+            Some(ch) => ProxySettings {
+                http_proxy: ch.http_proxy.clone().or_else(|| global.http_proxy.clone()),
+                https_proxy: ch
+                    .https_proxy
+                    .clone()
+                    .or_else(|| global.https_proxy.clone()),
+                socks_proxy: ch
+                    .socks_proxy
+                    .clone()
+                    .or_else(|| global.socks_proxy.clone()),
+                no_proxy: if ch.no_proxy.is_empty() {
+                    global.no_proxy.clone()
+                } else {
+                    ch.no_proxy.clone()
+                },
+            },
+        }
+    }
+
+    /// Returns `true` if any proxy is configured.
+    pub fn is_configured(&self) -> bool {
+        self.http_proxy.is_some() || self.https_proxy.is_some() || self.socks_proxy.is_some()
     }
 }
 
@@ -351,6 +387,61 @@ mod tests {
         assert!(err.to_string().contains("unknown protocol"));
 
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn proxy_merge_channel_overrides_global() {
+        let global = ProxySettings {
+            http_proxy: Some("http://global:8080".into()),
+            https_proxy: Some("https://global:8443".into()),
+            socks_proxy: None,
+            no_proxy: vec!["localhost".into()],
+        };
+        let channel = ProxySettings {
+            http_proxy: Some("http://channel:9090".into()),
+            https_proxy: None,
+            socks_proxy: Some("socks5://channel:1080".into()),
+            no_proxy: vec![],
+        };
+        let merged = ProxySettings::merge(Some(&channel), &global);
+        assert_eq!(merged.http_proxy.as_deref(), Some("http://channel:9090"));
+        assert_eq!(merged.https_proxy.as_deref(), Some("https://global:8443"));
+        assert_eq!(merged.socks_proxy.as_deref(), Some("socks5://channel:1080"));
+        assert_eq!(merged.no_proxy, vec!["localhost"]);
+    }
+
+    #[test]
+    fn proxy_merge_channel_no_proxy_overrides_when_nonempty() {
+        let global = ProxySettings {
+            no_proxy: vec!["localhost".into(), "127.0.0.1".into()],
+            ..Default::default()
+        };
+        let channel = ProxySettings {
+            no_proxy: vec!["internal.corp".into()],
+            ..Default::default()
+        };
+        let merged = ProxySettings::merge(Some(&channel), &global);
+        assert_eq!(merged.no_proxy, vec!["internal.corp"]);
+    }
+
+    #[test]
+    fn proxy_merge_none_channel_returns_global() {
+        let global = ProxySettings {
+            http_proxy: Some("http://global:8080".into()),
+            ..Default::default()
+        };
+        let merged = ProxySettings::merge(None, &global);
+        assert_eq!(merged.http_proxy.as_deref(), Some("http://global:8080"));
+    }
+
+    #[test]
+    fn proxy_is_configured() {
+        assert!(!ProxySettings::default().is_configured());
+        assert!(ProxySettings {
+            http_proxy: Some("http://x".into()),
+            ..Default::default()
+        }
+        .is_configured());
     }
 
     #[tokio::test]

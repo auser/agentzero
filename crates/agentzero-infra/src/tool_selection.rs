@@ -294,6 +294,90 @@ fn parse_tool_names_from_response(response: &str, available_tools: &[ToolSummary
 }
 
 // ---------------------------------------------------------------------------
+// HintedToolSelector — explicit hints + keyword fallback
+// ---------------------------------------------------------------------------
+
+/// Foundational tools always included regardless of hints.
+const ALWAYS_INCLUDE: &[&str] = &["read_file", "shell", "content_search"];
+
+/// Selects tools using explicit name hints (from goal decomposition) combined
+/// with recipe-matched tools (from catalog learning) and keyword-based fallback.
+///
+/// Selection priority: explicit hints → recipe-matched tools → keyword fallback.
+/// When hints are empty and no recipes match, delegates entirely to keyword fallback.
+pub struct HintedToolSelector {
+    /// Tool names suggested by the goal planner for this agent node.
+    pub hints: Vec<String>,
+    /// Optional recipe store for catalog learning.
+    pub recipes: Option<std::sync::Arc<std::sync::Mutex<crate::tool_recipes::RecipeStore>>>,
+    /// Fallback selector for keyword-based matching.
+    pub fallback: KeywordToolSelector,
+}
+
+#[async_trait]
+impl ToolSelector for HintedToolSelector {
+    async fn select(
+        &self,
+        task_description: &str,
+        available_tools: &[ToolSummary],
+    ) -> anyhow::Result<Vec<String>> {
+        if self.hints.is_empty() {
+            return self
+                .fallback
+                .select(task_description, available_tools)
+                .await;
+        }
+
+        let available_names: HashSet<&str> =
+            available_tools.iter().map(|t| t.name.as_str()).collect();
+
+        // 1. Exact hint matches against available tools.
+        let mut selected: Vec<String> = Vec::new();
+        for hint in &self.hints {
+            for tool in available_tools {
+                if (tool.name == *hint
+                    || tool.name.contains(hint.as_str())
+                    || hint.contains(tool.name.as_str()))
+                    && !selected.contains(&tool.name)
+                {
+                    selected.push(tool.name.clone());
+                }
+            }
+        }
+
+        // 2. Recipe-matched tools (catalog learning).
+        if let Some(ref recipes) = self.recipes {
+            if let Ok(store) = recipes.lock() {
+                let suggested = store.suggest_tools(task_description, 3);
+                for name in suggested {
+                    if available_names.contains(name.as_str()) && !selected.contains(&name) {
+                        selected.push(name);
+                    }
+                }
+            }
+        }
+
+        // 3. Always-include foundational tools.
+        for &name in ALWAYS_INCLUDE {
+            if available_names.contains(name) && !selected.contains(&name.to_string()) {
+                selected.push(name.to_string());
+            }
+        }
+
+        // 4. Augment with keyword matches using a boosted query.
+        let boosted = format!("{task_description} {}", self.hints.join(" "));
+        let keyword_results = self.fallback.select(&boosted, available_tools).await?;
+        for name in keyword_results {
+            if !selected.contains(&name) {
+                selected.push(name);
+            }
+        }
+
+        Ok(selected)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -501,5 +585,98 @@ mod tests {
         let selector = AiToolSelector::new(Box::new(NeverCalledProvider), 10);
         let result = selector.select("anything", &[]).await.expect("select");
         assert!(result.is_empty());
+    }
+
+    // ── HintedToolSelector tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn hinted_empty_hints_delegates_to_fallback() {
+        let selector = HintedToolSelector {
+            hints: vec![],
+            recipes: None,
+            fallback: KeywordToolSelector::default(),
+        };
+        let tools = test_tools();
+        let result = selector
+            .select("read a file from disk", &tools)
+            .await
+            .expect("select");
+        assert!(result.contains(&"read_file".to_string()));
+    }
+
+    #[tokio::test]
+    async fn hinted_exact_match_returns_hinted_tools_first() {
+        let selector = HintedToolSelector {
+            hints: vec!["web_search".to_string(), "http_request".to_string()],
+            recipes: None,
+            fallback: KeywordToolSelector::default(),
+        };
+        let tools = test_tools();
+        let result = selector
+            .select("find information online", &tools)
+            .await
+            .expect("select");
+        // web_search should be in the result because it was hinted.
+        assert!(result.contains(&"web_search".to_string()));
+        assert!(result.contains(&"http_request".to_string()));
+        // web_search should appear before non-hinted tools.
+        let ws_pos = result
+            .iter()
+            .position(|n| n == "web_search")
+            .expect("web_search present");
+        // git_commit is not hinted, so it should come after if present at all.
+        if let Some(gc_pos) = result.iter().position(|n| n == "git_commit") {
+            assert!(
+                ws_pos < gc_pos,
+                "hinted tool should rank before non-hinted tool"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn hinted_always_includes_foundational_tools() {
+        let selector = HintedToolSelector {
+            hints: vec!["web_search".to_string()],
+            recipes: None,
+            fallback: KeywordToolSelector::default(),
+        };
+        let mut tools = test_tools();
+        tools.push(ToolSummary {
+            name: "read_file".to_string(),
+            description: "Read a file from the filesystem".to_string(),
+        });
+        let result = selector
+            .select("search the web", &tools)
+            .await
+            .expect("select");
+        // read_file should always be included even though it wasn't hinted.
+        assert!(
+            result.contains(&"read_file".to_string()),
+            "foundational tool read_file should always be included"
+        );
+        // shell should be included if available.
+        assert!(
+            result.contains(&"shell".to_string()),
+            "foundational tool shell should always be included"
+        );
+    }
+
+    #[tokio::test]
+    async fn hinted_substring_match() {
+        let selector = HintedToolSelector {
+            hints: vec!["git".to_string()],
+            recipes: None,
+            fallback: KeywordToolSelector::default(),
+        };
+        let tools = test_tools();
+        let result = selector
+            .select("commit changes", &tools)
+            .await
+            .expect("select");
+        // "git" hint should match "git_commit" via substring.
+        assert!(
+            result.contains(&"git_commit".to_string()),
+            "substring hint 'git' should match 'git_commit'"
+        );
     }
 }

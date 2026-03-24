@@ -1,11 +1,11 @@
 ---
 title: Overview
-description: AgentZero is a lightweight, security-first agent runtime and CLI built entirely in Rust with clean crate boundaries and trait-driven extensibility.
+description: "Fast, small, and fully autonomous AI personal assistant infrastructure. ANY OS, ANY PLATFORM — deploy anywhere, swap anything."
 ---
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-AgentZero is a **lightweight, security-first agent runtime and CLI** built entirely in Rust. It provides a single-binary runtime with streaming output, trait-driven extensibility, encrypted storage, and fail-closed security defaults.
+AgentZero is **fast, small, and fully autonomous AI personal assistant infrastructure**, built entirely in Rust. ANY OS, ANY PLATFORM — deploy anywhere, swap anything.
 
 :::note
 AgentZero is under active development. The architecture is stable but individual features may change between releases.
@@ -13,31 +13,32 @@ AgentZero is under active development. The architecture is stable but individual
 
 ## Why AgentZero
 
-- **Security that ships with the product.** Scoped tools, allowlists, audit logging, and encrypted storage are built into the core — not bolted on as plugins. Every agent runs with fail-closed defaults from day one.
-- **Zero vendor lock-in.** Swap LLM providers, memory backends, tools, and communication channels through clean trait interfaces. Your agent logic stays the same whether you're running GPT-4, Claude, or a local model.
-- **One binary, deploy anywhere.** A single native Rust binary gives you the full runtime — CLI, gateway, daemon, and tools. No containers, no interpreters, no external dependencies. Cold starts in milliseconds.
-- **Built for production.** OTP-gated tool execution, secret redaction, audit trails, and an emergency stop give you the operational controls that real deployments demand.
+- **Deploy anywhere.** A single native binary runs on Linux, macOS, and Windows — 8 platform targets, CI-tested on all three OS families. Docker multi-arch for containers. 4.5 MB embedded binary for resource-constrained devices.
+- **Swap anything.** LLM providers, storage backends, tools, and channels are all swappable through trait interfaces. 37+ providers, 25+ channels, 58+ tools. Your agent logic stays the same.
+- **Fully autonomous.** Three autonomy levels, autopilot with cap gates and missions, cron scheduling, multi-agent delegation and swarm coordination. Agents propose, approve, and execute work independently.
+- **ANY PLATFORM.** Client SDKs for Python, TypeScript, Swift, and Kotlin talk to the gateway over HTTP/WebSocket. OpenAI-compatible API works with any existing client library. Interactive API docs at `/docs` on every deployment.
+- **Secure by default.** Encrypted storage, allowlists, policy gates, audit logging, secret redaction, and emergency stop. Fail-closed from day one.
 
 ## Features
 
 <CardGrid>
-  <Card title="Single Binary" icon="rocket">
-    One `cargo install` gives you the full runtime — CLI, gateway, daemon, and all tools. No Docker, no Node, no Python.
+  <Card title="ANY OS" icon="rocket">
+    Linux (x86, ARM, musl), macOS (Intel, Apple Silicon), Windows. CI-tested on all three. Docker multi-arch.
   </Card>
-  <Card title="Trait-Driven Core" icon="puzzle">
-    Provider, MemoryStore, Tool, and Channel are all traits. Swap implementations without touching orchestration code.
+  <Card title="ANY PLATFORM" icon="puzzle">
+    Client SDKs for Python, TypeScript, Swift, Kotlin. OpenAI-compatible API. Interactive Scalar docs at /docs.
   </Card>
-  <Card title="Secure by Default" icon="approve-check">
-    Deny-by-default tool execution, filesystem scoping, shell command allowlists, secret redaction, and audit trails.
+  <Card title="Swap Anything" icon="random">
+    Provider, MemoryStore, Tool, and Channel are all traits. 37+ LLM providers, 25+ channels, 2 storage backends.
   </Card>
-  <Card title="Fast Cold Starts" icon="star">
-    Native Rust binary starts in milliseconds. No JIT warmup, no interpreter overhead, no container boot.
+  <Card title="Fully Autonomous" icon="star">
+    Three autonomy levels, autopilot with cap gates and missions, cron scheduling, multi-agent delegation.
   </Card>
-  <Card title="Streaming Output" icon="open-book">
-    Stream agent responses token-by-token via CLI, SSE, or WebSocket. Real-time feedback for long-running tasks.
+  <Card title="Small & Fast" icon="approve-check">
+    4.5 MB embedded binary. Millisecond cold starts. Async Tokio runtime with streaming SSE and WebSocket output.
   </Card>
-  <Card title="System Prompts" icon="setting">
-    Configure a system prompt per agent or delegate to control personality, constraints, and behavior.
+  <Card title="Secure by Default" icon="setting">
+    Encrypted storage, deny-by-default tools, filesystem scoping, shell allowlists, secret redaction, audit trails.
   </Card>
 </CardGrid>
 
@@ -46,17 +47,21 @@ AgentZero is under active development. The architecture is stable but individual
 | | |
 |---|---|
 | **Language** | 100% Rust |
-| **Crates** | 17 workspace crates |
+| **Crates** | 16 workspace crates |
+| **Binary Size** | 4.5 MB embedded / 18 MB full |
+| **Platform Targets** | 8 (Linux x86/ARM/musl, macOS Intel/ARM, Windows) |
+| **Client SDKs** | Python, TypeScript, Swift, Kotlin |
 | **CLI Commands** | 38+ subcommands |
-| **Providers** | OpenAI-compatible (OpenRouter, OpenAI, Anthropic, Ollama, local) |
-| **Memory** | SQLite (default), Turso/libsql (optional) |
-| **Tools** | 58+ built-in (file I/O, shell, networking, browser, delegation, memory, git, SOP, cron, hardware, autopilot, agent management, and more) |
+| **Providers** | 37+ (OpenAI, Anthropic, Google, Ollama, local llama.cpp, and more) |
+| **Memory** | SQLite (default, encrypted), Turso/libsql (optional) |
+| **Tools** | 58+ built-in (file I/O, shell, networking, browser, delegation, memory, git, cron, hardware, autopilot, and more) |
 | **MCP** | First-class Model Context Protocol — each MCP tool registered individually with real schema |
-| **Channels** | Telegram, Discord, Slack, Matrix, Email, IRC, Nostr, Webhook, and more |
+| **Channels** | 25+ (Telegram, Discord, Slack, Matrix, Email, WhatsApp, SMS, and more) |
 | **Plugins** | WASM sandbox with integrity verification |
-| **Security** | Allowlists, OTP gates, audit trail, secret redaction, estop |
+| **Security** | Encrypted storage, allowlists, OTP gates, audit trail, secret redaction, estop |
 | **Multi-Agent** | Delegation, swarm coordination, pipelines, event bus, persistent named agents |
-| **Autopilot** | Autonomous company loop — proposals, cap gates, missions, triggers, reaction matrices |
+| **Autopilot** | Autonomous agent loop — proposals, cap gates, missions, triggers, reaction matrices |
+| **API Docs** | Interactive Scalar docs at /docs on every gateway deployment |
 | **License** | MIT / Apache-2.0 |
 
 ## Quick Start

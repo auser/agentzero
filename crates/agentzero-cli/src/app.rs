@@ -46,6 +46,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             host,
             port,
             new_pairing,
+            ui,
+            no_auth,
         } => {
             commands::gateway::GatewayCommand::run(
                 &ctx,
@@ -53,6 +55,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     host,
                     port,
                     new_pairing,
+                    ui,
+                    no_auth,
                 },
             )
             .await
@@ -186,6 +190,24 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Template { command } => {
             commands::template::TemplateCommand::run(&ctx, command).await
+        }
+        Commands::Workflow { command } => {
+            commands::workflow::WorkflowCommand::run(&ctx, command).await
+        }
+        Commands::Swarm {
+            goal,
+            plan,
+            sandbox,
+        } => {
+            commands::swarm::SwarmCommand::run(
+                &ctx,
+                commands::swarm::SwarmOptions {
+                    goal,
+                    plan_file: plan,
+                    sandbox_level: sandbox,
+                },
+            )
+            .await
         }
         Commands::Tools { command } => commands::tools::ToolsCommand::run(&ctx, command).await,
         #[cfg(feature = "gateway")]

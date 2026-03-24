@@ -6,6 +6,8 @@ pub struct GatewayOptions {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub new_pairing: bool,
+    pub ui: bool,
+    pub no_auth: bool,
 }
 
 pub struct GatewayCommand;
@@ -29,6 +31,9 @@ impl AgentZeroCommand for GatewayCommand {
             println!("port {requested_port} is in use, using port {port} instead");
         }
         let token_store_path = ctx.data_dir.join("gateway-paired-tokens.json");
+        if opts.ui {
+            println!("UI enabled — serving at http://{host}:{port}/");
+        }
         agentzero_gateway::run(
             &host,
             port,
@@ -38,6 +43,8 @@ impl AgentZeroCommand for GatewayCommand {
                 data_dir: Some(ctx.data_dir.clone()),
                 config_path: Some(ctx.config_path.clone()),
                 workspace_root: Some(ctx.workspace_root.clone()),
+                serve_ui: opts.ui,
+                no_auth: opts.no_auth,
                 ..Default::default()
             },
         )
@@ -56,6 +63,8 @@ mod tests {
             host: None,
             port: None,
             new_pairing: false,
+            ui: false,
+            no_auth: false,
         };
         // Without a config, falls back to hardcoded defaults
         let host = opts.host.unwrap_or_else(|| "127.0.0.1".to_string());

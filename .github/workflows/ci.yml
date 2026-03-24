@@ -8,7 +8,11 @@ on:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -20,20 +24,44 @@ jobs:
       - name: test
         run: cargo test --workspace
       - name: verify dependency policy
+        if: matrix.os == 'ubuntu-latest'
         run: scripts/verify-dependency-policy.sh
       - name: release build (default)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo build -p agentzero --release
       - name: release size budget (default)
-        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 30000000
+        if: matrix.os == 'ubuntu-latest'
+        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 25000000
       - name: release build (minimal)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo build -p agentzero --profile release-min --no-default-features --features minimal
       - name: release size budget (minimal)
+        if: matrix.os == 'ubuntu-latest'
         run: scripts/check-binary-size.sh --binary target/release-min/agentzero --max-bytes 8000000
       - name: release build (embedded)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo build -p agentzero --profile release-min --no-default-features --features embedded
       - name: release size budget (embedded)
+        if: matrix.os == 'ubuntu-latest'
         run: scripts/check-binary-size.sh --binary target/release-min/agentzero --max-bytes 8000000
+      - name: binary size summary
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          DEFAULT_SIZE=$(wc -c < target/release/agentzero | tr -d ' ')
+          MINIMAL_SIZE=$(wc -c < target/release-min/agentzero | tr -d ' ')
+          EMBEDDED_SIZE=$(wc -c < target/release-min/agentzero | tr -d ' ')
+          DEFAULT_MB=$(echo "scale=2; $DEFAULT_SIZE / 1048576" | bc)
+          MINIMAL_MB=$(echo "scale=2; $MINIMAL_SIZE / 1048576" | bc)
+          EMBEDDED_MB=$(echo "scale=2; $EMBEDDED_SIZE / 1048576" | bc)
+          echo "## Binary Sizes" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Profile | Size | Budget |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---------|------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Default | ${DEFAULT_MB} MB | 25 MB |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Minimal | ${MINIMAL_MB} MB | 8 MB |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Embedded | ${EMBEDDED_MB} MB | 8 MB |" >> "$GITHUB_STEP_SUMMARY"
       - name: cold-start latency
+        if: matrix.os == 'ubuntu-latest'
         run: scripts/bench-cli-startup.sh --iterations 20 --command "--help"
 
   security:
@@ -80,6 +108,22 @@ jobs:
         with:
           name: coverage
           path: coverage
+
+  cross-arm:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+      - name: install cross
+        run: cargo install cross --locked
+      - name: cross build (aarch64)
+        run: cross build --workspace --target aarch64-unknown-linux-gnu
+      - name: cross test (aarch64)
+        run: cross test --workspace --target aarch64-unknown-linux-gnu
 
   # e2e-ollama: removed from CI — small local models (llama3.2 3B) are too
   # nondeterministic for reliable tool-use assertions. The tests remain in

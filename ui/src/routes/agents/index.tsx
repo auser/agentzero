@@ -1,7 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { agentsApi, type AgentListItem, type CreateAgentPayload, type UpdateAgentPayload } from '@/lib/api/agents'
+import { modelsApi } from '@/lib/api/models'
+import { api } from '@/lib/api/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -10,6 +12,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { TagInput } from '@/components/ui/tag-input'
+import { AutocompleteTagInput } from '@/components/ui/autocomplete-tag-input'
 import { Plus, Pencil, Trash2, BarChart3 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { AgentCostChart } from '@/components/agents/AgentCostChart'
@@ -18,20 +22,32 @@ export const Route = createFileRoute('/agents/')({
   component: AgentsPage,
 })
 
+interface ToolsResponse {
+  tools: { name: string; description?: string; category?: string }[]
+}
+
 type FormData = {
   name: string
   description: string
   system_prompt: string
   provider: string
   model: string
-  keywords: string
-  allowed_tools: string
+  keywords: string[]
+  allowed_tools: string[]
 }
 
 const emptyForm: FormData = {
   name: '', description: '', system_prompt: '',
-  provider: '', model: '', keywords: '', allowed_tools: '',
+  provider: '', model: '', keywords: [], allowed_tools: [],
 }
+
+const TEMPLATE_VARIABLES = [
+  { name: 'agent_name', description: 'The name of this agent' },
+  { name: 'date', description: 'Current date (YYYY-MM-DD)' },
+  { name: 'provider', description: 'Selected LLM provider' },
+  { name: 'model', description: 'Selected model ID' },
+  { name: 'description', description: 'Agent description' },
+]
 
 function toPayload(f: FormData): UpdateAgentPayload {
   return {
@@ -40,8 +56,8 @@ function toPayload(f: FormData): UpdateAgentPayload {
     system_prompt: f.system_prompt || undefined,
     provider: f.provider || undefined,
     model: f.model || undefined,
-    keywords: f.keywords ? f.keywords.split(',').map((k) => k.trim()).filter(Boolean) : undefined,
-    allowed_tools: f.allowed_tools ? f.allowed_tools.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
+    keywords: f.keywords.length > 0 ? f.keywords : undefined,
+    allowed_tools: f.allowed_tools.length > 0 ? f.allowed_tools : undefined,
   }
 }
 
@@ -52,11 +68,35 @@ function AgentsPage() {
   const [deleteTarget, setDeleteTarget] = useState<AgentListItem | null>(null)
   const [statsAgent, setStatsAgent] = useState<AgentListItem | null>(null)
   const [form, setForm] = useState<FormData>(emptyForm)
+  const promptRef = useRef<HTMLTextAreaElement>(null)
 
   const { data, isPending } = useQuery({
     queryKey: ['agents'],
     queryFn: () => agentsApi.list(),
   })
+
+  const { data: modelsData } = useQuery({
+    queryKey: ['models'],
+    queryFn: () => modelsApi.list(),
+    enabled: sheetOpen,
+  })
+
+  const { data: toolsData, isPending: toolsLoading } = useQuery({
+    queryKey: ['tools'],
+    queryFn: () => api.get<ToolsResponse>('/v1/tools'),
+    enabled: sheetOpen,
+  })
+
+  const providers = useMemo(() => {
+    const set = new Set((modelsData?.data ?? []).map((m) => m.owned_by))
+    return Array.from(set).sort()
+  }, [modelsData])
+
+  const filteredModels = useMemo(() => {
+    const all = modelsData?.data ?? []
+    if (!form.provider) return all
+    return all.filter((m) => m.owned_by === form.provider)
+  }, [modelsData, form.provider])
 
   const createMutation = useMutation({
     mutationFn: (payload: CreateAgentPayload) => agentsApi.create(payload),
@@ -94,10 +134,25 @@ function AgentsPage() {
       system_prompt: '',
       provider: agent.provider,
       model: agent.model,
-      keywords: agent.keywords.join(', '),
-      allowed_tools: agent.allowed_tools.join(', '),
+      keywords: agent.keywords,
+      allowed_tools: agent.allowed_tools,
     })
     setSheetOpen(true)
+  }
+
+  function insertVariable(name: string) {
+    const el = promptRef.current
+    if (!el) return
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    const text = form.system_prompt
+    const insertion = `{{${name}}}`
+    const newText = text.slice(0, start) + insertion + text.slice(end)
+    setForm((f) => ({ ...f, system_prompt: newText }))
+    requestAnimationFrame(() => {
+      el.selectionStart = el.selectionEnd = start + insertion.length
+      el.focus()
+    })
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -237,29 +292,74 @@ function AgentsPage() {
             </div>
             <div className="space-y-1">
               <Label>Provider</Label>
-              <Input value={form.provider} onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))} placeholder="anthropic" />
+              <select
+                value={form.provider}
+                onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value, model: '' }))}
+                className="w-full h-9 px-3 text-sm rounded-md border border-input bg-background focus:ring-1 focus:ring-ring outline-none"
+              >
+                <option value="">Any provider</option>
+                {providers.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
             </div>
             <div className="space-y-1">
               <Label>Model</Label>
-              <Input value={form.model} onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))} placeholder="claude-sonnet-4-6" />
+              <select
+                value={form.model}
+                onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+                className="w-full h-9 px-3 text-sm rounded-md border border-input bg-background focus:ring-1 focus:ring-ring outline-none"
+              >
+                <option value="">Default (from config)</option>
+                {filteredModels.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}{form.provider ? '' : ` (${m.owned_by})`}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="space-y-1">
               <Label>System Prompt</Label>
               <textarea
+                ref={promptRef}
                 value={form.system_prompt}
                 onChange={(e) => setForm((f) => ({ ...f, system_prompt: e.target.value }))}
                 rows={4}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
                 placeholder="You are a helpful assistant…"
               />
+              <div className="flex flex-wrap items-center gap-1 mt-1">
+                <span className="text-xs text-muted-foreground mr-1">Variables:</span>
+                {TEMPLATE_VARIABLES.map((v) => (
+                  <button
+                    key={v.name}
+                    type="button"
+                    className="text-xs bg-secondary hover:bg-secondary/80 rounded px-1.5 py-0.5 font-mono transition-colors"
+                    title={v.description}
+                    onClick={() => insertVariable(v.name)}
+                  >
+                    {`{{${v.name}}}`}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="space-y-1">
-              <Label>Keywords <span className="text-muted-foreground text-xs">(comma-separated)</span></Label>
-              <Input value={form.keywords} onChange={(e) => setForm((f) => ({ ...f, keywords: e.target.value }))} placeholder="travel, booking, flights" />
+              <Label>Keywords</Label>
+              <TagInput
+                value={form.keywords}
+                onChange={(tags) => setForm((f) => ({ ...f, keywords: tags }))}
+                placeholder="Add keyword…"
+              />
             </div>
             <div className="space-y-1">
-              <Label>Allowed Tools <span className="text-muted-foreground text-xs">(comma-separated)</span></Label>
-              <Input value={form.allowed_tools} onChange={(e) => setForm((f) => ({ ...f, allowed_tools: e.target.value }))} placeholder="web_search, read_file" />
+              <Label>Allowed Tools</Label>
+              <AutocompleteTagInput
+                value={form.allowed_tools}
+                onChange={(tags) => setForm((f) => ({ ...f, allowed_tools: tags }))}
+                suggestions={toolsData?.tools ?? []}
+                isLoading={toolsLoading}
+                placeholder="Search tools…"
+              />
             </div>
             {(createMutation.error || updateMutation.error) && (
               <p className="text-xs text-destructive">
