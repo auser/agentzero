@@ -372,17 +372,104 @@ agentzero swarm --plan workflow.json "execute this plan"
 
 ## Natural Language Agent Definitions
 
-Define persistent agents from plain English. The system derives name, system prompt, keywords, and tools automatically.
+Define persistent agents from plain English. The system derives name, system prompt, keywords, tools, and schedule automatically. Agents persist encrypted and are auto-routed to by keywords.
+
+### Creating an Agent via Conversation
 
 ```
-"Create an agent that reviews my GitHub PRs daily and posts summaries to Slack"
+You: "I need an agent that reviews my GitHub PRs daily and posts summaries to Slack"
+
+Agent calls agent_manage:
+{
+  "action": "create_from_description",
+  "nl_description": "An agent that reviews my GitHub PRs daily and posts summaries to Slack"
+}
+
+→ LLM derives the agent definition:
+  name:           pr_reviewer
+  description:    Reviews GitHub PRs and posts daily summaries to Slack
+  system_prompt:  "You are an expert code reviewer. Each day, check for open
+                   PRs on the configured GitHub repos, review the diffs for
+                   bugs, security issues, and style violations, then post a
+                   concise summary to the designated Slack channel."
+  keywords:       ["pr", "review", "github", "code review", "pull request"]
+  allowed_tools:  ["shell", "read_file", "web_fetch", "git_operations", "http_request"]
+  schedule:       "0 9 * * *"  (daily at 9am)
+
+→ Agent created with ID: agent-a1b2c3
+→ Persists in .agentzero/agents.json (encrypted)
+→ Suggested schedule: 0 9 * * * (use cron_add to activate)
 ```
 
-The `agent_manage create_from_description` action:
-1. Sends the description to an LLM with existing agents for dedup awareness
-2. LLM derives: `name: "pr_reviewer"`, `keywords: ["pr", "review", "github"]`, `allowed_tools: ["shell", "read_file", "web_fetch", "git_operations"]`, `suggested_schedule: "0 9 * * *"`
-3. Creates an `AgentRecord` in the encrypted agent store
-4. The agent persists across sessions and is auto-routed to when future messages match its keywords
+### Creating an Agent via the Gateway API
+
+```bash
+curl -X POST http://localhost:3000/v1/agent \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Create an agent that monitors my server logs for errors and alerts me on Telegram"
+  }'
+```
+
+The agent internally calls `agent_manage create_from_description` and returns the created agent details.
+
+### How Agents Are Routed
+
+When you send a message to AgentZero, the system checks if any persistent agent's keywords match:
+
+```
+You: "Review the latest PRs on agentzero"
+
+→ AgentRouter matches keywords ["pr", "review"] against stored agents
+→ Routes to pr_reviewer agent (created last week)
+→ pr_reviewer already has the right system prompt, tools, and context
+→ No manual configuration needed
+```
+
+### Managing Persistent Agents
+
+The `agent_manage` tool supports these actions:
+
+| Action | Description | Example |
+|---|---|---|
+| `create` | Create with explicit fields | `{"action": "create", "name": "monitor", "keywords": ["logs"]}` |
+| `create_from_description` | Create from plain English | `{"action": "create_from_description", "nl_description": "..."}` |
+| `list` | List all persistent agents | `{"action": "list"}` |
+| `get` | Get full agent details | `{"action": "get", "agent_id": "agent-a1b2c3"}` |
+| `update` | Update agent fields | `{"action": "update", "agent_id": "...", "keywords": ["new"]}` |
+| `delete` | Delete an agent | `{"action": "delete", "agent_id": "agent-a1b2c3"}` |
+| `set_status` | Pause/resume | `{"action": "set_status", "agent_id": "...", "status": "stopped"}` |
+
+### Dedup Awareness
+
+When creating an agent via `create_from_description`, the LLM prompt includes all existing agents. If a similar agent already exists, the system can update it rather than creating a duplicate:
+
+```
+You: "Create an agent that reviews code in pull requests"
+
+→ LLM sees existing agent: pr_reviewer (keywords: [pr, review, github])
+→ Response: "Agent 'pr_reviewer' already exists with similar capabilities.
+   Updated its system prompt to include general code review."
+```
+
+### Agent Channel Integration
+
+Persistent agents can be connected to communication channels. The `AgentRecord` includes a `channels` field for platform-specific configuration:
+
+```
+You: "Connect the pr_reviewer agent to my Telegram"
+
+Agent calls agent_manage update:
+{
+  "action": "update",
+  "agent_id": "agent-a1b2c3",
+  "channels": {
+    "telegram": { "chat_id": "-1001234567890", "enabled": true }
+  }
+}
+```
+
+Once connected, the agent receives messages from that channel and responds through it.
 
 ### Configuration
 
@@ -392,6 +479,10 @@ enable_agent_manage = true
 enable_dynamic_tools = true    # needed for the LLM call in create_from_description
 ```
 
+### Persistence
+
+Agents persist in `.agentzero/agents.json` (encrypted at rest). They survive restarts, updates, and reboots. The user's agent library grows over time as a personal team of specialists.
+
 ---
 
 ## Tool Catalog Learning
@@ -400,20 +491,75 @@ The system remembers which tool combinations worked for what kinds of goals. Ove
 
 ### How It Works
 
-1. After a successful swarm or agent run, a **recipe** is recorded: `{goal_summary, tools_used, success}`
-2. Recipes are stored encrypted in `.agentzero/tool-recipes.json`
-3. On future goals, the `HintedToolSelector` queries the recipe store
-4. Tools from matching recipes are **boosted** in the selection priority
+```
+Week 1: "summarize this video"
+  → System uses: shell, web_fetch, whisper_transcribe, image_gen
+  → Run succeeds
+  → Recipe recorded: {goal: "summarize video", tools: [...], success: true}
+
+Week 2: "transcribe this podcast"
+  → RecipeStore matches on "transcribe" keywords
+  → Boosts whisper_transcribe tool (already exists from Week 1)
+  → No tool creation needed — faster execution
+
+Week 4: "create a highlight reel from this webinar"
+  → RecipeStore matches on "video" + existing tools
+  → whisper_transcribe, shell, image_gen all boosted
+  → Agent assembles the right pipeline immediately
+```
 
 ### Selection Priority
 
-The `HintedToolSelector` combines three signals:
+The `HintedToolSelector` combines three signals in order:
 
-1. **Explicit hints** — from `GoalPlanner` per-node `tool_hints`
+1. **Explicit hints** — from `GoalPlanner` per-node `tool_hints` (highest priority)
 2. **Recipe matches** — Jaccard similarity on goal keywords → boost previously successful tools
-3. **Keyword fallback** — TF-IDF matching on tool descriptions
+3. **Keyword fallback** — TF-IDF matching on tool name + description
 
-This means "summarize this podcast" in Week 2 automatically picks up `whisper_transcribe` (a dynamic tool created in Week 1 for video summarization) because the recipe store matches on "summarize" + "transcribe".
+### Recipe Matching
+
+Recipes are matched using Jaccard similarity on tokenized goal keywords:
+
+```
+Stored recipe:  "summarize this video" → tokens: [summarize, this, video]
+New goal:       "summarize this podcast" → tokens: [summarize, this, podcast]
+
+Jaccard similarity = |intersection| / |union|
+                   = |{summarize, this}| / |{summarize, this, video, podcast}|
+                   = 2/4 = 0.5  → MATCH (above threshold)
+
+→ Tools from stored recipe are boosted: shell, web_fetch, whisper_transcribe
+```
+
+Recipes with higher `use_count` (reused more often) get a logarithmic boost, so frequently successful patterns float to the top.
+
+### What Gets Recorded
+
+| Field | Description |
+|---|---|
+| `goal_summary` | The original goal text |
+| `goal_keywords` | Pre-tokenized keywords for matching |
+| `tools_used` | Tool names that were invoked during the run |
+| `success` | Whether the run completed successfully |
+| `timestamp` | When the recipe was recorded |
+| `use_count` | Incremented each time this recipe's tools are reused |
+
+Only successful recipes are used for matching. Failed recipes are stored but excluded from suggestions — the system only recommends tool combos that actually worked.
+
+### Persistence
+
+Recipes persist in `.agentzero/tool-recipes.json` (encrypted at rest). The store retains up to 200 recipes, pruning oldest failed recipes when the limit is reached. Successful, frequently-reused recipes are prioritized.
+
+### Growth Over Time
+
+| Timeframe | System State |
+|---|---|
+| **Day 1** | 0 dynamic tools, 0 agents, 0 recipes. Every goal starts from scratch. |
+| **Week 1** | 3 dynamic tools created, 1 agent defined, 5 recipes recorded. |
+| **Week 4** | 8 tools, 3 agents, 20 recipes. New goals match existing patterns 60%+ of the time. |
+| **Month 2** | 15 tools, 5 agents, 50 recipes. The system resolves most goals using existing infrastructure. |
+
+The `.agentzero/` directory is the system's growing brain — portable, encrypted, and backupable.
 
 ---
 

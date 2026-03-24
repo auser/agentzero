@@ -580,37 +580,161 @@ For the full ABI specification, host callbacks, and manifest schema, see the [Pl
 
 Dynamic tools are created at runtime by agents and **persist across sessions**. Over time, the system accumulates a library of tools it invented — each encrypted at rest in `.agentzero/dynamic-tools.json`.
 
-### How It Works
+### Creating a Tool via Conversation
 
-An agent can create a new tool mid-session using the `tool_create` tool:
+During any agent session, the agent can call `tool_create` to invent a new tool:
 
 ```
-Agent: "I need a tool that transcribes audio files using Whisper"
-→ tool_create creates a shell-strategy dynamic tool: whisper_transcribe
-→ Command template: whisper {{input}} --output_format txt
-→ Available immediately and in all future sessions
+You: "I need to transcribe audio files using Whisper"
+
+Agent thinks: No transcription tool exists. I'll create one.
+Agent calls tool_create:
+{
+  "action": "create",
+  "description": "A tool that transcribes audio/video files using OpenAI Whisper CLI",
+  "strategy_hint": "shell"
+}
+
+→ LLM derives the tool definition automatically:
+  name: whisper_transcribe
+  strategy: shell
+  command_template: whisper {{input}} --output_format txt
+
+→ Tool registered immediately — available in this session and every future session.
+```
+
+The agent can then use `whisper_transcribe` as a tool in the same conversation, without restarting.
+
+### Creating a Tool via the Gateway API
+
+```bash
+# The agent calls tool_create internally, but you can also
+# ask the agent to create tools via the gateway:
+curl -X POST http://localhost:3000/v1/agent \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Create a tool that checks the weather using wttr.in"
+  }'
 ```
 
 ### Execution Strategies
 
-| Strategy | Description | Example |
+Each dynamic tool wraps one of four execution strategies:
+
+#### Shell Strategy
+
+Executes a shell command with `{{input}}` placeholder substitution.
+
+```json
+{
+  "name": "youtube_download",
+  "description": "Download a YouTube video using yt-dlp",
+  "strategy": {
+    "type": "shell",
+    "command_template": "yt-dlp -o /tmp/%(title)s.%(ext)s {{input}}"
+  }
+}
+```
+
+When the agent calls `youtube_download` with input `"https://youtube.com/watch?v=abc"`, the system runs:
+```bash
+yt-dlp -o /tmp/%(title)s.%(ext)s https://youtube.com/watch?v=abc
+```
+
+#### HTTP Strategy
+
+Calls an HTTP endpoint with the tool input as the request body.
+
+```json
+{
+  "name": "sentiment_api",
+  "description": "Analyze text sentiment via external API",
+  "strategy": {
+    "type": "http",
+    "url": "https://api.example.com/v1/sentiment",
+    "method": "POST",
+    "headers": {
+      "Authorization": "Bearer sk-...",
+      "Content-Type": "application/json"
+    }
+  }
+}
+```
+
+#### LLM Strategy
+
+Delegates to the LLM with a specialized system prompt. Useful for analysis, review, or transformation tasks that don't need external tools.
+
+```json
+{
+  "name": "code_reviewer",
+  "description": "Review code for bugs, security issues, and style",
+  "strategy": {
+    "type": "llm",
+    "system_prompt": "You are an expert code reviewer. Analyze the following code for bugs, security vulnerabilities, performance issues, and style violations. Be specific and actionable."
+  }
+}
+```
+
+#### Composite Strategy
+
+Chains existing tools sequentially — each step's output becomes the next step's input.
+
+```json
+{
+  "name": "video_to_summary",
+  "description": "Download a video, transcribe it, then summarize",
+  "strategy": {
+    "type": "composite",
+    "steps": [
+      { "tool_name": "youtube_download" },
+      { "tool_name": "whisper_transcribe" },
+      { "tool_name": "code_reviewer", "input_override": "Summarize this transcript" }
+    ]
+  }
+}
+```
+
+### Managing Dynamic Tools
+
+The `tool_create` tool supports five actions:
+
+| Action | Description | Example Input |
 |---|---|---|
-| **Shell** | Execute a shell command with `{{input}}` substitution | `whisper {{input}} --output_format txt` |
-| **HTTP** | Call an HTTP endpoint | `POST https://api.example.com/v1/analyze` |
-| **LLM** | Delegate to an LLM with a specialized system prompt | Code reviewer, summarizer |
-| **Composite** | Chain existing tools sequentially | Download → Transcribe → Summarize |
+| `create` | Create a new tool from NL description | `{"action": "create", "description": "...", "strategy_hint": "shell"}` |
+| `list` | List all dynamic tools with their strategies | `{"action": "list"}` |
+| `delete` | Remove a dynamic tool by name | `{"action": "delete", "name": "whisper_transcribe"}` |
+| `export` | Export a tool as shareable JSON | `{"action": "export", "name": "whisper_transcribe"}` |
+| `import` | Import a tool from JSON (single or array) | `{"action": "import", "json": "{...}"}` |
 
-### Sharing Tools
+### Sharing Tools Between Instances
 
-Dynamic tools can be exported and shared between AgentZero instances:
-
+Export a tool on machine A:
 ```
-Agent: "Export the whisper_transcribe tool"
-→ Returns JSON definition that can be imported on another machine
-
-Agent: "Import this tool definition: { ... }"
-→ Registers the tool immediately
+You: "Export the youtube_download tool"
+Agent: Here's the tool definition:
+{
+  "name": "youtube_download",
+  "description": "Download a YouTube video using yt-dlp",
+  "strategy": { "type": "shell", "command_template": "yt-dlp -o /tmp/%(title)s.%(ext)s {{input}}" },
+  "created_at": 1711234567
+}
 ```
+
+Import it on machine B:
+```
+You: "Import this tool: { ... paste the JSON ... }"
+Agent calls tool_create:
+{"action": "import", "json": "{ ... }"}
+→ Tool registered and persisted.
+```
+
+### How Dynamic Tools Are Discovered
+
+1. **At startup:** `build_runtime_execution()` loads all tools from `.agentzero/dynamic-tools.json` into the tool list alongside built-in tools. The LLM sees them identically.
+2. **Mid-session:** The `ToolSource` trait on `DynamicToolRegistry` feeds newly created tools into `build_tool_definitions()` on each agent loop iteration. A tool created via `tool_create` is visible to the LLM on the very next turn.
+3. **Tool selection:** Both `KeywordToolSelector` and `HintedToolSelector` match against dynamic tools by name and description — they participate in tool filtering just like built-in tools.
+4. **Recipe learning:** When a dynamic tool is used successfully, the `RecipeStore` records it. Future goals matching similar patterns will boost that tool automatically.
 
 ### Configuration
 
@@ -624,13 +748,14 @@ enable_dynamic_tools = true
 ### Security
 
 - Only **root agents** (depth=0) can create tools — sub-agents cannot
-- Shell-strategy tools are validated against the `ShellPolicy`
-- HTTP-strategy tools are validated against the `UrlAccessPolicy`
+- Shell-strategy tools are validated against the `ShellPolicy` (command allowlists, path restrictions)
+- HTTP-strategy tools are validated against the `UrlAccessPolicy` (domain allowlists, private IP blocking)
+- LLM-strategy tools use the same provider and billing as the parent agent
 - All definitions are encrypted at rest via `EncryptedJsonStore`
 
 ### Persistence
 
-Dynamic tools survive restarts. The system loads all persisted tools from `.agentzero/dynamic-tools.json` at startup and makes them available alongside built-in tools.
+Dynamic tools survive restarts, updates, and reboots. The encrypted store at `.agentzero/dynamic-tools.json` is the system's growing tool library — portable and backupable.
 
 ---
 
