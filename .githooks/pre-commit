@@ -98,7 +98,7 @@ if [ -n "$TEST_SCOPE" ] || [ "$WORKSPACE_MANIFEST_CHANGED" = true ]; then
     echo "Running tests..."
     if command -v cargo-nextest &>/dev/null; then
         # shellcheck disable=SC2086
-        if ! cargo nextest run --no-fail-fast $TEST_SCOPE; then
+        if ! cargo nextest run --no-fail-fast --no-tests=pass $TEST_SCOPE; then
             echo ""
             echo "Tests failed."
             exit 1

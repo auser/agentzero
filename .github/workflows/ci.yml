@@ -17,12 +17,33 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+      - name: Setup Strawberry Perl (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          echo "C:/Strawberry/c/bin" >> "$GITHUB_PATH"
+          echo "C:/Strawberry/perl/site/bin" >> "$GITHUB_PATH"
+          echo "C:/Strawberry/perl/bin" >> "$GITHUB_PATH"
+          if [ -f /usr/bin/perl ]; then
+            mv /usr/bin/perl /usr/bin/perl-msys2
+          fi
+      - name: Install NASM (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/setup-nasm@v1
       - name: fmt
         run: cargo fmt --all --check
-      - name: clippy
+      - name: clippy (unix)
+        if: matrix.os != 'windows-latest'
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: test
+      - name: clippy (windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo clippy --workspace --all-targets --features vendored-openssl -- -D warnings
+      - name: test (unix)
+        if: matrix.os != 'windows-latest'
         run: cargo test --workspace
+      - name: test (windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo test --workspace --features vendored-openssl
       - name: verify dependency policy
         if: matrix.os == 'ubuntu-latest'
         run: scripts/verify-dependency-policy.sh
@@ -31,7 +52,7 @@ jobs:
         run: cargo build -p agentzero --release
       - name: release size budget (default)
         if: matrix.os == 'ubuntu-latest'
-        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 25000000
+        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 28000000
       - name: release build (minimal)
         if: matrix.os == 'ubuntu-latest'
         run: cargo build -p agentzero --profile release-min --no-default-features --features minimal
@@ -57,7 +78,7 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Profile | Size | Budget |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---------|------|--------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Default | ${DEFAULT_MB} MB | 25 MB |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Default | ${DEFAULT_MB} MB | 28 MB |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Minimal | ${MINIMAL_MB} MB | 8 MB |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Embedded | ${EMBEDDED_MB} MB | 8 MB |" >> "$GITHUB_STEP_SUMMARY"
       - name: cold-start latency

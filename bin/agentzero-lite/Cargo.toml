@@ -11,6 +11,10 @@ publish = false
 name = "agentzero-lite"
 path = "src/main.rs"
 
+[features]
+default = []
+vendored-openssl = ["agentzero-storage/vendored-openssl"]
+
 [dependencies]
 agentzero-core = { workspace = true }
 agentzero-config = { workspace = true }
