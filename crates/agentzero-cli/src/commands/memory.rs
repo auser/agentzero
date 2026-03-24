@@ -355,8 +355,10 @@ mod tests {
     }
 
     fn write_config(path: &PathBuf, memory_backend: &str, sqlite_path: &str) {
+        // Use forward slashes so Windows backslashes don't become TOML escapes
+        let safe_path = sqlite_path.replace('\\', "/");
         let config = format!(
-            "[memory]\nbackend = \"{memory_backend}\"\nsqlite_path = \"{sqlite_path}\"\n\n[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n"
+            "[memory]\nbackend = \"{memory_backend}\"\nsqlite_path = \"{safe_path}\"\n\n[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n"
         );
         fs::write(path, config).expect("config should be written");
     }

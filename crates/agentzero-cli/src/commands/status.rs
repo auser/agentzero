@@ -47,9 +47,12 @@ mod tests {
         let dir = temp_dir();
         let config_path = dir.join("agentzero.toml");
         let db_path = dir.join("status-test.db");
+        let safe_path = db_path
+            .to_str()
+            .expect("path should be utf8")
+            .replace('\\', "/");
         let config = format!(
-            "[memory]\nbackend = \"sqlite\"\nsqlite_path = \"{}\"\n\n[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n",
-            db_path.to_str().expect("path should be utf8")
+            "[memory]\nbackend = \"sqlite\"\nsqlite_path = \"{safe_path}\"\n\n[security]\nallowed_root = \".\"\nallowed_commands = [\"echo\"]\n",
         );
         fs::write(&config_path, config).expect("config should be written");
 

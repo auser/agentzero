@@ -174,9 +174,11 @@ mod tests {
     #[test]
     fn resolves_default_data_dir_from_home_success_path() {
         let home = temp_dir();
+        let home_str = home.to_string_lossy().to_string();
         with_vars(
             vec![
-                ("HOME", Some(home.to_string_lossy().to_string())),
+                ("HOME", Some(home_str.clone())),
+                ("USERPROFILE", Some(home_str)),
                 (ENV_DATA_DIR, None::<String>),
                 (ENV_CONFIG_PATH, None::<String>),
             ],
@@ -220,14 +222,17 @@ mod tests {
         let configured_dir = temp_dir();
         let config_dir = home.join(DEFAULT_DATA_DIR_NAME);
         fs::create_dir_all(&config_dir).expect("config dir should be created");
+        let safe_dir = configured_dir.display().to_string().replace('\\', "/");
         fs::write(
             config_dir.join("agentzero.toml"),
-            format!("data_dir = \"{}\"\n", configured_dir.display()),
+            format!("data_dir = \"{safe_dir}\"\n"),
         )
         .expect("config file should be written");
+        let home_str = home.to_string_lossy().to_string();
         with_vars(
             vec![
-                ("HOME", Some(home.to_string_lossy().to_string())),
+                ("HOME", Some(home_str.clone())),
+                ("USERPROFILE", Some(home_str)),
                 (ENV_DATA_DIR, None::<String>),
                 (ENV_CONFIG_PATH, None::<String>),
             ],
@@ -248,9 +253,11 @@ mod tests {
         fs::create_dir_all(&config_dir).expect("config dir should be created");
         fs::write(config_dir.join(DEFAULT_CONFIG_FILE), "not-toml = [")
             .expect("invalid config should be written");
+        let home_str = home.to_string_lossy().to_string();
         with_vars(
             vec![
-                ("HOME", Some(home.to_string_lossy().to_string())),
+                ("HOME", Some(home_str.clone())),
+                ("USERPROFILE", Some(home_str)),
                 (ENV_DATA_DIR, None::<String>),
                 (ENV_CONFIG_PATH, None::<String>),
             ],
