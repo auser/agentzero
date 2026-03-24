@@ -266,7 +266,10 @@ mod tests {
         let ctx = ToolContext::new(dir.to_string_lossy().to_string());
         let result = WasmModuleTool
             .execute(
-                &format!(r#"{{"op": "inspect", "path": "{}"}}"#, wasm_path.display()),
+                &format!(
+                    r#"{{"op": "inspect", "path": "{}"}}"#,
+                    wasm_path.display().to_string().replace('\\', "/")
+                ),
                 &ctx,
             )
             .await
@@ -386,7 +389,13 @@ mod tests {
 
         let ctx = ToolContext::new(dir.to_string_lossy().to_string());
         let err = WasmToolExecTool
-            .execute(&format!(r#"{{"module": "{}"}}"#, path.display()), &ctx)
+            .execute(
+                &format!(
+                    r#"{{"module": "{}"}}"#,
+                    path.display().to_string().replace('\\', "/")
+                ),
+                &ctx,
+            )
             .await
             .expect_err("invalid wasm should fail");
         assert!(err.to_string().contains("invalid magic bytes"));

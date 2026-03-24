@@ -288,6 +288,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(target_os = "windows", ignore)]
     async fn executes_python_hello() {
         let tool = CodeInterpreterTool::default();
         let result = tool

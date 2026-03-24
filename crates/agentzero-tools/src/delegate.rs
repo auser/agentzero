@@ -902,6 +902,7 @@ mod tests {
         let cid = format!("delegate-{agent_name}-{depth}-{nanos}");
         assert!(cid.starts_with("delegate-researcher-1-"));
         // Should be unique — different nanos each time.
+        std::thread::sleep(std::time::Duration::from_millis(1));
         let cid2 = format!(
             "delegate-{agent_name}-{depth}-{}",
             std::time::SystemTime::now()
