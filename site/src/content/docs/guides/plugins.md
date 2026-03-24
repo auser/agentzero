@@ -507,4 +507,4 @@ Any language that compiles to `wasm32-wasip1` can be used to write plugins:
 | Zig | `zig build -Dtarget=wasm32-wasi` | Good WASM support |
 | AssemblyScript | `asc --target wasm32-wasi` | TypeScript-like syntax |
 
-For languages that cannot compile to WASM, see the [FFI Bindings](/agentzero/guides/ffi-bindings/) guide for registering tools directly from Swift, Kotlin, Python, or Node.js via the callback interface.
+For languages that cannot compile to WASM, see the [FFI Bindings](/guides/ffi-bindings/) guide for registering tools directly from Swift, Kotlin, Python, or Node.js via the callback interface.

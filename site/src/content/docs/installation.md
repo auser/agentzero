@@ -75,14 +75,14 @@ Pre-built binaries are provided for these platform/architecture combinations:
 | macOS | x86_64 (Intel) | `agentzero-v*-macos-x86_64` |
 | Windows | x86_64 | `agentzero-v*-windows-x86_64.exe` |
 
-For other architectures (ARMv7, 32-bit x86), use `--from-source` to build locally. See the [Raspberry Pi guide](/agentzero/guides/raspberry-pi/) for detailed ARM instructions.
+For other architectures (ARMv7, 32-bit x86), use `--from-source` to build locally. See the [Raspberry Pi guide](/guides/raspberry-pi/) for detailed ARM instructions.
 
 ### Platform-Specific Guides
 
 For detailed instructions on specific platforms:
 
-- **[Android](/agentzero/guides/android/)** — Running in Termux, cross-compilation with Android NDK
-- **[Raspberry Pi](/agentzero/guides/raspberry-pi/)** — Pre-built ARM binaries, building on-device, systemd service setup
+- **[Android](/guides/android/)** — Running in Termux, cross-compilation with Android NDK
+- **[Raspberry Pi](/guides/raspberry-pi/)** — Pre-built ARM binaries, building on-device, systemd service setup
 
 ## Install Variants
 
@@ -224,5 +224,5 @@ cargo run -p agentzero -- status
 
 ## Next Steps
 
-- [Quick Start](/agentzero/quickstart/) — Set up config and run your first agent message
-- [Config Reference](/agentzero/config/reference/) — Full annotated configuration file
+- [Quick Start](/quickstart/) — Set up config and run your first agent message
+- [Config Reference](/config/reference/) — Full annotated configuration file

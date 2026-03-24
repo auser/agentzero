@@ -6,7 +6,7 @@ description: Get AgentZero installed, configured, and running — from first ins
 This guide walks you through every step to get AgentZero running, from installation through production deployment.
 
 :::tip[Want an always-on agent fast?]
-If you just want a bot responding on Telegram, Discord, or Slack with tools enabled, see [Always-On Agent in 5 Minutes](/agentzero/guides/always-on/).
+If you just want a bot responding on Telegram, Discord, or Slack with tools enabled, see [Always-On Agent in 5 Minutes](/guides/always-on/).
 :::
 
 ## Prerequisites
@@ -69,52 +69,13 @@ agentzero --help
 
 ## 2. Configure
 
-The `onboard` command creates your `agentzero.toml` config file in the current directory.
-
-### Interactive wizard
+Run the interactive onboard wizard — it walks you through provider, model, and security settings:
 
 ```bash
 agentzero onboard --interactive
 ```
 
-This walks you through choosing a provider, model, memory backend, and security settings.
-
-### Non-interactive (scripted)
-
-```bash
-agentzero onboard \
-  --provider openrouter \
-  --model anthropic/claude-sonnet-4-6 \
-  --memory sqlite \
-  --allowed-root . \
-  --allowed-commands ls,pwd,cat,echo \
-  --yes
-```
-
-The generated `agentzero.toml` contains three required sections:
-
-```toml
-[provider]
-kind = "openrouter"
-base_url = "https://openrouter.ai/api/v1"
-model = "anthropic/claude-sonnet-4-6"
-
-[memory]
-backend = "sqlite"
-sqlite_path = "./agentzero.db"
-
-[security]
-allowed_root = "."
-allowed_commands = ["ls", "pwd", "cat", "echo"]
-```
-
-To view or modify your config later:
-
-```bash
-agentzero config show          # View effective config
-agentzero config get provider.model   # Get a single value
-agentzero config set provider.model gpt-4o  # Change a value
-```
+This creates your `agentzero.toml` config file. That's it — you're ready to authenticate.
 
 ---
 
@@ -404,7 +365,7 @@ bot_token = "YOUR_DISCORD_BOT_TOKEN"
 
 ### More channels
 
-AgentZero also supports Matrix, Email (SMTP/IMAP), IRC, Mattermost, Nostr, Webhook, and more. See [Configuration Reference](/agentzero/config/reference/) for all channel options.
+AgentZero also supports Matrix, Email (SMTP/IMAP), IRC, Mattermost, Nostr, Webhook, and more. See [Configuration Reference](/config/reference/) for all channel options.
 
 Manage channels:
 
@@ -577,6 +538,6 @@ agentzero doctor traces --limit 10
 
 ## Next Steps
 
-- [Configuration Reference](/agentzero/config/reference/) — Full annotated `agentzero.toml`
-- [CLI Commands](/agentzero/reference/commands/) — Complete command reference
-- [Architecture](/agentzero/architecture/) — How it all fits together
+- [Configuration Reference](/config/reference/) — Full annotated `agentzero.toml`
+- [CLI Commands](/reference/commands/) — Complete command reference
+- [Architecture](/architecture/) — How it all fits together

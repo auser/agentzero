@@ -139,6 +139,6 @@ enabled = true
 ## Next steps
 
 - Run as a system service that survives reboots: `agentzero service install && agentzero service start`
-- Add [delegate agents](/agentzero/guides/multi-agent/) for specialized tasks
-- Set up [scheduled tasks](/agentzero/reference/commands/) with `agentzero cron add`
-- See the full [Configuration Reference](/agentzero/config/reference/) for all options
+- Add [delegate agents](/guides/multi-agent/) for specialized tasks
+- Set up [scheduled tasks](/reference/commands/) with `agentzero cron add`
+- See the full [Configuration Reference](/config/reference/) for all options

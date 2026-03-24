@@ -122,7 +122,7 @@ The `GoalPlanner` decomposes natural language goals into multi-agent DAGs, the `
 
 ## See Also
 
-- [Security Boundaries](/agentzero/security/boundaries/) — Layered defense-in-depth model
-- [Trait System](/agentzero/architecture/traits/) — Detailed trait interfaces and crate boundaries
-- [Config Reference](/agentzero/config/reference/) — Full annotated `agentzero.toml`
-- [Threat Model](/agentzero/security/threat-model/) — Security threat analysis
+- [Security Boundaries](/security/boundaries/) — Layered defense-in-depth model
+- [Trait System](/architecture/traits/) — Detailed trait interfaces and crate boundaries
+- [Config Reference](/config/reference/) — Full annotated `agentzero.toml`
+- [Threat Model](/security/threat-model/) — Security threat analysis

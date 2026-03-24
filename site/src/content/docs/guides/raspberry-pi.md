@@ -297,7 +297,7 @@ sudo usermod -aG dialout $USER
 
 ## Next Steps
 
-- [Quick Start](/agentzero/quickstart/) — Set up config and run your first agent message
-- [Config Reference](/agentzero/config/reference/) — Full annotated configuration file
-- [Gateway Deployment](/agentzero/guides/deployment/) — Reverse proxy and Docker setup
-- [Provider Setup](/agentzero/guides/providers/) — Configure LLM providers
+- [Quick Start](/quickstart/) — Set up config and run your first agent message
+- [Config Reference](/config/reference/) — Full annotated configuration file
+- [Gateway Deployment](/guides/deployment/) — Reverse proxy and Docker setup
+- [Provider Setup](/guides/providers/) — Configure LLM providers

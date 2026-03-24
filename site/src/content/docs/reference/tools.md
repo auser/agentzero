@@ -517,7 +517,7 @@ Build: `cargo build --target wasm32-wasip1 --release`
 
 For a complete example with typed input, `az_log` host calls, `ToolOutput::with_warning`, and WASI filesystem access, see the **reference notepad plugin** at `plugins/agentzero-plugin-reference/notepad/`.
 
-See the [Plugin Authoring Guide](/agentzero/guides/plugins/) for the full walkthrough.
+See the [Plugin Authoring Guide](/guides/plugins/) for the full walkthrough.
 
 ### Plugin Discovery
 
@@ -572,7 +572,7 @@ module_hash_policy = "warn"  # warn or enforce
 - Capability validation: undeclared imports fail at load time (not runtime)
 - SHA-256 integrity: verified on every install and load
 
-For the full ABI specification, host callbacks, and manifest schema, see the [Plugin API Reference](/agentzero/reference/plugin-api/).
+For the full ABI specification, host callbacks, and manifest schema, see the [Plugin API Reference](/reference/plugin-api/).
 
 ---
 

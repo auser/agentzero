@@ -238,7 +238,7 @@ just ffi-swift
 ```
 
 Then link `libagentzero_ffi.a` and the generated `.swift`/`.h` files into your
-Xcode project. See the [iOS support plan](/agentzero/roadmap/) for the full
+Xcode project. See the [iOS support plan](/roadmap/) for the full
 XCFramework packaging workflow.
 
 ### Android (Kotlin)
@@ -252,7 +252,7 @@ cargo build -p agentzero-ffi --release --target aarch64-linux-android
 just ffi-kotlin
 ```
 
-See the [Android guide](/agentzero/guides/android/) for NDK setup and Gradle
+See the [Android guide](/guides/android/) for NDK setup and Gradle
 integration details.
 
 ## Troubleshooting
@@ -284,7 +284,7 @@ cargo build -p agentzero-ffi --release --no-default-features --features node
 
 ## Next steps
 
-- [Quick Start](/agentzero/quickstart/) — try the CLI first
-- [Android guide](/agentzero/guides/android/) — full Android compilation walkthrough
-- [Raspberry Pi guide](/agentzero/guides/raspberry-pi/) — ARM deployment
-- [Architecture](/agentzero/architecture/) — understand the runtime internals
+- [Quick Start](/quickstart/) — try the CLI first
+- [Android guide](/guides/android/) — full Android compilation walkthrough
+- [Raspberry Pi guide](/guides/raspberry-pi/) — ARM deployment
+- [Architecture](/architecture/) — understand the runtime internals
