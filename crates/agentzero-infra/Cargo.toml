@@ -28,6 +28,7 @@ async-trait.workspace = true
 agentzero-auth = { workspace = true }
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
+agentzero-macros = { workspace = true }
 agentzero-tools = { workspace = true }
 agentzero-storage = { workspace = true }
 agentzero-autopilot = { workspace = true, optional = true }

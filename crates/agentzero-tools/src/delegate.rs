@@ -4,6 +4,7 @@ use agentzero_core::delegation::{
     filter_tools, validate_delegation, DelegateConfig, DelegateRequest,
 };
 use agentzero_core::{Agent, AgentConfig, ChatResult, Provider, Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -22,6 +23,27 @@ pub type ToolBuilder = Arc<dyn Fn() -> anyhow::Result<Vec<Box<dyn Tool>>> + Send
 /// `Err(reason)` if the output should be blocked entirely.
 /// Wired to `LeakGuardPolicy::process()` at the call site.
 pub type OutputScanner = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DelegateSchema {
+    /// Action to perform: 'delegate' (default), 'check_result', 'list_results', 'cancel_task'
+    #[schema(enum_values = ["delegate", "check_result", "list_results", "cancel_task"])]
+    #[serde(default)]
+    action: Option<String>,
+    /// Name of the sub-agent to delegate to (required for 'delegate' action)
+    #[serde(default)]
+    agent: Option<String>,
+    /// The prompt/task to send to the sub-agent (required for 'delegate' action)
+    #[serde(default)]
+    prompt: Option<String>,
+    /// Run delegation in background mode — returns task_id immediately without waiting for completion
+    #[serde(default)]
+    background: Option<bool>,
+    /// Task ID to check or cancel (required for 'check_result' and 'cancel_task' actions)
+    #[serde(default)]
+    task_id: Option<String>,
+}
 
 fn default_action() -> String {
     "delegate".to_string()
@@ -47,6 +69,10 @@ struct Input {
     task_id: Option<String>,
 }
 
+#[tool(
+    name = "delegate",
+    description = "Delegate a subtask to a named sub-agent. Supports synchronous, background (fire-and-forget), and task lifecycle management (check, list, cancel)."
+)]
 pub struct DelegateTool {
     agents: HashMap<String, DelegateConfig>,
     current_depth: usize,
@@ -109,43 +135,15 @@ impl DelegateTool {
 #[async_trait]
 impl Tool for DelegateTool {
     fn name(&self) -> &'static str {
-        "delegate"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Delegate a subtask to a named sub-agent. Supports synchronous, background (fire-and-forget), and task lifecycle management (check, list, cancel)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "description": "Action to perform: 'delegate' (default), 'check_result', 'list_results', 'cancel_task'",
-                    "enum": ["delegate", "check_result", "list_results", "cancel_task"],
-                    "default": "delegate"
-                },
-                "agent": {
-                    "type": "string",
-                    "description": "Name of the sub-agent to delegate to (required for 'delegate' action)"
-                },
-                "prompt": {
-                    "type": "string",
-                    "description": "The prompt/task to send to the sub-agent (required for 'delegate' action)"
-                },
-                "background": {
-                    "type": "boolean",
-                    "description": "Run delegation in background mode — returns task_id immediately without waiting for completion",
-                    "default": false
-                },
-                "task_id": {
-                    "type": "string",
-                    "description": "Task ID to check or cancel (required for 'check_result' and 'cancel_task' actions)"
-                }
-            },
-            "additionalProperties": false
-        }))
+        Some(DelegateSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

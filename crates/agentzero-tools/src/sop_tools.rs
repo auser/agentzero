@@ -4,6 +4,7 @@ use crate::sop::engine::SopEngine;
 #[cfg(feature = "tools-extended")]
 use crate::sop::types::SopStepKind;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -55,25 +56,29 @@ impl SopStore {
 
 // --- sop_list ---
 
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct SopListInput {}
+
+#[tool(
+    name = "sop_list",
+    description = "List all standard operating procedures (SOPs) in the workspace."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SopListTool;
 
 #[async_trait]
 impl Tool for SopListTool {
     fn name(&self) -> &'static str {
-        "sop_list"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "List all standard operating procedures (SOPs) in the workspace."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }))
+        Some(SopListInput::schema())
     }
 
     async fn execute(&self, _input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -113,33 +118,32 @@ impl Tool for SopListTool {
 
 // --- sop_status ---
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct SopStatusInput {
+    /// The SOP plan ID
     id: String,
 }
 
+#[tool(
+    name = "sop_status",
+    description = "Get the current status and progress of an SOP."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SopStatusTool;
 
 #[async_trait]
 impl Tool for SopStatusTool {
     fn name(&self) -> &'static str {
-        "sop_status"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Get the current status and progress of an SOP."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "description": "The SOP plan ID" }
-            },
-            "required": ["id"],
-            "additionalProperties": false
-        }))
+        Some(SopStatusInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -197,35 +201,31 @@ impl Tool for SopStatusTool {
 
 // --- sop_advance ---
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct SopAdvanceInput {
+    /// The SOP plan ID
     id: String,
+    /// Index of the step to mark as completed
     step_index: usize,
 }
 
+#[tool(name = "sop_advance", description = "Advance an SOP to the next step.")]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SopAdvanceTool;
 
 #[async_trait]
 impl Tool for SopAdvanceTool {
     fn name(&self) -> &'static str {
-        "sop_advance"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Advance an SOP to the next step."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "description": "The SOP plan ID" },
-                "step_index": { "type": "integer", "description": "Index of the step to mark as completed" }
-            },
-            "required": ["id", "step_index"],
-            "additionalProperties": false
-        }))
+        Some(SopAdvanceInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -307,35 +307,34 @@ impl Tool for SopAdvanceTool {
 
 // --- sop_approve ---
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct SopApproveInput {
+    /// The SOP plan ID
     id: String,
+    /// Index of the step to approve
     step_index: usize,
 }
 
+#[tool(
+    name = "sop_approve",
+    description = "Approve a step in an SOP that requires human approval."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SopApproveTool;
 
 #[async_trait]
 impl Tool for SopApproveTool {
     fn name(&self) -> &'static str {
-        "sop_approve"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Approve a step in an SOP that requires human approval."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "description": "The SOP plan ID" },
-                "step_index": { "type": "integer", "description": "Index of the step to approve" }
-            },
-            "required": ["id", "step_index"],
-            "additionalProperties": false
-        }))
+        Some(SopApproveInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -380,42 +379,40 @@ impl Tool for SopApproveTool {
 
 // --- sop_execute ---
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct SopExecuteInput {
+    /// Unique SOP plan ID
     id: String,
+    /// List of step titles
     steps: Vec<String>,
+    /// Indices of steps requiring human approval
     #[serde(default)]
     approval_required: Vec<usize>,
-    /// Run in deterministic mode (bypass LLM for step transitions).
+    /// Run in deterministic mode (bypass LLM for step transitions)
     #[serde(default)]
     deterministic: bool,
 }
 
+#[tool(
+    name = "sop_execute",
+    description = "Create and begin executing a new SOP with defined steps."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SopExecuteTool;
 
 #[async_trait]
 impl Tool for SopExecuteTool {
     fn name(&self) -> &'static str {
-        "sop_execute"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Create and begin executing a new SOP with defined steps."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "description": "Unique SOP plan ID" },
-                "steps": { "type": "array", "items": { "type": "string" }, "description": "List of step titles" },
-                "approval_required": { "type": "array", "items": { "type": "integer" }, "description": "Indices of steps requiring human approval" },
-                "deterministic": { "type": "boolean", "description": "Run in deterministic mode (bypass LLM for step transitions)", "default": false }
-            },
-            "required": ["id", "steps"],
-            "additionalProperties": false
-        }))
+        Some(SopExecuteInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

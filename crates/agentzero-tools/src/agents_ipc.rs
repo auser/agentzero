@@ -1,5 +1,6 @@
 use agentzero_core::event_bus::Event;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use agentzero_storage::EncryptedJsonStore;
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
@@ -11,6 +12,26 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const IPC_STORE_FILE: &str = "ipc.json";
 /// Timeout for recv when using the event bus (seconds).
 const BUS_RECV_TIMEOUT_SECS: u64 = 30;
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct AgentsIpcInput {
+    /// The IPC operation to perform
+    #[schema(enum_values = ["send", "recv", "list", "clear"])]
+    op: String,
+    /// Sender agent name (required for send)
+    #[serde(default)]
+    from: Option<String>,
+    /// Recipient agent name (required for send/recv)
+    #[serde(default)]
+    to: Option<String>,
+    /// Message payload (required for send)
+    #[serde(default)]
+    payload: Option<String>,
+    /// Max messages to return (for list)
+    #[serde(default)]
+    limit: Option<usize>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct IpcMessage {
@@ -42,33 +63,24 @@ enum IpcRequest {
     },
 }
 
+#[tool(
+    name = "agents_ipc",
+    description = "Inter-process communication between agents: send messages and receive responses. When an event bus is available, messages are published as events. Otherwise falls back to file-based storage."
+)]
 pub struct AgentsIpcTool;
 
 #[async_trait]
 impl Tool for AgentsIpcTool {
     fn name(&self) -> &'static str {
-        "agents_ipc"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Inter-process communication between agents: send messages and receive responses. \
-         When an event bus is available, messages are published as events. Otherwise falls \
-         back to file-based storage."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "op": { "type": "string", "enum": ["send", "recv", "list", "clear"], "description": "The IPC operation to perform" },
-                "from": { "type": "string", "description": "Sender agent name (required for send)" },
-                "to": { "type": "string", "description": "Recipient agent name (required for send/recv)" },
-                "payload": { "type": "string", "description": "Message payload (required for send)" },
-                "limit": { "type": "integer", "description": "Max messages to return (for list)" }
-            },
-            "required": ["op"],
-            "additionalProperties": false
-        }))
+        Some(AgentsIpcInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

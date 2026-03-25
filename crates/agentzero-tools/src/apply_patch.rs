@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -40,6 +41,20 @@ struct ApplyPatchInput {
     dry_run: bool,
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct ApplyPatchSchema {
+    /// The patch text in unified diff format
+    patch: String,
+    /// If true, show what would change without modifying files
+    #[serde(default)]
+    dry_run: Option<bool>,
+}
+
+#[tool(
+    name = "apply_patch",
+    description = "Apply a unified patch to one or more files. Supports update, add, and delete operations with context-based matching and dry-run mode."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ApplyPatchTool;
 
@@ -316,28 +331,15 @@ impl ApplyPatchTool {
 #[async_trait]
 impl Tool for ApplyPatchTool {
     fn name(&self) -> &'static str {
-        "apply_patch"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Apply a unified patch to one or more files. Supports update, add, and delete operations with context-based matching and dry-run mode."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "patch": {
-                    "type": "string",
-                    "description": "The patch text in unified diff format"
-                },
-                "dry_run": {
-                    "type": "boolean",
-                    "description": "If true, show what would change without modifying files"
-                }
-            },
-            "required": ["patch"]
-        }))
+        Some(ApplyPatchSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

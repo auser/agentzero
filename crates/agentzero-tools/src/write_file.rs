@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -22,16 +23,25 @@ impl WriteFilePolicy {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToolSchema)]
+#[allow(dead_code)]
 struct WriteFileInput {
+    /// Relative path to the file to write
     path: String,
+    /// Text content to write to the file
     content: String,
+    /// Set to true to overwrite an existing file
     #[serde(default)]
     overwrite: bool,
+    /// If true, report what would happen without writing
     #[serde(default)]
     dry_run: bool,
 }
 
+#[tool(
+    name = "write_file",
+    description = "Write content to a file, creating it if it does not exist or overwriting if overwrite=true. Path must be within the workspace root."
+)]
 pub struct WriteFileTool {
     allowed_root: PathBuf,
     max_write_bytes: u64,
@@ -95,36 +105,15 @@ impl WriteFileTool {
 #[async_trait]
 impl Tool for WriteFileTool {
     fn name(&self) -> &'static str {
-        "write_file"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Write content to a file, creating it if it does not exist or overwriting if overwrite=true. Path must be within the workspace root."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Relative path to the file to write"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Text content to write to the file"
-                },
-                "overwrite": {
-                    "type": "boolean",
-                    "description": "Set to true to overwrite an existing file"
-                },
-                "dry_run": {
-                    "type": "boolean",
-                    "description": "If true, report what would happen without writing"
-                }
-            },
-            "required": ["path", "content"]
-        }))
+        Some(WriteFileInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

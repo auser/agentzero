@@ -1,9 +1,22 @@
 use agentzero_core::common::url_policy::UrlAccessPolicy;
 use agentzero_core::common::util::parse_http_url_with_policy;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::anyhow;
 use async_trait::async_trait;
+use serde::Deserialize;
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct UrlValidationInput {
+    /// URL to validate
+    url: String,
+}
+
+#[tool(
+    name = "url_validation",
+    description = "Validate a URL against the access policy (private IPs, domain allowlist, etc.)."
+)]
 #[derive(Default)]
 pub struct UrlValidationTool {
     url_policy: UrlAccessPolicy,
@@ -19,21 +32,15 @@ impl UrlValidationTool {
 #[async_trait]
 impl Tool for UrlValidationTool {
     fn name(&self) -> &'static str {
-        "url_validation"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Validate a URL against the access policy (private IPs, domain allowlist, etc.)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "required": ["url"],
-            "properties": {
-                "url": {"type": "string", "description": "URL to validate"}
-            }
-        }))
+        Some(UrlValidationInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

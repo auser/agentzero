@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -42,6 +43,17 @@ impl Default for WebSearchConfig {
     }
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct WebSearchSchema {
+    /// The search query
+    query: String,
+}
+
+#[tool(
+    name = "web_search",
+    description = "Search the web using DuckDuckGo, Brave, or Jina and return a summary of results."
+)]
 pub struct WebSearchTool {
     client: reqwest::Client,
     config: WebSearchConfig,
@@ -246,24 +258,15 @@ fn clean_html(s: &str) -> String {
 #[async_trait]
 impl Tool for WebSearchTool {
     fn name(&self) -> &'static str {
-        "web_search"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Search the web using DuckDuckGo, Brave, or Jina and return a summary of results."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query"
-                }
-            },
-            "required": ["query"]
-        }))
+        Some(WebSearchSchema::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

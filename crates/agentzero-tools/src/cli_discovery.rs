@@ -1,12 +1,16 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::Context;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
-#[derive(Debug, Deserialize)]
-struct Input {
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct CliDiscoveryInput {
+    /// Operation: check_command or runtime_info
     op: String,
+    /// Command name to check (for check_command op)
     #[serde(default)]
     command: Option<String>,
 }
@@ -16,32 +20,29 @@ struct Input {
 /// Operations:
 /// - `check_command`: Check if a shell command is available on PATH
 /// - `runtime_info`: Return runtime environment information
+#[tool(
+    name = "cli_discovery",
+    description = "Discover available CLI tools and runtime environment: check command availability or get runtime info."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CliDiscoveryTool;
 
 #[async_trait]
 impl Tool for CliDiscoveryTool {
     fn name(&self) -> &'static str {
-        "cli_discovery"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Discover available CLI tools and runtime environment: check command availability or get runtime info."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "required": ["op"],
-            "properties": {
-                "op": {"type": "string", "description": "Operation: check_command or runtime_info"},
-                "command": {"type": "string", "description": "Command name to check (for check_command op)"}
-            }
-        }))
+        Some(CliDiscoveryInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
-        let parsed: Input =
+        let parsed: CliDiscoveryInput =
             serde_json::from_str(input).context("cli_discovery expects JSON: {\"op\", ...}")?;
 
         let output = match parsed.op.as_str() {

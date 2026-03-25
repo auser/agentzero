@@ -3,7 +3,9 @@
 
 use crate::tools::dynamic_tool::{DynamicToolDef, DynamicToolRegistry, DynamicToolStrategy};
 use agentzero_core::{Provider, Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
+use serde::Deserialize;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,9 +19,34 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// - `import` — import a tool definition from JSON
 ///
 /// Gated by `ctx.depth == 0` (only root agents can create tools).
+#[tool(
+    name = "tool_create",
+    description = "Create, list, delete, export, or import dynamic tools at runtime. Created tools persist across sessions and are immediately available."
+)]
 pub struct ToolCreateTool {
     registry: Arc<DynamicToolRegistry>,
     provider: Arc<dyn Provider>,
+}
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct ToolCreateSchema {
+    /// Action to perform
+    #[schema(enum_values = ["create", "list", "delete", "export", "import"])]
+    action: String,
+    /// Natural language description of the tool to create (for 'create' action)
+    #[serde(default)]
+    description: Option<String>,
+    /// Tool name (for 'delete' and 'export' actions)
+    #[serde(default)]
+    name: Option<String>,
+    /// Optional hint for which strategy type to use (for 'create' action)
+    #[serde(default)]
+    #[schema(enum_values = ["shell", "http", "llm", "composite"])]
+    strategy_hint: Option<String>,
+    /// JSON tool definition to import (for 'import' action)
+    #[serde(default)]
+    json: Option<String>,
 }
 
 impl ToolCreateTool {
@@ -59,42 +86,15 @@ Rules:
 #[async_trait]
 impl Tool for ToolCreateTool {
     fn name(&self) -> &'static str {
-        "tool_create"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Create, list, delete, export, or import dynamic tools at runtime. Created tools persist across sessions and are immediately available."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["create", "list", "delete", "export", "import"],
-                    "description": "Action to perform"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Natural language description of the tool to create (for 'create' action)"
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Tool name (for 'delete' and 'export' actions)"
-                },
-                "strategy_hint": {
-                    "type": "string",
-                    "enum": ["shell", "http", "llm", "composite"],
-                    "description": "Optional hint for which strategy type to use (for 'create' action)"
-                },
-                "json": {
-                    "type": "string",
-                    "description": "JSON tool definition to import (for 'import' action)"
-                }
-            },
-            "required": ["action"]
-        }))
+        Some(ToolCreateSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

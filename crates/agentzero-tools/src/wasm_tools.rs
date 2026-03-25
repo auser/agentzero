@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -7,9 +8,13 @@ use std::path::Path;
 
 // --- wasm_module ---
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct WasmModuleInput {
+    /// The WASM module operation
+    #[schema(enum_values = ["inspect", "list"])]
     op: String,
+    /// Path to the WASM file (for inspect)
     #[serde(default)]
     path: Option<String>,
 }
@@ -19,29 +24,25 @@ struct WasmModuleInput {
 /// Operations:
 /// - `inspect`: Read a .wasm file and return basic module info (size, header validation)
 /// - `list`: List .wasm files in the workspace plugins directory
+#[tool(
+    name = "wasm_module",
+    description = "Inspect or list WASM modules in the workspace plugins directory."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct WasmModuleTool;
 
 #[async_trait]
 impl Tool for WasmModuleTool {
     fn name(&self) -> &'static str {
-        "wasm_module"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Inspect or list WASM modules in the workspace plugins directory."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "op": { "type": "string", "enum": ["inspect", "list"], "description": "The WASM module operation" },
-                "path": { "type": "string", "description": "Path to the WASM file (for inspect)" }
-            },
-            "required": ["op"],
-            "additionalProperties": false
-        }))
+        Some(WasmModuleInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -131,11 +132,15 @@ impl Tool for WasmModuleTool {
 
 // --- wasm_tool ---
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct WasmToolInput {
+    /// Path to the WASM module file
     module: String,
+    /// Function to invoke (default: _start)
     #[serde(default)]
     function: Option<String>,
+    /// Arguments to pass to the function
     #[serde(default)]
     args: Option<serde_json::Value>,
 }
@@ -145,30 +150,25 @@ struct WasmToolInput {
 /// This tool loads a WASM module and invokes a function within it.
 /// Currently validates the module path and reports that WASM execution
 /// requires the `wasmtime` runtime (future integration).
+#[tool(
+    name = "wasm_tool",
+    description = "Execute a function within a WASM module."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct WasmToolExecTool;
 
 #[async_trait]
 impl Tool for WasmToolExecTool {
     fn name(&self) -> &'static str {
-        "wasm_tool"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Execute a function within a WASM module."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "module": { "type": "string", "description": "Path to the WASM module file" },
-                "function": { "type": "string", "description": "Function to invoke (default: _start)" },
-                "args": { "type": "object", "description": "Arguments to pass to the function" }
-            },
-            "required": ["module"],
-            "additionalProperties": false
-        }))
+        Some(WasmToolInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

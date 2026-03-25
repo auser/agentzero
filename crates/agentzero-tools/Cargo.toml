@@ -18,6 +18,7 @@ document-tools = ["dep:scraper", "dep:zip"]
 anyhow.workspace = true
 async-trait.workspace = true
 agentzero-core = { workspace = true }
+agentzero-macros = { workspace = true }
 agentzero-providers = { workspace = true }
 agentzero-storage = { workspace = true }
 glob.workspace = true

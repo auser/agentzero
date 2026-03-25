@@ -5,16 +5,23 @@
 
 use agentzero_core::canvas::CanvasStore;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::json;
 use std::sync::Arc;
 
-#[derive(Debug, Deserialize)]
-struct Input {
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct CanvasInput {
+    /// The canvas action to perform
+    #[schema(enum_values = ["render", "snapshot", "clear", "list"])]
     action: String,
+    /// Canvas identifier (required for render, snapshot, clear)
     canvas_id: Option<String>,
+    /// MIME type of the content (required for render)
+    #[schema(enum_values = ["text/html", "image/svg+xml", "text/markdown", "text/plain"])]
     content_type: Option<String>,
+    /// The content to render (required for render)
     content: Option<String>,
 }
 
@@ -25,6 +32,10 @@ struct Input {
 /// - `snapshot` — read the current state of a canvas
 /// - `clear` — reset a canvas
 /// - `list` — list all active canvases
+#[tool(
+    name = "canvas",
+    description = "Push rich visual content (HTML, SVG, Markdown) to a live canvas viewable in the web UI. Use 'render' to push content, 'snapshot' to read current state, 'clear' to reset, 'list' to see all canvases."
+)]
 pub struct CanvasTool {
     store: Arc<CanvasStore>,
 }
@@ -38,44 +49,19 @@ impl CanvasTool {
 #[async_trait]
 impl Tool for CanvasTool {
     fn name(&self) -> &'static str {
-        "canvas"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Push rich visual content (HTML, SVG, Markdown) to a live canvas viewable in the web UI. \
-         Use 'render' to push content, 'snapshot' to read current state, 'clear' to reset, \
-         'list' to see all canvases."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "required": ["action"],
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["render", "snapshot", "clear", "list"],
-                    "description": "The canvas action to perform"
-                },
-                "canvas_id": {
-                    "type": "string",
-                    "description": "Canvas identifier (required for render, snapshot, clear)"
-                },
-                "content_type": {
-                    "type": "string",
-                    "enum": ["text/html", "image/svg+xml", "text/markdown", "text/plain"],
-                    "description": "MIME type of the content (required for render)"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The content to render (required for render)"
-                }
-            }
-        }))
+        Some(CanvasInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
-        let parsed: Input = serde_json::from_str(input)
+        let parsed: CanvasInput = serde_json::from_str(input)
             .map_err(|e| anyhow::anyhow!("canvas expects JSON: {{\"action\": \"...\"}}: {e}"))?;
 
         match parsed.action.as_str() {

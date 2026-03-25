@@ -6,6 +6,7 @@
 
 use agentzero_config::writer;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{bail, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -13,17 +14,27 @@ use std::path::{Path, PathBuf};
 
 const MAX_BACKUPS: usize = 10;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct Input {
+    /// The config operation to perform
+    #[schema(enum_values = ["get", "set", "validate", "diff", "backup_list", "rollback"])]
     action: String,
+    /// Config section name (e.g. 'provider', 'security', 'agents'). Omit for full config on get.
     #[serde(default)]
     section: Option<String>,
+    /// For set/validate/diff: the JSON value to merge into the section
     #[serde(default)]
     value: Option<serde_json::Value>,
+    /// For rollback: the backup timestamp to restore
     #[serde(default)]
     backup_id: Option<String>,
 }
 
+#[tool(
+    name = "config_manage",
+    description = "Read and modify the agentzero configuration. Actions: get (read config section), set (update config with validation + backup), validate (dry-run a change), diff (preview what would change), backup_list (list backups), rollback (restore a backup)."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ConfigManageTool;
 
@@ -44,39 +55,15 @@ impl ConfigManageTool {
 #[async_trait]
 impl Tool for ConfigManageTool {
     fn name(&self) -> &'static str {
-        "config_manage"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Read and modify the agentzero configuration. Actions: get (read config section), \
-         set (update config with validation + backup), validate (dry-run a change), \
-         diff (preview what would change), backup_list (list backups), rollback (restore a backup)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["get", "set", "validate", "diff", "backup_list", "rollback"],
-                    "description": "The config operation to perform"
-                },
-                "section": {
-                    "type": "string",
-                    "description": "Config section name (e.g. 'provider', 'security', 'agents'). Omit for full config on get."
-                },
-                "value": {
-                    "type": "object",
-                    "description": "For set/validate/diff: the JSON value to merge into the section"
-                },
-                "backup_id": {
-                    "type": "string",
-                    "description": "For rollback: the backup timestamp to restore"
-                }
-            },
-            "required": ["action"]
-        }))
+        Some(Input::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

@@ -1,11 +1,24 @@
 use agentzero_core::common::url_policy::UrlAccessPolicy;
 use agentzero_core::common::util::parse_http_url_with_policy;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
+use serde::Deserialize;
 
 const DEFAULT_MAX_BYTES: usize = 64 * 1024;
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct WebFetchInput {
+    /// The URL to fetch
+    url: String,
+}
+
+#[tool(
+    name = "web_fetch",
+    description = "Fetch a URL and return its content as text (HTML converted to plain text)."
+)]
 pub struct WebFetchTool {
     client: reqwest::Client,
     max_bytes: usize,
@@ -32,21 +45,15 @@ impl WebFetchTool {
 #[async_trait]
 impl Tool for WebFetchTool {
     fn name(&self) -> &'static str {
-        "web_fetch"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Fetch a URL and return its content as text (HTML converted to plain text)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "url": { "type": "string", "description": "The URL to fetch" }
-            },
-            "required": ["url"]
-        }))
+        Some(WebFetchInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
