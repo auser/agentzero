@@ -1,15 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { MessageSquare, X, Send, Loader2 } from 'lucide-react'
+import { MessageSquare, X, Send, Loader2, Cpu, Cloud } from 'lucide-react'
 import { useChat, type ChatMessage } from '@/hooks/useChat'
 
 /**
  * Persistent floating chat bubble in the bottom-right corner.
  * Uses the existing WebSocket chat hook to communicate with the gateway.
  * Available on every page via the root layout.
+ *
+ * Supports local model inference via the "builtin" provider (llama.cpp).
+ * Toggle between cloud and local mode with the CPU/Cloud button.
  */
 export function FloatingChat() {
   const [isOpen, setIsOpen] = useState(false)
   const [input, setInput] = useState('')
+  const [useLocal, setUseLocal] = useState(false)
   const { messages, status, send, clear } = useChat()
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -29,9 +33,9 @@ export function FloatingChat() {
   const handleSend = useCallback(() => {
     const text = input.trim()
     if (!text) return
-    send(text)
+    send(text, useLocal ? { provider: 'builtin' } : undefined)
     setInput('')
-  }, [input, send])
+  }, [input, send, useLocal])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -75,6 +79,17 @@ export function FloatingChat() {
         </div>
         <div className="flex items-center gap-1">
           <button
+            onClick={() => setUseLocal(!useLocal)}
+            className={`p-1.5 rounded-md transition-colors ${
+              useLocal
+                ? 'text-green-500 bg-green-500/10'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+            }`}
+            title={useLocal ? 'Using local model (offline)' : 'Using cloud provider'}
+          >
+            {useLocal ? <Cpu className="h-3.5 w-3.5" /> : <Cloud className="h-3.5 w-3.5" />}
+          </button>
+          <button
             onClick={clear}
             className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 text-xs"
             title="Clear chat"
@@ -98,6 +113,11 @@ export function FloatingChat() {
             <p className="text-xs mt-1 opacity-60">
               Ask me to create agents, configure tools, or manage your system.
             </p>
+            {useLocal && (
+              <p className="text-[10px] mt-2 text-green-600/70">
+                Local mode: responses stay on your device
+              </p>
+            )}
           </div>
         )}
         {messages.map((msg) => (

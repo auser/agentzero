@@ -41,7 +41,7 @@ function ChatPage() {
   function handleSend(e: React.FormEvent) {
     e.preventDefault()
     if (!input.trim()) return
-    send(input.trim(), selectedAgent, selectedModel)
+    send(input.trim(), { agentId: selectedAgent, model: selectedModel })
     setInput('')
   }
 

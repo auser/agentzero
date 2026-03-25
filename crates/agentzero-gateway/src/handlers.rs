@@ -676,18 +676,36 @@ async fn handle_socket(
 }
 
 /// Process a single text message from the WebSocket client.
+///
+/// Accepts either plain text (backward compat) or JSON:
+/// ```json
+/// { "message": "hello", "provider": "builtin", "model": "qwen2.5-coder-3b", "agent_id": "..." }
+/// ```
+/// When `provider` is set, it overrides the config file's provider (e.g., "builtin" for local model).
 async fn handle_text_message(
     socket: &mut WebSocket,
     config_path: &Arc<PathBuf>,
     workspace_root: &Arc<PathBuf>,
     text: String,
 ) {
+    // Try to parse as JSON for provider/model override support.
+    // Falls back to treating the entire string as the message.
+    let (message, provider_override, model_override) =
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+            let msg = parsed["message"].as_str().unwrap_or(&text).to_string();
+            let provider = parsed["provider"].as_str().map(String::from);
+            let model = parsed["model"].as_str().map(String::from);
+            (msg, provider, model)
+        } else {
+            (text.clone(), None, None)
+        };
+
     let req = RunAgentRequest {
         workspace_root: workspace_root.as_ref().clone(),
         config_path: config_path.as_ref().clone(),
-        message: text.clone(),
-        provider_override: None,
-        model_override: None,
+        message: message.clone(),
+        provider_override,
+        model_override,
         profile_override: None,
         extra_tools: vec![],
         conversation_id: None,
@@ -705,7 +723,7 @@ async fn handle_text_message(
             return;
         }
     };
-    let (mut rx, handle) = run_agent_streaming(execution, workspace_root.as_ref().clone(), text);
+    let (mut rx, handle) = run_agent_streaming(execution, workspace_root.as_ref().clone(), message);
     while let Some(chunk) = rx.recv().await {
         if !chunk.delta.is_empty() {
             let frame = json!({

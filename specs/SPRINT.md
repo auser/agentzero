@@ -1440,7 +1440,7 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 Global floating chat widget available across the entire UI (not just workflows). Powered by a **local model** (Ollama/llama.cpp) for privacy.
 
 - [x] **Floating bubble component** — `FloatingChat.tsx`: persistent bottom-right bubble, expands to 32rem chat panel. Available on every page via root `__root.tsx` layout. WebSocket-powered via existing `useChat` hook.
-- [ ] **Embedded local model** — runs inference directly in the Rust binary via `candle` or `llama-cpp-2`. No external server needed. Single binary, fully offline capable. Model weights bundled or downloaded on first run. Never sends data to remote APIs.
+- [x] **Embedded local model** — `BuiltinProvider` uses `llama-cpp-2` for in-process inference (feature-gated `local-model`). Auto-downloads Qwen 2.5 Coder 3B GGUF from HuggingFace on first use. WebSocket chat handler accepts `{"provider": "builtin"}` to route to local model. FloatingChat has CPU/Cloud toggle. Feature chain: binary → cli → gateway → infra → providers.
 - [ ] **Agent creation from chat** — "I want an agent that reads my email every morning" → creates agent config, tools, schedule, channel automatically.
 - [ ] **Full subsystem awareness** — chat can read and modify all AgentZero subsystems:
   - Schedule (create/modify cron jobs)
@@ -1521,8 +1521,8 @@ Upgrade edge rendering to match LangFlow's clean connection style.
 
 Floating chat bubble (powered by a local model) that lets the user describe the agent they want in natural language and auto-creates it. The chat assistant has full access to all AgentZero subsystems:
 
-- [x] **Floating chat widget** — `FloatingChat.tsx` in root layout, persistent bubble, WebSocket chat
-- [ ] **Local model integration** — runs through a local LLM (Ollama/llama.cpp) for privacy. `BuiltinProvider` with llama.cpp already exists behind `local-model` feature.
+- [x] **Floating chat widget** — `FloatingChat.tsx` in root layout, persistent bubble, WebSocket chat with local/cloud toggle
+- [x] **Local model integration** — `BuiltinProvider` with llama.cpp wired into WebSocket chat via `provider` field. CPU/Cloud toggle in FloatingChat. Feature chain: `local-model` → gateway → providers.
 - [ ] **Agent creation from description** — "I want an agent that reads my email every morning and summarizes it" → creates agent config, tools, schedule, channel
 - [ ] **Full subsystem awareness** — chat can inform and modify:
   - Schedule (create/modify cron jobs)
