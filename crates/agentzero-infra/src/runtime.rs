@@ -103,6 +103,53 @@ impl HookSink for AuditHookSink {
     }
 }
 
+/// Adapter to use `Arc<dyn Provider>` where `Box<dyn Provider>` is expected.
+/// Used when wrapping providers through the composable pipeline.
+struct PipelineProviderAdapter(std::sync::Arc<dyn Provider>);
+
+#[async_trait]
+impl Provider for PipelineProviderAdapter {
+    fn supports_streaming(&self) -> bool {
+        self.0.supports_streaming()
+    }
+    async fn complete(&self, prompt: &str) -> anyhow::Result<agentzero_core::ChatResult> {
+        self.0.complete(prompt).await
+    }
+    async fn complete_with_reasoning(
+        &self,
+        prompt: &str,
+        reasoning: &agentzero_core::ReasoningConfig,
+    ) -> anyhow::Result<agentzero_core::ChatResult> {
+        self.0.complete_with_reasoning(prompt, reasoning).await
+    }
+    async fn complete_streaming(
+        &self,
+        prompt: &str,
+        sender: tokio::sync::mpsc::UnboundedSender<agentzero_core::StreamChunk>,
+    ) -> anyhow::Result<agentzero_core::ChatResult> {
+        self.0.complete_streaming(prompt, sender).await
+    }
+    async fn complete_with_tools(
+        &self,
+        messages: &[agentzero_core::ConversationMessage],
+        tools: &[agentzero_core::ToolDefinition],
+        reasoning: &agentzero_core::ReasoningConfig,
+    ) -> anyhow::Result<agentzero_core::ChatResult> {
+        self.0.complete_with_tools(messages, tools, reasoning).await
+    }
+    async fn complete_streaming_with_tools(
+        &self,
+        messages: &[agentzero_core::ConversationMessage],
+        tools: &[agentzero_core::ToolDefinition],
+        reasoning: &agentzero_core::ReasoningConfig,
+        sender: tokio::sync::mpsc::UnboundedSender<agentzero_core::StreamChunk>,
+    ) -> anyhow::Result<agentzero_core::ChatResult> {
+        self.0
+            .complete_streaming_with_tools(messages, tools, reasoning, sender)
+            .await
+    }
+}
+
 /// Build a `RuntimeExecution` from a `RunAgentRequest`. This resolves config,
 /// API keys, provider, memory, tools, audit, and hooks — everything needed to
 /// run the agent. Extracted so both `run_agent_once` and streaming callers can
@@ -240,6 +287,33 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             );
             Box::new(agentzero_providers::FallbackProvider::new(chain))
         };
+
+    // Wrap provider with composable pipeline layers (metrics, cost cap).
+    let provider: Box<dyn agentzero_core::Provider> = {
+        let provider_arc: std::sync::Arc<dyn agentzero_core::Provider> = provider.into();
+        let mut pipeline = agentzero_providers::PipelineBuilder::new().layer(
+            agentzero_providers::MetricsLayer::new(&config.provider.kind, &config.provider.model),
+        );
+
+        // Add cost cap layer if a per-run budget is configured.
+        let cost_budget = config
+            .agent
+            .max_cost_usd
+            .map(|usd| (usd * 1_000_000.0) as u64)
+            .unwrap_or(0);
+        if cost_budget > 0 {
+            pipeline = pipeline.layer(agentzero_providers::CostCapLayer::new(
+                cost_budget,
+                &config.provider.kind,
+                &config.provider.model,
+            ));
+        }
+
+        let wrapped = pipeline.build(provider_arc);
+        // Convert Arc<dyn Provider> back to Box<dyn Provider> for RuntimeExecution.
+        Box::new(PipelineProviderAdapter(wrapped))
+    };
+
     let memory = match req.memory_override {
         Some(m) => m,
         None => build_memory_store(&req.config_path).await?,

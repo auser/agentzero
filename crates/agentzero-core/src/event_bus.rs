@@ -347,6 +347,105 @@ pub fn is_boundary_compatible(source_boundary: &str, consumer_boundary: &str) ->
     level(consumer_boundary) >= level(source_boundary)
 }
 
+// ---------------------------------------------------------------------------
+// TypedTopic — compile-time type-safe pub/sub wrapper
+// ---------------------------------------------------------------------------
+
+/// A compile-time type-safe topic that handles serialization/deserialization
+/// of messages automatically.
+///
+/// ```ignore
+/// let topic = TypedTopic::<AnnounceMessage>::new("agent.announce");
+///
+/// // Publish — M is serialized to JSON automatically
+/// topic.publish(&bus, "agent-1", &msg).await?;
+///
+/// // Subscribe — returns typed messages
+/// let mut sub = topic.subscribe(&bus);
+/// let msg: AnnounceMessage = sub.recv().await?;
+/// ```
+///
+/// This wraps the existing string-based EventBus without replacing it.
+/// String-based topics continue to work for backward compatibility.
+pub struct TypedTopic<M> {
+    name: String,
+    _phantom: std::marker::PhantomData<M>,
+}
+
+impl<M: Serialize + for<'de> Deserialize<'de> + Send> TypedTopic<M> {
+    /// Create a typed topic with the given name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// The topic name string.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Publish a typed message to the bus.
+    pub async fn publish(&self, bus: &dyn EventBus, source: &str, msg: &M) -> anyhow::Result<()> {
+        let payload = serde_json::to_string(msg)
+            .map_err(|e| anyhow::anyhow!("failed to serialize typed topic message: {e}"))?;
+        bus.publish(Event::new(&self.name, source, payload)).await
+    }
+
+    /// Publish a typed message with a privacy boundary.
+    pub async fn publish_with_boundary(
+        &self,
+        bus: &dyn EventBus,
+        source: &str,
+        msg: &M,
+        boundary: &str,
+    ) -> anyhow::Result<()> {
+        let payload = serde_json::to_string(msg)
+            .map_err(|e| anyhow::anyhow!("failed to serialize typed topic message: {e}"))?;
+        let event = Event::new(&self.name, source, payload).with_boundary(boundary);
+        bus.publish(event).await
+    }
+
+    /// Create a typed subscriber that deserializes messages from this topic.
+    pub fn subscribe(&self, bus: &dyn EventBus) -> TypedSubscriber<M> {
+        TypedSubscriber {
+            inner: bus.subscribe(),
+            topic_name: self.name.clone(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+/// A subscriber that automatically deserializes messages into the expected type.
+pub struct TypedSubscriber<M> {
+    inner: Box<dyn EventSubscriber>,
+    topic_name: String,
+    _phantom: std::marker::PhantomData<M>,
+}
+
+impl<M: for<'de> Deserialize<'de> + Send> TypedSubscriber<M> {
+    /// Receive the next typed message on this topic.
+    ///
+    /// Filters events to this topic and deserializes the payload.
+    /// Non-matching topics are silently skipped.
+    /// Deserialization errors are returned as `Err`.
+    pub async fn recv(&mut self) -> anyhow::Result<M> {
+        loop {
+            let event = self.inner.recv().await?;
+            if event.topic == self.topic_name {
+                let msg: M = serde_json::from_str(&event.payload).map_err(|e| {
+                    anyhow::anyhow!(
+                        "typed topic '{}' deserialization error: {e}",
+                        self.topic_name
+                    )
+                })?;
+                return Ok(msg);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,5 +669,105 @@ mod tests {
         assert_eq!(bus.subscriber_count(), 2);
 
         tokio::fs::remove_file(path).await.ok();
+    }
+
+    // --- TypedTopic tests ---
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    struct TestMessage {
+        text: String,
+        count: u32,
+    }
+
+    #[tokio::test]
+    async fn typed_topic_publish_subscribe_roundtrip() {
+        let bus = InMemoryBus::new(16);
+        let topic = TypedTopic::<TestMessage>::new("test.typed");
+
+        let mut sub = topic.subscribe(&bus);
+
+        let msg = TestMessage {
+            text: "hello".into(),
+            count: 42,
+        };
+        topic
+            .publish(&bus, "test-source", &msg)
+            .await
+            .expect("publish should succeed");
+
+        let received = sub.recv().await.expect("recv should succeed");
+        assert_eq!(received, msg);
+    }
+
+    #[tokio::test]
+    async fn typed_topic_filters_other_topics() {
+        let bus = InMemoryBus::new(16);
+        let topic = TypedTopic::<TestMessage>::new("my.topic");
+
+        let mut sub = topic.subscribe(&bus);
+
+        // Publish to a different topic — should be filtered out
+        bus.publish(Event::new(
+            "other.topic",
+            "src",
+            r#"{"text":"nope","count":0}"#,
+        ))
+        .await
+        .unwrap();
+
+        // Publish to our topic
+        let msg = TestMessage {
+            text: "yes".into(),
+            count: 1,
+        };
+        topic.publish(&bus, "src", &msg).await.unwrap();
+
+        let received = sub.recv().await.unwrap();
+        assert_eq!(received.text, "yes");
+    }
+
+    #[tokio::test]
+    async fn typed_topic_deserialization_error() {
+        let bus = InMemoryBus::new(16);
+        let topic_name = "bad.payload";
+        let topic = TypedTopic::<TestMessage>::new(topic_name);
+
+        let mut sub = topic.subscribe(&bus);
+
+        // Publish invalid JSON for this type
+        bus.publish(Event::new(topic_name, "src", "not valid json"))
+            .await
+            .unwrap();
+
+        let result = sub.recv().await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("deserialization error"));
+    }
+
+    #[tokio::test]
+    async fn typed_topic_with_boundary() {
+        let bus = InMemoryBus::new(16);
+        let topic = TypedTopic::<TestMessage>::new("secure.topic");
+
+        let msg = TestMessage {
+            text: "secret".into(),
+            count: 0,
+        };
+        topic
+            .publish_with_boundary(&bus, "agent", &msg, "local_only")
+            .await
+            .expect("publish should succeed");
+
+        // Verify the event was published with the boundary
+        let mut raw_sub = bus.subscribe();
+        topic
+            .publish_with_boundary(&bus, "agent", &msg, "encrypted_only")
+            .await
+            .unwrap();
+        let event = raw_sub.recv().await.unwrap();
+        assert_eq!(event.privacy_boundary, "encrypted_only");
     }
 }
