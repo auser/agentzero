@@ -8,6 +8,7 @@ mod mcp;
 mod plugin_scaffold;
 #[cfg(feature = "tools-full")]
 mod skill_manage;
+pub mod tier_stub;
 pub mod tool_create;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
@@ -342,6 +343,10 @@ fn default_tools_inner(
             }
         }
     }
+
+    // Register stub tools for tiers above the compiled tier so the agent
+    // gets a helpful upgrade message instead of "tool not found".
+    tools.extend(tier_stub::stub_tools_for_unavailable_tiers());
 
     // Suppress unused-variable warnings when tier features are disabled.
     #[cfg(not(feature = "tools-extended"))]

@@ -57,4 +57,10 @@ export const workflowsApi = {
 
   delete: (id: string) =>
     api.delete<{ workflow_id: string; deleted: boolean }>(`/v1/workflows/${id}`),
+
+  exportWorkflow: (id: string, signal?: AbortSignal) =>
+    api.get<Record<string, unknown>>(`/v1/workflows/${id}/export`, signal),
+
+  importWorkflow: (data: Record<string, unknown>) =>
+    api.post<WorkflowRecord>('/v1/workflows/import', data),
 }

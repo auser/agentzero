@@ -16,10 +16,21 @@ pub struct UpdateState {
     /// backwards compatibility with state files that predate this field.
     #[serde(default = "default_variant")]
     pub variant: String,
+    /// Binary tier: "core", "extended", or "full". Defaults to "full" for
+    /// backwards compatibility with state files that predate this field.
+    #[serde(default = "default_tier")]
+    pub tier: String,
+    /// History of previous tiers for tier rollback support.
+    #[serde(default)]
+    pub tier_history: Vec<String>,
 }
 
 fn default_variant() -> String {
     "default".to_string()
+}
+
+fn default_tier() -> String {
+    "full".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,6 +52,16 @@ pub struct RollbackUpdateResult {
     pub to_version: String,
 }
 
+/// Valid tier names for the progressive installation system.
+pub const VALID_TIERS: &[&str] = &["core", "extended", "full"];
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TierSwapResult {
+    pub from_tier: String,
+    pub to_tier: String,
+    pub version: String,
+}
+
 pub fn load_state(
     state_path: impl AsRef<Path>,
     current_version: &str,
@@ -56,6 +77,8 @@ pub fn load_state(
             last_applied_epoch_secs: None,
             previous_versions: vec![],
             variant: default_variant(),
+            tier: default_tier(),
+            tier_history: vec![],
         });
     if state.current_version.trim().is_empty() {
         state.current_version = current_version.to_string();
@@ -282,6 +305,115 @@ pub async fn download_and_install(
     })
 }
 
+/// Map a tier name to the artifact suffix used in release filenames.
+///
+/// `"full"` maps to `""` (no suffix) for backwards compatibility with
+/// existing release artifacts. `"core"` maps to `"-core"` (CI publishes
+/// this alongside the existing `-minimal` artifact).
+fn tier_artifact_suffix(tier: &str) -> &'static str {
+    match tier {
+        "core" => "-core",
+        "extended" => "-extended",
+        _ => "",
+    }
+}
+
+/// Download the release artifact for a different tier (same version) and
+/// atomically replace the running binary.
+pub async fn download_and_swap_tier(
+    state_path: impl AsRef<Path>,
+    current_version: &str,
+    target_tier: &str,
+    github_token: Option<&str>,
+) -> anyhow::Result<TierSwapResult> {
+    if !VALID_TIERS.contains(&target_tier) {
+        return Err(anyhow!(
+            "invalid tier '{}'; valid tiers are: {}",
+            target_tier,
+            VALID_TIERS.join(", ")
+        ));
+    }
+
+    let state = load_state(state_path.as_ref(), current_version)?;
+    if state.tier == target_tier {
+        return Err(anyhow!("already on the '{}' tier", target_tier));
+    }
+
+    let version = &state.current_version;
+    let suffix = tier_artifact_suffix(target_tier);
+    let (platform, arch) = current_target_name()?;
+    let ext = if platform == "windows" { ".exe" } else { "" };
+    let artifact_name = format!("agentzero-v{version}-{platform}-{arch}{suffix}{ext}");
+
+    let client = build_client(github_token)?;
+
+    let sums_url =
+        format!("https://github.com/auser/agentzero/releases/download/v{version}/SHA256SUMS");
+    let sums_text = client
+        .get(&sums_url)
+        .send()
+        .await
+        .context("failed to download SHA256SUMS")?
+        .error_for_status()
+        .context("SHA256SUMS download returned an error status")?
+        .text()
+        .await
+        .context("failed to read SHA256SUMS body")?;
+
+    let expected_hash = expected_checksum(&sums_text, &artifact_name)?;
+
+    let artifact_url =
+        format!("https://github.com/auser/agentzero/releases/download/v{version}/{artifact_name}");
+    let bytes = download_verified(&client, &artifact_url, &expected_hash).await?;
+
+    let exe_path =
+        std::env::current_exe().context("failed to determine current executable path")?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or_else(|| anyhow!("executable has no parent directory"))?;
+    let exe_stem = exe_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+
+    let backup_path = exe_dir.join(format!("{exe_stem}.backup"));
+    tokio::fs::copy(&exe_path, &backup_path)
+        .await
+        .with_context(|| format!("failed to back up binary to {}", backup_path.display()))?;
+
+    let tmp_path = exe_dir.join(format!("{exe_stem}.tmp"));
+    tokio::fs::write(&tmp_path, &bytes)
+        .await
+        .with_context(|| format!("failed to write new binary to {}", tmp_path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&tmp_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&tmp_path, perms)
+            .context("failed to set executable permissions on new binary")?;
+    }
+
+    tokio::fs::rename(&tmp_path, &exe_path)
+        .await
+        .with_context(|| format!("failed to replace binary at {}", exe_path.display()))?;
+
+    let from_tier = state.tier.clone();
+    let mut updated = state;
+    updated.tier_history.push(from_tier.clone());
+    updated.tier = target_tier.to_string();
+    updated.last_applied_epoch_secs = Some(now_epoch_secs());
+    save_state(state_path, &updated)?;
+
+    Ok(TierSwapResult {
+        from_tier,
+        to_tier: target_tier.to_string(),
+        version: updated.current_version,
+    })
+}
+
 /// Restore the `.backup` binary created by [`download_and_install`] and
 /// update the version state accordingly.
 ///
@@ -428,7 +560,10 @@ fn state_store(state_path: &Path) -> anyhow::Result<EncryptedJsonStore> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_update, check_for_updates, load_state, rollback_update};
+    use super::{
+        apply_update, check_for_updates, load_state, rollback_update, save_state,
+        tier_artifact_suffix, VALID_TIERS,
+    };
     use std::fs;
 
     #[test]
@@ -472,5 +607,43 @@ mod tests {
         let on_disk = fs::read_to_string(&state_path).expect("state file should be readable");
         assert!(!on_disk.contains("0.2.0"));
         assert!(!on_disk.contains("current_version"));
+    }
+
+    #[test]
+    fn state_defaults_tier_to_full_success_path() {
+        let tmp = tempfile::tempdir().expect("temp dir should be created");
+        let state_path = tmp.path().join("state.json");
+        let state = load_state(&state_path, "0.1.0").expect("state should load");
+        assert_eq!(state.tier, "full");
+        assert!(state.tier_history.is_empty());
+    }
+
+    #[test]
+    fn tier_persists_through_save_load_cycle_success_path() {
+        let tmp = tempfile::tempdir().expect("temp dir should be created");
+        let state_path = tmp.path().join("state.json");
+        let mut state = load_state(&state_path, "0.1.0").expect("state should load");
+        state.tier = "core".to_string();
+        state.tier_history.push("full".to_string());
+        save_state(&state_path, &state).expect("save should succeed");
+
+        let reloaded = load_state(&state_path, "0.1.0").expect("reload should succeed");
+        assert_eq!(reloaded.tier, "core");
+        assert_eq!(reloaded.tier_history, vec!["full".to_string()]);
+    }
+
+    #[test]
+    fn tier_artifact_suffix_maps_correctly_success_path() {
+        assert_eq!(tier_artifact_suffix("core"), "-core");
+        assert_eq!(tier_artifact_suffix("extended"), "-extended");
+        assert_eq!(tier_artifact_suffix("full"), "");
+    }
+
+    #[test]
+    fn valid_tiers_contains_all_three_success_path() {
+        assert_eq!(VALID_TIERS.len(), 3);
+        assert!(VALID_TIERS.contains(&"core"));
+        assert!(VALID_TIERS.contains(&"extended"));
+        assert!(VALID_TIERS.contains(&"full"));
     }
 }

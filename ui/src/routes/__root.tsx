@@ -2,6 +2,7 @@ import { createRootRoute, Outlet, redirect } from '@tanstack/react-router'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
+import { FloatingChat } from '@/components/shared/FloatingChat'
 import { useGlobalEvents } from '@/hooks/useGlobalEvents'
 import { useAuthStore } from '@/store/authStore'
 
@@ -18,6 +19,7 @@ function Shell() {
           </main>
         </div>
       </div>
+      <FloatingChat />
     </TooltipProvider>
   )
 }
