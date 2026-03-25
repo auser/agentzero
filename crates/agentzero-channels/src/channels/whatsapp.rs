@@ -81,8 +81,26 @@ mod impl_ {
         let message = value["messages"].as_array()?.first()?;
         let from = message["from"].as_str()?;
         if !helpers::is_user_allowed(from, allowed_users) { return None; }
-        let text = message["text"]["body"].as_str()?;
-        if text.is_empty() { return None; }
+        let text = message["text"]["body"].as_str().unwrap_or("");
+
+        // Extract WhatsApp media attachments (image, audio, document, video).
+        let mut attachments = Vec::new();
+        for media_type in ["image", "audio", "document", "video", "sticker"] {
+            if let Some(media) = message.get(media_type) {
+                let mime = media["mime_type"].as_str().unwrap_or("application/octet-stream");
+                let media_id = media["id"].as_str().unwrap_or("");
+                if !media_id.is_empty() {
+                    attachments.push(crate::media::MediaAttachment {
+                        mime_type: mime.to_string(),
+                        url: Some(format!("whatsapp://media/{media_id}")),
+                        transcript: None,
+                        description: media["caption"].as_str().map(String::from),
+                    });
+                }
+            }
+        }
+
+        if text.is_empty() && attachments.is_empty() { return None; }
         Some(ChannelMessage {
             id: helpers::new_message_id(),
             sender: from.to_string(),
@@ -92,7 +110,7 @@ mod impl_ {
             timestamp: helpers::now_epoch_secs(),
             thread_ts: None,
             privacy_boundary: String::new(),
-            attachments: Vec::new(),
+            attachments,
         })
     }
 

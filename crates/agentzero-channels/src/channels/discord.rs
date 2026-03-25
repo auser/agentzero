@@ -189,7 +189,27 @@ mod impl_ {
                         }
 
                         let content = d["content"].as_str().unwrap_or("").to_string();
-                        if content.is_empty() {
+
+                        // Extract native Discord attachments.
+                        let mut attachments = Vec::new();
+                        if let Some(att_arr) = d["attachments"].as_array() {
+                            for att in att_arr {
+                                if let Some(url) = att["url"].as_str() {
+                                    let mime = att["content_type"]
+                                        .as_str()
+                                        .unwrap_or("application/octet-stream");
+                                    attachments.push(crate::media::MediaAttachment {
+                                        mime_type: mime.to_string(),
+                                        url: Some(url.to_string()),
+                                        transcript: None,
+                                        description: None,
+                                    });
+                                }
+                            }
+                        }
+
+                        // Skip messages with no text AND no attachments.
+                        if content.is_empty() && attachments.is_empty() {
                             continue;
                         }
 
@@ -204,7 +224,7 @@ mod impl_ {
                             timestamp: helpers::now_epoch_secs(),
                             thread_ts: None,
                             privacy_boundary: String::new(),
-                            attachments: Vec::new(),
+                            attachments,
                         };
 
                         if tx.send(msg).await.is_err() {

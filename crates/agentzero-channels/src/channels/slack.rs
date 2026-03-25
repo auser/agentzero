@@ -164,8 +164,26 @@ mod impl_ {
                         let text = msg["text"].as_str().unwrap_or("");
                         let ts = msg["ts"].as_str().unwrap_or("");
 
-                        // Skip bot messages and empty
-                        if user == bot_user_id || user.is_empty() || text.is_empty() {
+                        // Extract native Slack file attachments.
+                        let mut attachments = Vec::new();
+                        if let Some(files) = msg["files"].as_array() {
+                            for file in files {
+                                if let Some(url) = file["url_private"].as_str() {
+                                    let mime = file["mimetype"]
+                                        .as_str()
+                                        .unwrap_or("application/octet-stream");
+                                    attachments.push(crate::media::MediaAttachment {
+                                        mime_type: mime.to_string(),
+                                        url: Some(url.to_string()),
+                                        transcript: None,
+                                        description: None,
+                                    });
+                                }
+                            }
+                        }
+
+                        // Skip bot messages and messages with no text AND no attachments.
+                        if user == bot_user_id || user.is_empty() || (text.is_empty() && attachments.is_empty()) {
                             continue;
                         }
 
@@ -186,7 +204,7 @@ mod impl_ {
                             timestamp: helpers::now_epoch_secs(),
                             thread_ts,
                             privacy_boundary: String::new(),
-                            attachments: Vec::new(),
+                            attachments,
                         };
 
                         if tx.send(channel_msg).await.is_err() {
@@ -290,7 +308,26 @@ mod impl_ {
                 }
 
                 let content = inner_event["text"].as_str().unwrap_or("").to_string();
-                if content.is_empty() {
+
+                // Extract native Slack file attachments (Socket Mode).
+                let mut attachments = Vec::new();
+                if let Some(files) = inner_event["files"].as_array() {
+                    for file in files {
+                        if let Some(url) = file["url_private"].as_str() {
+                            let mime = file["mimetype"]
+                                .as_str()
+                                .unwrap_or("application/octet-stream");
+                            attachments.push(crate::media::MediaAttachment {
+                                mime_type: mime.to_string(),
+                                url: Some(url.to_string()),
+                                transcript: None,
+                                description: None,
+                            });
+                        }
+                    }
+                }
+
+                if content.is_empty() && attachments.is_empty() {
                     continue;
                 }
 
@@ -306,7 +343,7 @@ mod impl_ {
                     timestamp: helpers::now_epoch_secs(),
                     thread_ts,
                     privacy_boundary: String::new(),
-                    attachments: Vec::new(),
+                    attachments,
                 };
 
                 if tx.send(channel_msg).await.is_err() {

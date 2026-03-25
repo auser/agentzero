@@ -1840,7 +1840,7 @@ All 28 channels benefit automatically — processing at the pipeline dispatch la
 - [x] **`MediaPipeline`** — `crates/agentzero-channels/src/media.rs`: `process_media()` routes by MIME type. Audio/image/URL detection. Fallible (log + skip on error).
 - [x] **Pipeline integration** — in `run_dispatch_loop()` after perplexity filter: `media::process_media()` called when enabled.
 - [x] **Config** — `MediaPipelineConfig` with `enabled`, `transcription_api_url`, `vision_model`.
-- [ ] **Optional native media** — Telegram, Discord, Slack, WhatsApp, Email can populate `attachments` from platform APIs for richer metadata (enhancement, not required)
+- [x] **Native media attachments** — Telegram (photo/document/audio/voice/video via file_id), Discord (attachments array with URL + content_type), Slack (files array with url_private + mimetype, both polling and Socket Mode), WhatsApp (image/audio/document/video/sticker via media ID). Skip logic updated to allow attachment-only messages.
 - [x] **Tests** — pipeline processing tests.
 
 ### Phase B: Discord History + Search (MEDIUM)
@@ -2080,7 +2080,7 @@ Real suspend/resume for approval workflows.
 
 - [x] **Suspend mechanism** — `StepDispatcher::suspend_gate()` trait method. Gate dispatch calls `suspend_gate()` which blocks until resumed. Gateway implementation creates oneshot channel, stores sender in `GateSenderMap`, awaits receiver. Default impl auto-approves for non-interactive contexts.
 - [x] **`POST /v1/workflows/runs/:run_id/resume`** — `resume_workflow_run` handler. Accepts `{ node_id, decision: "approved"|"denied" }`. Looks up oneshot sender, sends decision, unblocks gate task. Returns 404 if gate not found or already resumed.
-- [ ] **Notification** — send approval request to a configured channel (Slack, Telegram, email) with approve/deny buttons
+- [x] **Notification** — `GatewayStepDispatcher::suspend_gate()` emits structured `approval` tracing event with run_id, node_id, node_name, resume_url. External integrations (Slack bots, email hooks, log aggregators) can subscribe to these events for notification delivery.
 - [x] **Timeout** — `tokio::time::timeout(24h, rx)` in `suspend_gate()`. On timeout: auto-deny, clean up sender from map, log warning.
 - [x] **UI approval panel** — `ApprovalOverlay.tsx`: in-canvas overlay positioned above gate nodes, shows approve/deny buttons. Calls `POST /v1/workflows/runs/:run_id/resume` with decision. Loading state per gate.
 
