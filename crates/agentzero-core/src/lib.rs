@@ -29,7 +29,9 @@ pub use tracing;
 
 pub use agent::{Agent, ToolSource};
 pub use canvas::{Canvas, CanvasFrame, CanvasStore, CanvasSummary};
-pub use event_bus::{Event, EventBus, EventSubscriber, FileBackedBus, InMemoryBus};
+pub use event_bus::{
+    Event, EventBus, EventSubscriber, FileBackedBus, InMemoryBus, TypedSubscriber, TypedTopic,
+};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{
