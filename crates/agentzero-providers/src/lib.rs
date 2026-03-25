@@ -14,6 +14,7 @@ mod fallback;
 pub mod model_manager;
 mod models;
 mod openai;
+pub mod pipeline;
 mod pricing;
 pub mod provider_metrics;
 pub(crate) mod transport;
@@ -29,6 +30,7 @@ pub use models::{
     provider_supports_model, ModelCapabilities, ModelDescriptor,
 };
 pub use openai::OpenAiCompatibleProvider;
+pub use pipeline::{CostCapLayer, LlmLayer, MetricsLayer, PipelineBuilder};
 pub use pricing::{compute_cost_microdollars, model_pricing, ModelPricing};
 pub use transport::{
     health_probe, CircuitBreaker, CircuitBreakerStatus, CooldownState, HealthProbeResult,
