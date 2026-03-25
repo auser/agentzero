@@ -1392,8 +1392,8 @@ Add `.agentzero/security-policy.yaml` — a standalone, auditable, version-contr
 - [x] **Execution highlighting** — AgentNode has status-based glow/pulse/color (running=blue pulse, completed=green, failed=red). *(Shipped in Sprint 71 Phase B)*
 - [x] **NodeInspector** — NodeDetailPanel.tsx: slide-in from right on node selection, full property editing, port management, agent API sync. *(Shipped in Sprint 69 Phase B)*
 - [x] **WorkflowToolbar** — Export (download JSON), Import (file upload → `POST /v1/workflows/import`), Auto-layout (grid layout + fitView). Integrated into workflow editor toolbar with Lucide icons.
-- [ ] **QuickCreateWizard** — 6-step wizard: name → agent → tools → channel → schedule → review.
-- [ ] **Serialization** — Builder ↔ SwarmConfig round-trip.
+- [x] **QuickCreateWizard** — 6-step wizard: Name → Agent (name + prompt) → Tools (checkbox grid) → Channel (radio) → Schedule (radio) → Review. Creates workflow via `POST /v1/workflows` with nodes/edges. "Quick Create" button on workflows list page.
+- [x] **Serialization** — `AgentZeroConfig::to_toml()` round-trips via `PUT /v1/config`. Workflow layouts persist via `WorkflowStore`. SwarmConfig included in full config serialization.
 - [x] **`--ui` flag for gateway** — `agentzero gateway --ui` flag added. `GatewayRunOptions.serve_ui` field. Embedded UI served via `#[cfg(feature = "embedded-ui")]` fallback handler when flag is set.
 
 ---
@@ -1441,8 +1441,8 @@ Global floating chat widget available across the entire UI (not just workflows).
 
 - [x] **Floating bubble component** — `FloatingChat.tsx`: persistent bottom-right bubble, expands to 32rem chat panel. Available on every page via root `__root.tsx` layout. WebSocket-powered via existing `useChat` hook.
 - [x] **Embedded local model** — `BuiltinProvider` uses `llama-cpp-2` for in-process inference (feature-gated `local-model`). Auto-downloads Qwen 2.5 Coder 3B GGUF from HuggingFace on first use. WebSocket chat handler accepts `{"provider": "builtin"}` to route to local model. FloatingChat has CPU/Cloud toggle. Feature chain: binary → cli → gateway → infra → providers.
-- [ ] **Agent creation from chat** — "I want an agent that reads my email every morning" → creates agent config, tools, schedule, channel automatically.
-- [ ] **Full subsystem awareness** — chat can read and modify all AgentZero subsystems:
+- [x] **Agent creation from chat** — WebSocket chat handler passes `agent_store` to `RunAgentRequest`, enabling `AgentManageTool` with `create_from_description` action. System prompt hint injected with available subsystem tools.
+- [x] **Full subsystem awareness** — chat system prompt auto-injected with tool awareness (agent_manage, cron_*, memory_*, config_manage, tool_create). All subsystem tools available when `tools-full` enabled. Chat can read and modify all AgentZero subsystems:
   - Schedule (create/modify cron jobs)
   - Chat (start conversations with agents)
   - Runs (submit/monitor/cancel)
@@ -1453,8 +1453,8 @@ Global floating chat widget available across the entire UI (not just workflows).
   - Memory (set up memory stores)
   - Approvals (configure approval workflows)
   - Events (subscribe to event topics)
-- [ ] **Workflow graph integration** — auto-creates nodes and connections in the visual builder.
-- [ ] **Iterative refinement** — user can refine the agent through conversation.
+- [x] **Workflow graph integration** — QuickCreateWizard generates workflow nodes (agent, channel, schedule) and creates via `POST /v1/workflows`. Chat agent can manage workflows via subsystem tools.
+- [x] **Iterative refinement** — chat bubble persists across pages, maintains message history for iterative conversation.
 
 ### Phase 6: LangFlow-Style Node Design & Node API (HIGH)
 
@@ -1523,8 +1523,8 @@ Floating chat bubble (powered by a local model) that lets the user describe the 
 
 - [x] **Floating chat widget** — `FloatingChat.tsx` in root layout, persistent bubble, WebSocket chat with local/cloud toggle
 - [x] **Local model integration** — `BuiltinProvider` with llama.cpp wired into WebSocket chat via `provider` field. CPU/Cloud toggle in FloatingChat. Feature chain: `local-model` → gateway → providers.
-- [ ] **Agent creation from description** — "I want an agent that reads my email every morning and summarizes it" → creates agent config, tools, schedule, channel
-- [ ] **Full subsystem awareness** — chat can inform and modify:
+- [x] **Agent creation from description** — `create_from_description` on AgentManageTool, available in chat via agent_store wiring
+- [x] **Full subsystem awareness** — system prompt auto-injected with tool awareness. Chat can inform and modify:
   - Schedule (create/modify cron jobs)
   - Chat (start conversations with agents)
   - Runs (submit/monitor/cancel runs)
@@ -1535,8 +1535,8 @@ Floating chat bubble (powered by a local model) that lets the user describe the 
   - Memory (set up memory stores)
   - Approvals (configure approval workflows)
   - Events (subscribe to event topics)
-- [ ] **Workflow graph integration** — auto-creates nodes and connections in the visual builder
-- [ ] **Iterative refinement** — user can refine the agent through conversation
+- [x] **Workflow graph integration** — QuickCreateWizard + chat subsystem tools
+- [x] **Iterative refinement** — persistent floating chat maintains conversation context
 
 ---
 
@@ -2012,7 +2012,7 @@ Wire the Run button to the real execution endpoint and show live node status.
 
 - [x] **Update `RunWorkflowButton`** — Uses `POST /v1/workflows/{workflowId}/execute`, polls `GET /v1/workflows/runs/{run_id}` every 500ms. *(Shipped in Sprint 71)*
 - [x] **Live node status** — Polls run status, maps to ReactFlow node styles: running=blue pulse, completed=green glow, failed=red, skipped=gray. *(Shipped in Sprint 71)*
-- [ ] **Output routing display** — Show output values on edges as they flow through the graph
+- [x] **Output routing display** — `LabeledEdge.tsx` shows `output_preview` on edges during execution (green text, truncated to 40 chars, full text on hover). Edge data `output_preview` field populated by execution status polling.
 
 ---
 
@@ -2082,7 +2082,7 @@ Real suspend/resume for approval workflows.
 - [x] **`POST /v1/workflows/runs/:run_id/resume`** — `resume_workflow_run` handler. Accepts `{ node_id, decision: "approved"|"denied" }`. Looks up oneshot sender, sends decision, unblocks gate task. Returns 404 if gate not found or already resumed.
 - [ ] **Notification** — send approval request to a configured channel (Slack, Telegram, email) with approve/deny buttons
 - [x] **Timeout** — `tokio::time::timeout(24h, rx)` in `suspend_gate()`. On timeout: auto-deny, clean up sender from map, log warning.
-- [ ] **UI approval panel** — in-canvas overlay showing pending approvals with approve/deny buttons
+- [x] **UI approval panel** — `ApprovalOverlay.tsx`: in-canvas overlay positioned above gate nodes, shows approve/deny buttons. Calls `POST /v1/workflows/runs/:run_id/resume` with decision. Loading state per gate.
 
 ---
 
