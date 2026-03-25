@@ -49,7 +49,10 @@ pub use sandbox::{
 };
 pub use swarm::{build_event_bus, build_swarm, build_swarm_with_presence};
 pub use swarm_context::{AgentAssignment, AgentAssignmentStatus, SiblingContext, SwarmContext};
-pub use swarm_supervisor::{SwarmConfig, SwarmResult, SwarmSupervisor};
+pub use swarm_supervisor::{
+    CompletedNodeSummary, ExecutionSnapshot, ReplanPolicy, ReplanRecord, SwarmConfig, SwarmResult,
+    SwarmSupervisor,
+};
 pub use template_store::{TemplateRecord, TemplateStore, TemplateUpdate};
 pub use workflow_executor::{
     compile as compile_workflow, execute_with_updates as execute_workflow_streaming, ExecutionPlan,

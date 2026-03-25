@@ -168,6 +168,88 @@ impl GoalPlanner {
     }
 }
 
+// ── Adaptive Re-Planning ─────────────────────────────────────────────────────
+
+/// Prompt template for adaptive recovery re-planning.
+const REPLAN_PROMPT: &str = r#"You are a task recovery agent. A multi-agent workflow partially failed. Create a NEW plan to complete the REMAINING work.
+
+RULES:
+- Do NOT re-do work that already completed successfully
+- Try a DIFFERENT strategy for the failed task
+- Keep new nodes minimal (1-5)
+- Node IDs must NOT reuse completed node IDs
+- Output ONLY the JSON object
+
+Output format:
+{
+  "title": "Recovery: <brief description>",
+  "nodes": [
+    {
+      "id": "recovery-1",
+      "name": "Agent Role",
+      "task": "What this agent should do",
+      "depends_on": [],
+      "file_scopes": [],
+      "sandbox_level": "worktree",
+      "tool_hints": ["shell", "read_file"]
+    }
+  ]
+}"#;
+
+/// Re-plan a partially-failed workflow using a borrowed provider reference.
+///
+/// Takes an [`ExecutionSnapshot`] describing completed work and the failure,
+/// and returns a new [`PlannedWorkflow`] for just the remaining work.
+pub async fn replan_with_provider(
+    provider: &dyn agentzero_core::Provider,
+    snapshot: &crate::swarm_supervisor::ExecutionSnapshot,
+    available_tools: &[agentzero_core::ToolSummary],
+) -> anyhow::Result<PlannedWorkflow> {
+    let tool_catalog: String = available_tools
+        .iter()
+        .map(|t| format!("- {}: {}", t.name, t.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let completed_summary: String = snapshot
+        .completed
+        .iter()
+        .map(|c| {
+            format!(
+                "- Node '{}' ({}): {} -> Output: {}",
+                c.node_id, c.node_name, c.task, c.output_preview
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let prompt = format!(
+        "{REPLAN_PROMPT}\n\n\
+         Available tools:\n{tool_catalog}\n\n\
+         Original goal: {goal}\n\n\
+         Completed work:\n{completed}\n\n\
+         Failed node: '{failed_id}' ({failed_name})\n\
+         Failed task: {failed_task}\n\
+         Failure reason: {reason}\n\n\
+         Remaining node IDs that never ran: {remaining}\n\n\
+         Create a recovery plan to complete the original goal.",
+        goal = snapshot.original_goal,
+        completed = if completed_summary.is_empty() {
+            "(none)".to_string()
+        } else {
+            completed_summary
+        },
+        failed_id = snapshot.failed_node_id,
+        failed_name = snapshot.failed_node_name,
+        failed_task = snapshot.failed_node_task,
+        reason = snapshot.failure_reason,
+        remaining = snapshot.remaining_node_ids.join(", "),
+    );
+
+    let result = provider.complete(&prompt).await?;
+    parse_planner_response(&result.output_text)
+}
+
 /// Extract JSON from an LLM response that may be wrapped in markdown fences.
 fn extract_json(response: &str) -> &str {
     let trimmed = response.trim();

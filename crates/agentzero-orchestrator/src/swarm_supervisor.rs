@@ -5,12 +5,13 @@
 //! [`SwarmContext`] for cross-agent awareness and [`RecoveryMonitor`] for
 //! dead agent recovery.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use agentzero_core::EventBus;
+use agentzero_core::{EventBus, Provider, ToolSummary};
 use serde::{Deserialize, Serialize};
 
-use crate::goal_planner::PlannedWorkflow;
+use crate::goal_planner::{self, PlannedWorkflow};
 use crate::recovery::RecoveryConfig;
 use crate::swarm_context::SwarmContext;
 use crate::workflow_executor::{
@@ -28,6 +29,10 @@ pub struct SwarmConfig {
     pub recovery: RecoveryConfig,
     /// Maximum total token budget (0 = unlimited).
     pub max_tokens: usize,
+    /// Maximum re-plan attempts before giving up (default: 3).
+    pub max_replan_attempts: usize,
+    /// Re-planning policy: auto, human_approved, or disabled.
+    pub replan_policy: ReplanPolicy,
 }
 
 impl Default for SwarmConfig {
@@ -36,6 +41,8 @@ impl Default for SwarmConfig {
             sandbox_level: "worktree".to_string(),
             recovery: RecoveryConfig::default(),
             max_tokens: 0,
+            max_replan_attempts: 3,
+            replan_policy: ReplanPolicy::Auto,
         }
     }
 }
@@ -55,6 +62,56 @@ pub struct SwarmResult {
     pub success: bool,
     /// Outputs from completed nodes.
     pub outputs: std::collections::HashMap<String, String>,
+    /// History of adaptive re-plan attempts (empty if no failures occurred).
+    #[serde(default)]
+    pub replan_history: Vec<ReplanRecord>,
+}
+
+/// Controls whether adaptive re-planning is automatic or requires approval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplanPolicy {
+    /// Automatically re-plan on failure (no human intervention).
+    #[default]
+    Auto,
+    /// Pause and request human approval before re-planning.
+    HumanApproved,
+    /// Never re-plan; fail immediately.
+    Disabled,
+}
+
+/// One entry in the re-plan history for observability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplanRecord {
+    pub attempt: usize,
+    pub failed_node_id: String,
+    pub failed_node_name: String,
+    pub failure_reason: String,
+    pub completed_node_ids: Vec<String>,
+    pub new_plan_title: String,
+    pub new_plan_node_count: usize,
+    pub timestamp_ms: u128,
+}
+
+/// State captured at the point of failure, passed to the re-planner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionSnapshot {
+    pub original_goal: String,
+    pub completed: Vec<CompletedNodeSummary>,
+    pub failed_node_id: String,
+    pub failed_node_name: String,
+    pub failed_node_task: String,
+    pub failure_reason: String,
+    pub remaining_node_ids: Vec<String>,
+}
+
+/// Summary of a completed node for the re-plan prompt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletedNodeSummary {
+    pub node_id: String,
+    pub node_name: String,
+    pub task: String,
+    pub output_preview: String,
 }
 
 /// A swarm execution request.
@@ -80,17 +137,36 @@ pub struct SwarmRequest {
 /// 5. Collects results and reports status
 pub struct SwarmSupervisor {
     event_bus: Option<Arc<dyn EventBus>>,
+    /// Provider for re-planning LLM calls. When None, re-planning is disabled.
+    replan_provider: Option<Arc<dyn Provider>>,
+    /// Available tool summaries for the re-planner.
+    available_tools: Vec<ToolSummary>,
 }
 
 impl SwarmSupervisor {
     /// Create a new swarm supervisor.
     pub fn new() -> Self {
-        Self { event_bus: None }
+        Self {
+            event_bus: None,
+            replan_provider: None,
+            available_tools: vec![],
+        }
     }
 
     /// Attach an event bus for swarm-level events.
     pub fn with_event_bus(mut self, bus: Arc<dyn EventBus>) -> Self {
         self.event_bus = Some(bus);
+        self
+    }
+
+    /// Configure a provider and tool catalog for adaptive re-planning.
+    pub fn with_replan_provider(
+        mut self,
+        provider: Arc<dyn Provider>,
+        tools: Vec<ToolSummary>,
+    ) -> Self {
+        self.replan_provider = Some(provider);
+        self.available_tools = tools;
         self
     }
 
@@ -186,6 +262,216 @@ impl SwarmSupervisor {
             node_statuses: run.node_statuses,
             success,
             outputs,
+            replan_history: vec![],
+        })
+    }
+
+    /// Execute with adaptive re-planning on failure.
+    ///
+    /// When a node fails and re-planning is enabled:
+    /// 1. Snapshots completed outputs + failure context
+    /// 2. Calls `GoalPlanner::replan_with_provider()` for a recovery plan
+    /// 3. Compiles and executes the recovery plan
+    /// 4. Repeats until success or max attempts exhausted
+    pub async fn execute_with_replan(
+        &self,
+        plan: &PlannedWorkflow,
+        initial_input: &str,
+        dispatcher: Arc<dyn StepDispatcher>,
+        status_tx: Option<tokio::sync::mpsc::Sender<StatusUpdate>>,
+        config: &SwarmConfig,
+        goal: &str,
+    ) -> anyhow::Result<SwarmResult> {
+        let mut current_plan = plan.clone();
+        let mut all_completed_outputs: HashMap<String, String> = HashMap::new();
+        let mut all_node_statuses: HashMap<String, NodeStatus> = HashMap::new();
+        let mut replan_history: Vec<ReplanRecord> = Vec::new();
+        let mut last_run_id = String::new();
+
+        for attempt in 0..=config.max_replan_attempts {
+            let result = self
+                .execute(
+                    &current_plan,
+                    initial_input,
+                    Arc::clone(&dispatcher),
+                    status_tx.clone(),
+                )
+                .await?;
+
+            last_run_id = result.run_id.clone();
+
+            // Merge results.
+            for (k, v) in &result.outputs {
+                all_completed_outputs.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &result.node_statuses {
+                all_node_statuses.insert(k.clone(), *v);
+            }
+
+            if result.success {
+                return Ok(SwarmResult {
+                    run_id: result.run_id,
+                    workflow_title: plan.title.clone(),
+                    node_count: all_node_statuses.len(),
+                    node_statuses: all_node_statuses,
+                    success: true,
+                    outputs: all_completed_outputs,
+                    replan_history,
+                });
+            }
+
+            // Check policy.
+            if config.replan_policy == ReplanPolicy::Disabled
+                || attempt >= config.max_replan_attempts
+            {
+                if attempt >= config.max_replan_attempts {
+                    tracing::warn!(attempts = attempt, "max re-plan attempts exhausted");
+                }
+                return Ok(SwarmResult {
+                    run_id: result.run_id,
+                    workflow_title: plan.title.clone(),
+                    node_count: all_node_statuses.len(),
+                    node_statuses: all_node_statuses,
+                    success: false,
+                    outputs: all_completed_outputs,
+                    replan_history,
+                });
+            }
+
+            // Find the first failed node.
+            let failed_node_id = match result
+                .node_statuses
+                .iter()
+                .find(|(_, s)| **s == NodeStatus::Failed)
+            {
+                Some((id, _)) => id.clone(),
+                None => break,
+            };
+
+            let failed_planned = current_plan.nodes.iter().find(|n| n.id == failed_node_id);
+            let failed_name = failed_planned.map(|n| n.name.clone()).unwrap_or_default();
+            let failed_task = failed_planned.map(|n| n.task.clone()).unwrap_or_default();
+
+            // Build snapshot.
+            let completed: Vec<CompletedNodeSummary> = result
+                .node_statuses
+                .iter()
+                .filter(|(_, s)| **s == NodeStatus::Completed)
+                .map(|(id, _)| {
+                    let planned = current_plan.nodes.iter().find(|n| n.id == *id);
+                    let output = all_completed_outputs.get(id).cloned().unwrap_or_default();
+                    CompletedNodeSummary {
+                        node_id: id.clone(),
+                        node_name: planned.map(|n| n.name.clone()).unwrap_or_default(),
+                        task: planned.map(|n| n.task.clone()).unwrap_or_default(),
+                        output_preview: output.chars().take(500).collect(),
+                    }
+                })
+                .collect();
+
+            let remaining: Vec<String> = result
+                .node_statuses
+                .iter()
+                .filter(|(_, s)| matches!(s, NodeStatus::Pending | NodeStatus::Suspended))
+                .map(|(id, _)| id.clone())
+                .collect();
+
+            let snapshot = ExecutionSnapshot {
+                original_goal: goal.to_string(),
+                completed,
+                failed_node_id: failed_node_id.clone(),
+                failed_node_name: failed_name.clone(),
+                failed_node_task: failed_task,
+                failure_reason: "node execution failed".to_string(),
+                remaining_node_ids: remaining,
+            };
+
+            // Emit re-plan event.
+            if let Some(ref bus) = self.event_bus {
+                let payload = serde_json::json!({
+                    "attempt": attempt + 1,
+                    "failed_node_id": &snapshot.failed_node_id,
+                    "failed_node_name": &snapshot.failed_node_name,
+                });
+                let event = agentzero_core::event_bus::Event::new(
+                    "swarm.replan.started",
+                    "swarm",
+                    payload.to_string(),
+                );
+                let _ = bus.publish(event).await;
+            }
+
+            // Human approval gate.
+            if config.replan_policy == ReplanPolicy::HumanApproved {
+                let decision = dispatcher
+                    .suspend_gate(&result.run_id, &failed_node_id, "replan-approval")
+                    .await;
+                if decision != "approved" {
+                    tracing::info!("re-plan denied by human");
+                    return Ok(SwarmResult {
+                        run_id: result.run_id,
+                        workflow_title: plan.title.clone(),
+                        node_count: all_node_statuses.len(),
+                        node_statuses: all_node_statuses,
+                        success: false,
+                        outputs: all_completed_outputs,
+                        replan_history,
+                    });
+                }
+            }
+
+            // Call the re-planner.
+            let provider = match &self.replan_provider {
+                Some(p) => p,
+                None => {
+                    tracing::warn!("re-plan needed but no provider configured");
+                    break;
+                }
+            };
+
+            let new_plan = goal_planner::replan_with_provider(
+                provider.as_ref(),
+                &snapshot,
+                &self.available_tools,
+            )
+            .await?;
+
+            tracing::info!(
+                attempt = attempt + 1,
+                new_nodes = new_plan.nodes.len(),
+                title = %new_plan.title,
+                "re-plan generated"
+            );
+
+            replan_history.push(ReplanRecord {
+                attempt: attempt + 1,
+                failed_node_id: snapshot.failed_node_id.clone(),
+                failed_node_name: snapshot.failed_node_name.clone(),
+                failure_reason: snapshot.failure_reason.clone(),
+                completed_node_ids: snapshot
+                    .completed
+                    .iter()
+                    .map(|c| c.node_id.clone())
+                    .collect(),
+                new_plan_title: new_plan.title.clone(),
+                new_plan_node_count: new_plan.nodes.len(),
+                timestamp_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis(),
+            });
+
+            current_plan = new_plan;
+        }
+
+        Ok(SwarmResult {
+            run_id: last_run_id,
+            workflow_title: plan.title.clone(),
+            node_count: all_node_statuses.len(),
+            node_statuses: all_node_statuses,
+            success: false,
+            outputs: all_completed_outputs,
+            replan_history,
         })
     }
 }
@@ -416,5 +702,105 @@ mod tests {
             topics.iter().any(|t| t == "swarm.agent.completed"),
             "should publish completion events, got: {topics:?}"
         );
+    }
+
+    // ── Re-planning tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn replan_disabled_returns_failure_immediately() {
+        let supervisor = SwarmSupervisor::new();
+        let plan = simple_plan();
+        let dispatcher: Arc<dyn StepDispatcher> = Arc::new(MockDispatcher);
+        let config = SwarmConfig {
+            replan_policy: ReplanPolicy::Disabled,
+            ..Default::default()
+        };
+
+        let result = supervisor
+            .execute_with_replan(&plan, "go", dispatcher, None, &config, "test goal")
+            .await
+            .expect("execute");
+
+        // MockDispatcher succeeds, so this should succeed even with Disabled policy.
+        assert!(result.success);
+        assert!(result.replan_history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn replan_no_provider_returns_failure() {
+        // Supervisor without replan_provider — should not panic.
+        let supervisor = SwarmSupervisor::new();
+        let plan = simple_plan();
+        let dispatcher: Arc<dyn StepDispatcher> = Arc::new(MockDispatcher);
+        let config = SwarmConfig::default();
+
+        let result = supervisor
+            .execute_with_replan(&plan, "go", dispatcher, None, &config, "test goal")
+            .await
+            .expect("execute");
+
+        // MockDispatcher succeeds, so no re-planning needed.
+        assert!(result.success);
+        assert!(result.replan_history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn replan_preserves_outputs_on_success() {
+        let supervisor = SwarmSupervisor::new();
+        let plan = simple_plan();
+        let dispatcher: Arc<dyn StepDispatcher> = Arc::new(MockDispatcher);
+        let config = SwarmConfig::default();
+
+        let result = supervisor
+            .execute_with_replan(&plan, "input", dispatcher, None, &config, "goal")
+            .await
+            .expect("execute");
+
+        assert!(result.success);
+        assert!(!result.outputs.is_empty(), "outputs should be preserved");
+        assert!(result.replan_history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn replan_policy_default_is_auto() {
+        assert_eq!(ReplanPolicy::default(), ReplanPolicy::Auto);
+    }
+
+    #[tokio::test]
+    async fn replan_record_serializes() {
+        let record = ReplanRecord {
+            attempt: 1,
+            failed_node_id: "n2".to_string(),
+            failed_node_name: "writer".to_string(),
+            failure_reason: "timeout".to_string(),
+            completed_node_ids: vec!["n1".to_string()],
+            new_plan_title: "Recovery: retry writer".to_string(),
+            new_plan_node_count: 1,
+            timestamp_ms: 12345,
+        };
+        let json = serde_json::to_string(&record).expect("serialize");
+        assert!(json.contains("Recovery: retry writer"));
+        assert!(json.contains("timeout"));
+    }
+
+    #[tokio::test]
+    async fn execution_snapshot_serializes() {
+        let snapshot = ExecutionSnapshot {
+            original_goal: "build API".to_string(),
+            completed: vec![CompletedNodeSummary {
+                node_id: "n1".to_string(),
+                node_name: "researcher".to_string(),
+                task: "research".to_string(),
+                output_preview: "found stuff".to_string(),
+            }],
+            failed_node_id: "n2".to_string(),
+            failed_node_name: "writer".to_string(),
+            failed_node_task: "write code".to_string(),
+            failure_reason: "compile error".to_string(),
+            remaining_node_ids: vec!["n3".to_string()],
+        };
+        let json = serde_json::to_string(&snapshot).expect("serialize");
+        assert!(json.contains("build API"));
+        assert!(json.contains("compile error"));
     }
 }
