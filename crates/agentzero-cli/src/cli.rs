@@ -69,6 +69,11 @@ pub enum Commands {
         /// Allowed shell commands (repeat or pass comma-separated values).
         #[arg(long, value_delimiter = ',')]
         allowed_commands: Vec<String>,
+        /// Bootstrap agents, tools, and channels from a natural language description.
+        /// When provided, onboard creates config as usual then uses the LLM to
+        /// create the agents/tools/channels described.
+        #[arg(short = 'm', long = "message")]
+        message: Option<String>,
     },
     /// Start the HTTP gateway server.
     #[cfg(feature = "gateway")]

@@ -20,6 +20,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             no_totp,
             allowed_root,
             allowed_commands,
+            message,
         } => {
             commands::onboard::OnboardCommand::run(
                 &ctx,
@@ -37,6 +38,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     no_totp,
                     allowed_root,
                     allowed_commands,
+                    message,
                 },
             )
             .await

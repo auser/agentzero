@@ -379,6 +379,80 @@ Rules:
 - suggested_schedule: cron expression if the description implies periodicity (e.g. "0 9 * * *" for daily at 9am). Empty string if no scheduling implied.
 - Output ONLY the JSON object, no markdown fences or explanation"#;
 
+/// Create an agent from a natural language description using the LLM.
+///
+/// Returns the created `AgentRecord` and an optional suggested cron schedule.
+pub async fn create_agent_from_nl(
+    store: &dyn AgentStoreApi,
+    provider: &dyn Provider,
+    description: &str,
+) -> anyhow::Result<(AgentRecord, String)> {
+    let existing = store.list();
+    let existing_summary = if existing.is_empty() {
+        String::new()
+    } else {
+        let lines: Vec<String> = existing
+            .iter()
+            .map(|a| format!("- {} (keywords: [{}])", a.name, a.keywords.join(", ")))
+            .collect();
+        format!(
+            "\n\nExisting agents (avoid creating duplicates):\n{}",
+            lines.join("\n")
+        )
+    };
+
+    let prompt = format!("{NL_AGENT_PROMPT}{existing_summary}\n\nAgent description: {description}");
+
+    let result = provider.complete(&prompt).await?;
+    let response = result.output_text.trim();
+
+    let parsed = parse_agent_json(response)?;
+
+    let name = parsed["name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("LLM response missing 'name'"))?;
+    let agent_desc = parsed["description"].as_str().unwrap_or(description);
+    let system_prompt = parsed["system_prompt"].as_str().unwrap_or("");
+    let keywords: Vec<String> = parsed["keywords"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let allowed_tools: Vec<String> = parsed["allowed_tools"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let suggested_schedule = parsed["suggested_schedule"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    let record = AgentRecord {
+        agent_id: String::new(),
+        name: name.to_string(),
+        description: agent_desc.to_string(),
+        system_prompt: Some(system_prompt.to_string()),
+        provider: String::new(),
+        model: String::new(),
+        keywords,
+        allowed_tools,
+        channels: HashMap::new(),
+        created_at: 0,
+        updated_at: 0,
+        status: AgentStatus::Active,
+    };
+
+    let created = store.create(record)?;
+    Ok((created, suggested_schedule))
+}
+
 impl AgentManageTool {
     async fn action_create_from_description(
         &self,
@@ -402,70 +476,15 @@ impl AgentManageTool {
             )
         })?;
 
-        // Include existing agents so the LLM can avoid duplicates.
-        let existing = store.list();
-        let existing_summary = if existing.is_empty() {
-            String::new()
-        } else {
-            let lines: Vec<String> = existing
-                .iter()
-                .map(|a| format!("- {} (keywords: [{}])", a.name, a.keywords.join(", ")))
-                .collect();
-            format!(
-                "\n\nExisting agents (avoid creating duplicates):\n{}",
-                lines.join("\n")
-            )
-        };
+        let (mut created, suggested_schedule) =
+            create_agent_from_nl(store, provider.as_ref(), nl_desc).await?;
 
-        let prompt = format!("{NL_AGENT_PROMPT}{existing_summary}\n\nAgent description: {nl_desc}");
-
-        let result = provider.complete(&prompt).await?;
-        let response = result.output_text.trim();
-
-        let parsed = parse_agent_json(response)?;
-
-        let name = parsed["name"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("LLM response missing 'name'"))?;
-        let description = parsed["description"].as_str().unwrap_or(nl_desc);
-        let system_prompt = parsed["system_prompt"].as_str().unwrap_or("");
-        let keywords: Vec<String> = parsed["keywords"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let allowed_tools: Vec<String> = parsed["allowed_tools"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let suggested_schedule = parsed["suggested_schedule"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-
-        let record = AgentRecord {
-            agent_id: String::new(),
-            name: name.to_string(),
-            description: description.to_string(),
-            system_prompt: Some(system_prompt.to_string()),
-            provider: input.provider.clone().unwrap_or_default(),
-            model: input.model.clone().unwrap_or_default(),
-            keywords,
-            allowed_tools,
-            channels: HashMap::new(),
-            created_at: 0,
-            updated_at: 0,
-            status: AgentStatus::Active,
-        };
-
-        let created = store.create(record)?;
+        if let Some(ref p) = input.provider {
+            created.provider = p.clone();
+        }
+        if let Some(ref m) = input.model {
+            created.model = m.clone();
+        }
 
         let mut output = format!(
             "Agent created from description.\n\

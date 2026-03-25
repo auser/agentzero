@@ -125,56 +125,73 @@ impl Tool for ToolCreateTool {
     }
 }
 
+/// Create a dynamic tool from a natural language description using the LLM.
+///
+/// Returns the name of the created tool.
+pub async fn create_tool_from_nl(
+    registry: &DynamicToolRegistry,
+    provider: &dyn Provider,
+    description: &str,
+    strategy_hint: Option<&str>,
+) -> anyhow::Result<String> {
+    let hint = strategy_hint.unwrap_or("");
+    let prompt = if hint.is_empty() {
+        format!("{TOOL_CREATE_PROMPT}\n\nTool description: {description}")
+    } else {
+        format!(
+            "{TOOL_CREATE_PROMPT}\n\nPreferred strategy type: {hint}\n\nTool description: {description}"
+        )
+    };
+
+    let result = provider.complete(&prompt).await?;
+    let response = result.output_text.trim();
+
+    let partial: serde_json::Value = parse_json_from_response(response)?;
+
+    let name = partial["name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("LLM response missing 'name' field"))?
+        .to_string();
+
+    let tool_description = partial["description"]
+        .as_str()
+        .unwrap_or(description)
+        .to_string();
+
+    let strategy: DynamicToolStrategy = serde_json::from_value(partial["strategy"].clone())
+        .map_err(|e| anyhow::anyhow!("failed to parse strategy from LLM response: {e}"))?;
+
+    let def = DynamicToolDef {
+        name: name.clone(),
+        description: tool_description,
+        strategy,
+        input_schema: partial.get("input_schema").cloned(),
+        created_at: now_secs(),
+    };
+
+    registry.register(def).await?;
+    Ok(name)
+}
+
 impl ToolCreateTool {
     async fn action_create(&self, input: &serde_json::Value) -> anyhow::Result<ToolResult> {
         let description = input["description"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing 'description' field for create action"))?;
 
-        let strategy_hint = input["strategy_hint"].as_str().unwrap_or("");
+        let strategy_hint = input["strategy_hint"].as_str();
 
-        let prompt = if strategy_hint.is_empty() {
-            format!("{TOOL_CREATE_PROMPT}\n\nTool description: {description}")
-        } else {
-            format!(
-                "{TOOL_CREATE_PROMPT}\n\nPreferred strategy type: {strategy_hint}\n\nTool description: {description}"
-            )
-        };
-
-        let result = self.provider.complete(&prompt).await?;
-        let response = result.output_text.trim();
-
-        // Parse the LLM response into a partial definition.
-        let partial: serde_json::Value = parse_json_from_response(response)?;
-
-        let name = partial["name"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("LLM response missing 'name' field"))?
-            .to_string();
-
-        let tool_description = partial["description"]
-            .as_str()
-            .unwrap_or(description)
-            .to_string();
-
-        let strategy: DynamicToolStrategy = serde_json::from_value(partial["strategy"].clone())
-            .map_err(|e| anyhow::anyhow!("failed to parse strategy from LLM response: {e}"))?;
-
-        let def = DynamicToolDef {
-            name: name.clone(),
-            description: tool_description,
-            strategy,
-            input_schema: partial.get("input_schema").cloned(),
-            created_at: now_secs(),
-        };
-
-        let tool = self.registry.register(def).await?;
+        let name = create_tool_from_nl(
+            &self.registry,
+            self.provider.as_ref(),
+            description,
+            strategy_hint,
+        )
+        .await?;
 
         Ok(ToolResult {
             output: format!(
-                "Dynamic tool '{}' created and registered. Description: {}. Available immediately and persists across sessions.",
-                tool.name(),
-                tool.description()
+                "Dynamic tool '{name}' created and registered. Available immediately and persists across sessions.",
             ),
         })
     }

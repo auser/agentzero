@@ -5,6 +5,7 @@
 //! module handles AES-256-GCM encryption for secrets at rest.
 
 pub mod crypto;
+pub mod discord;
 pub mod event_bus;
 pub mod memory;
 mod queue;

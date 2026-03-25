@@ -1846,10 +1846,10 @@ All 28 channels benefit automatically — processing at the pipeline dispatch la
 ### Phase B: Discord History + Search (MEDIUM)
 
 - [x] **`DiscordHistoryChannel`** — `crates/agentzero-channels/src/channels/discord_history.rs`. Shadow listener, feature-gated `channel-discord-history`. `listen()` is stub/TODO.
-- [ ] **SQLite schema** — `discord_messages` table + `discord_name_cache` table (24h TTL refresh) in `agentzero-storage`
-- [ ] **`DiscordSearchTool`** — keyword search over logged history with human-readable name resolution
+- [x] **SQLite schema** — `discord_messages` table + `discord_name_cache` table (24h TTL) in `agentzero-storage/src/discord.rs`. WAL mode, indexes on content/channel/created_at. 5 tests.
+- [x] **`DiscordSearchTool`** — keyword search over SQLite history. Accepts `Arc<DiscordHistoryStore>` via `with_store()`. Returns JSON with author, content, channel_id, timestamp. 6 tests.
 - [x] **Registration** — in `channel_catalog!`
-- [ ] **Tests** — message logging, name resolution, search queries, TTL cache refresh
+- [x] **Tests** — 11 tests: insert+search, search limit, name cache roundtrip, name cache unknown, message count (storage); schema, empty query, invalid JSON, no store, with store, no matches (tool)
 
 ---
 
@@ -1857,8 +1857,8 @@ All 28 channels benefit automatically — processing at the pipeline dispatch la
 
 - [x] Media pipeline processes audio/images from any channel automatically
 - [x] Channels without native media support benefit via URL detection
-- [ ] Discord history persists to SQLite with searchable keyword index
-- [ ] Name cache resolves opaque snowflake IDs to human-readable names
+- [x] Discord history persists to SQLite via `DiscordHistoryStore` with keyword search
+- [x] Name cache resolves snowflake IDs to display names with 24h TTL
 - [x] 0 clippy warnings, all tests pass
 
 ---
@@ -1885,7 +1885,7 @@ All 28 channels benefit automatically — processing at the pipeline dispatch la
 - [x] **Webhook endpoint** — Uses existing `POST /v1/webhook/gmail-push` gateway route
 - [x] **Feature gate** — `channel-gmail-push` with `reqwest` dependency
 - [x] **Config** — `access_token`, `project_id`, `topic_name`, `allowed_senders` via constructor + builders
-- [ ] **Auth integration** — OAuth token refresh not yet automated (static access_token)
+- [x] **Auth integration** — `with_oauth_refresh()` builder configures refresh_token/client_id/client_secret. `refresh_access_token()` calls Google OAuth2 endpoint. Auto-refresh every 50 minutes in `listen()` loop via `tokio::select!`.
 - [x] **Registration** — in `channel_catalog!`
 - [x] **Tests** — 5 tests: HTML stripping, plain text passthrough, sender filtering (empty allows all, non-empty filters), base64 encoding
 

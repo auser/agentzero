@@ -1,5 +1,5 @@
 #[cfg(feature = "tools-full")]
-mod agent_manage;
+pub mod agent_manage;
 #[cfg(feature = "tools-full")]
 mod config_manage;
 pub mod dynamic_tool;
@@ -47,7 +47,7 @@ pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
 
 // ── Full tier re-exports ─────────────────────────────────────────────
 #[cfg(feature = "tools-full")]
-pub use agent_manage::AgentManageTool;
+pub use agent_manage::{create_agent_from_nl, AgentManageTool};
 #[cfg(feature = "tools-full")]
 pub use agentzero_tools::{
     BrowserOpenTool, BrowserTool, CodexCliTool, ComposioTool, DomainCreateTool, DomainInfoTool,
@@ -141,7 +141,7 @@ fn default_tools_inner(
     #[cfg(feature = "tools-extended")]
     {
         tools.push(Box::new(CliDiscoveryTool));
-        tools.push(Box::new(DiscordSearchTool));
+        tools.push(Box::new(DiscordSearchTool::new()));
         tools.push(Box::new(ProxyConfigTool));
         tools.push(Box::new(SopListTool));
         tools.push(Box::new(SopStatusTool));

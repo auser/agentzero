@@ -21,7 +21,13 @@ mod impl_ {
     /// The channel re-calls `users.watch()` every 6 days to maintain delivery.
     pub struct GmailPushChannel {
         /// OAuth access token for Gmail API calls.
-        access_token: String,
+        access_token: std::sync::Mutex<String>,
+        /// OAuth refresh token for automatic token renewal.
+        refresh_token: Option<String>,
+        /// OAuth client ID for token refresh.
+        client_id: Option<String>,
+        /// OAuth client secret for token refresh.
+        client_secret: Option<String>,
         /// Google Cloud project ID for Pub/Sub.
         project_id: String,
         /// Pub/Sub topic name (e.g., "projects/{project}/topics/{topic}").
@@ -37,13 +43,29 @@ mod impl_ {
     impl GmailPushChannel {
         pub fn new(access_token: String, project_id: String, topic_name: String) -> Self {
             Self {
-                access_token,
+                access_token: std::sync::Mutex::new(access_token),
+                refresh_token: None,
+                client_id: None,
+                client_secret: None,
                 project_id,
                 topic_name,
                 allowed_senders: Vec::new(),
                 client: reqwest::Client::new(),
                 last_history_id: std::sync::Mutex::new(None),
             }
+        }
+
+        /// Configure OAuth refresh credentials for automatic token renewal.
+        pub fn with_oauth_refresh(
+            mut self,
+            refresh_token: String,
+            client_id: String,
+            client_secret: String,
+        ) -> Self {
+            self.refresh_token = Some(refresh_token);
+            self.client_id = Some(client_id);
+            self.client_secret = Some(client_secret);
+            self
         }
 
         pub fn with_allowed_senders(mut self, senders: Vec<String>) -> Self {
@@ -54,6 +76,52 @@ mod impl_ {
         pub fn with_client(mut self, client: reqwest::Client) -> Self {
             self.client = client;
             self
+        }
+
+        /// Get the current access token.
+        fn access_token(&self) -> String {
+            self.access_token.lock().expect("token lock").clone()
+        }
+
+        /// Refresh the OAuth access token using the refresh token.
+        /// Returns Ok(new_token) on success.
+        async fn refresh_access_token(&self) -> anyhow::Result<String> {
+            let refresh_token = self.refresh_token.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no refresh_token configured"))?;
+            let client_id = self.client_id.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no client_id configured"))?;
+            let client_secret = self.client_secret.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no client_secret configured"))?;
+
+            let resp = self
+                .client
+                .post("https://oauth2.googleapis.com/token")
+                .form(&[
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", refresh_token),
+                    ("client_id", client_id),
+                    ("client_secret", client_secret),
+                ])
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("oauth refresh request failed: {e}"))?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(anyhow::anyhow!("oauth refresh failed ({status}): {body}"));
+            }
+
+            let result: serde_json::Value = resp.json().await?;
+            let new_token = result["access_token"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("oauth response missing access_token"))?
+                .to_string();
+
+            // Update stored token.
+            *self.access_token.lock().expect("token lock") = new_token.clone();
+            tracing::info!("gmail oauth token refreshed");
+            Ok(new_token)
         }
 
         /// Register a Gmail push subscription via users.watch().
@@ -68,7 +136,7 @@ mod impl_ {
             let resp = self
                 .client
                 .post(url)
-                .header("Authorization", format!("Bearer {}", self.access_token))
+                .header("Authorization", format!("Bearer {}", self.access_token()))
                 .json(&body)
                 .send()
                 .await
@@ -133,7 +201,7 @@ mod impl_ {
             let resp = self
                 .client
                 .post(url)
-                .header("Authorization", format!("Bearer {}", self.access_token))
+                .header("Authorization", format!("Bearer {}", self.access_token()))
                 .json(&serde_json::json!({ "raw": encoded }))
                 .send()
                 .await
@@ -169,17 +237,29 @@ mod impl_ {
                 }
             }
 
-            // Re-register watch every 6 days (subscriptions expire after 7)
-            let mut interval = tokio::time::interval(Duration::from_secs(6 * 24 * 3600));
-            interval.tick().await; // skip first immediate tick
+            // Token refresh every 50 minutes (tokens expire after 60).
+            let mut token_interval = tokio::time::interval(Duration::from_secs(50 * 60));
+            token_interval.tick().await; // skip first immediate tick
+
+            // Re-register watch every 6 days (subscriptions expire after 7).
+            let mut watch_interval = tokio::time::interval(Duration::from_secs(6 * 24 * 3600));
+            watch_interval.tick().await; // skip first immediate tick
+
             loop {
-                interval.tick().await;
-                match self.register_watch().await {
-                    Ok(history_id) => {
-                        tracing::info!(history_id, "gmail watch renewed");
+                tokio::select! {
+                    _ = token_interval.tick() => {
+                        if self.refresh_token.is_some() {
+                            match self.refresh_access_token().await {
+                                Ok(_) => tracing::debug!("gmail token auto-refreshed"),
+                                Err(e) => tracing::warn!(error = %e, "gmail token refresh failed"),
+                            }
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "gmail watch renewal failed");
+                    _ = watch_interval.tick() => {
+                        match self.register_watch().await {
+                            Ok(history_id) => tracing::info!(history_id, "gmail watch renewed"),
+                            Err(e) => tracing::warn!(error = %e, "gmail watch renewal failed"),
+                        }
                     }
                 }
             }
@@ -190,7 +270,7 @@ mod impl_ {
             let resp = self
                 .client
                 .get("https://gmail.googleapis.com/gmail/v1/users/me/profile")
-                .header("Authorization", format!("Bearer {}", self.access_token))
+                .header("Authorization", format!("Bearer {}", self.access_token()))
                 .timeout(Duration::from_secs(10))
                 .send()
                 .await;
