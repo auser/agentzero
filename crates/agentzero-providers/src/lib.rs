@@ -10,6 +10,7 @@ pub mod builtin;
 mod catalog;
 pub mod embedding;
 mod fallback;
+pub mod guardrails;
 #[cfg(feature = "local-model")]
 pub mod model_manager;
 mod models;
@@ -25,6 +26,10 @@ mod noise_transport;
 pub use anthropic::AnthropicProvider;
 pub use catalog::{find_provider, supported_providers, ProviderDescriptor};
 pub use fallback::{FallbackInfo, FallbackProvider, FALLBACK_INFO};
+pub use guardrails::{
+    Enforcement, Guard, GuardEntry, GuardVerdict, GuardrailsLayer, PiiRedactionGuard,
+    PromptInjectionGuard,
+};
 pub use models::{
     find_models_for_provider, model_capabilities, provider_config_fingerprint,
     provider_supports_model, ModelCapabilities, ModelDescriptor,

@@ -437,6 +437,7 @@ dependencies = [
  "indicatif 0.17.11",
  "llama-cpp-2",
  "metrics",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
