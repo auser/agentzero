@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::anyhow;
 use async_trait::async_trait;
 use scraper::{Html, Selector};
@@ -9,40 +10,33 @@ use std::collections::HashMap;
 ///
 /// Input: JSON with `html` (raw HTML string) and `selectors` (map of name → CSS selector).
 /// Output: JSON object mapping each name to extracted text (single match) or array of text (multiple matches).
+#[tool(
+    name = "html_extract",
+    description = "Extract structured data from HTML using CSS selectors. Returns a JSON object mapping selector names to extracted text."
+)]
 pub struct HtmlExtractTool;
 
-#[derive(Deserialize)]
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct HtmlExtractInput {
+    /// Raw HTML content to parse
     html: String,
+    /// Map of field names to CSS selectors. Each selector extracts text from matching elements.
     selectors: HashMap<String, String>,
 }
 
 #[async_trait]
 impl Tool for HtmlExtractTool {
     fn name(&self) -> &'static str {
-        "html_extract"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Extract structured data from HTML using CSS selectors. Returns a JSON object mapping selector names to extracted text."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "html": {
-                    "type": "string",
-                    "description": "Raw HTML content to parse"
-                },
-                "selectors": {
-                    "type": "object",
-                    "description": "Map of field names to CSS selectors. Each selector extracts text from matching elements.",
-                    "additionalProperties": { "type": "string" }
-                }
-            },
-            "required": ["html", "selectors"]
-        }))
+        Some(HtmlExtractInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

@@ -8,6 +8,7 @@ use super::types::{
 };
 use crate::sop_tools::SopExecuteTool;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -35,65 +36,52 @@ struct DomainCreateInput {
     template: Option<String>,
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DomainCreateSchema {
+    /// Unique domain identifier (alphanumeric, hyphens, underscores)
+    name: String,
+    /// What this domain covers
+    description: String,
+    /// Source configurations
+    #[serde(default)]
+    sources: Option<Vec<serde_json::Value>>,
+    /// Verification configuration
+    #[serde(default)]
+    verification: Option<serde_json::Value>,
+    /// Workflow templates
+    #[serde(default)]
+    workflows: Option<Vec<serde_json::Value>>,
+    /// System prompt
+    #[serde(default)]
+    system_prompt: Option<String>,
+    /// Domain constraints
+    #[serde(default)]
+    constraints: Option<serde_json::Value>,
+    /// Create from built-in template: academic_research, competitive_intelligence
+    #[serde(default)]
+    template: Option<String>,
+}
+
+#[tool(
+    name = "domain_create",
+    description = "Create a new research domain with configured sources, verification strategies, workflows, and AI persona. Domains can also be created from built-in templates."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DomainCreateTool;
 
 #[async_trait]
 impl Tool for DomainCreateTool {
     fn name(&self) -> &'static str {
-        "domain_create"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Create a new research domain with configured sources, verification strategies, workflows, and AI persona. Domains can also be created from built-in templates."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string", "description": "Unique domain identifier (alphanumeric, hyphens, underscores)" },
-                "description": { "type": "string", "description": "What this domain covers" },
-                "sources": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "kind": { "type": "string", "description": "Adapter: arxiv, semantic_scholar, openalex, web_search, http_api" },
-                            "label": { "type": "string" },
-                            "config": { "type": "object" },
-                            "priority": { "type": "integer" },
-                            "enabled": { "type": "boolean" }
-                        },
-                        "required": ["kind", "label"]
-                    }
-                },
-                "verification": {
-                    "type": "object",
-                    "properties": {
-                        "strategies": { "type": "array" },
-                        "min_confidence": { "type": "number" }
-                    }
-                },
-                "workflows": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": { "type": "string" },
-                            "description": { "type": "string" },
-                            "steps": { "type": "array", "items": { "type": "string" } },
-                            "approval_required": { "type": "array", "items": { "type": "integer" } }
-                        },
-                        "required": ["name", "steps"]
-                    }
-                },
-                "system_prompt": { "type": "string" },
-                "constraints": { "type": "object" },
-                "template": { "type": "string", "description": "Create from built-in template: academic_research, competitive_intelligence" }
-            },
-            "required": ["name", "description"]
-        }))
+        Some(DomainCreateSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -185,36 +173,59 @@ struct DomainUpdateInput {
     set_enabled: Option<bool>,
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DomainUpdateSchema {
+    /// Domain to update
+    name: String,
+    /// New description
+    #[serde(default)]
+    set_description: Option<String>,
+    /// Sources to add
+    #[serde(default)]
+    add_sources: Option<Vec<serde_json::Value>>,
+    /// Source kinds to remove
+    #[serde(default)]
+    remove_sources: Option<Vec<String>>,
+    /// New verification configuration
+    #[serde(default)]
+    set_verification: Option<serde_json::Value>,
+    /// Workflows to add
+    #[serde(default)]
+    add_workflows: Option<Vec<serde_json::Value>>,
+    /// Workflow names to remove
+    #[serde(default)]
+    remove_workflows: Option<Vec<String>>,
+    /// New system prompt
+    #[serde(default)]
+    set_system_prompt: Option<String>,
+    /// New constraints
+    #[serde(default)]
+    set_constraints: Option<serde_json::Value>,
+    /// Enable or disable the domain
+    #[serde(default)]
+    set_enabled: Option<bool>,
+}
+
+#[tool(
+    name = "domain_update",
+    description = "Update an existing domain: add/remove sources, workflows, change system prompt, etc."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DomainUpdateTool;
 
 #[async_trait]
 impl Tool for DomainUpdateTool {
     fn name(&self) -> &'static str {
-        "domain_update"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Update an existing domain: add/remove sources, workflows, change system prompt, etc."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string", "description": "Domain to update" },
-                "set_description": { "type": "string" },
-                "add_sources": { "type": "array", "items": { "type": "object" } },
-                "remove_sources": { "type": "array", "items": { "type": "string" }, "description": "Source kinds to remove" },
-                "set_verification": { "type": "object" },
-                "add_workflows": { "type": "array", "items": { "type": "object" } },
-                "remove_workflows": { "type": "array", "items": { "type": "string" }, "description": "Workflow names to remove" },
-                "set_system_prompt": { "type": "string" },
-                "set_constraints": { "type": "object" },
-                "set_enabled": { "type": "boolean" }
-            },
-            "required": ["name"]
-        }))
+        Some(DomainUpdateSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -281,25 +292,25 @@ impl Tool for DomainUpdateTool {
 // domain_list
 // ============================================================================
 
+#[tool(
+    name = "domain_list",
+    description = "List all available research domains (project + global)."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DomainListTool;
 
 #[async_trait]
 impl Tool for DomainListTool {
     fn name(&self) -> &'static str {
-        "domain_list"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "List all available research domains (project + global)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }))
+        None
     }
 
     async fn execute(&self, _input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -339,27 +350,32 @@ struct DomainInfoInput {
     name: String,
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DomainInfoSchema {
+    /// Domain name to inspect
+    name: String,
+}
+
+#[tool(
+    name = "domain_info",
+    description = "Show the full configuration of a research domain."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DomainInfoTool;
 
 #[async_trait]
 impl Tool for DomainInfoTool {
     fn name(&self) -> &'static str {
-        "domain_info"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Show the full configuration of a research domain."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string", "description": "Domain name to inspect" }
-            },
-            "required": ["name"]
-        }))
+        Some(DomainInfoSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -392,6 +408,25 @@ fn default_max_results() -> usize {
     5
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DomainSearchSchema {
+    /// Domain to search within
+    domain: String,
+    /// Search query
+    query: String,
+    /// Max results per source (default 5)
+    #[serde(default)]
+    max_results: Option<i64>,
+    /// Optional filter: only search these source kinds
+    #[serde(default)]
+    sources: Option<Vec<String>>,
+}
+
+#[tool(
+    name = "domain_search",
+    description = "Search across a domain's configured sources, merge and deduplicate results."
+)]
 pub struct DomainSearchTool {
     client: Client,
 }
@@ -411,24 +446,15 @@ impl Default for DomainSearchTool {
 #[async_trait]
 impl Tool for DomainSearchTool {
     fn name(&self) -> &'static str {
-        "domain_search"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Search across a domain's configured sources, merge and deduplicate results."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "domain": { "type": "string", "description": "Domain to search within" },
-                "query": { "type": "string", "description": "Search query" },
-                "max_results": { "type": "integer", "description": "Max results per source (default 5)" },
-                "sources": { "type": "array", "items": { "type": "string" }, "description": "Optional filter: only search these source kinds" }
-            },
-            "required": ["domain", "query"]
-        }))
+        Some(DomainSearchSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -536,6 +562,19 @@ struct DomainVerifyInput {
     findings: Vec<FindingToVerify>,
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DomainVerifySchema {
+    /// Domain whose verification config to use
+    domain: String,
+    /// Findings to verify
+    findings: Vec<serde_json::Value>,
+}
+
+#[tool(
+    name = "domain_verify",
+    description = "Verify research findings using a domain's configured verification strategies (existence check, metadata match, DOI resolution, cross-reference)."
+)]
 pub struct DomainVerifyTool {
     client: Client,
 }
@@ -555,37 +594,15 @@ impl Default for DomainVerifyTool {
 #[async_trait]
 impl Tool for DomainVerifyTool {
     fn name(&self) -> &'static str {
-        "domain_verify"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Verify research findings using a domain's configured verification strategies (existence check, metadata match, DOI resolution, cross-reference)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "domain": { "type": "string", "description": "Domain whose verification config to use" },
-                "findings": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "title": { "type": "string" },
-                            "authors": { "type": "array", "items": { "type": "string" } },
-                            "year": { "type": "integer" },
-                            "doi": { "type": "string" },
-                            "arxiv_id": { "type": "string" },
-                            "url": { "type": "string" },
-                            "claimed_content": { "type": "string" }
-                        },
-                        "required": ["title"]
-                    }
-                }
-            },
-            "required": ["domain", "findings"]
-        }))
+        Some(DomainVerifySchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -879,29 +896,37 @@ struct DomainWorkflowInput {
     sop_id: Option<String>,
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DomainWorkflowSchema {
+    /// Domain containing the workflow template
+    domain: String,
+    /// Workflow template name
+    workflow: String,
+    /// Custom SOP ID (auto-generated if omitted)
+    #[serde(default)]
+    sop_id: Option<String>,
+}
+
+#[tool(
+    name = "domain_workflow",
+    description = "Create an SOP from a domain's workflow template."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DomainWorkflowTool;
 
 #[async_trait]
 impl Tool for DomainWorkflowTool {
     fn name(&self) -> &'static str {
-        "domain_workflow"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Create an SOP from a domain's workflow template."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "domain": { "type": "string", "description": "Domain containing the workflow template" },
-                "workflow": { "type": "string", "description": "Workflow template name" },
-                "sop_id": { "type": "string", "description": "Custom SOP ID (auto-generated if omitted)" }
-            },
-            "required": ["domain", "workflow"]
-        }))
+        Some(DomainWorkflowSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -951,29 +976,36 @@ struct DomainLearnInput {
     content: String,
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DomainLearnSchema {
+    /// Domain this lesson relates to
+    domain: String,
+    /// Category: source_quality, query_strategy, verification_insight, domain_knowledge
+    lesson_type: String,
+    /// The lesson learned
+    content: String,
+}
+
+#[tool(
+    name = "domain_learn",
+    description = "Capture a lesson learned from working with a domain (e.g., source quality, query strategy, verification insight)."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DomainLearnTool;
 
 #[async_trait]
 impl Tool for DomainLearnTool {
     fn name(&self) -> &'static str {
-        "domain_learn"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Capture a lesson learned from working with a domain (e.g., source quality, query strategy, verification insight)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "domain": { "type": "string", "description": "Domain this lesson relates to" },
-                "lesson_type": { "type": "string", "description": "Category: source_quality, query_strategy, verification_insight, domain_knowledge" },
-                "content": { "type": "string", "description": "The lesson learned" }
-            },
-            "required": ["domain", "lesson_type", "content"]
-        }))
+        Some(DomainLearnSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -1014,29 +1046,38 @@ fn default_lesson_limit() -> usize {
     10
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DomainLessonsSchema {
+    /// Domain to recall lessons for
+    domain: String,
+    /// Optional filter by lesson type
+    #[serde(default)]
+    lesson_type: Option<String>,
+    /// Max lessons to return (default 10)
+    #[serde(default)]
+    max_results: Option<i64>,
+}
+
+#[tool(
+    name = "domain_lessons",
+    description = "Recall lessons learned for a domain, sorted by relevance (with time-decay)."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DomainLessonsTool;
 
 #[async_trait]
 impl Tool for DomainLessonsTool {
     fn name(&self) -> &'static str {
-        "domain_lessons"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Recall lessons learned for a domain, sorted by relevance (with time-decay)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "domain": { "type": "string", "description": "Domain to recall lessons for" },
-                "lesson_type": { "type": "string", "description": "Optional filter by lesson type" },
-                "max_results": { "type": "integer", "description": "Max lessons to return (default 10)" }
-            },
-            "required": ["domain"]
-        }))
+        Some(DomainLessonsSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

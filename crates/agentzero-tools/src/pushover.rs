@@ -1,17 +1,24 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct PushoverInput {
+    /// Notification message
     message: String,
+    /// Optional notification title
     #[serde(default)]
     title: Option<String>,
+    /// Priority: -2 to 2
     #[serde(default)]
     priority: Option<i8>,
+    /// Pushover API token (or use PUSHOVER_TOKEN env)
     #[serde(default)]
     token: Option<String>,
+    /// Pushover user key (or use PUSHOVER_USER env)
     #[serde(default)]
     user: Option<String>,
 }
@@ -23,31 +30,25 @@ struct PushoverInput {
 /// - `token` and `user` fields in the input JSON.
 ///
 /// Priority levels: -2 (lowest), -1, 0 (normal), 1 (high), 2 (emergency).
+#[tool(
+    name = "pushover",
+    description = "Send push notifications via the Pushover service."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PushoverTool;
 
 #[async_trait]
 impl Tool for PushoverTool {
     fn name(&self) -> &'static str {
-        "pushover"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Send push notifications via the Pushover service."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "required": ["message"],
-            "properties": {
-                "message": {"type": "string", "description": "Notification message"},
-                "title": {"type": "string", "description": "Optional notification title"},
-                "priority": {"type": "integer", "description": "Priority: -2 to 2"},
-                "token": {"type": "string", "description": "Pushover API token (or use PUSHOVER_TOKEN env)"},
-                "user": {"type": "string", "description": "Pushover user key (or use PUSHOVER_USER env)"}
-            }
-        }))
+        Some(PushoverInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

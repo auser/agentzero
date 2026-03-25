@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -6,8 +7,10 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Command;
 
-#[derive(Debug, Deserialize)]
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct ScreenshotInput {
+    /// Output filename for the screenshot
     #[serde(default = "default_filename")]
     filename: String,
 }
@@ -16,6 +19,10 @@ fn default_filename() -> String {
     "screenshot.png".to_string()
 }
 
+#[tool(
+    name = "screenshot",
+    description = "Capture a screenshot of the current display and save it to a file."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ScreenshotTool;
 
@@ -45,21 +52,15 @@ impl ScreenshotTool {
 #[async_trait]
 impl Tool for ScreenshotTool {
     fn name(&self) -> &'static str {
-        "screenshot"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Capture a screenshot of the current display and save it to a file."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "filename": { "type": "string", "description": "Output filename for the screenshot" }
-            },
-            "required": ["filename"]
-        }))
+        Some(ScreenshotInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

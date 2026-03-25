@@ -90,6 +90,7 @@ name = "agentzero-autopilot"
 version = "0.10.0"
 dependencies = [
  "agentzero-core",
+ "agentzero-macros",
  "anyhow",
  "async-trait",
  "chrono",

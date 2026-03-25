@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -42,8 +43,33 @@ fn default_pending() -> TaskStatus {
     TaskStatus::Pending
 }
 
+#[tool(
+    name = "task_plan",
+    description = "Manage a structured task plan: create, list, update status, or clear tasks for tracking multi-step work."
+)]
 pub struct TaskPlanTool {
     tasks: Mutex<Vec<TaskItem>>,
+}
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct TaskPlanSchema {
+    /// The task plan action to perform
+    #[schema(enum_values = ["create", "add", "update", "list", "delete"])]
+    action: String,
+    /// Tasks to create (for create action)
+    #[serde(default)]
+    tasks: Option<Vec<serde_json::Value>>,
+    /// Task title (for add action)
+    #[serde(default)]
+    title: Option<String>,
+    /// Task ID (for update action)
+    #[serde(default)]
+    id: Option<i64>,
+    /// New status (for update action)
+    #[serde(default)]
+    #[schema(enum_values = ["pending", "in_progress", "completed"])]
+    status: Option<String>,
 }
 
 impl Default for TaskPlanTool {
@@ -102,26 +128,15 @@ impl TaskPlanTool {
 #[async_trait]
 impl Tool for TaskPlanTool {
     fn name(&self) -> &'static str {
-        "task_plan"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Manage a structured task plan: create, list, update status, or clear tasks for tracking multi-step work."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": { "type": "string", "enum": ["create", "add", "update", "list", "delete"], "description": "The task plan action to perform" },
-                "tasks": { "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string" }, "status": { "type": "string" } }, "required": ["title"] }, "description": "Tasks to create (for create action)" },
-                "title": { "type": "string", "description": "Task title (for add action)" },
-                "id": { "type": "integer", "description": "Task ID (for update action)" },
-                "status": { "type": "string", "enum": ["pending", "in_progress", "completed"], "description": "New status (for update action)" }
-            },
-            "required": ["action"],
-            "additionalProperties": false
-        }))
+        Some(TaskPlanSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

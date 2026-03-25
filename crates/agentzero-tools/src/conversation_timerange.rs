@@ -1,13 +1,27 @@
 //! Conversation time-range query tool.
 
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::json;
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct SchemaInput {
+    /// Start timestamp (unix seconds)
+    #[serde(default)]
+    since: Option<i64>,
+    /// End timestamp (unix seconds)
+    #[serde(default)]
+    until: Option<i64>,
+    /// Maximum entries to return (default: 50)
+    #[serde(default)]
+    limit: Option<i64>,
+}
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
-struct Input {
+struct ExecuteInput {
     since: Option<i64>,
     until: Option<i64>,
     #[serde(default = "default_limit")]
@@ -19,32 +33,29 @@ fn default_limit() -> usize {
 }
 
 /// Query conversation memory within a time range.
+#[tool(
+    name = "conversation_timerange",
+    description = "Query conversation history within a specific time range (unix timestamps)."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ConversationTimerangeTool;
 
 #[async_trait]
 impl Tool for ConversationTimerangeTool {
     fn name(&self) -> &'static str {
-        "conversation_timerange"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Query conversation history within a specific time range (unix timestamps)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "since": { "type": "integer", "description": "Start timestamp (unix seconds)" },
-                "until": { "type": "integer", "description": "End timestamp (unix seconds)" },
-                "limit": { "type": "integer", "description": "Maximum entries to return (default: 50)" }
-            }
-        }))
+        Some(SchemaInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
-        let _parsed: Input = serde_json::from_str(input)
+        let _parsed: ExecuteInput = serde_json::from_str(input)
             .map_err(|e| anyhow::anyhow!("conversation_timerange expects JSON: {e}"))?;
 
         Ok(ToolResult {

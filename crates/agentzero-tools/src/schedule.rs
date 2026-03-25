@@ -1,5 +1,6 @@
 use crate::cron_store::CronStore;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -220,13 +221,19 @@ fn day_of_week(s: &str) -> Option<u8> {
 // Schedule tool (unified interface)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct ScheduleInput {
+    /// The scheduling action to perform
+    #[schema(enum_values = ["create", "list", "update", "remove", "pause", "resume", "parse"])]
     action: String,
+    /// Task ID (required for create/update/remove/pause/resume)
     #[serde(default)]
     id: Option<String>,
+    /// Cron expression or natural language schedule (e.g. 'every 5 minutes')
     #[serde(default)]
     schedule: Option<String>,
+    /// Command to run on schedule
     #[serde(default)]
     command: Option<String>,
 }
@@ -241,31 +248,25 @@ struct ScheduleInput {
 /// - `pause` — disable a task (requires `id`)
 /// - `resume` — re-enable a task (requires `id`)
 /// - `parse` — parse a natural-language expression to cron (requires `schedule`)
+#[tool(
+    name = "schedule",
+    description = "Manage scheduled tasks: create, list, update, remove, pause, resume, or parse cron expressions."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ScheduleTool;
 
 #[async_trait]
 impl Tool for ScheduleTool {
     fn name(&self) -> &'static str {
-        "schedule"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Manage scheduled tasks: create, list, update, remove, pause, resume, or parse cron expressions."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": { "type": "string", "enum": ["create", "list", "update", "remove", "pause", "resume", "parse"], "description": "The scheduling action to perform" },
-                "id": { "type": "string", "description": "Task ID (required for create/update/remove/pause/resume)" },
-                "schedule": { "type": "string", "description": "Cron expression or natural language schedule (e.g. 'every 5 minutes')" },
-                "command": { "type": "string", "description": "Command to run on schedule" }
-            },
-            "required": ["action"],
-            "additionalProperties": false
-        }))
+        Some(ScheduleInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

@@ -1,6 +1,27 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct ProposalCreateSchema {
+    /// Short title for the proposal
+    title: String,
+    /// Detailed description of what should be done
+    description: String,
+    /// Type of proposal (default: task_request)
+    #[serde(default)]
+    #[schema(enum_values = ["content_idea", "task_request", "resource_request", "system_change"])]
+    proposal_type: Option<String>,
+    /// Priority level (default: medium)
+    #[serde(default)]
+    #[schema(enum_values = ["low", "medium", "high", "critical"])]
+    priority: Option<String>,
+    /// Estimated cost in microdollars (1 cent = 10000 microdollars)
+    #[serde(default)]
+    estimated_cost_microdollars: Option<i64>,
+}
 
 #[derive(Debug, Deserialize)]
 struct ProposalCreateInput {
@@ -23,52 +44,25 @@ fn default_priority() -> String {
 }
 
 /// Tool that allows agents to create autopilot proposals.
+#[tool(
+    name = "proposal_create",
+    description = "Create a new proposal for work to be done. The proposal will be evaluated by the cap gate system and, if approved, converted into an executable mission. Use this to suggest new tasks, content ideas, or system changes."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ProposalCreateTool;
 
 #[async_trait]
 impl Tool for ProposalCreateTool {
     fn name(&self) -> &'static str {
-        "proposal_create"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Create a new proposal for work to be done. The proposal will be \
-         evaluated by the cap gate system and, if approved, converted into \
-         an executable mission. Use this to suggest new tasks, content ideas, \
-         or system changes."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "title": {
-                    "type": "string",
-                    "description": "Short title for the proposal"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Detailed description of what should be done"
-                },
-                "proposal_type": {
-                    "type": "string",
-                    "enum": ["content_idea", "task_request", "resource_request", "system_change"],
-                    "description": "Type of proposal (default: task_request)"
-                },
-                "priority": {
-                    "type": "string",
-                    "enum": ["low", "medium", "high", "critical"],
-                    "description": "Priority level (default: medium)"
-                },
-                "estimated_cost_microdollars": {
-                    "type": "integer",
-                    "description": "Estimated cost in microdollars (1 cent = 10000 microdollars)"
-                }
-            },
-            "required": ["title", "description"],
-            "additionalProperties": false
-        }))
+        Some(ProposalCreateSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

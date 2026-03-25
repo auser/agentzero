@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::Context;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -49,15 +50,21 @@ impl CoordinationStore {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct Input {
+    /// Operation: list, record, or clear
     op: String,
+    /// Agent name (for record)
     #[serde(default)]
     agent_name: Option<String>,
+    /// Status string (for record)
     #[serde(default)]
     status: Option<String>,
+    /// Prompt summary (for record)
     #[serde(default)]
     prompt_summary: Option<String>,
+    /// Iterations used (for record)
     #[serde(default)]
     iterations_used: Option<usize>,
 }
@@ -68,31 +75,25 @@ struct Input {
 /// - `list`: List all delegation records
 /// - `record`: Record a delegation event
 /// - `clear`: Clear all delegation records
+#[tool(
+    name = "delegate_coordination_status",
+    description = "Track and manage delegation coordination: list, record, or clear delegation events."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DelegateCoordinationStatusTool;
 
 #[async_trait]
 impl Tool for DelegateCoordinationStatusTool {
     fn name(&self) -> &'static str {
-        "delegate_coordination_status"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Track and manage delegation coordination: list, record, or clear delegation events."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "required": ["op"],
-            "properties": {
-                "op": {"type": "string", "description": "Operation: list, record, or clear"},
-                "agent_name": {"type": "string", "description": "Agent name (for record)"},
-                "status": {"type": "string", "description": "Status string (for record)"},
-                "prompt_summary": {"type": "string", "description": "Prompt summary (for record)"},
-                "iterations_used": {"type": "integer", "description": "Iterations used (for record)"}
-            }
-        }))
+        Some(Input::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

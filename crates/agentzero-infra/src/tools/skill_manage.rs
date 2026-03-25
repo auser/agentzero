@@ -3,6 +3,7 @@
 //! Wraps the existing `SkillStore` and `SkillForge` from `agentzero-tools`.
 
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use agentzero_tools::skills::skillforge::{render_skill_markdown, SkillTemplate};
 use agentzero_tools::skills::SkillStore;
 use anyhow::{bail, Context};
@@ -10,17 +11,27 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct Input {
+    /// The skill operation to perform
+    #[schema(enum_values = ["create", "list", "get", "update", "remove", "test"])]
     action: String,
+    /// Skill name (alphanumeric, hyphens, underscores)
     #[serde(default)]
     name: Option<String>,
+    /// For create: what the skill does
     #[serde(default)]
     description: Option<String>,
+    /// For create/update: the markdown source content. If omitted on create, auto-generated from description.
     #[serde(default)]
     source: Option<String>,
 }
 
+#[tool(
+    name = "skill_manage",
+    description = "Create, list, update, and remove skills. Skills are reusable AI behavior templates. Actions: create (generate + install), list, get, update (replace source), remove, test."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SkillManageTool;
 
@@ -33,38 +44,15 @@ impl SkillManageTool {
 #[async_trait]
 impl Tool for SkillManageTool {
     fn name(&self) -> &'static str {
-        "skill_manage"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Create, list, update, and remove skills. Skills are reusable AI behavior templates. \
-         Actions: create (generate + install), list, get, update (replace source), remove, test."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["create", "list", "get", "update", "remove", "test"],
-                    "description": "The skill operation to perform"
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Skill name (alphanumeric, hyphens, underscores)"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "For create: what the skill does"
-                },
-                "source": {
-                    "type": "string",
-                    "description": "For create/update: the markdown source content. If omitted on create, auto-generated from description."
-                }
-            },
-            "required": ["action"]
-        }))
+        Some(Input::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

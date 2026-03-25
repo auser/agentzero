@@ -1,10 +1,28 @@
 use agentzero_core::common::url_policy::UrlAccessPolicy;
 use agentzero_core::common::util::parse_http_url_with_policy;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use reqwest::Method;
+use serde::Deserialize;
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct HttpRequestInput {
+    /// HTTP method (GET, POST, PUT, DELETE)
+    method: String,
+    /// The URL to request
+    url: String,
+    /// Optional request body
+    #[serde(default)]
+    body: Option<String>,
+}
+
+#[tool(
+    name = "http_request",
+    description = "Send an HTTP request (GET, POST, PUT, DELETE) and return the response. Input format: \"METHOD URL [BODY]\"."
+)]
 pub struct HttpRequestTool {
     client: reqwest::Client,
     url_policy: UrlAccessPolicy,
@@ -29,23 +47,15 @@ impl HttpRequestTool {
 #[async_trait]
 impl Tool for HttpRequestTool {
     fn name(&self) -> &'static str {
-        "http_request"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Send an HTTP request (GET, POST, PUT, DELETE) and return the response. Input format: \"METHOD URL [BODY]\"."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "method": { "type": "string", "description": "HTTP method (GET, POST, PUT, DELETE)" },
-                "url": { "type": "string", "description": "The URL to request" },
-                "body": { "type": "string", "description": "Optional request body" }
-            },
-            "required": ["method", "url"]
-        }))
+        Some(HttpRequestInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

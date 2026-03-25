@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -6,11 +7,15 @@ use std::path::{Component, Path, PathBuf};
 
 const DEFAULT_LIMIT: usize = 100;
 
-#[derive(Debug, Deserialize)]
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct GlobSearchInput {
+    /// Glob pattern to match (e.g. "**/*.rs", "src/*.ts")
     pattern: String,
+    /// Subdirectory to search within (optional, defaults to workspace root)
     #[serde(default)]
     path: Option<String>,
+    /// Maximum number of results to return (default: 100)
     #[serde(default = "default_limit")]
     limit: usize,
 }
@@ -19,6 +24,10 @@ fn default_limit() -> usize {
     DEFAULT_LIMIT
 }
 
+#[tool(
+    name = "glob_search",
+    description = "Search for files matching a glob pattern within the workspace. Returns a list of matching file paths."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GlobSearchTool;
 
@@ -58,32 +67,15 @@ impl GlobSearchTool {
 #[async_trait]
 impl Tool for GlobSearchTool {
     fn name(&self) -> &'static str {
-        "glob_search"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Search for files matching a glob pattern within the workspace. Returns a list of matching file paths."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Glob pattern to match (e.g. \"**/*.rs\", \"src/*.ts\")"
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Subdirectory to search within (optional, defaults to workspace root)"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return (default: 100)"
-                }
-            },
-            "required": ["pattern"]
-        }))
+        Some(GlobSearchInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

@@ -1,18 +1,28 @@
 use agentzero_core::routing::ModelRouter;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct Input {
+    /// The routing operation to perform
+    #[schema(enum_values = ["list_routes", "list_embedding_routes", "resolve_hint", "classify_query", "route_query"])]
     op: String,
+    /// Route hint to resolve (for resolve_hint)
     #[serde(default)]
     hint: Option<String>,
+    /// Query to classify or route (for classify_query/route_query)
     #[serde(default)]
     query: Option<String>,
 }
 
+#[tool(
+    name = "model_routing_config",
+    description = "View or modify the model routing configuration at runtime."
+)]
 pub struct ModelRoutingConfigTool {
     router: ModelRouter,
 }
@@ -26,24 +36,15 @@ impl ModelRoutingConfigTool {
 #[async_trait]
 impl Tool for ModelRoutingConfigTool {
     fn name(&self) -> &'static str {
-        "model_routing_config"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "View or modify the model routing configuration at runtime."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "op": { "type": "string", "enum": ["list_routes", "list_embedding_routes", "resolve_hint", "classify_query", "route_query"], "description": "The routing operation to perform" },
-                "hint": { "type": "string", "description": "Route hint to resolve (for resolve_hint)" },
-                "query": { "type": "string", "description": "Query to classify or route (for classify_query/route_query)" }
-            },
-            "required": ["op"],
-            "additionalProperties": false
-        }))
+        Some(Input::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

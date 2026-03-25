@@ -1,5 +1,6 @@
 use crate::delegate::OutputScanner;
 use agentzero_core::{AgentEndpoint, ChannelEndpoint, Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -13,21 +14,25 @@ const DEFAULT_TURN_TIMEOUT_SECS: u64 = 120;
 /// Default maximum concurrent converse calls.
 const DEFAULT_MAX_CONCURRENT: usize = 4;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct ConverseInput {
-    /// Target agent ID (mutually exclusive with `channel`).
+    /// Target agent ID to converse with (mutually exclusive with channel)
     agent: Option<String>,
-    /// Target channel for human-in-the-loop (mutually exclusive with `agent`).
+    /// Target channel for human-in-the-loop (mutually exclusive with agent)
     channel: Option<String>,
-    /// Channel recipient (required when `channel` is set).
+    /// Channel recipient (required when channel is set)
     recipient: Option<String>,
-    /// The message to send.
+    /// The message to send
     message: String,
-    /// Conversation identifier shared across turns. The caller generates this
-    /// on the first turn and reuses it for subsequent turns.
+    /// Shared conversation identifier. Generate on first turn, reuse for subsequent turns.
     conversation_id: String,
 }
 
+#[tool(
+    name = "converse",
+    description = "Have a multi-turn conversation with another agent or a human via channel. Each call is one turn — call repeatedly with the same conversation_id to continue the conversation. You control when to stop."
+)]
 pub struct ConverseTool {
     /// Agent endpoints keyed by agent_id, provided by the orchestrator.
     agents: HashMap<String, Arc<dyn AgentEndpoint>>,
@@ -92,43 +97,15 @@ impl ConverseTool {
 #[async_trait]
 impl Tool for ConverseTool {
     fn name(&self) -> &'static str {
-        "converse"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Have a multi-turn conversation with another agent or a human via channel. \
-         Each call is one turn — call repeatedly with the same conversation_id to \
-         continue the conversation. You control when to stop."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "agent": {
-                    "type": "string",
-                    "description": "Target agent ID to converse with (mutually exclusive with channel)"
-                },
-                "channel": {
-                    "type": "string",
-                    "description": "Target channel for human-in-the-loop (mutually exclusive with agent)"
-                },
-                "recipient": {
-                    "type": "string",
-                    "description": "Channel recipient (required when channel is set)"
-                },
-                "message": {
-                    "type": "string",
-                    "description": "The message to send"
-                },
-                "conversation_id": {
-                    "type": "string",
-                    "description": "Shared conversation identifier. Generate on first turn, reuse for subsequent turns."
-                }
-            },
-            "required": ["message", "conversation_id"],
-            "additionalProperties": false
-        }))
+        Some(ConverseInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

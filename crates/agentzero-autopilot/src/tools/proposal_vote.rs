@@ -1,6 +1,20 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
+
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct ProposalVoteSchema {
+    /// ID of the proposal to vote on
+    proposal_id: String,
+    /// Vote to approve or reject
+    #[schema(enum_values = ["approve", "reject"])]
+    vote: String,
+    /// Optional reason for the vote
+    #[serde(default)]
+    reason: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 struct ProposalVoteInput {
@@ -11,41 +25,25 @@ struct ProposalVoteInput {
 }
 
 /// Tool that allows agents (or the system) to approve or reject proposals.
+#[tool(
+    name = "proposal_vote",
+    description = "Vote to approve or reject a pending proposal. Approved proposals are automatically converted into executable missions."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ProposalVoteTool;
 
 #[async_trait]
 impl Tool for ProposalVoteTool {
     fn name(&self) -> &'static str {
-        "proposal_vote"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Vote to approve or reject a pending proposal. Approved proposals \
-         are automatically converted into executable missions."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "proposal_id": {
-                    "type": "string",
-                    "description": "ID of the proposal to vote on"
-                },
-                "vote": {
-                    "type": "string",
-                    "enum": ["approve", "reject"],
-                    "description": "Vote to approve or reject"
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Optional reason for the vote"
-                }
-            },
-            "required": ["proposal_id", "vote"],
-            "additionalProperties": false
-        }))
+        Some(ProposalVoteSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

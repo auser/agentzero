@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -62,7 +63,19 @@ fn default_log_limit() -> usize {
     DEFAULT_LOG_LIMIT
 }
 
+#[tool(
+    name = "git_operations",
+    description = "Perform git operations: status, diff, log, branch, add, commit, checkout, show, stash. Input is JSON with an \"op\" field."
+)]
 pub struct GitOperationsTool;
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct GitOperationsSchema {
+    /// Git operation: status, diff, log, branch, add, commit, checkout, show, stash
+    #[schema(enum_values = ["status", "diff", "log", "branch", "add", "commit", "checkout", "show", "stash"])]
+    op: String,
+}
 
 impl Default for GitOperationsTool {
     fn default() -> Self {
@@ -160,25 +173,15 @@ impl GitOperationsTool {
 #[async_trait]
 impl Tool for GitOperationsTool {
     fn name(&self) -> &'static str {
-        "git_operations"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Perform git operations: status, diff, log, branch, add, commit, checkout, show, stash. Input is JSON with an \"op\" field."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "op": {
-                    "type": "string",
-                    "description": "Git operation: status, diff, log, branch, add, commit, checkout, show, stash",
-                    "enum": ["status", "diff", "log", "branch", "add", "commit", "checkout", "show", "stash"]
-                }
-            },
-            "required": ["op"]
-        }))
+        Some(GitOperationsSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

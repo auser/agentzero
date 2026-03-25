@@ -1,12 +1,16 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
-#[derive(Debug, Deserialize)]
-struct Input {
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DiscordSearchInput {
+    /// Search query keywords
     query: String,
+    /// Maximum results (default: 20)
     #[serde(default = "default_limit")]
     limit: usize,
 }
@@ -19,6 +23,10 @@ fn default_limit() -> usize {
 ///
 /// When constructed with a `DiscordHistoryStore`, queries the SQLite database
 /// for matching messages. Without a store, returns a helpful message.
+#[tool(
+    name = "discord_search",
+    description = "Search Discord message history for keywords. Returns matching messages with sender names and timestamps."
+)]
 #[derive(Default)]
 pub struct DiscordSearchTool {
     store: Option<Arc<agentzero_storage::discord::DiscordHistoryStore>>,
@@ -37,26 +45,19 @@ impl DiscordSearchTool {
 #[async_trait]
 impl Tool for DiscordSearchTool {
     fn name(&self) -> &'static str {
-        "discord_search"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Search Discord message history for keywords. Returns matching messages with sender names and timestamps."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "query": { "type": "string", "description": "Search query keywords" },
-                "limit": { "type": "integer", "description": "Maximum results (default: 20)", "default": 20 }
-            },
-            "required": ["query"]
-        }))
+        Some(DiscordSearchInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
-        let parsed: Input = serde_json::from_str(input).map_err(|e| {
+        let parsed: DiscordSearchInput = serde_json::from_str(input).map_err(|e| {
             anyhow::anyhow!("discord_search expects JSON: {{\"query\": \"...\"}}: {e}")
         })?;
 

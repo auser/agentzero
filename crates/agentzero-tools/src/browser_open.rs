@@ -1,17 +1,24 @@
 use agentzero_core::common::url_policy::UrlAccessPolicy;
 use agentzero_core::common::util::parse_http_url_with_policy;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::process::Stdio;
 use tokio::process::Command;
 
-#[derive(Debug, Deserialize)]
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct BrowserOpenInput {
+    /// The URL to open
     url: String,
 }
 
+#[tool(
+    name = "browser_open",
+    description = "Open a URL in the user's default web browser."
+)]
 #[derive(Default)]
 pub struct BrowserOpenTool {
     url_policy: UrlAccessPolicy,
@@ -50,21 +57,15 @@ impl BrowserOpenTool {
 #[async_trait]
 impl Tool for BrowserOpenTool {
     fn name(&self) -> &'static str {
-        "browser_open"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Open a URL in the user's default web browser."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "url": { "type": "string", "description": "The URL to open" }
-            },
-            "required": ["url"]
-        }))
+        Some(BrowserOpenInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

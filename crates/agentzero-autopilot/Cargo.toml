@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 agentzero-core = { workspace = true }
+agentzero-macros = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
