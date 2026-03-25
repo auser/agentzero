@@ -1,7 +1,9 @@
 use crate::shell_parse::{self, AnnotatedChar, QuoteContext};
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
+use serde::Deserialize;
 use std::process::Stdio;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
@@ -88,8 +90,19 @@ impl ShellPolicy {
     }
 }
 
+#[tool(
+    name = "shell",
+    description = "Execute a shell command from the allowlist. Input is the full command line. Returns stdout, stderr, and exit code."
+)]
 pub struct ShellTool {
     policy: ShellPolicy,
+}
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct ShellInput {
+    /// The shell command to execute (e.g. "ls -la", "cargo build")
+    command: String,
 }
 
 impl ShellTool {
@@ -206,24 +219,15 @@ impl ShellTool {
 #[async_trait]
 impl Tool for ShellTool {
     fn name(&self) -> &'static str {
-        "shell"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Execute a shell command from the allowlist. Input is the full command line. Returns stdout, stderr, and exit code."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to execute (e.g. \"ls -la\", \"cargo build\")"
-                }
-            },
-            "required": ["command"]
-        }))
+        Some(ShellInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

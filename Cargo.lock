@@ -312,6 +312,7 @@ dependencies = [
  "agentzero-autopilot",
  "agentzero-config",
  "agentzero-core",
+ "agentzero-macros",
  "agentzero-orchestrator",
  "agentzero-plugins",
  "agentzero-providers",
@@ -351,6 +352,15 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "agentzero-macros"
+version = "0.10.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -471,6 +481,7 @@ name = "agentzero-tools"
 version = "0.10.0"
 dependencies = [
  "agentzero-core",
+ "agentzero-macros",
  "agentzero-providers",
  "agentzero-storage",
  "anyhow",
