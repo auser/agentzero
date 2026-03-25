@@ -39,6 +39,10 @@ struct Input {
     /// Run in background mode — returns task_id immediately
     #[serde(default)]
     background: bool,
+    /// Multiple agents to delegate to in parallel (fan-out mode).
+    /// When set, each agent receives the same prompt and results are collected.
+    #[serde(default)]
+    agents: Option<Vec<String>>,
     /// Task ID (required for check_result, cancel_task)
     task_id: Option<String>,
 }
@@ -156,7 +160,14 @@ impl Tool for DelegateTool {
             serde_json::from_str(input).map_err(|e| anyhow::anyhow!("invalid input: {e}"))?;
 
         match parsed.action.as_str() {
-            "delegate" => self.execute_delegate(parsed, ctx).await,
+            "delegate" => {
+                // Parallel fan-out when `agents` is provided.
+                if parsed.agents.is_some() {
+                    self.execute_parallel(parsed, ctx).await
+                } else {
+                    self.execute_delegate(parsed, ctx).await
+                }
+            }
             "check_result" => self.execute_check_result(parsed).await,
             "list_results" => self.execute_list_results().await,
             "cancel_task" => self.execute_cancel_task(parsed).await,
@@ -289,6 +300,111 @@ impl DelegateTool {
                 output: safe_output,
             })
         }
+    }
+
+    /// Execute parallel fan-out: delegate the same prompt to multiple agents concurrently.
+    async fn execute_parallel(
+        &self,
+        parsed: Input,
+        ctx: &ToolContext,
+    ) -> anyhow::Result<ToolResult> {
+        let agent_names = parsed
+            .agents
+            .ok_or_else(|| anyhow::anyhow!("'agents' is required for parallel delegation"))?;
+        let prompt = parsed
+            .prompt
+            .ok_or_else(|| anyhow::anyhow!("'prompt' is required for delegate action"))?;
+
+        if agent_names.is_empty() {
+            return Err(anyhow::anyhow!("'agents' must not be empty"));
+        }
+
+        // Validate all agents exist and pass delegation checks.
+        let mut configs = Vec::with_capacity(agent_names.len());
+        for name in &agent_names {
+            let config = self
+                .agents
+                .get(name)
+                .ok_or_else(|| anyhow::anyhow!("unknown agent: {name}"))?;
+            let request = DelegateRequest {
+                agent_name: name.clone(),
+                prompt: prompt.clone(),
+                current_depth: self.current_depth,
+            };
+            validate_delegation(&request, config)?;
+            configs.push((name.clone(), config.clone()));
+        }
+
+        // Fan-out: spawn each agent concurrently, respect semaphore.
+        let mut set = tokio::task::JoinSet::new();
+        for (name, config) in configs {
+            let prompt = prompt.clone();
+            let tool_builder = self.tool_builder.clone();
+            let parent_policy = self.parent_policy.clone();
+            let output_scanner = self.output_scanner.clone();
+            let semaphore = self.semaphore.clone();
+            let child_ctx = build_child_ctx(ctx, &config, &name);
+            let agent_name = name.clone();
+
+            set.spawn(async move {
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .map_err(|_| anyhow::anyhow!("delegation semaphore closed"))?;
+
+                let output = run_delegation(
+                    &config,
+                    &prompt,
+                    &child_ctx,
+                    &tool_builder,
+                    parent_policy.as_ref(),
+                )
+                .await?;
+
+                let safe_output =
+                    apply_output_scanner(output_scanner.as_ref(), &output, &agent_name)?;
+                Ok::<(String, String, u64, u64), anyhow::Error>((
+                    agent_name,
+                    safe_output,
+                    child_ctx.current_tokens(),
+                    child_ctx.current_cost(),
+                ))
+            });
+        }
+
+        // Collect results.
+        let mut results = Vec::new();
+        while let Some(join_result) = set.join_next().await {
+            match join_result {
+                Ok(Ok((name, output, tokens, cost))) => {
+                    ctx.add_tokens(tokens);
+                    ctx.add_cost(cost);
+                    results.push(serde_json::json!({
+                        "agent": name,
+                        "status": "completed",
+                        "output": output,
+                    }));
+                }
+                Ok(Err(e)) => {
+                    results.push(serde_json::json!({
+                        "agent": "unknown",
+                        "status": "failed",
+                        "error": e.to_string(),
+                    }));
+                }
+                Err(e) => {
+                    results.push(serde_json::json!({
+                        "agent": "unknown",
+                        "status": "failed",
+                        "error": format!("join error: {e}"),
+                    }));
+                }
+            }
+        }
+
+        Ok(ToolResult {
+            output: serde_json::to_string(&results).unwrap_or_default(),
+        })
     }
 
     /// Check the status of a background task.

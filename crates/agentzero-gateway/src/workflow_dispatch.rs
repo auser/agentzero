@@ -219,6 +219,18 @@ impl StepDispatcher for GatewayStepDispatcher {
             "gate suspended — waiting for human decision via POST /v1/workflows/runs/:run_id/resume"
         );
 
+        // Emit a structured approval event for monitoring/notification systems.
+        // External integrations (Slack bots, email hooks) can subscribe to the
+        // EventBus "approval.requested" topic or watch structured logs.
+        tracing::info!(
+            target: "approval",
+            run_id = %self.run_id,
+            node_id = %node_id,
+            node_name = %node_name,
+            resume_url = %format!("/v1/workflows/runs/{}/resume", self.run_id),
+            "approval requested — gate awaiting human decision"
+        );
+
         // Block until the resume endpoint sends a decision, or timeout.
         // Default timeout: 24 hours.
         let timeout = std::time::Duration::from_secs(24 * 60 * 60);

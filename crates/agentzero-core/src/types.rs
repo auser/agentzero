@@ -549,6 +549,15 @@ pub struct ToolContext {
     /// Sender identity for per-sender rate limiting (e.g., Telegram user ID, Discord channel).
     #[serde(default)]
     pub sender_id: Option<String>,
+    /// Cancellation token for structured cancellation cascade.
+    /// Coexists with the legacy `cancelled: Arc<AtomicBool>` flag.
+    /// When the token is cancelled, background tasks and sub-agents should stop.
+    #[serde(skip)]
+    pub cancellation_token: Option<tokio_util::sync::CancellationToken>,
+    /// Task identifier when this context is executing as a background task.
+    /// Set by `TaskManager::spawn_background()` so tools can identify their own task.
+    #[serde(default)]
+    pub task_id: Option<String>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -615,6 +624,8 @@ impl ToolContext {
             max_tokens: 0,
             max_cost_microdollars: 0,
             sender_id: None,
+            cancellation_token: None,
+            task_id: None,
         }
     }
 

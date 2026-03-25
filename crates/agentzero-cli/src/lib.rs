@@ -145,6 +145,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Service { .. } => "service",
         #[cfg(feature = "tui")]
         Commands::Dashboard { .. } => "dashboard",
+        Commands::Tier { .. } => "tier",
         Commands::Migrate { .. } => "migrate",
         Commands::Update { .. } => "update",
         Commands::Completions { .. } => "completions",

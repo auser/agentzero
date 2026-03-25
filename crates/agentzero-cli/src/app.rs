@@ -20,6 +20,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             no_totp,
             allowed_root,
             allowed_commands,
+            message,
         } => {
             commands::onboard::OnboardCommand::run(
                 &ctx,
@@ -37,6 +38,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     no_totp,
                     allowed_root,
                     allowed_commands,
+                    message,
                 },
             )
             .await
@@ -152,6 +154,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 commands::dashboard::DashboardCommand::run(&ctx, ()).await
             }
         }
+        Commands::Tier { command } => commands::tier::TierCommand::run(&ctx, command).await,
         Commands::Migrate { command } => commands::update::MigrateCommand::run(&ctx, command).await,
         Commands::Update { check, command } => {
             let resolved = command.unwrap_or_else(|| {

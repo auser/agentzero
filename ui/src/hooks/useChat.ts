@@ -73,15 +73,22 @@ export function useChat() {
   }, [connect])
 
   const send = useCallback(
-    (text: string, agentId?: string, model?: string) => {
+    (text: string, opts?: { agentId?: string; model?: string; provider?: string }) => {
       const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: text }
       setMessages((prev) => [...prev, userMsg])
 
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ message: text, agent_id: agentId, model }))
+        wsRef.current.send(
+          JSON.stringify({
+            message: text,
+            agent_id: opts?.agentId,
+            model: opts?.model,
+            provider: opts?.provider,
+          }),
+        )
       }
     },
-    []
+    [],
   )
 
   const clear = useCallback(() => setMessages([]), [])

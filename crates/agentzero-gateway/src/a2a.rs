@@ -111,10 +111,13 @@ pub(crate) async fn agent_card(State(state): State<GatewayState>) -> Json<AgentC
         vec![]
     };
 
+    let public_url = crate::handlers::resolve_public_url(&state)
+        .unwrap_or_else(|| "http://localhost".to_string());
+
     Json(AgentCard {
         name: state.service_name.as_ref().clone(),
         description: Some("AgentZero AI agent".to_string()),
-        url: "http://localhost".to_string(),
+        url: public_url,
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
         capabilities: AgentCapabilities {
             streaming: false,
@@ -130,11 +133,35 @@ pub(crate) async fn agent_card(State(state): State<GatewayState>) -> Json<AgentC
 /// `POST /a2a` — Handle A2A JSON-RPC requests.
 ///
 /// Supports: `tasks/send`, `tasks/get`, `tasks/cancel`.
+/// When `[a2a] bearer_token` is configured, requires `Authorization: Bearer <token>`.
 pub(crate) async fn a2a_rpc(
     State(state): State<GatewayState>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Json<Value> {
+    // Enforce bearer token if configured.
+    if let Some(ref rx) = state.live_config {
+        if let Some(ref expected_token) = rx.borrow().a2a.bearer_token {
+            let provided = headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            match provided {
+                Some(token) if token == expected_token.as_str() => {}
+                _ => {
+                    return Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": body.get("id").cloned().unwrap_or(Value::Null),
+                        "error": {
+                            "code": -32600,
+                            "message": "unauthorized: invalid or missing bearer token",
+                        },
+                    }));
+                }
+            }
+        }
+    }
+
     let id = body.get("id").cloned().unwrap_or(Value::Null);
     let method = body.get("method").and_then(Value::as_str).unwrap_or("");
     let params = body.get("params").cloned().unwrap_or(json!({}));

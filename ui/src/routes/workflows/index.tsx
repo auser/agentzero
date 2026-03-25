@@ -5,7 +5,8 @@ import { workflowsApi, type WorkflowRecord } from '@/lib/api/workflows'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
-import { Plus, Trash2, Pencil, FileEdit, GitBranch } from 'lucide-react'
+import { Plus, Trash2, Pencil, FileEdit, GitBranch, Wand2 } from 'lucide-react'
+import { QuickCreateWizard } from '@/components/workflows/QuickCreateWizard'
 import { formatDistanceToNow } from 'date-fns'
 
 export const Route = createFileRoute('/workflows/')({
@@ -16,6 +17,7 @@ function WorkflowsPage() {
   const queryClient = useQueryClient()
   const [createName, setCreateName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<WorkflowRecord | null>(null)
+  const [showWizard, setShowWizard] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['workflows'],
@@ -52,7 +54,22 @@ function WorkflowsPage() {
             Visual agent pipelines — connect agents, tools, and channels into executable workflows.
           </p>
         </div>
+        <Button size="sm" variant="outline" onClick={() => setShowWizard(true)}>
+          <Wand2 className="h-3.5 w-3.5 mr-1.5" />
+          Quick Create
+        </Button>
       </div>
+
+      {showWizard && (
+        <QuickCreateWizard
+          onComplete={(id) => {
+            setShowWizard(false)
+            queryClient.invalidateQueries({ queryKey: ['workflows'] })
+            window.location.href = `/workflows/${id}`
+          }}
+          onCancel={() => setShowWizard(false)}
+        />
+      )}
 
       {/* Create new */}
       <div className="flex items-center gap-2">

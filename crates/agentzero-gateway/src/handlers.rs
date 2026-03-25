@@ -601,10 +601,14 @@ pub(crate) async fn ws_chat(
         .workspace_root
         .clone()
         .ok_or(GatewayError::AgentUnavailable)?;
+    let agent_store = state
+        .agent_store
+        .as_ref()
+        .map(|s| Arc::clone(s) as Arc<dyn agentzero_core::agent_store::AgentStoreApi>);
     crate::gateway_metrics::record_ws_connection();
     Ok(ws
         .max_message_size(WS_MAX_MESSAGE_SIZE)
-        .on_upgrade(move |socket| handle_socket(socket, config_path, workspace_root))
+        .on_upgrade(move |socket| handle_socket(socket, config_path, workspace_root, agent_store))
         .into_response())
 }
 
@@ -612,6 +616,7 @@ async fn handle_socket(
     mut socket: WebSocket,
     config_path: Arc<PathBuf>,
     workspace_root: Arc<PathBuf>,
+    agent_store: Option<Arc<dyn agentzero_core::agent_store::AgentStoreApi>>,
 ) {
     let mut heartbeat = interval(WS_HEARTBEAT_INTERVAL);
     heartbeat.tick().await; // consume the immediate first tick
@@ -629,6 +634,7 @@ async fn handle_socket(
                             &mut socket,
                             &config_path,
                             &workspace_root,
+                            &agent_store,
                             text.to_string(),
                         )
                         .await;
@@ -676,22 +682,41 @@ async fn handle_socket(
 }
 
 /// Process a single text message from the WebSocket client.
+///
+/// Accepts either plain text (backward compat) or JSON:
+/// ```json
+/// { "message": "hello", "provider": "builtin", "model": "qwen2.5-coder-3b", "agent_id": "..." }
+/// ```
+/// When `provider` is set, it overrides the config file's provider (e.g., "builtin" for local model).
 async fn handle_text_message(
     socket: &mut WebSocket,
     config_path: &Arc<PathBuf>,
     workspace_root: &Arc<PathBuf>,
+    agent_store: &Option<Arc<dyn agentzero_core::agent_store::AgentStoreApi>>,
     text: String,
 ) {
+    // Try to parse as JSON for provider/model override support.
+    // Falls back to treating the entire string as the message.
+    let (message, provider_override, model_override) =
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+            let msg = parsed["message"].as_str().unwrap_or(&text).to_string();
+            let provider = parsed["provider"].as_str().map(String::from);
+            let model = parsed["model"].as_str().map(String::from);
+            (msg, provider, model)
+        } else {
+            (text.clone(), None, None)
+        };
+
     let req = RunAgentRequest {
         workspace_root: workspace_root.as_ref().clone(),
         config_path: config_path.as_ref().clone(),
-        message: text.clone(),
-        provider_override: None,
-        model_override: None,
+        message: message.clone(),
+        provider_override,
+        model_override,
         profile_override: None,
         extra_tools: vec![],
         conversation_id: None,
-        agent_store: None,
+        agent_store: agent_store.clone(),
         memory_override: None,
     };
     let execution = match build_runtime_execution(req).await {
@@ -705,7 +730,32 @@ async fn handle_text_message(
             return;
         }
     };
-    let (mut rx, handle) = run_agent_streaming(execution, workspace_root.as_ref().clone(), text);
+
+    // Inject subsystem awareness: append a hint to the system prompt so the
+    // chat agent knows it can manage agents, schedules, config, memory, etc.
+    let mut execution = execution;
+    let subsystem_hint = concat!(
+        "\n\nYou have access to AgentZero platform management tools. ",
+        "You can create/list/update/delete persistent agents (agent_manage), ",
+        "manage cron schedules (cron_add/list/remove), ",
+        "store and recall memories (memory_store/recall/forget), ",
+        "read and update system configuration (config_manage), ",
+        "and create custom tools at runtime (tool_create). ",
+        "When the user asks you to set up agents, schedules, or configure the system, ",
+        "use these tools directly.",
+    );
+    match execution.config.system_prompt {
+        Some(ref mut prompt) if !prompt.contains("agent_manage") => {
+            prompt.push_str(subsystem_hint);
+        }
+        None => {
+            execution.config.system_prompt =
+                Some(format!("You are a helpful AI assistant.{subsystem_hint}"));
+        }
+        _ => {}
+    }
+
+    let (mut rx, handle) = run_agent_streaming(execution, workspace_root.as_ref().clone(), message);
     while let Some(chunk) = rx.recv().await {
         if !chunk.delta.is_empty() {
             let frame = json!({

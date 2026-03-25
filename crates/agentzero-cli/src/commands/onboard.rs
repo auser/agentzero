@@ -32,6 +32,8 @@ pub struct OnboardOptions {
     pub no_totp: bool,
     pub allowed_root: Option<String>,
     pub allowed_commands: Vec<String>,
+    /// NL description to bootstrap agents, tools, and channels.
+    pub message: Option<String>,
 }
 
 pub struct OnboardCommand;
@@ -70,6 +72,35 @@ impl AgentZeroCommand for OnboardCommand {
         } else {
             let mut reader = stdin.lock();
             run_with_io(&path, &mut reader, &mut stdout, false, opts.force, resolved)?;
+        }
+
+        // NL bootstrap phase: if the user passed -m, use the LLM to create
+        // agents, tools, channels, and schedules from the description.
+        if let Some(ref description) = opts.message {
+            #[cfg(feature = "nl-evolving")]
+            {
+                writeln!(stdout)?;
+                writeln!(stdout, "Bootstrapping from description...")?;
+
+                let summary = run_nl_bootstrap(
+                    ctx,
+                    &path,
+                    description,
+                    opts.provider.as_deref(),
+                    opts.model.as_deref(),
+                )
+                .await?;
+
+                print_bootstrap_summary(&mut stdout, &summary)?;
+            }
+            #[cfg(not(feature = "nl-evolving"))]
+            {
+                let _ = description;
+                anyhow::bail!(
+                    "--message requires the 'nl-evolving' feature. \
+                     Rebuild with: cargo build --features nl-evolving"
+                );
+            }
         }
 
         Ok(())
@@ -880,6 +911,305 @@ fn print_summary(
     Ok(())
 }
 
+// ── NL Bootstrap ────────────────────────────────────────────────────────────
+
+#[cfg(feature = "nl-evolving")]
+mod nl_bootstrap {
+    use super::*;
+    use crate::command_core::CommandContext;
+    use agentzero_infra::runtime::build_provider_from_config;
+    use agentzero_infra::tools::agent_manage::create_agent_from_nl;
+    use agentzero_infra::tools::dynamic_tool::DynamicToolRegistry;
+    use agentzero_infra::tools::tool_create::create_tool_from_nl;
+    use agentzero_orchestrator::agent_store::AgentStore;
+    use agentzero_tools::cron_store::CronStore;
+    use serde::Deserialize;
+    use std::sync::Arc;
+
+    const BOOTSTRAP_PLANNER_PROMPT: &str = r#"You are a setup planner for an AI agent system called AgentZero. Given a natural language description of what the user wants, output a JSON plan for what needs to be created.
+
+Output a JSON object with this exact structure:
+{
+  "agents": [
+    {
+      "description": "Natural language description of this agent's role and behavior"
+    }
+  ],
+  "channels": [
+    {
+      "type": "email",
+      "reason": "User mentioned watching inbox"
+    }
+  ],
+  "tools": [
+    {
+      "description": "Natural language description of a custom tool to create",
+      "strategy_hint": "shell"
+    }
+  ],
+  "schedules": [
+    {
+      "agent_index": 0,
+      "cron": "*/5 * * * *",
+      "reason": "Check inbox every 5 minutes"
+    }
+  ]
+}
+
+Rules:
+- agents[].description: detailed NL description that will be passed to the agent creation system. Include the agent's purpose, expertise, and behavioral guidelines.
+- channels[].type: one of: email, telegram, discord, slack, matrix, irc, sms, webhook, signal, whatsapp, nostr, mqtt, cli
+- tools[]: only include if the user needs a CUSTOM tool not already built-in. Common built-in tools already exist: shell, read_file, write_file, web_search, web_fetch, http_request, git_operations, content_search, cron_add, send_message
+- schedules[].agent_index: index into the agents array (0-based) indicating which agent this schedule is for
+- schedules[].cron: standard 5-field cron expression
+- Infer channels from context clues: "inbox"/"email" -> email, "Slack messages" -> slack, "Discord" -> discord, "text me" -> sms, "Telegram" -> telegram
+- Keep it minimal — prefer fewer agents with broader scope over many narrow agents
+- Output ONLY the JSON object, no markdown fences or explanation"#;
+
+    #[derive(Debug, Deserialize)]
+    struct BootstrapPlan {
+        #[serde(default)]
+        agents: Vec<BootstrapAgent>,
+        #[serde(default)]
+        channels: Vec<BootstrapChannel>,
+        #[serde(default)]
+        tools: Vec<BootstrapTool>,
+        #[serde(default)]
+        schedules: Vec<BootstrapSchedule>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct BootstrapAgent {
+        description: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct BootstrapChannel {
+        #[serde(rename = "type")]
+        channel_type: String,
+        reason: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct BootstrapTool {
+        description: String,
+        #[serde(default)]
+        strategy_hint: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct BootstrapSchedule {
+        agent_index: usize,
+        cron: String,
+        reason: String,
+    }
+
+    pub(crate) struct BootstrapSummary {
+        pub agents_created: Vec<String>,
+        pub channels_needed: Vec<(String, String)>,
+        pub tools_created: Vec<String>,
+        pub schedules_added: Vec<String>,
+        pub warnings: Vec<String>,
+    }
+
+    /// Parse a JSON plan from an LLM response, handling markdown fences.
+    fn parse_bootstrap_json(response: &str) -> anyhow::Result<BootstrapPlan> {
+        let trimmed = response.trim();
+
+        if let Some(start) = trimmed.find("```json") {
+            let after = &trimmed[start + 7..];
+            if let Some(end) = after.find("```") {
+                if let Ok(v) = serde_json::from_str(after[..end].trim()) {
+                    return Ok(v);
+                }
+            }
+        }
+
+        if let Some(start) = trimmed.find("```") {
+            let after = &trimmed[start + 3..];
+            if let Some(end) = after.find("```") {
+                if let Ok(v) = serde_json::from_str(after[..end].trim()) {
+                    return Ok(v);
+                }
+            }
+        }
+
+        if let Some(start) = trimmed.find('{') {
+            if let Some(end) = trimmed.rfind('}') {
+                if let Ok(v) = serde_json::from_str(&trimmed[start..=end]) {
+                    return Ok(v);
+                }
+            }
+        }
+
+        serde_json::from_str(trimmed)
+            .map_err(|e| anyhow::anyhow!("failed to parse bootstrap plan from LLM: {e}"))
+    }
+
+    pub(crate) async fn run_nl_bootstrap(
+        ctx: &CommandContext,
+        config_path: &std::path::Path,
+        description: &str,
+        provider_override: Option<&str>,
+        model_override: Option<&str>,
+    ) -> anyhow::Result<BootstrapSummary> {
+        let provider =
+            build_provider_from_config(config_path, provider_override, model_override, None)
+                .await
+                .context("failed to initialise LLM provider for NL bootstrap")?;
+
+        let planner_prompt = format!("{BOOTSTRAP_PLANNER_PROMPT}\n\nUser request: {description}");
+        let plan_result = provider
+            .complete(&planner_prompt)
+            .await
+            .context("LLM call for bootstrap planning failed")?;
+        let plan = parse_bootstrap_json(&plan_result.output_text)?;
+
+        let mut summary = BootstrapSummary {
+            agents_created: Vec::new(),
+            channels_needed: Vec::new(),
+            tools_created: Vec::new(),
+            schedules_added: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        let mut agent_names: Vec<String> = Vec::new();
+
+        // ── Create agents ───────────────────────────────────────────────
+        if !plan.agents.is_empty() {
+            let agent_store =
+                AgentStore::persistent(&ctx.data_dir).context("failed to open agent store")?;
+
+            for (i, agent_def) in plan.agents.iter().enumerate() {
+                match create_agent_from_nl(&agent_store, provider.as_ref(), &agent_def.description)
+                    .await
+                {
+                    Ok((record, _schedule)) => {
+                        agent_names.push(record.name.clone());
+                        summary.agents_created.push(record.name);
+                    }
+                    Err(e) => {
+                        agent_names.push(format!("agent_{i}"));
+                        summary
+                            .warnings
+                            .push(format!("failed to create agent {i}: {e}"));
+                    }
+                }
+            }
+        }
+
+        // ── Create custom tools ─────────────────────────────────────────
+        if !plan.tools.is_empty() {
+            let registry = Arc::new(
+                DynamicToolRegistry::open(&ctx.data_dir)
+                    .context("failed to open dynamic tool registry")?,
+            );
+
+            for tool_def in &plan.tools {
+                match create_tool_from_nl(
+                    &registry,
+                    provider.as_ref(),
+                    &tool_def.description,
+                    tool_def.strategy_hint.as_deref(),
+                )
+                .await
+                {
+                    Ok(name) => summary.tools_created.push(name),
+                    Err(e) => summary.warnings.push(format!(
+                        "failed to create tool '{}': {e}",
+                        tool_def.description
+                    )),
+                }
+            }
+        }
+
+        // ── Note channels that need setup ───────────────────────────────
+        for ch in &plan.channels {
+            summary
+                .channels_needed
+                .push((ch.channel_type.clone(), ch.reason.clone()));
+        }
+
+        // ── Create cron schedules ───────────────────────────────────────
+        if !plan.schedules.is_empty() {
+            let cron_store = CronStore::new(&ctx.data_dir)?;
+
+            for sched in &plan.schedules {
+                let agent_name = agent_names
+                    .get(sched.agent_index)
+                    .cloned()
+                    .unwrap_or_else(|| format!("agent_{}", sched.agent_index));
+
+                let task_id = format!("bootstrap_{agent_name}");
+                let command = format!("agent -m \"run scheduled task\" --agent {agent_name}");
+
+                match cron_store.add(&task_id, &sched.cron, &command) {
+                    Ok(_) => summary.schedules_added.push(format!(
+                        "{} ({}) — {}",
+                        agent_name, sched.cron, sched.reason
+                    )),
+                    Err(e) => summary
+                        .warnings
+                        .push(format!("failed to add schedule for {agent_name}: {e}")),
+                }
+            }
+        }
+
+        Ok(summary)
+    }
+
+    pub(crate) fn print_bootstrap_summary(
+        writer: &mut dyn Write,
+        summary: &BootstrapSummary,
+    ) -> anyhow::Result<()> {
+        writeln!(writer, "Bootstrap complete!")?;
+        writeln!(writer)?;
+
+        if !summary.agents_created.is_empty() {
+            writeln!(writer, "Agents created:")?;
+            for name in &summary.agents_created {
+                writeln!(writer, "  + {name}")?;
+            }
+        }
+
+        if !summary.tools_created.is_empty() {
+            writeln!(writer, "Custom tools created:")?;
+            for name in &summary.tools_created {
+                writeln!(writer, "  + {name}")?;
+            }
+        }
+
+        if !summary.schedules_added.is_empty() {
+            writeln!(writer, "Schedules added:")?;
+            for desc in &summary.schedules_added {
+                writeln!(writer, "  + {desc}")?;
+            }
+        }
+
+        if !summary.channels_needed.is_empty() {
+            writeln!(writer)?;
+            writeln!(writer, "Channels to configure:")?;
+            for (ch_type, reason) in &summary.channels_needed {
+                writeln!(writer, "  -> {ch_type} ({reason})")?;
+                writeln!(writer, "     Run: agentzero channel add {ch_type}")?;
+            }
+        }
+
+        if !summary.warnings.is_empty() {
+            writeln!(writer)?;
+            writeln!(writer, "Warnings:")?;
+            for w in &summary.warnings {
+                writeln!(writer, "  ! {w}")?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "nl-evolving")]
+use nl_bootstrap::{print_bootstrap_summary, run_nl_bootstrap};
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -987,6 +1317,7 @@ mod tests {
             no_totp: false,
             allowed_root: None,
             allowed_commands: vec![],
+            message: None,
         };
 
         let cfg = resolve_onboard_config(&opts, |key| match key {
@@ -1027,6 +1358,7 @@ mod tests {
             no_totp: false,
             allowed_root: Some("./flag-root".to_string()),
             allowed_commands: vec!["cat".to_string(), "echo".to_string()],
+            message: None,
         };
 
         let cfg = resolve_onboard_config(&opts, |key| match key {

@@ -118,8 +118,48 @@ mod impl_ {
                     }
 
                     let message = &update["message"];
-                    let text = message["text"].as_str().unwrap_or("");
-                    if text.is_empty() {
+                    let text = message["text"]
+                        .as_str()
+                        .or_else(|| message["caption"].as_str())
+                        .unwrap_or("");
+
+                    // Extract native media attachments from Telegram message.
+                    let mut attachments = Vec::new();
+                    if let Some(photos) = message["photo"].as_array() {
+                        // Telegram sends multiple sizes; take the largest (last).
+                        if let Some(photo) = photos.last() {
+                            if let Some(file_id) = photo["file_id"].as_str() {
+                                attachments.push(crate::media::MediaAttachment {
+                                    mime_type: "image/jpeg".to_string(),
+                                    url: Some(format!(
+                                        "https://api.telegram.org/file/bot{}/{}",
+                                        self.bot_token, file_id
+                                    )),
+                                    transcript: None,
+                                    description: None,
+                                });
+                            }
+                        }
+                    }
+                    for key in ["document", "audio", "voice", "video", "video_note"] {
+                        if let Some(file_id) = message[key]["file_id"].as_str() {
+                            let mime = message[key]["mime_type"]
+                                .as_str()
+                                .unwrap_or("application/octet-stream");
+                            attachments.push(crate::media::MediaAttachment {
+                                mime_type: mime.to_string(),
+                                url: Some(format!(
+                                    "https://api.telegram.org/file/bot{}/{}",
+                                    self.bot_token, file_id
+                                )),
+                                transcript: None,
+                                description: None,
+                            });
+                        }
+                    }
+
+                    // Skip messages with no text AND no attachments.
+                    if text.is_empty() && attachments.is_empty() {
                         continue;
                     }
 
@@ -147,7 +187,7 @@ mod impl_ {
                         timestamp: helpers::now_epoch_secs(),
                         thread_ts: None,
                         privacy_boundary: String::new(),
-                        attachments: Vec::new(),
+                        attachments,
                     };
 
                     if tx.send(msg).await.is_err() {

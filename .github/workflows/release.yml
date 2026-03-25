@@ -202,12 +202,64 @@ jobs:
         env:
           MINIMAL_BIN: target/${{ matrix.rust_target }}/release-min/agentzero${{ matrix.ext }}
         run: scripts/check-binary-size.sh --binary "$MINIMAL_BIN" --max-bytes 8000000
-      - name: Save minimal binary before embedded build
+      - name: Save minimal binary before next build
         shell: bash
         env:
           RUST_TARGET: ${{ matrix.rust_target }}
           EXT: ${{ matrix.ext }}
         run: cp "target/${RUST_TARGET}/release-min/agentzero${EXT}" "target/${RUST_TARGET}/release-min/agentzero-minimal${EXT}"
+      - name: Build core tier binary
+        shell: bash
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+          USE_ZIGBUILD: ${{ matrix.use_zigbuild }}
+          EXTRA_FEATURES: ${{ matrix.extra_features }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: >-
+            ${{ matrix.target_name == 'linux-aarch64' && 'aarch64-linux-gnu-gcc' || '' }}
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: >-
+            ${{ matrix.target_name == 'linux-armv7' && 'arm-linux-gnueabihf-gcc' || '' }}
+        run: |
+          FEATURES="minimal"
+          if [[ -n "$EXTRA_FEATURES" ]]; then
+            FEATURES="$FEATURES,$EXTRA_FEATURES"
+          fi
+          if [[ "$USE_ZIGBUILD" == "true" ]]; then
+            cargo zigbuild -p agentzero --profile release-min --target "$RUST_TARGET" --no-default-features --features "$FEATURES"
+          else
+            cargo build -p agentzero --profile release-min --target "$RUST_TARGET" --no-default-features --features "$FEATURES"
+          fi
+      - name: Save core tier binary
+        shell: bash
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+          EXT: ${{ matrix.ext }}
+        run: cp "target/${RUST_TARGET}/release-min/agentzero${EXT}" "target/${RUST_TARGET}/release-min/agentzero-core${EXT}"
+      - name: Build extended tier binary
+        shell: bash
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+          USE_ZIGBUILD: ${{ matrix.use_zigbuild }}
+          EXTRA_FEATURES: ${{ matrix.extra_features }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: >-
+            ${{ matrix.target_name == 'linux-aarch64' && 'aarch64-linux-gnu-gcc' || '' }}
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: >-
+            ${{ matrix.target_name == 'linux-armv7' && 'arm-linux-gnueabihf-gcc' || '' }}
+        run: |
+          FEATURES="tools-extended,memory-sqlite,plugins,tls-rustls,interactive"
+          if [[ -n "$EXTRA_FEATURES" ]]; then
+            FEATURES="$FEATURES,$EXTRA_FEATURES"
+          fi
+          if [[ "$USE_ZIGBUILD" == "true" ]]; then
+            cargo zigbuild -p agentzero --profile release-min --target "$RUST_TARGET" --no-default-features --features "$FEATURES"
+          else
+            cargo build -p agentzero --profile release-min --target "$RUST_TARGET" --no-default-features --features "$FEATURES"
+          fi
+      - name: Save extended tier binary
+        shell: bash
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+          EXT: ${{ matrix.ext }}
+        run: cp "target/${RUST_TARGET}/release-min/agentzero${EXT}" "target/${RUST_TARGET}/release-min/agentzero-extended${EXT}"
       - name: Build embedded binary
         shell: bash
         env:
@@ -266,6 +318,8 @@ jobs:
           mkdir -p dist
           cp "$BIN_PATH" "dist/agentzero-v${VERSION}-${TARGET_NAME}${EXT}"
           cp "target/${RUST_TARGET}/release-min/agentzero-minimal${EXT}" "dist/agentzero-v${VERSION}-${TARGET_NAME}-minimal${EXT}"
+          cp "target/${RUST_TARGET}/release-min/agentzero-core${EXT}" "dist/agentzero-v${VERSION}-${TARGET_NAME}-core${EXT}"
+          cp "target/${RUST_TARGET}/release-min/agentzero-extended${EXT}" "dist/agentzero-v${VERSION}-${TARGET_NAME}-extended${EXT}"
           cp "target/${RUST_TARGET}/release-min/agentzero${EXT}" "dist/agentzero-v${VERSION}-${TARGET_NAME}-embedded${EXT}"
           cp "target/${RUST_TARGET}/release-min/agentzero-lite${EXT}" "dist/agentzero-lite-v${VERSION}-${TARGET_NAME}${EXT}"
       - name: Package artifact (windows)
@@ -281,6 +335,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item "$env:BIN_PATH" "dist/agentzero-v$env:VERSION-$env:TARGET_NAME$env:EXT"
           Copy-Item "target/$env:RUST_TARGET/release-min/agentzero-minimal$env:EXT" "dist/agentzero-v$env:VERSION-$env:TARGET_NAME-minimal$env:EXT"
+          Copy-Item "target/$env:RUST_TARGET/release-min/agentzero-core$env:EXT" "dist/agentzero-v$env:VERSION-$env:TARGET_NAME-core$env:EXT"
+          Copy-Item "target/$env:RUST_TARGET/release-min/agentzero-extended$env:EXT" "dist/agentzero-v$env:VERSION-$env:TARGET_NAME-extended$env:EXT"
           Copy-Item "target/$env:RUST_TARGET/release-min/agentzero$env:EXT" "dist/agentzero-v$env:VERSION-$env:TARGET_NAME-embedded$env:EXT"
       - name: Upload artifact
         uses: actions/upload-artifact@v7

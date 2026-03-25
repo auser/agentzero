@@ -43,6 +43,7 @@ pub mod skill;
 pub mod status;
 pub mod swarm;
 pub mod template;
+pub mod tier;
 pub mod tools;
 pub mod tunnel;
 pub mod update;
