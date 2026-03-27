@@ -7,11 +7,14 @@
 mod anthropic;
 #[cfg(feature = "local-model")]
 pub mod builtin;
+#[cfg(feature = "candle")]
+pub mod candle_provider;
 mod catalog;
 pub mod embedding;
 mod fallback;
 pub mod guardrails;
-#[cfg(feature = "local-model")]
+pub mod local_tools;
+#[cfg(any(feature = "local-model", feature = "candle"))]
 pub mod model_manager;
 mod models;
 mod openai;
@@ -95,6 +98,16 @@ pub fn build_builtin_provider(model: String) -> Box<dyn agentzero_core::Provider
     Box::new(builtin::BuiltinProvider::new(model))
 }
 
+/// Build a Candle (in-process, pure Rust) local LLM provider.
+///
+/// Available only when compiled with the `candle` feature.
+#[cfg(feature = "candle")]
+pub fn build_candle_provider(
+    config: candle_provider::CandleConfig,
+) -> Box<dyn agentzero_core::Provider> {
+    Box::new(candle_provider::CandleProvider::new(config))
+}
+
 /// Build a provider with privacy enforcement.
 ///
 /// - `"local_only"` — rejects cloud providers entirely.
@@ -140,6 +153,14 @@ pub fn build_provider_with_transport(
                 "\x1b[1;31merror:\x1b[0m provider 'builtin' requires the 'local-model' feature."
             );
             eprintln!("       Rebuild with: cargo run --features local-model");
+            std::process::exit(1);
+        }
+        #[cfg(feature = "candle")]
+        "candle" => build_candle_provider(candle_provider::CandleConfig::default()),
+        #[cfg(not(feature = "candle"))]
+        "candle" => {
+            eprintln!("\x1b[1;31merror:\x1b[0m provider 'candle' requires the 'candle' feature.");
+            eprintln!("       Rebuild with: cargo run --features candle");
             std::process::exit(1);
         }
         "anthropic" => Box::new(AnthropicProvider::with_config(

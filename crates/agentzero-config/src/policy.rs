@@ -262,6 +262,7 @@ fn load_mcp_servers(
                     command: entry.command,
                     args: entry.args,
                     env: entry.env,
+                    sha256: entry.sha256,
                 },
             )
         })

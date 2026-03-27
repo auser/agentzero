@@ -743,6 +743,8 @@ fn default_base_url(provider: &str) -> &str {
     match provider {
         "openrouter" => "https://openrouter.ai/api",
         "anthropic" => "https://api.anthropic.com",
+        // In-process providers don't need a base URL
+        "builtin" | "candle" => "",
         _ => "https://api.openai.com",
     }
 }

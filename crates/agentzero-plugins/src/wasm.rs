@@ -41,7 +41,8 @@ impl Default for WasmIsolationPolicy {
             allow_fs_write: false,
             allow_fs_read: false,
             allowed_host_calls: Vec::new(),
-            require_signed: false,
+            // Require signed plugins in release builds; allow unsigned in debug.
+            require_signed: cfg!(not(debug_assertions)),
         }
     }
 }

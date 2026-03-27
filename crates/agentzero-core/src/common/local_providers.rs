@@ -24,6 +24,14 @@ const LOCAL_PROVIDERS: &[LocalProviderMeta] = &[
         provider_type: LocalProviderType::ChatCompletion,
     },
     LocalProviderMeta {
+        id: "candle",
+        default_port: 0,
+        default_base_url: "",
+        models_endpoint: None,
+        supports_pull: false,
+        provider_type: LocalProviderType::ChatCompletion,
+    },
+    LocalProviderMeta {
         id: "ollama",
         default_port: 11434,
         default_base_url: "http://localhost:11434",
@@ -129,7 +137,7 @@ mod tests {
 
     #[test]
     fn all_local_providers_contains_expected_count() {
-        assert_eq!(all_local_providers().len(), 8);
+        assert_eq!(all_local_providers().len(), 9);
     }
 
     #[test]

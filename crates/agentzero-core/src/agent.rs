@@ -7,7 +7,8 @@ use crate::types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ConversationMessage,
     HookEvent, HookFailureMode, HookRiskTier, HookSink, LoopAction, MemoryEntry, MemoryStore,
     MetricsSink, Provider, ResearchTrigger, StopReason, StreamSink, Tool, ToolContext,
-    ToolDefinition, ToolResultMessage, ToolSelector, ToolSummary, ToolUseRequest, UserMessage,
+    ToolDefinition, ToolExecutionRecord, ToolResultMessage, ToolSelector, ToolSummary,
+    ToolUseRequest, UserMessage,
 };
 use crate::validation::validate_json;
 use serde_json::json;
@@ -600,6 +601,29 @@ impl Agent {
         }
     }
 
+    /// Push a `ToolExecutionRecord` into the shared context collector.
+    fn record_tool_execution(
+        ctx: &ToolContext,
+        tool_name: &str,
+        success: bool,
+        error: Option<String>,
+        latency_ms: u64,
+    ) {
+        let record = ToolExecutionRecord {
+            tool_name: tool_name.to_string(),
+            success,
+            error,
+            latency_ms,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+        if let Ok(mut records) = ctx.tool_executions.lock() {
+            records.push(record);
+        }
+    }
+
     #[instrument(skip(self, tool, tool_input, ctx), fields(tool = tool_name, request_id, iteration))]
     async fn execute_tool(
         &self,
@@ -666,35 +690,39 @@ impl Agent {
             {
                 Ok(Ok(result)) => result,
                 Ok(Err(source)) => {
-                    self.observe_histogram(
-                        "tool_latency_ms",
-                        tool_started.elapsed().as_secs_f64() * 1000.0,
-                    );
+                    let latency_ms = tool_started.elapsed().as_millis() as u64;
+                    self.observe_histogram("tool_latency_ms", latency_ms as f64);
                     self.increment_counter("tool_errors_total");
+                    Self::record_tool_execution(
+                        ctx,
+                        tool_name,
+                        false,
+                        Some(source.to_string()),
+                        latency_ms,
+                    );
                     return Err(AgentError::Tool {
                         tool: tool_name.to_string(),
                         source,
                     });
                 }
                 Err(_elapsed) => {
-                    self.observe_histogram(
-                        "tool_latency_ms",
-                        tool_started.elapsed().as_secs_f64() * 1000.0,
-                    );
+                    let latency_ms = tool_started.elapsed().as_millis() as u64;
+                    self.observe_histogram("tool_latency_ms", latency_ms as f64);
                     self.increment_counter("tool_errors_total");
                     self.increment_counter("tool_timeouts_total");
-                    warn!(
-                        tool = %tool_name,
-                        timeout_ms = tool_timeout_ms,
-                        "tool execution timed out"
+                    let err_msg =
+                        format!("tool '{}' timed out after {}ms", tool_name, tool_timeout_ms);
+                    warn!(tool = %tool_name, timeout_ms = tool_timeout_ms, "tool execution timed out");
+                    Self::record_tool_execution(
+                        ctx,
+                        tool_name,
+                        false,
+                        Some(err_msg.clone()),
+                        latency_ms,
                     );
                     return Err(AgentError::Tool {
                         tool: tool_name.to_string(),
-                        source: anyhow::anyhow!(
-                            "tool '{}' timed out after {}ms",
-                            tool_name,
-                            tool_timeout_ms
-                        ),
+                        source: anyhow::anyhow!("{}", err_msg),
                     });
                 }
             }
@@ -706,11 +734,16 @@ impl Agent {
             {
                 Ok(result) => result,
                 Err(source) => {
-                    self.observe_histogram(
-                        "tool_latency_ms",
-                        tool_started.elapsed().as_secs_f64() * 1000.0,
-                    );
+                    let latency_ms = tool_started.elapsed().as_millis() as u64;
+                    self.observe_histogram("tool_latency_ms", latency_ms as f64);
                     self.increment_counter("tool_errors_total");
+                    Self::record_tool_execution(
+                        ctx,
+                        tool_name,
+                        false,
+                        Some(source.to_string()),
+                        latency_ms,
+                    );
                     return Err(AgentError::Tool {
                         tool: tool_name.to_string(),
                         source,
@@ -718,10 +751,9 @@ impl Agent {
                 }
             }
         };
-        self.observe_histogram(
-            "tool_latency_ms",
-            tool_started.elapsed().as_secs_f64() * 1000.0,
-        );
+        let latency_ms = tool_started.elapsed().as_millis() as u64;
+        self.observe_histogram("tool_latency_ms", latency_ms as f64);
+        Self::record_tool_execution(ctx, tool_name, true, None, latency_ms);
         self.audit(
             "tool_execute_success",
             json!({

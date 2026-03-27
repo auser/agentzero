@@ -558,6 +558,10 @@ pub struct ToolContext {
     /// Set by `TaskManager::spawn_background()` so tools can identify their own task.
     #[serde(default)]
     pub task_id: Option<String>,
+    /// Shared collector for tool execution records. Populated during agent runs
+    /// and consumed by the runtime for quality tracking and persistence.
+    #[serde(skip)]
+    pub tool_executions: Arc<std::sync::Mutex<Vec<ToolExecutionRecord>>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -598,6 +602,10 @@ impl std::fmt::Debug for ToolContext {
             .field("max_tokens", &self.max_tokens)
             .field("max_cost_microdollars", &self.max_cost_microdollars)
             .field("sender_id", &self.sender_id)
+            .field(
+                "tool_executions_count",
+                &self.tool_executions.lock().map(|v| v.len()).unwrap_or(0),
+            )
             .finish()
     }
 }
@@ -626,6 +634,7 @@ impl ToolContext {
             sender_id: None,
             cancellation_token: None,
             task_id: None,
+            tool_executions: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -726,6 +735,8 @@ pub enum ToolSelectionMode {
     Keyword,
     /// Use a lightweight LLM call to classify relevant tools.
     Ai,
+    /// Two-stage: keyword/embedding pre-filter → LLM refinement on shortlist.
+    TwoStage,
 }
 
 impl std::fmt::Display for ToolSelectionMode {
@@ -734,6 +745,7 @@ impl std::fmt::Display for ToolSelectionMode {
             Self::All => write!(f, "all"),
             Self::Keyword => write!(f, "keyword"),
             Self::Ai => write!(f, "ai"),
+            Self::TwoStage => write!(f, "two_stage"),
         }
     }
 }
@@ -745,6 +757,7 @@ impl std::str::FromStr for ToolSelectionMode {
             "all" => Ok(Self::All),
             "keyword" => Ok(Self::Keyword),
             "ai" => Ok(Self::Ai),
+            "two_stage" | "twostage" => Ok(Self::TwoStage),
             other => Err(format!("unknown tool selection mode: {other}")),
         }
     }
@@ -920,6 +933,17 @@ pub struct MemoryEntry {
     pub embedding: Option<Vec<f32>>,
 }
 
+/// Structured record of a single tool execution for quality tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolExecutionRecord {
+    pub tool_name: String,
+    pub success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub latency_ms: u64,
+    pub timestamp: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
     pub stage: String,
@@ -969,6 +993,15 @@ pub trait Provider: Send + Sync {
     /// Defaults to `false`; override in providers that implement real streaming.
     fn supports_streaming(&self) -> bool {
         false
+    }
+
+    /// Estimate the number of tokens in a text string.
+    ///
+    /// Returns `None` if the provider doesn't have a tokenizer (most cloud
+    /// providers). Local providers with in-process tokenizers should override
+    /// this to enable context window management and overflow prevention.
+    fn estimate_tokens(&self, _text: &str) -> Option<usize> {
+        None
     }
 
     async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult>;

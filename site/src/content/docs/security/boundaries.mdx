@@ -55,11 +55,15 @@ Canonicalization (symlink resolution) → Allowed Root Check →
 Hard-link Check (B7) → Sensitive Path Check → Size Check → Execute
 ```
 
-**Sensitive file patterns blocked** (unless explicitly allowed):
-- `.env`, `.env.local`, `.env.production`
-- `.aws/credentials`, `.ssh/id_rsa`, `.ssh/id_ed25519`
-- `.gnupg/`, `credentials.json`, `service-account.json`
-- `.npmrc`, `.pypirc`
+**Sensitive file patterns blocked** (unless explicitly allowed) — 40+ patterns including:
+- **Environment:** `.env`, `.env.*` (any suffix)
+- **Cloud:** `.aws/credentials`, `.aws/config`, `.azure/accessTokens.json`, `.config/gcloud/credentials.db`
+- **SSH:** `.ssh/id_rsa`, `.ssh/id_ed25519`, `.ssh/id_ecdsa`, `.ssh/id_dsa`
+- **Kubernetes/Docker:** `.kube/config`, `.docker/config.json`
+- **Certificates:** `*.pem`, `*.key`, `*.p12`, `*.pfx`
+- **Database:** `.pgpass`, `.my.cnf`, `.netrc`
+- **Package registries:** `.npmrc`, `.pypirc`, `.gem/credentials`
+- **Service accounts:** `credentials.json`, `service-account.json`, `client_secret.json`
 
 ### Shell Security Pipeline
 
@@ -92,11 +96,19 @@ Forbidden Char Check (context-aware) → Execute → Output Truncation
   </Card>
 
   <Card title="WASM Plugins" icon="puzzle">
-    Plugins run in a **sandboxed** WASM environment. Network is disabled by default. Filesystem write is disabled by default. **Fuel limits** bound CPU consumption. Memory capped at 64 MB. Symlink modules rejected.
+    Plugins run in a **sandboxed** WASM environment. Network is disabled by default. Filesystem write is disabled by default. **Fuel limits** bound CPU consumption. Memory capped at 256 MB. **Ed25519 signatures required** in release builds.
   </Card>
 
   <Card title="Gateway" icon="star">
-    Binds to **localhost only** by default. Remote pairing requires a one-time password (OTP). All gateway listeners validate the origin of HTTP callers.
+    Binds to **localhost only** by default. **mTLS** client certificate verification. **HMAC-SHA256** request signing with replay protection. TLS enforced in production mode. Constant-time token comparison.
+  </Card>
+
+  <Card title="LLM Guardrails" icon="warning">
+    **PII redaction** (email, phone, SSN, API keys) and **prompt injection detection** enabled in audit mode by default. Composable pipeline with block/sanitize/audit enforcement.
+  </Card>
+
+  <Card title="MCP Attestation" icon="approve-check">
+    MCP server binaries are **SHA-256 verified** before spawning. Prevents supply-chain attacks via compromised or tampered server binaries.
   </Card>
 </CardGrid>
 

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tracing::warn;
 
@@ -30,6 +30,15 @@ impl AutonomyLevel {
     }
 }
 
+/// Per-tool rate limit: max invocations within a sliding window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolRateLimit {
+    /// Maximum invocations allowed per window.
+    pub max_calls: u32,
+    /// Window duration in seconds.
+    pub window_secs: u64,
+}
+
 /// Runtime autonomy policy built from config values.
 #[derive(Debug, Clone)]
 pub struct AutonomyPolicy {
@@ -41,6 +50,8 @@ pub struct AutonomyPolicy {
     pub always_ask: HashSet<String>,
     pub allow_sensitive_file_reads: bool,
     pub allow_sensitive_file_writes: bool,
+    /// Optional per-tool rate limits (tool_name -> limit).
+    pub tool_rate_limits: HashMap<String, ToolRateLimit>,
 }
 
 impl Default for AutonomyPolicy {
@@ -62,6 +73,7 @@ impl Default for AutonomyPolicy {
             always_ask: HashSet::new(),
             allow_sensitive_file_reads: false,
             allow_sensitive_file_writes: false,
+            tool_rate_limits: HashMap::new(),
         }
     }
 }
@@ -126,6 +138,19 @@ impl AutonomyPolicy {
         let allow_sensitive_file_writes =
             self.allow_sensitive_file_writes && child.allow_sensitive_file_writes;
 
+        // Tool rate limits: take the more restrictive (lower max_calls) for each tool.
+        let mut tool_rate_limits = self.tool_rate_limits.clone();
+        for (tool, child_limit) in &child.tool_rate_limits {
+            tool_rate_limits
+                .entry(tool.clone())
+                .and_modify(|parent_limit| {
+                    if child_limit.max_calls < parent_limit.max_calls {
+                        *parent_limit = child_limit.clone();
+                    }
+                })
+                .or_insert_with(|| child_limit.clone());
+        }
+
         AutonomyPolicy {
             level,
             workspace_only,
@@ -135,6 +160,7 @@ impl AutonomyPolicy {
             always_ask,
             allow_sensitive_file_reads,
             allow_sensitive_file_writes,
+            tool_rate_limits,
         }
     }
 }
@@ -151,18 +177,50 @@ pub enum ApprovalDecision {
 }
 
 /// Sensitive file patterns for detection.
+///
+/// Checked via `ends_with`, `contains("/pattern")`, and exact file-name match,
+/// so both full paths and bare filenames are covered.
 const SENSITIVE_FILE_PATTERNS: &[&str] = &[
+    // Environment / dotenv
     ".env",
     ".env.local",
     ".env.production",
+    ".env.staging",
+    ".env.development",
+    // Cloud credentials
     ".aws/credentials",
+    ".aws/config",
+    ".azure/accessTokens.json",
+    ".config/gcloud/credentials.db",
+    ".config/gcloud/application_default_credentials.json",
+    // SSH keys
     ".ssh/id_rsa",
     ".ssh/id_ed25519",
+    ".ssh/id_ecdsa",
+    ".ssh/id_dsa",
+    // GPG
     ".gnupg/",
-    "credentials.json",
-    "service-account.json",
+    // Kubernetes
+    ".kube/config",
+    // Docker
+    ".docker/config.json",
+    // Package registry tokens
     ".npmrc",
     ".pypirc",
+    ".gem/credentials",
+    // Database
+    ".pgpass",
+    ".my.cnf",
+    ".netrc",
+    // Service account / OAuth
+    "credentials.json",
+    "service-account.json",
+    "client_secret.json",
+    // Certificate private keys
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
 ];
 
 impl AutonomyPolicy {
@@ -217,21 +275,22 @@ impl AutonomyPolicy {
 
     /// Check whether a file path is allowed for reading.
     pub fn check_file_read(&self, path: &str) -> ApprovalDecision {
+        let display = sanitize_path_for_display(path);
         if self.is_forbidden_path(path) {
             return ApprovalDecision::Blocked {
-                reason: format!("path `{path}` is in forbidden_paths"),
+                reason: format!("path `{display}` is in forbidden_paths"),
             };
         }
         if !self.allow_sensitive_file_reads && is_sensitive_path(path) {
             return ApprovalDecision::Blocked {
                 reason: format!(
-                    "path `{path}` is a sensitive file (allow_sensitive_file_reads = false)"
+                    "path `{display}` is a sensitive file (allow_sensitive_file_reads = false)"
                 ),
             };
         }
         if self.workspace_only && !self.is_within_allowed_roots(path) {
             return ApprovalDecision::Blocked {
-                reason: format!("path `{path}` is outside allowed workspace roots"),
+                reason: format!("path `{display}` is outside allowed workspace roots"),
             };
         }
         ApprovalDecision::Approved
@@ -239,6 +298,7 @@ impl AutonomyPolicy {
 
     /// Check whether a file path is allowed for writing.
     pub fn check_file_write(&self, path: &str) -> ApprovalDecision {
+        let display = sanitize_path_for_display(path);
         if !self.level.allows_writes() {
             return ApprovalDecision::Blocked {
                 reason: "writes blocked: autonomy level is read_only".into(),
@@ -246,19 +306,19 @@ impl AutonomyPolicy {
         }
         if self.is_forbidden_path(path) {
             return ApprovalDecision::Blocked {
-                reason: format!("path `{path}` is in forbidden_paths"),
+                reason: format!("path `{display}` is in forbidden_paths"),
             };
         }
         if !self.allow_sensitive_file_writes && is_sensitive_path(path) {
             return ApprovalDecision::Blocked {
                 reason: format!(
-                    "path `{path}` is a sensitive file (allow_sensitive_file_writes = false)"
+                    "path `{display}` is a sensitive file (allow_sensitive_file_writes = false)"
                 ),
             };
         }
         if self.workspace_only && !self.is_within_allowed_roots(path) {
             return ApprovalDecision::Blocked {
-                reason: format!("path `{path}` is outside allowed workspace roots"),
+                reason: format!("path `{display}` is outside allowed workspace roots"),
             };
         }
         ApprovalDecision::Approved
@@ -313,6 +373,15 @@ impl AutonomyPolicy {
 /// Detect sensitive files by path suffix/pattern.
 pub fn is_sensitive_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/");
+
+    // Catch any `.env.*` variant (e.g. `.env.test`, `.env.ci`).
+    if let Some(fname) = Path::new(&normalized).file_name() {
+        let fname = fname.to_string_lossy();
+        if fname.starts_with(".env.") || fname == ".env" {
+            return true;
+        }
+    }
+
     SENSITIVE_FILE_PATTERNS.iter().any(|pattern| {
         normalized.ends_with(pattern)
             || normalized.contains(&format!("/{pattern}"))
@@ -320,6 +389,17 @@ pub fn is_sensitive_path(path: &str) -> bool {
                 .file_name()
                 .is_some_and(|f| f.to_string_lossy() == *pattern)
     })
+}
+
+/// Replace the user's home directory with `~` in paths shown to the LLM,
+/// preventing leakage of the full filesystem layout.
+fn sanitize_path_for_display(path: &str) -> String {
+    if let Ok(home) = std::env::var("HOME") {
+        if path.starts_with(&home) {
+            return format!("~{}", &path[home.len()..]);
+        }
+    }
+    path.to_string()
 }
 
 fn expand_tilde(path: &str) -> String {
@@ -418,6 +498,23 @@ mod tests {
         assert!(is_sensitive_path("/home/user/.aws/credentials"));
         assert!(is_sensitive_path("/project/.ssh/id_rsa"));
         assert!(!is_sensitive_path("/project/src/main.rs"));
+    }
+
+    #[test]
+    fn sensitive_file_detects_expanded_patterns() {
+        // .env.* wildcard
+        assert!(is_sensitive_path("/app/.env.test"));
+        assert!(is_sensitive_path("/app/.env.ci"));
+        // New additions
+        assert!(is_sensitive_path("/home/user/.docker/config.json"));
+        assert!(is_sensitive_path("/home/user/.kube/config"));
+        assert!(is_sensitive_path("/home/user/.ssh/id_ecdsa"));
+        assert!(is_sensitive_path("/home/user/.pgpass"));
+        assert!(is_sensitive_path("/home/user/.netrc"));
+        assert!(is_sensitive_path("/certs/server.key"));
+        assert!(is_sensitive_path("/certs/server.pem"));
+        // Still negative
+        assert!(!is_sensitive_path("/project/Cargo.toml"));
     }
 
     #[test]

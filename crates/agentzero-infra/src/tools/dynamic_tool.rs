@@ -30,6 +30,34 @@ pub struct DynamicToolDef {
     pub input_schema: Option<serde_json::Value>,
     /// Unix timestamp when this tool was created.
     pub created_at: u64,
+    // ── Quality tracking ─────────────────────────────────────────────────
+    #[serde(default)]
+    pub total_invocations: u32,
+    #[serde(default)]
+    pub total_successes: u32,
+    #[serde(default)]
+    pub total_failures: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// Evolution generation (0 = original, incremented on each auto-fix/improve).
+    #[serde(default)]
+    pub generation: u32,
+    /// Name of the tool this was evolved from (lineage tracking).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_name: Option<String>,
+    /// Whether a user has explicitly rated this tool (prevents auto-retirement).
+    #[serde(default)]
+    pub user_rated: bool,
+}
+
+impl DynamicToolDef {
+    /// Success rate as a fraction (0.0..=1.0). Returns 0.5 when no invocations.
+    pub fn success_rate(&self) -> f64 {
+        if self.total_invocations == 0 {
+            return 0.5;
+        }
+        self.total_successes as f64 / self.total_invocations as f64
+    }
 }
 
 /// Execution strategy for a dynamic tool.
@@ -65,6 +93,9 @@ pub struct CompositeStep {
 
 // ── DynamicTool (Tool trait impl) ────────────────────────────────────────────
 
+/// Callback type for resolving tools by name during composite execution.
+pub type ToolResolver = Arc<dyn Fn(&str) -> Option<Arc<dyn Tool>> + Send + Sync>;
+
 /// A runtime-created tool wrapping a [`DynamicToolStrategy`].
 pub struct DynamicTool {
     /// Leaked for `&'static str` lifetime requirement on `Tool::name()`.
@@ -75,6 +106,9 @@ pub struct DynamicTool {
     strategy: DynamicToolStrategy,
     /// Optional JSON Schema.
     schema: Option<serde_json::Value>,
+    /// Optional tool resolver for real composite execution.
+    /// When set, Composite tools actually invoke sub-tools in sequence.
+    tool_resolver: Option<ToolResolver>,
 }
 
 impl DynamicTool {
@@ -88,6 +122,18 @@ impl DynamicTool {
             description: Box::leak(def.description.clone().into_boxed_str()),
             strategy: def.strategy.clone(),
             schema: def.input_schema.clone(),
+            tool_resolver: None,
+        }
+    }
+
+    /// Create a `DynamicTool` with a tool resolver for real composite execution.
+    pub fn from_def_with_resolver(def: &DynamicToolDef, resolver: ToolResolver) -> Self {
+        Self {
+            name: Box::leak(def.name.clone().into_boxed_str()),
+            description: Box::leak(def.description.clone().into_boxed_str()),
+            strategy: def.strategy.clone(),
+            schema: def.input_schema.clone(),
+            tool_resolver: Some(resolver),
         }
     }
 }
@@ -106,7 +152,7 @@ impl Tool for DynamicTool {
         self.schema.clone()
     }
 
-    async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+    async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         match &self.strategy {
             DynamicToolStrategy::Shell { command_template } => {
                 let cmd = command_template.replace("{{input}}", input);
@@ -175,10 +221,29 @@ impl Tool for DynamicTool {
 
             DynamicToolStrategy::Composite { steps } => {
                 let mut current_input = input.to_string();
+
+                // If we have a tool resolver, actually execute the pipeline.
+                if let Some(ref resolver) = self.tool_resolver {
+                    for step in steps {
+                        let step_input = step
+                            .input_override
+                            .as_deref()
+                            .unwrap_or(&current_input)
+                            .to_string();
+                        let tool = resolver(&step.tool_name).ok_or_else(|| {
+                            anyhow::anyhow!("composite step tool '{}' not found", step.tool_name)
+                        })?;
+                        let result = tool.execute(&step_input, ctx).await?;
+                        current_input = result.output;
+                    }
+                    return Ok(ToolResult {
+                        output: current_input,
+                    });
+                }
+
+                // Fallback: describe the pipeline (no resolver available).
                 for step in steps {
                     let step_input = step.input_override.as_deref().unwrap_or(&current_input);
-                    // Composite tools describe the pipeline; actual tool
-                    // invocation is up to the agent. Return the plan.
                     current_input =
                         format!("[Step: {} with input: {}]", step.tool_name, step_input);
                 }
@@ -300,12 +365,175 @@ impl DynamicToolRegistry {
         Ok(names)
     }
 
+    /// Record a tool execution outcome, updating quality counters and persisting.
+    pub async fn record_outcome(
+        &self,
+        name: &str,
+        success: bool,
+        error: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let mut defs = self.defs.write().await;
+        if let Some(def) = defs.iter_mut().find(|d| d.name == name) {
+            def.total_invocations += 1;
+            if success {
+                def.total_successes += 1;
+            } else {
+                def.total_failures += 1;
+                def.last_error = error.map(|e| {
+                    if e.len() > 500 {
+                        format!("{}...", &e[..497])
+                    } else {
+                        e.to_string()
+                    }
+                });
+            }
+            self.persist(&defs)?;
+        }
+        Ok(())
+    }
+
+    /// Get a clone of a tool definition by name.
+    pub async fn get_def(&self, name: &str) -> Option<DynamicToolDef> {
+        self.defs
+            .read()
+            .await
+            .iter()
+            .find(|d| d.name == name)
+            .cloned()
+    }
+
+    /// Check if a tool name belongs to a dynamic tool.
+    pub async fn is_dynamic(&self, name: &str) -> bool {
+        self.defs.read().await.iter().any(|d| d.name == name)
+    }
+
+    /// Apply a user quality rating (good/bad/reset).
+    pub async fn apply_user_rating(&self, name: &str, rating: &str) -> anyhow::Result<()> {
+        let mut defs = self.defs.write().await;
+        if let Some(def) = defs.iter_mut().find(|d| d.name == name) {
+            match rating {
+                "good" => {
+                    def.total_invocations += 3;
+                    def.total_successes += 3;
+                    def.user_rated = true;
+                }
+                "bad" => {
+                    def.total_invocations += 3;
+                    def.total_failures += 3;
+                    def.user_rated = true;
+                }
+                "reset" => {
+                    def.total_invocations = 0;
+                    def.total_successes = 0;
+                    def.total_failures = 0;
+                    def.last_error = None;
+                }
+                _ => anyhow::bail!("unknown rating: {rating} (expected good/bad/reset)"),
+            }
+            self.persist(&defs)?;
+            Ok(())
+        } else {
+            anyhow::bail!("tool not found: {name}")
+        }
+    }
+
+    /// Export a tool as a shareable bundle with related recipes and lineage.
+    pub async fn export_bundle(
+        &self,
+        name: &str,
+        recipe_store: Option<&crate::tool_recipes::RecipeStore>,
+    ) -> anyhow::Result<Option<ToolBundle>> {
+        let defs = self.defs.read().await;
+        let def = match defs.iter().find(|d| d.name == name) {
+            Some(d) => d.clone(),
+            None => return Ok(None),
+        };
+
+        // Walk lineage chain.
+        let mut lineage = Vec::new();
+        let mut current = def.parent_name.clone();
+        while let Some(ref parent) = current {
+            lineage.push(parent.clone());
+            current = defs
+                .iter()
+                .find(|d| d.name == *parent)
+                .and_then(|d| d.parent_name.clone());
+        }
+
+        // Collect related recipes.
+        let related_recipes = recipe_store
+            .map(|store| store.export_for_tools(&[name.to_string()]))
+            .unwrap_or_default();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        Ok(Some(ToolBundle {
+            version: 1,
+            tool: def,
+            related_recipes,
+            lineage,
+            exported_at: now,
+        }))
+    }
+
+    /// Import a tool bundle, resetting quality counters (imported tools must re-prove themselves).
+    pub async fn import_bundle(
+        &self,
+        bundle: ToolBundle,
+        recipe_store: Option<&mut crate::tool_recipes::RecipeStore>,
+    ) -> anyhow::Result<String> {
+        let mut def = bundle.tool;
+        // Reset quality counters — imported tools start fresh.
+        def.total_invocations = 0;
+        def.total_successes = 0;
+        def.total_failures = 0;
+        def.last_error = None;
+        def.user_rated = false;
+
+        let name = def.name.clone();
+        self.register(def).await?;
+
+        // Import related recipes.
+        if let Some(store) = recipe_store {
+            for recipe in bundle.related_recipes {
+                let tools = recipe.tools_used.clone();
+                if let Err(e) = store.record(&recipe.goal_summary, &tools, recipe.success) {
+                    tracing::warn!(error = %e, "failed to import recipe from bundle");
+                }
+            }
+        }
+
+        Ok(name)
+    }
+
     fn persist(&self, defs: &[DynamicToolDef]) -> anyhow::Result<()> {
         let data = DynamicToolsData {
             tools: defs.to_vec(),
         };
         self.store.save(&data)
     }
+}
+
+// ── ToolBundle ──────────────────────────────────────────────────────────────
+
+/// A shareable bundle containing a tool, its related recipes, and lineage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolBundle {
+    /// Bundle format version.
+    pub version: u32,
+    /// The tool definition.
+    pub tool: DynamicToolDef,
+    /// Recipes that reference this tool.
+    #[serde(default)]
+    pub related_recipes: Vec<crate::tool_recipes::ToolRecipe>,
+    /// Parent chain: [parent_name, grandparent_name, ...].
+    #[serde(default)]
+    pub lineage: Vec<String>,
+    /// Unix timestamp when this bundle was exported.
+    pub exported_at: u64,
 }
 
 // ── ToolSource impl ──────────────────────────────────────────────────────────
@@ -360,6 +588,13 @@ mod tests {
             },
             input_schema: None,
             created_at: now_secs(),
+            total_invocations: 0,
+            total_successes: 0,
+            total_failures: 0,
+            last_error: None,
+            generation: 0,
+            parent_name: None,
+            user_rated: false,
         }
     }
 
@@ -386,6 +621,13 @@ mod tests {
             },
             input_schema: None,
             created_at: now_secs(),
+            total_invocations: 0,
+            total_successes: 0,
+            total_failures: 0,
+            last_error: None,
+            generation: 0,
+            parent_name: None,
+            user_rated: false,
         };
         let json = serde_json::to_string(&llm).expect("serialize");
         assert!(json.contains(r#""type":"llm""#));
@@ -400,6 +642,13 @@ mod tests {
             },
             input_schema: None,
             created_at: now_secs(),
+            total_invocations: 0,
+            total_successes: 0,
+            total_failures: 0,
+            last_error: None,
+            generation: 0,
+            parent_name: None,
+            user_rated: false,
         };
         let json = serde_json::to_string(&http).expect("serialize");
         assert!(json.contains(r#""type":"http""#));
@@ -421,6 +670,13 @@ mod tests {
             },
             input_schema: None,
             created_at: now_secs(),
+            total_invocations: 0,
+            total_successes: 0,
+            total_failures: 0,
+            last_error: None,
+            generation: 0,
+            parent_name: None,
+            user_rated: false,
         };
         let json = serde_json::to_string(&composite).expect("serialize");
         assert!(json.contains(r#""type":"composite""#));
@@ -472,6 +728,13 @@ mod tests {
             },
             input_schema: None,
             created_at: now_secs(),
+            total_invocations: 0,
+            total_successes: 0,
+            total_failures: 0,
+            last_error: None,
+            generation: 0,
+            parent_name: None,
+            user_rated: false,
         };
         let tool = DynamicTool::from_def(&def);
         let ctx = ToolContext::new("/tmp".to_string());

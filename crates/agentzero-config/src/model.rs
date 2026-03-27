@@ -46,6 +46,10 @@ pub struct AgentZeroConfig {
     pub a2a: A2aConfig,
     #[serde(default)]
     pub sop: SopConfig,
+    #[serde(default)]
+    pub guardrails: GuardrailsConfig,
+    #[serde(default)]
+    pub local: LocalModelConfig,
 }
 
 impl AgentZeroConfig {
@@ -53,8 +57,8 @@ impl AgentZeroConfig {
         if self.provider.kind.trim().is_empty() {
             return Err(anyhow!("provider.kind must not be empty"));
         }
-        // The builtin provider runs in-process — no base_url needed.
-        if self.provider.kind == "builtin" {
+        // In-process providers run locally — no base_url needed.
+        if self.provider.kind == "builtin" || self.provider.kind == "candle" {
             return Ok(());
         }
         if self.provider.base_url.trim().is_empty() {
@@ -508,6 +512,49 @@ impl Default for ProviderConfig {
     }
 }
 
+/// Configuration for local (in-process) LLM inference.
+///
+/// Shared by both the `builtin` (llama.cpp) and `candle` providers.
+/// Configured under `[local]` in TOML.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct LocalModelConfig {
+    /// HuggingFace repo or path to a GGUF file.
+    pub model: String,
+    /// Specific GGUF filename within the HuggingFace repo.
+    pub filename: String,
+    /// Context window size in tokens.
+    pub n_ctx: u32,
+    /// Temperature for sampling (0.0 = greedy, higher = more random).
+    pub temperature: f64,
+    /// Top-p (nucleus) sampling threshold.
+    pub top_p: f64,
+    /// Maximum number of tokens to generate per response.
+    pub max_output_tokens: u32,
+    /// Random seed for reproducible generation.
+    pub seed: u64,
+    /// Repetition penalty factor (1.0 = no penalty).
+    pub repeat_penalty: f32,
+    /// Device to use: "auto", "metal", "cuda", "cpu".
+    pub device: String,
+}
+
+impl Default for LocalModelConfig {
+    fn default() -> Self {
+        Self {
+            model: "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF".to_string(),
+            filename: "qwen2.5-coder-3b-instruct-q4_k_m.gguf".to_string(),
+            n_ctx: 8192,
+            temperature: 0.7,
+            top_p: 0.9,
+            max_output_tokens: 2048,
+            seed: 42,
+            repeat_penalty: 1.1,
+            device: "auto".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct MemoryConfig {
@@ -813,6 +860,10 @@ pub struct McpServerEntry {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Optional SHA-256 hash of the server binary for attestation.
+    /// When set, the binary is verified before spawning.
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 /// Top-level structure of an `mcp.json` file.
@@ -1400,6 +1451,34 @@ pub struct GatewayConfig {
     /// Example: "https://api.example.com"
     #[serde(default)]
     pub public_url: Option<String>,
+    /// WebSocket configuration.
+    #[serde(default)]
+    pub websocket: WebSocketConfig,
+}
+
+/// Tunable WebSocket timeout and size parameters.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct WebSocketConfig {
+    /// Ping interval in seconds (default 30).
+    pub heartbeat_interval_secs: u64,
+    /// Close if no pong received within this many seconds (default 60).
+    pub pong_timeout_secs: u64,
+    /// Close if no client message within this many seconds (default 300).
+    pub idle_timeout_secs: u64,
+    /// Maximum message size in bytes (default 2 MB).
+    pub max_message_bytes: usize,
+}
+
+impl Default for WebSocketConfig {
+    fn default() -> Self {
+        Self {
+            heartbeat_interval_secs: 30,
+            pong_timeout_secs: 60,
+            idle_timeout_secs: 300,
+            max_message_bytes: 2 * 1024 * 1024,
+        }
+    }
 }
 
 /// TLS certificate configuration for the gateway.
@@ -1409,6 +1488,10 @@ pub struct TlsConfig {
     pub cert_path: String,
     /// Path to the PEM-encoded private key file.
     pub key_path: String,
+    /// Path to a PEM-encoded CA certificate for client certificate verification (mTLS).
+    /// When set, clients must present a certificate signed by this CA.
+    #[serde(default)]
+    pub client_ca_path: Option<String>,
 }
 
 impl Default for GatewayConfig {
@@ -1424,6 +1507,7 @@ impl Default for GatewayConfig {
             tls: None,
             allow_insecure: false,
             public_url: None,
+            websocket: WebSocketConfig::default(),
         }
     }
 }
@@ -1716,6 +1800,19 @@ pub struct OutboundLeakGuardConfig {
     pub enabled: bool,
     pub action: String,
     pub sensitivity: f64,
+    /// Additional regex patterns to detect as credential leaks.
+    /// Each entry is a `{name: "pattern_name", regex: "regex_pattern"}` pair.
+    #[serde(default)]
+    pub extra_patterns: Vec<LeakPatternEntry>,
+}
+
+/// A user-defined leak detection pattern.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LeakPatternEntry {
+    /// Human-readable name for the pattern (used in redaction markers).
+    pub name: String,
+    /// Regex pattern to match against outbound text.
+    pub regex: String,
 }
 
 impl Default for OutboundLeakGuardConfig {
@@ -1724,6 +1821,7 @@ impl Default for OutboundLeakGuardConfig {
             enabled: true,
             action: "redact".to_string(),
             sensitivity: 0.7,
+            extra_patterns: Vec::new(),
         }
     }
 }
@@ -2568,6 +2666,31 @@ impl Default for A2aAgentConfig {
     }
 }
 
+// --- Guardrails configuration ---
+
+/// Configuration for LLM input/output guardrails.
+///
+/// Guards are enabled in `audit` mode by default so that violations are logged
+/// even when the user hasn't explicitly configured guardrails.  Set `mode` to
+/// `"off"` to disable, `"sanitize"` to redact, or `"block"` to reject.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct GuardrailsConfig {
+    /// Enforcement mode for PII redaction: "off", "audit", "sanitize", "block".
+    pub pii_mode: String,
+    /// Enforcement mode for prompt injection detection: "off", "audit", "sanitize", "block".
+    pub injection_mode: String,
+}
+
+impl Default for GuardrailsConfig {
+    fn default() -> Self {
+        Self {
+            pii_mode: "audit".to_string(),
+            injection_mode: "audit".to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2705,6 +2828,7 @@ mod tests {
             config.gateway.tls = Some(TlsConfig {
                 cert_path: "/etc/ssl/cert.pem".to_string(),
                 key_path: "/etc/ssl/key.pem".to_string(),
+                client_ca_path: None,
             });
             let result = config.validate_production_mode();
             assert!(

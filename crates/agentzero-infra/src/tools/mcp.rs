@@ -12,6 +12,50 @@ use tokio::time::{timeout, Duration};
 
 const DEFAULT_MCP_TIMEOUT_MS: u64 = 10_000;
 
+/// Verify that the SHA-256 hash of a binary matches the expected value.
+///
+/// Resolves the binary via PATH lookup if it isn't an absolute path,
+/// then reads and hashes the file contents.
+fn verify_binary_sha256(command: &str, expected_hex: &str) -> anyhow::Result<()> {
+    use sha2::{Digest, Sha256};
+    use std::path::{Path, PathBuf};
+
+    let binary_path = if Path::new(command).is_absolute() {
+        PathBuf::from(command)
+    } else {
+        resolve_in_path(command)
+            .ok_or_else(|| anyhow!("cannot locate mcp server binary `{command}` in PATH"))?
+    };
+
+    let bytes = std::fs::read(&binary_path)
+        .with_context(|| format!("cannot read mcp server binary: {}", binary_path.display()))?;
+
+    let actual_hex = format!("{:x}", Sha256::digest(&bytes));
+    let expected_lower = expected_hex.trim().to_ascii_lowercase();
+
+    if actual_hex != expected_lower {
+        anyhow::bail!(
+            "sha256 mismatch for `{}`: expected {expected_lower}, got {actual_hex}",
+            binary_path.display()
+        );
+    }
+
+    tracing::debug!(
+        binary = %binary_path.display(),
+        sha256 = %actual_hex,
+        "mcp server binary attestation passed"
+    );
+    Ok(())
+}
+
+/// Resolve a command name to its full path by searching PATH.
+fn resolve_in_path(command: &str) -> Option<std::path::PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    std::env::split_paths(&path_var)
+        .map(|dir| dir.join(command))
+        .find(|p| p.is_file())
+}
+
 // ---------------------------------------------------------------------------
 // MCP session (subprocess I/O) — kept from original implementation
 // ---------------------------------------------------------------------------
@@ -76,6 +120,8 @@ pub(crate) struct McpServerConnection {
     args: Vec<String>,
     env: HashMap<String, String>,
     timeout_ms: u64,
+    /// Expected SHA-256 hash of the server binary (hex, lowercase).
+    expected_sha256: Option<String>,
     session: Mutex<Option<McpSession>>,
 }
 
@@ -87,6 +133,7 @@ impl McpServerConnection {
             args: def.args.clone(),
             env: def.env.clone(),
             timeout_ms,
+            expected_sha256: def.sha256.clone(),
             session: Mutex::new(None),
         }
     }
@@ -142,6 +189,16 @@ impl McpServerConnection {
 
     /// Spawn a new MCP server process and perform the protocol handshake.
     async fn spawn_session(&self) -> anyhow::Result<McpSession> {
+        // Verify binary SHA-256 hash if configured.
+        if let Some(expected) = &self.expected_sha256 {
+            verify_binary_sha256(&self.command, expected).with_context(|| {
+                format!(
+                    "mcp server `{}` binary attestation failed",
+                    self.server_name
+                )
+            })?;
+        }
+
         let mut cmd = Command::new(&self.command);
         cmd.args(&self.args)
             .stdin(std::process::Stdio::piped())
@@ -566,8 +623,7 @@ mod tests {
             "test".to_string(),
             &McpServerDef {
                 command: "echo".to_string(),
-                args: vec![],
-                env: HashMap::new(),
+                ..McpServerDef::default()
             },
             10_000,
         ));
@@ -599,8 +655,7 @@ mod tests {
             "fs".to_string(),
             &McpServerDef {
                 command: "echo".to_string(),
-                args: vec![],
-                env: HashMap::new(),
+                ..McpServerDef::default()
             },
             10_000,
         ));

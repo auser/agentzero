@@ -11,7 +11,7 @@ repository.workspace = true
 default = []
 privacy = ["agentzero-core/privacy", "dep:base64"]
 telemetry = ["agentzero-infra/telemetry"]
-tls = ["dep:axum-server"]
+tls = ["dep:axum-server", "dep:rustls", "dep:rustls-pemfile"]
 embedded-ui = ["dep:rust-embed", "dep:mime_guess"]
 autopilot = []
 local-model = ["agentzero-infra/local-model"]
@@ -36,9 +36,13 @@ axum = { version = "0.7", default-features = false, features = ["http1", "json",
 futures-util = "0.3"
 serde.workspace = true
 serde_json.workspace = true
+hex = "0.4"
+hmac = "0.12"
 sha2.workspace = true
 subtle = "2"
 axum-server = { workspace = true, features = ["tls-rustls"], optional = true }
+rustls = { version = "0.23", optional = true }
+rustls-pemfile = { version = "2", optional = true }
 rust-embed = { version = "8", features = ["include-exclude"], optional = true }
 mime_guess = { version = "2", optional = true }
 tokio.workspace = true

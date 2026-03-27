@@ -115,6 +115,15 @@ pub(crate) struct GatewayState {
     /// Gate resume channels: `(run_id, node_id) → oneshot::Sender<decision>`.
     /// Used by the resume endpoint to unblock suspended gate nodes.
     pub(crate) gate_senders: GateSenderMap,
+    /// Dynamic tool registry for sharing tools via the API.
+    pub(crate) dynamic_tool_registry:
+        Option<Arc<agentzero_infra::tools::dynamic_tool::DynamicToolRegistry>>,
+    /// Recipe store for sharing tool recipes via the API.
+    #[allow(dead_code)]
+    pub(crate) recipe_store:
+        Option<Arc<std::sync::Mutex<agentzero_infra::tool_recipes::RecipeStore>>>,
+    /// Configurable WebSocket timeouts.
+    pub(crate) ws_config: agentzero_config::WebSocketConfig,
 }
 
 impl GatewayState {
@@ -171,7 +180,30 @@ impl GatewayState {
             template_store: None,
             workflow_runs: Arc::new(Mutex::new(HashMap::new())),
             gate_senders: Arc::new(Mutex::new(HashMap::new())),
+            dynamic_tool_registry: None,
+            recipe_store: None,
+            ws_config: agentzero_config::WebSocketConfig::default(),
         }
+    }
+
+    /// Attach a dynamic tool registry for tool sharing.
+    #[allow(dead_code)]
+    pub(crate) fn with_dynamic_tool_registry(
+        mut self,
+        registry: Arc<agentzero_infra::tools::dynamic_tool::DynamicToolRegistry>,
+    ) -> Self {
+        self.dynamic_tool_registry = Some(registry);
+        self
+    }
+
+    /// Attach a recipe store for recipe sharing.
+    #[allow(dead_code)]
+    pub(crate) fn with_recipe_store(
+        mut self,
+        store: Arc<std::sync::Mutex<agentzero_infra::tool_recipes::RecipeStore>>,
+    ) -> Self {
+        self.recipe_store = Some(store);
+        self
     }
 
     /// Set the canvas store for live canvas rendering.
@@ -262,6 +294,12 @@ impl GatewayState {
     ) -> Self {
         self.require_pairing = require_pairing;
         self.allow_public_bind = allow_public_bind;
+        self
+    }
+
+    /// Set WebSocket configuration from the gateway config.
+    pub(crate) fn with_ws_config(mut self, ws_config: agentzero_config::WebSocketConfig) -> Self {
+        self.ws_config = ws_config;
         self
     }
 
@@ -413,6 +451,9 @@ impl GatewayState {
             template_store: None,
             workflow_runs: Arc::new(Mutex::new(HashMap::new())),
             gate_senders: Arc::new(Mutex::new(HashMap::new())),
+            dynamic_tool_registry: None,
+            recipe_store: None,
+            ws_config: agentzero_config::WebSocketConfig::default(),
         }
     }
 
@@ -463,6 +504,9 @@ impl GatewayState {
             template_store: None,
             workflow_runs: Arc::new(Mutex::new(HashMap::new())),
             gate_senders: Arc::new(Mutex::new(HashMap::new())),
+            dynamic_tool_registry: None,
+            recipe_store: None,
+            ws_config: agentzero_config::WebSocketConfig::default(),
         }
     }
 }

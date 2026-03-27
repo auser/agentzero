@@ -13,13 +13,19 @@ pub fn load(path: &Path) -> anyhow::Result<AgentZeroConfig> {
     // Only set values that aren't already in the environment to avoid
     // overriding explicit env vars.
     //
-    // SAFETY: This runs during single-threaded config initialization, before
-    // the async runtime spawns worker threads.
-    for (key, value) in &dotenv_overrides {
-        if std::env::var(key).is_err() {
-            unsafe { std::env::set_var(key, value) };
+    // SAFETY: `set_var` is unsafe because concurrent reads/writes to the
+    // environment are data races. We enforce single-execution via
+    // `std::sync::Once` and this runs before the async runtime spawns
+    // worker threads, so no other thread can observe partial state.
+    static ENV_INIT: std::sync::Once = std::sync::Once::new();
+    ENV_INIT.call_once(|| {
+        for (key, value) in &dotenv_overrides {
+            if std::env::var(key).is_err() {
+                // SAFETY: inside Once::call_once, guaranteed single-threaded.
+                unsafe { std::env::set_var(key, value) };
+            }
         }
-    }
+    });
 
     let settings = Config::builder()
         .add_source(File::from(path.to_path_buf()).required(false))

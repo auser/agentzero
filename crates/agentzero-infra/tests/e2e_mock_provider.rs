@@ -191,6 +191,9 @@ async fn agent_single_turn_no_tools() {
         sender_id: None,
         dynamic_registry: None,
         task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hi".to_string())
@@ -227,6 +230,9 @@ async fn agent_with_echo_tool() {
         sender_id: None,
         dynamic_registry: None,
         task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
     };
 
     let output = run_agent_with_runtime(
@@ -271,6 +277,9 @@ async fn agent_respects_max_iterations() {
         sender_id: None,
         dynamic_registry: None,
         task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
     };
 
     // The loop runs `max_tool_iterations` iterations (0..2). Each iteration
@@ -310,6 +319,9 @@ async fn agent_with_failing_provider_returns_error() {
         sender_id: None,
         dynamic_registry: None,
         task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hello".to_string())
