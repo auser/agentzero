@@ -761,7 +761,7 @@ Ratatui-based terminal dashboard with tabs, live runs/agents/events panels. Defe
 
 **Branch:** `feat/privacy-first-lite`
 
-**Plan:** `specs/plans/24-privacy-first-lite.md`
+**Plan:** `specs/plans/35-privacy-first-lite.md`
 
 ---
 
@@ -2156,7 +2156,7 @@ Give AgentZero a natural language goal and let it autonomously decompose into a 
 
 - [x] **`GoalPlanner`** — New `goal_planner.rs`. `PlannedWorkflow` with `PlannedNode` structs (id, name, task, depends_on, file_scopes, sandbox_level). `GOAL_PLANNER_PROMPT` for structured output. `parse_planner_response()` handles markdown fences, leading text, bare JSON. `to_workflow_json()` converts to ReactFlow-compatible nodes+edges for `compile()`. 8 tests.
 - [x] **`SwarmSupervisor`** — New `swarm_supervisor.rs`. `execute(plan, input, dispatcher, status_tx)` compiles `PlannedWorkflow` → `ExecutionPlan`, registers agents with `SwarmContext`, runs via parallel `JoinSet` executor, updates context on completion/failure, collects text outputs. `SwarmConfig` with sandbox_level, recovery config, token budget. 5 tests.
-- [x] **Adaptive re-planning** — `SwarmSupervisor::execute_with_replan()`: supervisor-level retry loop. On node failure, snapshots completed outputs + error context, calls `GoalPlanner::replan_with_provider()` with `REPLAN_PROMPT` for recovery plan, compiles and re-executes. `ReplanPolicy` (Auto/HumanApproved/Disabled), max 3 attempts, `ReplanRecord` history for observability. EventBus events: `swarm.replan.started`/`completed`. 6 new tests.
+- [x] **Adaptive re-planning** — `SwarmSupervisor::execute_with_replan()`: supervisor-level retry loop. On node failure, snapshots completed outputs + error context, calls `GoalPlanner::replan_with_provider()` with `REPLAN_PROMPT` for **recovery** plan, compiles and re-executes. `ReplanPolicy` (Auto/HumanApproved/Disabled), max 3 attempts, `ReplanRecord` history for observability. EventBus events: `swarm.replan.started`/`completed`. 6 new tests.
 - [x] **CLI entry point** — `agentzero swarm "Build a REST API with auth"` in `commands/swarm.rs`. Accepts `--plan` for pre-generated JSON, `--sandbox` for isolation level. Streams node status updates to stderr, prints structured results to stdout. Reuses `CliStepDispatcher` via `build_cli_dispatcher()`.
 - [x] **Gateway entry point** — `POST /v1/swarm` in `handlers.rs`. Accepts `{ "goal": "..." }` or `{ "plan": {...} }`. Compiles plan, executes via `SwarmSupervisor` in background task, stores run state for polling via `GET /v1/workflows/runs/:run_id`. Returns `{ run_id, title, node_count, status }`.
 - [ ] **UI integration** *(deferred to backlog)* — Goal input → live graph visualization → interactive editing during execution → merge review at end. Backend ready (gateway returns run IDs + status); needs React frontend work.
@@ -2343,6 +2343,60 @@ Export/import tools with quality metadata and related recipes.
 - [x] 0 clippy warnings, all existing tests pass
 
 **Sprint 75 complete.** New `pattern_capture.rs` (170 lines, 4 tests), `TwoStageToolSelector` (100+ lines), `ToolBundle` type with export/import, real composite execution via `tool_resolver`, recipe evolution with periodic triggering, 3 gateway sharing endpoints with `DynamicToolRegistry`/`RecipeStore` on `GatewayState`. All 730 tests passing, 0 clippy warnings.
+
+---
+
+## Sprint 76: Local LLM Ecosystem — Constrained Decoding, Chat Templates, RAG Pipeline
+
+**Goal:** Make local LLMs production-grade: guaranteed valid tool calls via constrained decoding (outlines-core), multi-model chat template support (Llama 3/Mistral/Gemma), semantic document chunking for RAG (text-splitter), and local embedding generation via Candle. Builds on the Candle provider shipped in Sprint 75.
+
+**Baseline:** Sprint 75 complete. Candle provider with GGUF loading, streaming, fuzzy JSON repair, `[local]` config, `estimate_tokens()`, shared `local_tools` module. 709+ tests passing, 0 clippy warnings.
+
+**Plan:** `specs/plans/35-local-llm-ecosystem.md`
+
+---
+
+### Phase A: Constrained Decoding via outlines-core (HIGH)
+
+Guarantee valid JSON tool calls from any local model by masking invalid tokens during generation.
+
+- [ ] **Add `outlines-core` dependency** — Feature-gated behind `candle` feature in `agentzero-providers`. Pure Rust, uses same `tokenizers` crate.
+- [ ] **Build tool call JSON schema** — In `local_tools.rs`, generate a JSON schema for the `{"name": "...", "arguments": {...}}` format from `ToolDefinition` list.
+- [ ] **`ConstrainedDecoder` struct** — Wraps `outlines_core::Index`. `new(schema, vocabulary)` builds the FSA. `allowed_tokens(state)` returns valid token IDs. `next_state(state, token_id)` advances.
+- [ ] **Integrate into CandleProvider generation loop** — After computing logits, mask out tokens not in `allowed_tokens()`. Apply mask before sampling. Advance state after sampling. Only activate when tools are present (plain chat is unconstrained).
+- [ ] **Tests** — Verify schema→regex→index pipeline. Verify masking produces valid JSON. Verify unconstrained mode still works for chat.
+
+### Phase B: Chat Template Support (HIGH)
+
+Support Llama 3, Mistral, Gemma, and other chat formats beyond hardcoded ChatML.
+
+- [ ] **`ChatTemplate` enum** — In `local_tools.rs`: `ChatML` (current Qwen), `Llama3`, `Mistral`, `Gemma`, `Custom(String)`. Each variant knows its BOS/EOS tokens, role markers, and tool call format.
+- [ ] **Auto-detect from GGUF metadata** — Parse `tokenizer.chat_template` from GGUF file metadata. Fall back to ChatML if not found.
+- [ ] **`format_prompt(template, messages, tools)` function** — Replaces the current `format_chatml_prompt`. Dispatches to the correct formatter based on detected template.
+- [ ] **Config override** — Add `chat_template` to `[local]` config for manual override.
+- [ ] **Update EOS token resolution** — Use the detected template's EOS token.
+- [ ] **Tests** — Format messages in each template, verify correct role markers and structure.
+
+### Phase C: RAG Document Chunking via text-splitter (MEDIUM)
+
+- [ ] **Add `text-splitter` dependency** — Workspace dep with `markdown`, `code` features. Feature-gated behind `rag` in `agentzero-tools`.
+- [ ] **`chunk_document` tool** — Accepts file path + max chunk size, returns semantically split chunks.
+- [ ] **Tests** — Chunk markdown file, verify semantic boundaries. Chunk code file, verify syntax-aware splits.
+
+### Phase D: Local Embeddings via Candle (MEDIUM)
+
+- [ ] **`CandleEmbeddingProvider`** — Loads MiniLM-L6-v2 via Candle. Implements `EmbeddingProvider` trait. No ONNX Runtime.
+- [ ] **Wire into runtime** — Default embedding provider when `candle` feature is active.
+- [ ] **Tests** — Cosine similarity checks for similar vs unrelated sentences.
+
+### Acceptance Criteria
+
+- [ ] 3B quantized model produces 100% valid tool call JSON (no fuzzy repair needed)
+- [ ] Non-Qwen models (Llama 3, Mistral) work with correct chat templates
+- [ ] Documents chunked with semantic awareness respecting chunk size limits
+- [ ] Embeddings generated locally without API calls
+- [ ] 0 clippy warnings, all existing tests pass
+- [ ] Default binary (no features) unaffected — all new deps behind feature gates
 
 ---
 
