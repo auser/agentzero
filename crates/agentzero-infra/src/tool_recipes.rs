@@ -33,6 +33,23 @@ pub struct ToolRecipe {
     pub timestamp: u64,
     /// How many times this recipe has been reused.
     pub use_count: u32,
+    // ── Quality tracking ─────────────────────────────────────────────────
+    #[serde(default)]
+    pub total_applications: u32,
+    #[serde(default)]
+    pub total_successes: u32,
+    #[serde(default)]
+    pub total_failures: u32,
+}
+
+impl ToolRecipe {
+    /// Success rate as a fraction (0.0..=1.0). Returns 0.5 when no applications.
+    pub fn success_rate(&self) -> f64 {
+        if self.total_applications == 0 {
+            return 0.5;
+        }
+        self.total_successes as f64 / self.total_applications as f64
+    }
 }
 
 /// Wrapper for encrypted persistence.
@@ -51,6 +68,8 @@ pub struct RecipeStore {
     recipes: Vec<ToolRecipe>,
     store: EncryptedJsonStore,
     next_id: u64,
+    /// Counts agent runs for periodic recipe evolution (not persisted).
+    run_counter: u64,
 }
 
 impl RecipeStore {
@@ -72,6 +91,7 @@ impl RecipeStore {
             recipes: data.recipes,
             store,
             next_id,
+            run_counter: 0,
         })
     }
 
@@ -98,6 +118,9 @@ impl RecipeStore {
             success,
             timestamp: now_secs(),
             use_count: 0,
+            total_applications: 0,
+            total_successes: 0,
+            total_failures: 0,
         };
 
         self.recipes.push(recipe);
@@ -133,6 +156,10 @@ impl RecipeStore {
             .iter()
             .enumerate()
             .filter(|(_, r)| r.success) // Only match successful recipes.
+            .filter(|(_, r)| {
+                // Exclude recipes with very low success rate (quality gate).
+                r.total_applications < 3 || r.success_rate() >= 0.15
+            })
             .map(|(i, r)| {
                 let doc_set: HashSet<&str> = r.goal_keywords.iter().map(|s| s.as_str()).collect();
                 // Jaccard-like overlap: shared terms / total unique terms.
@@ -145,7 +172,9 @@ impl RecipeStore {
                 };
                 // Boost by use_count (logarithmic).
                 let boost = 1.0 + (r.use_count as f64).ln_1p() * 0.1;
-                (i, score * boost)
+                // Weight by quality.
+                let quality = r.success_rate();
+                (i, score * boost * quality)
             })
             .filter(|(_, score)| *score > 0.0)
             .collect();
@@ -171,6 +200,20 @@ impl RecipeStore {
         tools
     }
 
+    /// Record the outcome of a run where a recipe was applied.
+    pub fn record_outcome(&mut self, recipe_id: &str, success: bool) -> anyhow::Result<()> {
+        if let Some(r) = self.recipes.iter_mut().find(|r| r.id == recipe_id) {
+            r.total_applications += 1;
+            if success {
+                r.total_successes += 1;
+            } else {
+                r.total_failures += 1;
+            }
+            self.persist()?;
+        }
+        Ok(())
+    }
+
     /// Increment the use_count on a recipe (called when a recipe's tools are reused).
     pub fn mark_reused(&mut self, recipe_id: &str) -> anyhow::Result<()> {
         if let Some(r) = self.recipes.iter_mut().find(|r| r.id == recipe_id) {
@@ -183,6 +226,93 @@ impl RecipeStore {
     /// List all recipes.
     pub fn list(&self) -> &[ToolRecipe] {
         &self.recipes
+    }
+
+    /// Evolve recipes: promote high-performing variants, retire poor performers.
+    /// Returns the count of promotions + retirements applied.
+    pub fn evolve_recipes(&mut self) -> anyhow::Result<u32> {
+        let mut changes = 0u32;
+
+        // Retire: remove recipes with very low success rate.
+        let before_len = self.recipes.len();
+        self.recipes
+            .retain(|r| !(r.total_applications >= 5 && r.success_rate() < 0.15));
+        let retired = before_len - self.recipes.len();
+        changes += retired as u32;
+
+        // Promote: group recipes by goal similarity and boost the best.
+        // Collect promotion targets first to avoid borrow conflicts.
+        let len = self.recipes.len();
+        let mut to_promote: Vec<usize> = Vec::new();
+        let mut already_compared = std::collections::HashSet::new();
+        for i in 0..len {
+            if self.recipes[i].total_applications < 3 {
+                continue;
+            }
+            for j in (i + 1)..len {
+                if already_compared.contains(&j) || self.recipes[j].total_applications < 3 {
+                    continue;
+                }
+                let i_kw: std::collections::HashSet<&str> = self.recipes[i]
+                    .goal_keywords
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
+                let j_kw: std::collections::HashSet<&str> = self.recipes[j]
+                    .goal_keywords
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
+
+                let intersection = i_kw.intersection(&j_kw).count() as f64;
+                let union = i_kw.union(&j_kw).count() as f64;
+                let jaccard = if union > 0.0 {
+                    intersection / union
+                } else {
+                    0.0
+                };
+                if jaccard < 0.7 {
+                    continue;
+                }
+
+                let i_rate = self.recipes[i].success_rate();
+                let j_rate = self.recipes[j].success_rate();
+                if (i_rate - j_rate).abs() >= 0.2 {
+                    let winner = if i_rate > j_rate { i } else { j };
+                    to_promote.push(winner);
+                    already_compared.insert(winner);
+                }
+            }
+        }
+        for idx in &to_promote {
+            self.recipes[*idx].use_count += 1;
+            changes += 1;
+        }
+
+        if changes > 0 {
+            self.persist()?;
+        }
+        Ok(changes)
+    }
+
+    /// Track run count for periodic recipe evolution.
+    pub fn increment_run_counter(&mut self) -> u64 {
+        self.run_counter += 1;
+        self.run_counter
+    }
+
+    /// Check if recipe evolution should run (every 10th run).
+    pub fn should_evolve(&self) -> bool {
+        self.run_counter > 0 && self.run_counter % 10 == 0
+    }
+
+    /// Export recipes that reference any of the given tool names.
+    pub fn export_for_tools(&self, tool_names: &[String]) -> Vec<ToolRecipe> {
+        self.recipes
+            .iter()
+            .filter(|r| r.tools_used.iter().any(|t| tool_names.contains(t)))
+            .cloned()
+            .collect()
     }
 
     /// Clear all recipes.

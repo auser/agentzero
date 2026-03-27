@@ -157,6 +157,9 @@ async fn e2e_basic_completion() {
         sender_id: None,
         dynamic_registry: None,
         task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
     };
 
     let output = run_agent_with_runtime(execution, workspace_root(), "Say hello.".to_string())
@@ -191,6 +194,9 @@ async fn e2e_agent_with_echo_tool() {
         sender_id: None,
         dynamic_registry: None,
         task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
     };
 
     let output = run_agent_with_runtime(
@@ -237,6 +243,9 @@ async fn e2e_multi_turn_memory() {
         sender_id: None,
         dynamic_registry: None,
         task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
     };
 
     let output1 = run_agent_with_runtime(
@@ -281,6 +290,9 @@ async fn e2e_multi_turn_memory() {
         sender_id: None,
         dynamic_registry: None,
         task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
     };
 
     let output2 =

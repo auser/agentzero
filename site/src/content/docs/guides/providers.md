@@ -103,29 +103,44 @@ model = "anthropic/claude-sonnet-4-6"
 
 ---
 
-## Built-in Local Model (recommended for local)
+## Candle Local Model (recommended for local)
 
-AgentZero includes a built-in local LLM provider powered by llama.cpp. No external server or API key needed — the model runs entirely in-process.
+AgentZero includes a local LLM provider powered by [Candle](https://github.com/huggingface/candle), Hugging Face's pure Rust ML framework. No external server, API key, or C++ compiler needed — the model runs entirely in-process.
 
 **Default model:** Qwen2.5-Coder-3B-Instruct (Q4_K_M quantization, ~2 GB download on first run)
 
 ### Setup
 
-1. Build with the `local-model` feature:
+1. Build with the `candle` feature:
 
 ```bash
-cargo build --release --features local-model
+cargo build --release --features candle
 ```
 
-1. Configure:
+2. Configure:
 
 ```toml
 [provider]
-kind = "builtin"
+kind = "candle"
 model = "qwen2.5-coder-3b"
 ```
 
-That's it. On first run, AgentZero automatically downloads the model from HuggingFace Hub to `~/.agentzero/models/` and shows a progress bar.
+That's it. On first run, AgentZero automatically downloads the model and tokenizer from HuggingFace Hub to `~/.agentzero/models/` and shows a progress bar.
+
+### Local model settings
+
+Tune inference parameters via the `[local]` config section:
+
+```toml
+[local]
+model = "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF"   # HF repo
+filename = "qwen2.5-coder-3b-instruct-q4_k_m.gguf"
+n_ctx = 8192              # context window (tokens)
+temperature = 0.7         # 0.0 = greedy, higher = more random
+top_p = 0.9               # nucleus sampling
+max_output_tokens = 2048  # max tokens per response
+device = "auto"           # "auto" | "cpu" (Metal/CUDA coming soon)
+```
 
 ### Custom GGUF models
 
@@ -141,17 +156,36 @@ model = "TheBloke/Mistral-7B-Instruct-v0.2-GGUF/mistral-7b-instruct-v0.2.Q4_K_M.
 
 ### Tool use
 
-The builtin provider supports tool calling via Qwen's `<tool_call>` prompt format. Tool definitions are automatically injected into the system prompt and model outputs are parsed for tool invocations. All built-in tools and plugin tools work with the builtin provider.
+The Candle provider supports tool calling via Qwen's `<tool_call>` prompt format. Tool definitions are automatically injected into the system prompt and model outputs are parsed for tool invocations. Includes fuzzy JSON repair for common small-model mistakes (trailing commas, unquoted keys, key aliases). All built-in tools and plugin tools work with the Candle provider.
 
-### GPU acceleration
+### Streaming
 
-On macOS (Apple Silicon), the model automatically offloads to the GPU via Metal. On Linux with CUDA, GPU offloading is used when available.
+The Candle provider streams tokens as they are generated — you see output incrementally, not all at once.
+
+### Token counting
+
+The Candle provider includes an in-process tokenizer, enabling accurate token estimation for context window management. The `estimate_tokens()` method is available on the `Provider` trait for context overflow prevention.
 
 ### Limitations
 
 - The default 3B model is best for simple tasks — coding assistance, file operations, basic research
 - For complex multi-step pipelines, consider using a larger model or a cloud provider
 - Vision/image inputs are not supported
+- GPU acceleration (Metal/CUDA) is coming soon — currently runs on CPU
+
+## Built-in Local Model (legacy)
+
+The `builtin` provider uses llama.cpp via C++ bindings. It works but requires a C++ compiler and does not support real streaming (output appears all at once). Prefer the `candle` provider above.
+
+```bash
+cargo build --release --features local-model
+```
+
+```toml
+[provider]
+kind = "builtin"
+model = "qwen2.5-coder-3b"
+```
 
 :::note
 The `local-model` feature requires a C++ compiler for llama.cpp bindings. On macOS this is included with Xcode Command Line Tools. On Linux, install `build-essential` or equivalent.

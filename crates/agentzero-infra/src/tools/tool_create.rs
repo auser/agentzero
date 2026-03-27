@@ -32,7 +32,7 @@ pub struct ToolCreateTool {
 #[allow(dead_code)]
 struct ToolCreateSchema {
     /// Action to perform
-    #[schema(enum_values = ["create", "list", "delete", "export", "import"])]
+    #[schema(enum_values = ["create", "list", "delete", "export", "import", "rate", "bundle_export", "bundle_import"])]
     action: String,
     /// Natural language description of the tool to create (for 'create' action)
     #[serde(default)]
@@ -47,6 +47,10 @@ struct ToolCreateSchema {
     /// JSON tool definition to import (for 'import' action)
     #[serde(default)]
     json: Option<String>,
+    /// Quality rating for 'rate' action
+    #[serde(default)]
+    #[schema(enum_values = ["good", "bad", "reset"])]
+    rating: Option<String>,
 }
 
 impl ToolCreateTool {
@@ -118,8 +122,11 @@ impl Tool for ToolCreateTool {
             "delete" => self.action_delete(&parsed).await,
             "export" => self.action_export(&parsed).await,
             "import" => self.action_import(&parsed).await,
+            "rate" => self.action_rate(&parsed).await,
+            "bundle_export" => self.action_bundle_export(&parsed).await,
+            "bundle_import" => self.action_bundle_import(&parsed).await,
             other => Err(anyhow::anyhow!(
-                "unknown action '{other}'; expected create, list, delete, export, or import"
+                "unknown action '{other}'; expected create, list, delete, export, import, rate, bundle_export, or bundle_import"
             )),
         }
     }
@@ -167,6 +174,13 @@ pub async fn create_tool_from_nl(
         strategy,
         input_schema: partial.get("input_schema").cloned(),
         created_at: now_secs(),
+        total_invocations: 0,
+        total_successes: 0,
+        total_failures: 0,
+        last_error: None,
+        generation: 0,
+        parent_name: None,
+        user_rated: false,
     };
 
     registry.register(def).await?;
@@ -261,6 +275,63 @@ impl ToolCreateTool {
         let names = self.registry.import_tools(json).await?;
         Ok(ToolResult {
             output: format!("Imported {} tool(s): {}", names.len(), names.join(", ")),
+        })
+    }
+
+    async fn action_rate(&self, input: &serde_json::Value) -> anyhow::Result<ToolResult> {
+        let name = input["name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing 'name' field for rate action"))?;
+        let rating = input["rating"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing 'rating' field (expected good/bad/reset)"))?;
+
+        self.registry.apply_user_rating(name, rating).await?;
+
+        let msg = match rating {
+            "good" => format!(
+                "Rated '{name}' as good — quality counters boosted, tool is now user-endorsed."
+            ),
+            "bad" => format!(
+                "Rated '{name}' as bad — quality counters penalized, tool is now user-endorsed."
+            ),
+            "reset" => format!("Reset quality counters for '{name}'."),
+            _ => format!("Applied rating '{rating}' to '{name}'."),
+        };
+        Ok(ToolResult { output: msg })
+    }
+
+    async fn action_bundle_export(&self, input: &serde_json::Value) -> anyhow::Result<ToolResult> {
+        let name = input["name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing 'name' field for bundle_export action"))?;
+
+        let bundle = self
+            .registry
+            .export_bundle(name, None)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("tool not found: {name}"))?;
+
+        let json = serde_json::to_string_pretty(&bundle)
+            .map_err(|e| anyhow::anyhow!("failed to serialize bundle: {e}"))?;
+
+        Ok(ToolResult {
+            output: format!("Exported bundle for '{name}':\n{json}"),
+        })
+    }
+
+    async fn action_bundle_import(&self, input: &serde_json::Value) -> anyhow::Result<ToolResult> {
+        let json = input["json"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing 'json' field for bundle_import action"))?;
+
+        let bundle: crate::tools::dynamic_tool::ToolBundle = serde_json::from_str(json)
+            .map_err(|e| anyhow::anyhow!("failed to parse tool bundle: {e}"))?;
+
+        let name = self.registry.import_bundle(bundle, None).await?;
+
+        Ok(ToolResult {
+            output: format!("Imported tool bundle '{name}' (quality counters reset to zero)."),
         })
     }
 }
@@ -418,6 +489,13 @@ mod tests {
                 },
                 input_schema: None,
                 created_at: now_secs(),
+                total_invocations: 0,
+                total_successes: 0,
+                total_failures: 0,
+                last_error: None,
+                generation: 0,
+                parent_name: None,
+                user_rated: false,
             })
             .await
             .expect("register");

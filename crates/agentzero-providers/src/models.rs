@@ -125,6 +125,17 @@ const GEMINI_MODELS: &[ModelDescriptor] = &[
     },
 ];
 
+const CANDLE_MODELS: &[ModelDescriptor] = &[ModelDescriptor {
+    id: "qwen2.5-coder-3b",
+    is_default: true,
+    capabilities: ModelCapabilities {
+        vision: false,
+        tool_use: true,
+        streaming: true,
+        max_output_tokens: 2048,
+    },
+}];
+
 const BUILTIN_MODELS: &[ModelDescriptor] = &[ModelDescriptor {
     id: "qwen2.5-coder-3b",
     is_default: true,
@@ -163,6 +174,7 @@ pub fn find_models_for_provider(
         "openai" | "openai-codex" | "copilot" => OPENAI_MODELS,
         "anthropic" => ANTHROPIC_MODELS,
         "gemini" => GEMINI_MODELS,
+        "candle" => CANDLE_MODELS,
         "builtin" => BUILTIN_MODELS,
         "ollama" | "llamacpp" | "lmstudio" | "vllm" | "sglang" | "osaurus" => OLLAMA_MODELS,
         _ => OPENROUTER_MODELS,

@@ -87,6 +87,10 @@ metrics-exporter-prometheus = { version = "0.16", default-features = false }
 wasmi = "1"
 wasmi_wasi = "1"
 llama-cpp-2 = { version = "0.1", default-features = false }
+candle-core = { version = "0.9", default-features = false }
+candle-nn = { version = "0.9", default-features = false }
+candle-transformers = { version = "0.9", default-features = false }
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 hf-hub = "0.5"
 indicatif = "0.17"
 

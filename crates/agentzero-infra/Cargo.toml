@@ -21,6 +21,7 @@ wasm-plugins = ["dep:agentzero-plugins"]
 wasm-jit = ["wasm-plugins", "agentzero-plugins/wasm-jit"]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
 local-model = ["agentzero-providers/local-model"]
+candle = ["agentzero-providers/candle"]
 
 [dependencies]
 anyhow.workspace = true
@@ -42,6 +43,7 @@ tracing-opentelemetry = { version = "0.30", optional = true }
 reqwest = { workspace = true, features = ["multipart"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, optional = true }

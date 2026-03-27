@@ -35,6 +35,7 @@ interactive = ["dep:inquire", "dep:console"]
 privacy = ["agentzero-core/privacy", "agentzero-gateway?/privacy"]
 telemetry = ["agentzero-infra/telemetry", "agentzero-gateway?/telemetry"]
 local-model = ["agentzero-infra/local-model", "agentzero-gateway?/local-model"]
+candle = ["agentzero-infra/candle"]
 config-ui = ["dep:agentzero-config-ui"]
 
 [dependencies]

@@ -195,12 +195,16 @@ Some functionality requires compile-time feature flags (only applies to source b
 
 | Feature | Description |
 |---|---|
-| `local-model` | Built-in local LLM via llama.cpp (no external server needed) |
+| `candle` | Local LLM inference via Candle — pure Rust, no C++ compiler needed |
+| `local-model` | Legacy local LLM via llama.cpp (requires C++ compiler) |
 | `hardware` | Hardware discovery and peripheral commands |
 | `whatsapp-web` | WhatsApp Web channel support |
 
 ```bash
-# Build with built-in local model support
+# Build with local model support (recommended)
+cargo build -p agentzero --release --features candle
+
+# Or with legacy llama.cpp backend
 cargo build -p agentzero --release --features local-model
 
 # Build with hardware discovery

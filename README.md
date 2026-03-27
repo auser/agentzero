@@ -64,7 +64,7 @@ agentzero -vvv agent -m "your task"
 | | |
 |---|---|
 | **Language** | 100% Rust — single binary, millisecond cold starts |
-| **Providers** | Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, vLLM, LlamaCPP |
+| **Providers** | Anthropic, OpenAI, OpenRouter, Ollama, Candle (local), LM Studio, vLLM, LlamaCPP |
 | **Tools** | 50+ built-in (file I/O, shell, git, web search, browser, memory, delegation, MCP, and more) |
 | **Memory** | SQLite with SQLCipher encryption (default), Turso/libsql (optional) |
 | **Channels** | Telegram, Discord, Slack, Matrix, Email, IRC, Nostr, Webhook, and more |

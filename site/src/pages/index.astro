@@ -18,10 +18,10 @@ const features = [
   { title: "NL Agent Definitions", desc: "Say 'an agent that reviews my PRs daily' — name, system prompt, keywords, tools, and schedule are derived automatically." },
   { title: "Autonomous Swarms", desc: "Give a goal, get a parallel agent DAG. Each node gets only the tools it needs. Sandboxed execution with conflict detection." },
   { title: "Small & Fast", desc: "4.5 MB embedded binary. Millisecond cold starts. Async Tokio runtime with streaming output." },
-  { title: "Secure by Default", desc: "Encrypted storage, allowlists, policy gates, audit logging, secret redaction. Fail-closed from day one." },
-  { title: "Plugin Sandbox", desc: "WASM plugins run in a bounded sandbox with integrity verification and resource limits." },
+  { title: "Secure by Default", desc: "Defense-in-depth: encrypted storage, path canonicalization, DNS rebinding protection, PII redaction, prompt injection detection, credential leak guards, and audit logging. Fail-closed from day one." },
+  { title: "Plugin Sandbox", desc: "WASM plugins run in a bounded sandbox with fuel metering, memory caps, and Ed25519 signature verification required in production." },
   { title: "Multi-Platform Channels", desc: "Telegram, Discord, Slack, and 20+ more. One agent, every platform. Add a channel with a single config line." },
-  { title: "37+ LLM Providers", desc: "OpenAI, Anthropic, Google, Ollama, local llama.cpp, and more. Swap providers with a config change — no code required." },
+  { title: "37+ LLM Providers", desc: "OpenAI, Anthropic, Google, Ollama, Candle local inference, and more. Swap providers with a config change — no code required." },
 ];
 
 const steps = [
@@ -44,13 +44,28 @@ const differentiators = [
   { title: "Catalog Learning", desc: "When a tool combo solves a task, it's saved as a recipe. Next time you ask something similar, those exact tools are selected automatically." },
   { title: "Single Binary", desc: "One static binary, zero runtime dependencies. 4.5 MB embedded, 18 MB full. Download and run." },
   { title: "Rust Memory Safety", desc: "No GC pauses, no null pointers, no data races. Compile-time guarantees eliminate entire classes of bugs." },
-  { title: "Security First", desc: "TOTP approval, secret leak detection, encrypted storage, and tool-level policy gates — all built in." },
-  { title: "37+ Providers", desc: "OpenAI, Anthropic, Google, Ollama, local llama.cpp, and 30+ more. Swap providers with a config change." },
+  { title: "Security First", desc: "12-layer defense-in-depth: XChaCha20-Poly1305 encryption, mTLS, HMAC request signing, PII/injection guardrails, credential leak detection, MCP binary attestation, and declarative YAML security policies." },
+  { title: "37+ Providers", desc: "OpenAI, Anthropic, Google, Ollama, Candle local inference, and 30+ more. Swap providers with a config change." },
   { title: "8 Platform Targets", desc: "Linux (x86/ARM/musl), macOS (Intel/Apple Silicon), Windows. CI-tested on all three OS families." },
   { title: "MCP + A2A", desc: "Model Context Protocol for tool interop. Google A2A for agent-to-agent communication. Standards-first." },
   { title: "Autonomous Swarms", desc: "Give a goal in plain English. The system decomposes it into a parallel agent DAG, each node sandboxed with only the tools it needs." },
   { title: "Client SDKs", desc: "Thin HTTP/WebSocket SDKs for Python, TypeScript, Swift, and Kotlin. Any platform that can make HTTP calls can control AgentZero." },
   { title: "Interactive API Docs", desc: "Every gateway ships Scalar API docs at /docs. Explore and test all 40+ endpoints from the browser." },
+];
+
+const securityLayers = [
+  { title: "File I/O", desc: "Path canonicalization, symlink resolution, hard-link detection, sensitive file blocking (40+ patterns including .env.*, .kube/config, *.pem)" },
+  { title: "Shell Execution", desc: "Context-aware quote parser, explicit command allowlist, backtick/dollar always blocked, output truncation" },
+  { title: "Encryption at Rest", desc: "XChaCha20-Poly1305 AEAD with random nonces, 256-bit keys, file permissions 0o600, atomic writes" },
+  { title: "Network Security", desc: "DNS rebinding protection, private IP blocking (RFC1918/link-local/carrier-grade NAT), constant-time token comparison" },
+  { title: "Credential Leak Guard", desc: "Pattern + Shannon entropy detection for 11+ secret formats, boundary isolation between local and remote channels, configurable patterns" },
+  { title: "LLM Guardrails", desc: "PII redaction (email, phone, SSN, API keys) and prompt injection detection enabled by default in audit mode" },
+  { title: "WASM Plugin Sandbox", desc: "Fuel metering, 256 MB memory cap, default-deny network/filesystem, Ed25519 signature required in release builds" },
+  { title: "Gateway Security", desc: "mTLS client certificate verification, HMAC-SHA256 request signing with replay protection, TLS enforced in production mode" },
+  { title: "MCP Attestation", desc: "SHA-256 binary hash verification before spawning MCP server subprocesses" },
+  { title: "Autonomy & Delegation", desc: "3-tier autonomy (ReadOnly/Supervised/Full), policy intersection for sub-agents, per-tool rate limits" },
+  { title: "Declarative Policies", desc: "YAML per-tool security policies with granular egress, filesystem, and command rules" },
+  { title: "Audit & Redaction", desc: "Structured audit events, automatic secret redaction in errors/logs/panics, path sanitization in LLM-facing messages" },
 ];
 
 const pillars = [
@@ -64,8 +79,8 @@ const pillars = [
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AgentZero — Self-Growing AI Agent Infrastructure in Rust</title>
-    <meta name="description" content="Self-growing AI agent infrastructure in Rust. Describe tools and agents in plain English — the system assembles, remembers, and gets smarter over time. Encrypted persistence, 58+ built-in tools, WASM plugins, multi-agent swarms. Any OS, any platform." />
+    <title>AgentZero — Secure Self-Growing AI Agent Infrastructure in Rust</title>
+    <meta name="description" content="Production-grade AI agent infrastructure in Rust. 12-layer defense-in-depth security, self-growing tools, multi-agent swarms. 4.5 MB binary, 58+ tools, mTLS, encrypted storage, WASM sandbox. One binary, secure by default, infinite agents." />
     <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
   </head>
   <body class="az-page">
@@ -80,6 +95,7 @@ const pillars = [
         <div class="az-nav-links">
           <a href="#features">Features</a>
           <a href="#why">Why AgentZero</a>
+          <a href="#security">Security</a>
           <a href="#how-it-works">How It Works</a>
           <a href="#architecture">Architecture</a>
           <a href={`${base}overview/`} class="az-nav-docs">Docs</a>
@@ -113,10 +129,10 @@ const pillars = [
       <section class="az-hero">
         <div class="az-hero-inner">
           <div class="az-hero-text">
-            <p class="az-eyebrow">SELF-GROWING AI AGENT INFRASTRUCTURE</p>
-            <h1>Describe it. It builds itself.<br /><span class="az-accent">And remembers.</span></h1>
-            <p class="az-lead">Define agents and tools in plain English. The system self-assembles, persists everything, and gets smarter over time.</p>
-            <p class="az-sub">Say "summarize this video" and it decomposes the goal, creates missing tools, executes in parallel, and remembers what worked. Next time, it's faster. All encrypted, all Rust. 🦀</p>
+            <p class="az-eyebrow">SELF-GROWING AI AGENT INFRASTRUCTURE IN RUST</p>
+            <h1>One binary.<br />Secure by default.<br /><span class="az-accent">Infinite agents.</span></h1>
+            <p class="az-lead">Production-grade AI agents that create their own tools, assemble into swarms, and get smarter with every run. 4.5 MB. 12-layer security. Pure Rust.</p>
+            <p class="az-sub">Say "summarize this video" — it decomposes the goal, creates missing tools, executes in parallel, and remembers what works. Next time, it's faster. Encrypted at rest, signed in transit, sandboxed at every layer. 🦀</p>
             <div class="az-hero-actions">
               <a href={`${base}overview/`} class="az-btn az-btn-primary">Read the docs</a>
               <a href="https://github.com/auser/agentzero" class="az-btn az-btn-secondary" target="_blank" rel="noopener">GitHub</a>
@@ -173,6 +189,23 @@ const pillars = [
         </div>
       </section>
 
+      <!-- Security -->
+      <section id="security" class="az-features">
+        <h2>12-layer defense-in-depth</h2>
+        <p class="az-why-lead">The most comprehensive security model in any AI agent framework.</p>
+        <div class="az-features-grid">
+          {securityLayers.map((s) => (
+            <article>
+              <h3>{s.title}</h3>
+              <p>{s.desc}</p>
+            </article>
+          ))}
+        </div>
+        <div style="text-align: center; margin-top: 2rem;">
+          <a href={`${base}security/overview/`} class="az-btn az-btn-secondary">Read the full security documentation</a>
+        </div>
+      </section>
+
       <!-- Install -->
       <section class="az-install">
         <h2>Install in seconds</h2>
@@ -222,8 +255,8 @@ const pillars = [
 
       <!-- CTA -->
       <section class="az-cta">
-        <h2>Deploy anywhere. Swap anything. 🦀</h2>
-        <p>Fast, small, extensible, and fully autonomous. Secure by design. Configured in conversation.</p>
+        <h2>One binary. Every platform. Unbreakable security. 🦀</h2>
+        <p>4.5 MB, 12 security layers, 37+ LLM providers, 58+ tools. Agents that build themselves and never forget. Deploy it and walk away.</p>
         <div class="az-cta-actions">
           <a href={`${base}overview/`} class="az-btn az-btn-primary">Get started</a>
           <a href="https://github.com/auser/agentzero" class="az-btn az-btn-secondary" target="_blank" rel="noopener">View on GitHub</a>

@@ -10,7 +10,7 @@ AgentZero uses a single `agentzero.toml` file located in the data directory (def
 ```toml
 # ─── Provider ────────────────────────────────────────────
 [provider]
-kind = "openrouter"                              # openai, openrouter, anthropic, ollama, builtin, custom
+kind = "openrouter"                              # openai, openrouter, anthropic, ollama, candle, builtin, custom
 base_url = "https://openrouter.ai/api/v1"        # provider API endpoint (not needed for builtin)
 model = "anthropic/claude-sonnet-4-6"         # model identifier
 default_temperature = 0.7                        # 0.0 – 2.0
@@ -22,9 +22,17 @@ default_temperature = 0.7                        # 0.0 – 2.0
 # base_url = "https://api.openai.com/v1"
 # model = "gpt-4o"
 # api_key_env = "OPENAI_API_KEY"                 # env var holding the API key
-# For local inference with no external server (requires --features local-model):
-# kind = "builtin"
+# For local inference with no external server (requires --features candle):
+# kind = "candle"
 # model = "qwen2.5-coder-3b"
+
+# Local model tuning (shared by candle and builtin providers)
+# [local]
+# n_ctx = 8192                                   # context window (tokens)
+# temperature = 0.7                              # sampling temperature
+# top_p = 0.9                                    # nucleus sampling
+# max_output_tokens = 2048                       # max tokens per response
+# device = "auto"                                # "auto" | "cpu"
 
 # ─── Memory ──────────────────────────────────────────────
 [memory]

@@ -342,6 +342,8 @@ pub struct McpServerDef {
     pub command: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    /// Optional SHA-256 hash of the server binary for attestation.
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone)]

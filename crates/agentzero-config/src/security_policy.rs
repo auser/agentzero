@@ -136,7 +136,14 @@ impl SecurityPolicyFile {
     }
 
     /// Check if a tool is allowed to access a filesystem path.
+    ///
+    /// The path is canonicalized before comparison to prevent traversal attacks
+    /// (e.g. `/workspace/../etc/passwd` resolving outside allowed roots).
     pub fn check_filesystem(&self, tool_name: &str, path: &str) -> PolicyDecision {
+        let canonical = std::fs::canonicalize(path)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| path.to_string());
+
         for rule in &self.rules {
             if tool_matches(&rule.tool, tool_name) {
                 if rule.filesystem.is_empty() {
@@ -146,11 +153,12 @@ impl SecurityPolicyFile {
                         _ => PolicyDecision::Allow,
                     };
                 }
-                if rule
-                    .filesystem
-                    .iter()
-                    .any(|allowed| path.starts_with(allowed))
-                {
+                if rule.filesystem.iter().any(|allowed| {
+                    let allowed_canonical = std::fs::canonicalize(allowed)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| allowed.clone());
+                    canonical.starts_with(&allowed_canonical)
+                }) {
                     return PolicyDecision::Allow;
                 }
                 return PolicyDecision::Deny;
@@ -276,13 +284,50 @@ rules:
 
     #[test]
     fn filesystem_check() {
-        let policy = test_policy();
+        // Use a temp directory that definitely exists for canonicalization.
+        let dir = std::env::temp_dir();
+        let dir_str = dir.to_string_lossy().to_string();
+
+        // Build a policy that allows the canonical temp dir.
+        let yaml = format!(
+            "default: deny\nrules:\n  - tool: read_file\n    filesystem: [\"{dir_str}\"]\n    action: allow\n"
+        );
+        let policy: SecurityPolicyFile = serde_yaml::from_str(&yaml).expect("parse");
+
+        // Create a real file so canonicalize() works (it requires the path to exist).
+        let test_file = dir.join("agentzero_policy_test.txt");
+        std::fs::write(&test_file, "test").expect("create temp file");
+
         assert_eq!(
-            policy.check_filesystem("read_file", "/workspace/src/main.rs"),
+            policy.check_filesystem("read_file", &test_file.to_string_lossy()),
             PolicyDecision::Allow
         );
+
+        std::fs::remove_file(&test_file).ok();
+
+        // A path outside the temp dir should be denied.
         assert_eq!(
             policy.check_filesystem("read_file", "/etc/passwd"),
+            PolicyDecision::Deny
+        );
+    }
+
+    #[test]
+    fn filesystem_check_traversal_blocked() {
+        // Path that tries to escape via traversal should be denied
+        // because it canonicalizes outside the allowed root.
+        let dir = std::env::temp_dir();
+        let dir_str = dir.to_string_lossy().to_string();
+
+        let yaml = format!(
+            "default: deny\nrules:\n  - tool: read_file\n    filesystem: [\"{dir_str}\"]\n    action: allow\n"
+        );
+        let policy: SecurityPolicyFile = serde_yaml::from_str(&yaml).expect("parse");
+
+        // /tmp/../etc/passwd canonicalizes to /etc/passwd which is outside /tmp.
+        let traversal = format!("{dir_str}/../etc/passwd");
+        assert_eq!(
+            policy.check_filesystem("read_file", &traversal),
             PolicyDecision::Deny
         );
     }

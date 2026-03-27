@@ -2247,6 +2247,105 @@ Record successful tool combos, boost them on matching future goals.
 
 ---
 
+## Sprint 74: Self-Evolution Engine — Quality Tracking, AUTO-FIX, AUTO-IMPROVE, User Feedback
+
+**Goal:** Close the feedback loop on Sprint 73's self-growing system. Tools and recipes gain quality tracking with success/failure counters. Failing tools get LLM-based auto-repair (AUTO-FIX). High-quality tools evolve into optimized variants (AUTO-IMPROVE). Users can explicitly rate tools to guide evolution. The system self-heals and self-optimizes over time.
+
+**Baseline:** Sprint 73 complete. Dynamic tools, NL agents, goal decomposition, and recipe store all shipped. No quality feedback loop — tools never improve or get repaired. No execution telemetry beyond audit events.
+
+**Plan:** `specs/plans/34-self-evolution-engine.md`
+
+---
+
+### Phase A: Execution Telemetry + Quality Tracking (HIGH)
+
+Foundation for all evolution features. Per-tool execution records + quality counters on tools and recipes.
+
+- [x] **`ToolExecutionRecord` type + `tool_executions` on `ToolContext`** — `types.rs`. Shared `Arc<Mutex<Vec>>` collector, same pattern as `tokens_used`/`cost_microdollars`.
+- [x] **Collect records in `Agent::execute_tool()`** — `agent.rs`. Push on all 3 error paths + success path via `record_tool_execution()` helper.
+- [x] **Quality fields on `DynamicToolDef`** — `dynamic_tool.rs`. `total_invocations`, `total_successes`, `total_failures`, `last_error`, `generation`, `parent_name`, `user_rated`. `record_outcome()`, `get_def()`, `is_dynamic()`, `apply_user_rating()` on registry.
+- [x] **Quality fields on `ToolRecipe`** — `tool_recipes.rs`. `total_applications`, `total_successes`, `total_failures`. `record_outcome()`. Quality-weighted matching (TF-IDF * success_rate, exclude <15% with >=3 applications).
+- [x] **Surface in `RunAgentOutput` + persist + wire counters** — `runtime.rs`. Execution history JSONL (10k cap), dynamic tool counter updates, recipe recording, `recipe_store` + `tool_evolver` on `RuntimeExecution`. Built in `build_runtime_execution()`.
+
+### Phase B: AUTO-FIX + AUTO-IMPROVE — Tool Evolution Engine (HIGH)
+
+LLM-based repair for failing tools + optimization for successful tools.
+
+- [x] **`ToolEvolver` struct** — New `tool_evolver.rs`. AUTO-FIX: `maybe_fix()` + `TOOL_FIX_PROMPT` (>60% failure, >=5 invocations). AUTO-IMPROVE: `evolve_candidates()` + `TOOL_IMPROVE_PROMPT` (>80% success, >=10 invocations). Strategy JSON parsing with 4 fallback modes.
+- [x] **Evolution safeguards** — `session_evolutions: Mutex<HashSet>`, max 5/session, generation cap 5 (fix) / 3 (improve), 24h cooldown for improvements, `user_rated` tools exempt from auto-fix.
+- [x] **Wire into runtime** — `runtime.rs`. `tool_evolver` on `RuntimeExecution`, constructed in `build_runtime_execution()` with provider. Post-run: auto-fix failed tools, then `evolve_candidates()`. 7 tests (parse strategies, eligibility checks).
+
+### Phase F: User Feedback Signals (LOW)
+
+Explicit human quality ratings to guide evolution.
+
+- [x] **`rate` action on `ToolCreateTool`** — `tool_create.rs`. `good`/`bad`/`reset` ratings. `good` boosts successes by 3, `bad` boosts failures by 3, `reset` zeroes all counters.
+- [x] **`user_rated` field on `DynamicToolDef`** — `dynamic_tool.rs`. Set by `apply_user_rating()`. Prevents auto-fix of user-endorsed tools. AUTO-IMPROVE can still derive variants.
+
+### Acceptance Criteria
+
+- [x] `ToolExecutionRecord` captured for every tool call, persisted to `execution-history.jsonl`
+- [x] Dynamic tools track success/failure, poor performers filtered from selection
+- [x] Tool recipes track outcomes, poor recipes demoted in matching
+- [x] Failing dynamic tools auto-repaired via LLM after 5+ failures at >60% failure rate
+- [x] Successful dynamic tools auto-improved via LLM after 10+ invocations at >80% success rate
+- [x] Anti-loop: generation caps, session limits, cooldowns
+- [x] `tool_create rate <name> good/bad/reset` adjusts quality counters
+- [x] 0 clippy warnings, all existing tests pass
+
+**Sprint 74 complete.** New `tool_evolver.rs` (280+ lines, AUTO-FIX + AUTO-IMPROVE with 7 tests), quality tracking on DynamicToolDef (7 new fields) and ToolRecipe (3 new fields), execution telemetry pipeline via `ToolContext` shared collector, user feedback via `rate` action, full runtime wiring with post-run hooks. All tests passing, 0 clippy warnings.
+
+---
+
+## Sprint 75: Self-Evolution Engine — AUTO-LEARN, Two-Stage Selection, Sharing
+
+**Goal:** Extend Sprint 74's feedback loop with pattern capture, intelligent tool selection scaling, and tool sharing. Novel multi-tool combos are auto-captured as reusable Composite tools with real chained execution. Recipes evolve — winners get promoted, losers get retired. Tool selection scales via keyword/embedding pre-filter → LLM refinement. Tools and recipes become shareable via bundles.
+
+**Baseline:** Sprint 74 complete. Execution telemetry, quality counters on tools/recipes, AUTO-FIX, AUTO-IMPROVE, user feedback all shipped. `ToolEvolver`, `RecipeStore`, `DynamicToolRegistry` fully wired into runtime.
+
+**Plan:** `specs/plans/34-self-evolution-engine.md` (Phases C, D, E)
+
+---
+
+### Phase C: AUTO-LEARN + Recipe Evolution (HIGH)
+
+Capture novel patterns and evolve recipes based on quality data.
+
+- [x] **`PatternCapture` struct** — New `pattern_capture.rs` (170 lines). `capture_if_novel(goal, tool_executions)` detects novel 3+ tool combos via Jaccard < 0.8 against existing recipes. 4 tests.
+- [x] **Novelty detection + composite creation** — Extract unique successful tools in execution order, create Composite `DynamicToolDef`, auto-name `auto_{keyword}_{timestamp}`, register + record recipe.
+- [x] **Recipe evolution** — `evolve_recipes()` on `RecipeStore`. Group by Jaccard >= 0.7, promote best variants (boost use_count), retire poor performers (<15% success, >=5 applications). `run_counter` + `should_evolve()` for periodic triggering every 10th run.
+- [x] **Real composite execution** — `ToolResolver` type alias + `tool_resolver: Option<ToolResolver>` on `DynamicTool`. `from_def_with_resolver()` constructor. Composite tools chain sub-tool execution in sequence, piping outputs. Fallback to plan-description when resolver absent.
+- [x] **Wire into runtime** — `pattern_capture` on `RuntimeExecution`. Post-run: `capture_if_novel()`, periodic `evolve_recipes()`. Constructed from `dynamic_registry` + `recipe_store`.
+
+### Phase D: Two-Stage Tool Selection (MEDIUM)
+
+Prevent prompt bloat as dynamic tools grow.
+
+- [x] **`TwoStageToolSelector`** — `tool_selection.rs` (100+ lines). Stage 1: `KeywordToolSelector` narrows to `stage1_max` (30), optional embedding re-rank via `EmbeddingProvider` + cosine similarity with per-session cache. Stage 2: `AiToolSelector` on shortlist, returns `stage2_max` (15). Graceful degradation on missing embeddings or LLM failure.
+- [x] **Config integration** — `TwoStage` variant on `ToolSelectionMode` enum + `Display`/`FromStr` impls. Accepts `"two_stage"` and `"twostage"`.
+
+### Phase E: Tool/Recipe Sharing (LOW)
+
+Export/import tools with quality metadata and related recipes.
+
+- [x] **`ToolBundle` type + export/import** — `dynamic_tool.rs`. `ToolBundle { version, tool, related_recipes, lineage, exported_at }`. `export_bundle(name, recipe_store)` walks lineage + collects related recipes. `import_bundle(bundle, recipe_store)` resets quality counters. `export_for_tools()` on RecipeStore.
+- [x] **Gateway endpoints** — `GET /v1/dynamic-tools` (list with quality metadata), `GET /v1/dynamic-tools/:name/bundle` (export bundle), `POST /v1/dynamic-tools` (import bundle). `DynamicToolRegistry` + `RecipeStore` on `GatewayState` with builder methods.
+- [x] **CLI integration** — `tool_create` actions: `bundle_export` (exports bundle JSON), `bundle_import` (imports from JSON with zeroed counters).
+
+### Acceptance Criteria
+
+- [x] Novel 3+ tool combos auto-captured as Composite dynamic tools
+- [x] Composite tools execute real tool chains (not just text plans) via `tool_resolver`
+- [x] Recipes evolve: winners promoted, losers retired
+- [x] Two-stage selection scales to 100+ tools without prompt bloat
+- [x] Tool bundles export/import with quality metadata + recipes via CLI
+- [x] Gateway sharing endpoints (list, export bundle, import bundle)
+- [x] 0 clippy warnings, all existing tests pass
+
+**Sprint 75 complete.** New `pattern_capture.rs` (170 lines, 4 tests), `TwoStageToolSelector` (100+ lines), `ToolBundle` type with export/import, real composite execution via `tool_resolver`, recipe evolution with periodic triggering, 3 gateway sharing endpoints with `DynamicToolRegistry`/`RecipeStore` on `GatewayState`. All 730 tests passing, 0 clippy warnings.
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

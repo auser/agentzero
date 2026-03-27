@@ -26,6 +26,8 @@ pub struct LeakGuardPolicy {
     pub enabled: bool,
     pub action: LeakAction,
     pub sensitivity: f64,
+    /// Additional user-defined regex patterns (name, compiled regex).
+    pub extra_patterns: Vec<(String, Regex)>,
 }
 
 impl Default for LeakGuardPolicy {
@@ -34,6 +36,7 @@ impl Default for LeakGuardPolicy {
             enabled: true,
             action: LeakAction::Redact,
             sensitivity: 0.7,
+            extra_patterns: Vec::new(),
         }
     }
 }
@@ -149,6 +152,18 @@ impl LeakGuardPolicy {
             for mat in pattern.find_iter(text) {
                 findings.push(LeakFinding {
                     pattern_name: name,
+                    matched_text: mat.as_str().to_string(),
+                    start: mat.start(),
+                    end: mat.end(),
+                });
+            }
+        }
+
+        // User-defined extra patterns.
+        for (name, pattern) in &self.extra_patterns {
+            for mat in pattern.find_iter(text) {
+                findings.push(LeakFinding {
+                    pattern_name: Box::leak(name.clone().into_boxed_str()),
                     matched_text: mat.as_str().to_string(),
                     start: mat.start(),
                     end: mat.end(),
@@ -277,6 +292,7 @@ mod tests {
             enabled: true,
             action: LeakAction::Redact,
             sensitivity: 0.7,
+            extra_patterns: Vec::new(),
         }
     }
 
@@ -343,6 +359,7 @@ mod tests {
             enabled: true,
             action: LeakAction::Block,
             sensitivity: 0.7,
+            extra_patterns: Vec::new(),
         };
         let result = g.process("Key: sk-abc123def456ghi789jkl012mno345");
         assert!(result.is_err());
