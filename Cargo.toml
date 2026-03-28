@@ -87,6 +87,8 @@ candle-core = { version = "0.9", default-features = false }
 candle-nn = { version = "0.9", default-features = false }
 candle-transformers = { version = "0.9", default-features = false }
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+outlines-core = { version = "0.2", default-features = false }
+text-splitter = { version = "0.29", default-features = false, features = ["markdown"] }
 hf-hub = "0.5"
 indicatif = "0.17"
 

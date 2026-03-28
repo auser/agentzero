@@ -110,6 +110,22 @@ pub fn parse_tool_calls(raw: &str) -> (String, Vec<ToolUseRequest>) {
     (text, tool_calls)
 }
 
+/// Check if the model output looks like a failed tool call attempt.
+///
+/// Returns `true` if the text contains patterns suggesting the model tried
+/// to produce a tool call but the JSON was malformed enough that
+/// `parse_tool_calls` couldn't extract it.
+pub fn looks_like_failed_tool_call(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    // Check for common patterns that indicate a tool call attempt:
+    // - Contains tool_call tags but parsing failed (malformed JSON inside)
+    // - Contains "name" and "arguments" keywords near JSON-like structures
+    // - Contains function call patterns
+    (lower.contains("<tool_call>") && lower.contains("</tool_call>"))
+        || (lower.contains("\"name\"") && lower.contains("\"arguments\"") && text.contains('{'))
+        || (lower.contains("\"function\"") && text.contains('{'))
+}
+
 /// Parse a single tool call JSON object.
 ///
 /// Accepts `{"name": "...", "arguments": {...}}` with several key aliases:
@@ -188,12 +204,114 @@ fn try_repair_json(raw: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// ChatML prompt formatting
+// Chat template support
 // ---------------------------------------------------------------------------
+
+/// Supported chat template formats for local models.
+///
+/// Each variant encodes a model family's prompt structure: role markers, turn
+/// delimiters, tool call formatting, and EOS tokens. Auto-detected from
+/// tokenizer config or manually overridden via `[local] chat_template`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatTemplate {
+    /// Qwen, Yi, and ChatML-based models. `<|im_start|>role\n...<|im_end|>`
+    ChatML,
+    /// Llama 3 / 3.1 / 3.2 Instruct. `<|begin_of_text|><|start_header_id|>role<|end_header_id|>\n\n...<|eot_id|>`
+    Llama3,
+    /// Mistral / Mixtral Instruct. `[INST] ... [/INST]`
+    Mistral,
+    /// Google Gemma 2 / 3 Instruct. `<start_of_turn>role\n...<end_of_turn>`
+    Gemma,
+}
+
+impl ChatTemplate {
+    /// The EOS token string this template family uses.
+    pub fn eos_token(&self) -> &'static str {
+        match self {
+            Self::ChatML => "<|im_end|>",
+            Self::Llama3 => "<|eot_id|>",
+            Self::Mistral => "</s>",
+            Self::Gemma => "<end_of_turn>",
+        }
+    }
+
+    /// Try to detect the chat template from known special tokens in the
+    /// tokenizer's vocabulary. Returns `None` if unrecognized.
+    #[cfg(any(feature = "candle", feature = "local-model"))]
+    pub fn detect(tokenizer: &tokenizers::Tokenizer) -> Option<Self> {
+        let added: Vec<String> = tokenizer
+            .get_added_tokens_decoder()
+            .values()
+            .map(|t| t.content.clone())
+            .collect();
+
+        let has = |s: &str| added.iter().any(|t| t == s);
+
+        if has("<|start_header_id|>") && has("<|eot_id|>") {
+            return Some(Self::Llama3);
+        }
+        if has("<start_of_turn>") && has("<end_of_turn>") {
+            return Some(Self::Gemma);
+        }
+        if has("[INST]") {
+            return Some(Self::Mistral);
+        }
+        if has("<|im_start|>") && has("<|im_end|>") {
+            return Some(Self::ChatML);
+        }
+
+        None
+    }
+
+    /// Parse a template name string (from config) into a `ChatTemplate`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_lowercase().as_str() {
+            "chatml" | "qwen" | "yi" => Some(Self::ChatML),
+            "llama3" | "llama-3" | "llama" => Some(Self::Llama3),
+            "mistral" | "mixtral" => Some(Self::Mistral),
+            "gemma" => Some(Self::Gemma),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ChatTemplate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ChatML => write!(f, "chatml"),
+            Self::Llama3 => write!(f, "llama3"),
+            Self::Mistral => write!(f, "mistral"),
+            Self::Gemma => write!(f, "gemma"),
+        }
+    }
+}
+
+/// Format conversation messages using the specified chat template.
+///
+/// This is the primary prompt formatting entry point. Dispatches to the
+/// correct formatter based on the template variant.
+pub fn format_prompt(
+    template: ChatTemplate,
+    messages: &[ConversationMessage],
+    tools: &[ToolDefinition],
+) -> String {
+    match template {
+        ChatTemplate::ChatML => format_chatml(messages, tools),
+        ChatTemplate::Llama3 => format_llama3(messages, tools),
+        ChatTemplate::Mistral => format_mistral(messages, tools),
+        ChatTemplate::Gemma => format_gemma(messages, tools),
+    }
+}
 
 /// Format conversation messages into a ChatML prompt string with optional
 /// tool definitions injected into the system prompt.
 pub fn format_chatml_prompt(messages: &[ConversationMessage], tools: &[ToolDefinition]) -> String {
+    format_chatml(messages, tools)
+}
+
+// ── ChatML (Qwen / Yi) ────────────────────────────────────────────────
+
+fn format_chatml(messages: &[ConversationMessage], tools: &[ToolDefinition]) -> String {
     let mut prompt = String::new();
     let mut has_system = false;
 
@@ -247,8 +365,188 @@ pub fn format_chatml_prompt(messages: &[ConversationMessage], tools: &[ToolDefin
         }
     }
 
-    // Start assistant turn
     prompt.push_str("<|im_start|>assistant\n");
+    prompt
+}
+
+// ── Llama 3 Instruct ──────────────────────────────────────────────────
+
+fn format_llama3(messages: &[ConversationMessage], tools: &[ToolDefinition]) -> String {
+    let mut prompt = String::from("<|begin_of_text|>");
+    let mut has_system = false;
+
+    for msg in messages {
+        match msg {
+            ConversationMessage::System { content } => {
+                prompt.push_str("<|start_header_id|>system<|end_header_id|>\n\n");
+                prompt.push_str(content);
+                if !tools.is_empty() {
+                    prompt.push_str(&format_tools_system_block(tools));
+                }
+                prompt.push_str("<|eot_id|>\n");
+                has_system = true;
+            }
+            ConversationMessage::User { content, .. } => {
+                if !has_system && !tools.is_empty() {
+                    prompt.push_str("<|start_header_id|>system<|end_header_id|>\n\n");
+                    prompt.push_str("You are a helpful assistant.");
+                    prompt.push_str(&format_tools_system_block(tools));
+                    prompt.push_str("<|eot_id|>\n");
+                    has_system = true;
+                }
+                prompt.push_str("<|start_header_id|>user<|end_header_id|>\n\n");
+                prompt.push_str(content);
+                prompt.push_str("<|eot_id|>\n");
+            }
+            ConversationMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                prompt.push_str("<|start_header_id|>assistant<|end_header_id|>\n\n");
+                if let Some(text) = content {
+                    prompt.push_str(text);
+                }
+                for tc in tool_calls {
+                    prompt.push_str("\n<tool_call>\n");
+                    let call_json = serde_json::json!({
+                        "name": tc.name,
+                        "arguments": tc.input,
+                    });
+                    prompt.push_str(&serde_json::to_string(&call_json).unwrap_or_default());
+                    prompt.push_str("\n</tool_call>");
+                }
+                prompt.push_str("<|eot_id|>\n");
+            }
+            ConversationMessage::ToolResult(result) => {
+                prompt.push_str("<|start_header_id|>tool<|end_header_id|>\n\n");
+                prompt.push_str(&result.content);
+                prompt.push_str("<|eot_id|>\n");
+            }
+        }
+    }
+
+    prompt.push_str("<|start_header_id|>assistant<|end_header_id|>\n\n");
+    prompt
+}
+
+// ── Mistral / Mixtral Instruct ────────────────────────────────────────
+
+fn format_mistral(messages: &[ConversationMessage], tools: &[ToolDefinition]) -> String {
+    // Mistral uses a flat [INST] / [/INST] format. System message is prefixed
+    // before the first user message. Tool results use [TOOL_RESULTS] tags.
+    let mut prompt = String::from("<s>");
+    let mut system_prefix = String::new();
+
+    for msg in messages {
+        match msg {
+            ConversationMessage::System { content } => {
+                system_prefix = content.clone();
+                if !tools.is_empty() {
+                    system_prefix.push_str(&format_tools_system_block(tools));
+                }
+            }
+            ConversationMessage::User { content, .. } => {
+                prompt.push_str("[INST] ");
+                if !system_prefix.is_empty() {
+                    prompt.push_str(&system_prefix);
+                    prompt.push_str("\n\n");
+                    system_prefix.clear();
+                } else if !tools.is_empty() && !prompt.contains("# Available Tools") {
+                    prompt.push_str("You are a helpful assistant.");
+                    prompt.push_str(&format_tools_system_block(tools));
+                    prompt.push_str("\n\n");
+                }
+                prompt.push_str(content);
+                prompt.push_str(" [/INST]");
+            }
+            ConversationMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                if let Some(text) = content {
+                    prompt.push_str(text);
+                }
+                for tc in tool_calls {
+                    prompt.push_str("\n<tool_call>\n");
+                    let call_json = serde_json::json!({
+                        "name": tc.name,
+                        "arguments": tc.input,
+                    });
+                    prompt.push_str(&serde_json::to_string(&call_json).unwrap_or_default());
+                    prompt.push_str("\n</tool_call>");
+                }
+                prompt.push_str("</s>");
+            }
+            ConversationMessage::ToolResult(result) => {
+                prompt.push_str("[TOOL_RESULTS]");
+                prompt.push_str(&result.content);
+                prompt.push_str("[/TOOL_RESULTS]");
+            }
+        }
+    }
+
+    // No explicit assistant prefix for Mistral — model generates after [/INST]
+    prompt
+}
+
+// ── Gemma Instruct ────────────────────────────────────────────────────
+
+fn format_gemma(messages: &[ConversationMessage], tools: &[ToolDefinition]) -> String {
+    // Gemma uses <start_of_turn>role\n...<end_of_turn> format.
+    // No dedicated system role — system content prepended to first user turn.
+    let mut prompt = String::new();
+    let mut system_prefix = String::new();
+
+    for msg in messages {
+        match msg {
+            ConversationMessage::System { content } => {
+                system_prefix = content.clone();
+                if !tools.is_empty() {
+                    system_prefix.push_str(&format_tools_system_block(tools));
+                }
+            }
+            ConversationMessage::User { content, .. } => {
+                prompt.push_str("<start_of_turn>user\n");
+                if !system_prefix.is_empty() {
+                    prompt.push_str(&system_prefix);
+                    prompt.push_str("\n\n");
+                    system_prefix.clear();
+                } else if !tools.is_empty() && !prompt.contains("# Available Tools") {
+                    prompt.push_str("You are a helpful assistant.");
+                    prompt.push_str(&format_tools_system_block(tools));
+                    prompt.push_str("\n\n");
+                }
+                prompt.push_str(content);
+                prompt.push_str("<end_of_turn>\n");
+            }
+            ConversationMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                prompt.push_str("<start_of_turn>model\n");
+                if let Some(text) = content {
+                    prompt.push_str(text);
+                }
+                for tc in tool_calls {
+                    prompt.push_str("\n<tool_call>\n");
+                    let call_json = serde_json::json!({
+                        "name": tc.name,
+                        "arguments": tc.input,
+                    });
+                    prompt.push_str(&serde_json::to_string(&call_json).unwrap_or_default());
+                    prompt.push_str("\n</tool_call>");
+                }
+                prompt.push_str("<end_of_turn>\n");
+            }
+            ConversationMessage::ToolResult(result) => {
+                prompt.push_str("<start_of_turn>tool\n");
+                prompt.push_str(&result.content);
+                prompt.push_str("<end_of_turn>\n");
+            }
+        }
+    }
+
+    prompt.push_str("<start_of_turn>model\n");
     prompt
 }
 
@@ -528,5 +826,219 @@ mod tests {
         assert!(formatted.contains("web_search"));
         assert!(formatted.contains("<|im_start|>tool"));
         assert!(formatted.contains("Found results."));
+    }
+
+    // ── looks_like_failed_tool_call tests ──────────────────────────────
+
+    #[test]
+    fn looks_like_failed_tool_call_with_malformed_tags() {
+        let text = "Sure, let me do that.\n<tool_call>\n{\"name: broken json\n</tool_call>";
+        assert!(looks_like_failed_tool_call(text));
+    }
+
+    #[test]
+    fn looks_like_failed_tool_call_with_json_keywords() {
+        let text = r#"I'll call the tool: {"name": "search", "arguments": {truncated"#;
+        assert!(looks_like_failed_tool_call(text));
+    }
+
+    #[test]
+    fn looks_like_failed_tool_call_with_function_keyword() {
+        let text = r#"{"function": "do_thing", "params": {}"#;
+        assert!(looks_like_failed_tool_call(text));
+    }
+
+    #[test]
+    fn looks_like_failed_tool_call_normal_text_is_false() {
+        let text = "This is just a normal response with no tool calls.";
+        assert!(!looks_like_failed_tool_call(text));
+    }
+
+    #[test]
+    fn looks_like_failed_tool_call_empty_is_false() {
+        assert!(!looks_like_failed_tool_call(""));
+    }
+
+    // ── ChatTemplate tests ────────────────────────────────────────────
+
+    fn user_msg(s: &str) -> ConversationMessage {
+        ConversationMessage::User {
+            content: s.to_string(),
+            parts: vec![],
+        }
+    }
+
+    fn system_msg(s: &str) -> ConversationMessage {
+        ConversationMessage::System {
+            content: s.to_string(),
+        }
+    }
+
+    fn assistant_msg(s: &str) -> ConversationMessage {
+        ConversationMessage::Assistant {
+            content: Some(s.to_string()),
+            tool_calls: vec![],
+        }
+    }
+
+    #[test]
+    fn chat_template_from_name() {
+        assert_eq!(
+            ChatTemplate::from_name("chatml"),
+            Some(ChatTemplate::ChatML)
+        );
+        assert_eq!(
+            ChatTemplate::from_name("Llama3"),
+            Some(ChatTemplate::Llama3)
+        );
+        assert_eq!(
+            ChatTemplate::from_name("MISTRAL"),
+            Some(ChatTemplate::Mistral)
+        );
+        assert_eq!(ChatTemplate::from_name("gemma"), Some(ChatTemplate::Gemma));
+        assert_eq!(ChatTemplate::from_name("qwen"), Some(ChatTemplate::ChatML));
+        assert_eq!(ChatTemplate::from_name("unknown"), None);
+    }
+
+    #[test]
+    fn chat_template_eos_tokens() {
+        assert_eq!(ChatTemplate::ChatML.eos_token(), "<|im_end|>");
+        assert_eq!(ChatTemplate::Llama3.eos_token(), "<|eot_id|>");
+        assert_eq!(ChatTemplate::Mistral.eos_token(), "</s>");
+        assert_eq!(ChatTemplate::Gemma.eos_token(), "<end_of_turn>");
+    }
+
+    #[test]
+    fn format_prompt_chatml_basic() {
+        let msgs = vec![user_msg("hello")];
+        let out = format_prompt(ChatTemplate::ChatML, &msgs, &[]);
+        assert!(out.contains("<|im_start|>user\nhello<|im_end|>"));
+        assert!(out.ends_with("<|im_start|>assistant\n"));
+    }
+
+    #[test]
+    fn format_prompt_chatml_with_system() {
+        let msgs = vec![system_msg("Be brief."), user_msg("hi")];
+        let out = format_prompt(ChatTemplate::ChatML, &msgs, &[]);
+        assert!(out.contains("<|im_start|>system\nBe brief.<|im_end|>"));
+        assert!(out.contains("<|im_start|>user\nhi<|im_end|>"));
+    }
+
+    #[test]
+    fn format_prompt_chatml_backward_compat() {
+        // format_chatml_prompt should produce identical output to format_prompt(ChatML)
+        let msgs = vec![system_msg("sys"), user_msg("hi"), assistant_msg("hey")];
+        let a = format_chatml_prompt(&msgs, &[]);
+        let b = format_prompt(ChatTemplate::ChatML, &msgs, &[]);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn format_prompt_llama3_basic() {
+        let msgs = vec![user_msg("hello")];
+        let out = format_prompt(ChatTemplate::Llama3, &msgs, &[]);
+        assert!(out.starts_with("<|begin_of_text|>"));
+        assert!(out.contains("<|start_header_id|>user<|end_header_id|>\n\nhello<|eot_id|>"));
+        assert!(out.ends_with("<|start_header_id|>assistant<|end_header_id|>\n\n"));
+    }
+
+    #[test]
+    fn format_prompt_llama3_with_system() {
+        let msgs = vec![system_msg("Be brief."), user_msg("hi")];
+        let out = format_prompt(ChatTemplate::Llama3, &msgs, &[]);
+        assert!(out.contains("<|start_header_id|>system<|end_header_id|>\n\nBe brief.<|eot_id|>"));
+    }
+
+    #[test]
+    fn format_prompt_llama3_multi_turn() {
+        let msgs = vec![user_msg("hi"), assistant_msg("hello"), user_msg("how?")];
+        let out = format_prompt(ChatTemplate::Llama3, &msgs, &[]);
+        assert!(out.contains("hello<|eot_id|>"));
+        assert!(out.contains("how?<|eot_id|>"));
+    }
+
+    #[test]
+    fn format_prompt_mistral_basic() {
+        let msgs = vec![user_msg("hello")];
+        let out = format_prompt(ChatTemplate::Mistral, &msgs, &[]);
+        assert!(out.starts_with("<s>"));
+        assert!(out.contains("[INST] hello [/INST]"));
+    }
+
+    #[test]
+    fn format_prompt_mistral_with_system() {
+        let msgs = vec![system_msg("Be brief."), user_msg("hi")];
+        let out = format_prompt(ChatTemplate::Mistral, &msgs, &[]);
+        // System message is prepended to first [INST] block
+        assert!(out.contains("[INST] Be brief."));
+        assert!(out.contains("hi [/INST]"));
+    }
+
+    #[test]
+    fn format_prompt_gemma_basic() {
+        let msgs = vec![user_msg("hello")];
+        let out = format_prompt(ChatTemplate::Gemma, &msgs, &[]);
+        assert!(out.contains("<start_of_turn>user\nhello<end_of_turn>"));
+        assert!(out.ends_with("<start_of_turn>model\n"));
+    }
+
+    #[test]
+    fn format_prompt_gemma_with_system() {
+        let msgs = vec![system_msg("Be brief."), user_msg("hi")];
+        let out = format_prompt(ChatTemplate::Gemma, &msgs, &[]);
+        // System content prepended to first user turn
+        assert!(out.contains("<start_of_turn>user\nBe brief."));
+        assert!(out.contains("hi<end_of_turn>"));
+    }
+
+    #[test]
+    fn format_prompt_gemma_assistant_uses_model_role() {
+        let msgs = vec![user_msg("hi"), assistant_msg("hello")];
+        let out = format_prompt(ChatTemplate::Gemma, &msgs, &[]);
+        assert!(out.contains("<start_of_turn>model\nhello<end_of_turn>"));
+    }
+
+    #[test]
+    fn format_prompt_all_templates_inject_tools() {
+        let tools = vec![ToolDefinition {
+            name: "search".into(),
+            description: "Search the web".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+                "required": ["query"]
+            }),
+        }];
+        for template in [
+            ChatTemplate::ChatML,
+            ChatTemplate::Llama3,
+            ChatTemplate::Mistral,
+            ChatTemplate::Gemma,
+        ] {
+            let msgs = vec![user_msg("find rust docs")];
+            let out = format_prompt(template, &msgs, &tools);
+            assert!(
+                out.contains("# Available Tools"),
+                "{template} should inject tool block"
+            );
+            assert!(
+                out.contains("search"),
+                "{template} should contain tool name"
+            );
+        }
+    }
+
+    #[test]
+    fn format_prompt_display_roundtrip() {
+        for template in [
+            ChatTemplate::ChatML,
+            ChatTemplate::Llama3,
+            ChatTemplate::Mistral,
+            ChatTemplate::Gemma,
+        ] {
+            let name = template.to_string();
+            let parsed = ChatTemplate::from_name(&name);
+            assert_eq!(parsed, Some(template), "roundtrip failed for {name}");
+        }
     }
 }

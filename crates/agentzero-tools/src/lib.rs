@@ -113,7 +113,8 @@ pub fn tool_tier(name: &str) -> ToolTier {
         | "docx_read"
         | "html_extract"
         | "a2a"
-        | "canvas" => ToolTier::Extended,
+        | "canvas"
+        | "chunk_document" => ToolTier::Extended,
 
         // --- Full tier: everything else ---
         _ => ToolTier::Full,
@@ -216,6 +217,10 @@ pub mod opencode_cli;
 pub mod pushover;
 #[cfg(feature = "tools-full")]
 pub mod wasm_tools;
+
+// ── RAG modules (rag feature) ────────────────────────────────────────
+#[cfg(feature = "rag")]
+pub mod chunk_document;
 
 use std::collections::HashMap;
 use std::path::PathBuf;

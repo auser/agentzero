@@ -537,6 +537,9 @@ pub struct LocalModelConfig {
     pub repeat_penalty: f32,
     /// Device to use: "auto", "metal", "cuda", "cpu".
     pub device: String,
+    /// Override auto-detected chat template (e.g. "chatml", "llama3", "mistral", "gemma").
+    /// When `None`, the template is detected from the tokenizer's special tokens.
+    pub chat_template: Option<String>,
 }
 
 impl Default for LocalModelConfig {
@@ -551,6 +554,7 @@ impl Default for LocalModelConfig {
             seed: 42,
             repeat_penalty: 1.1,
             device: "auto".to_string(),
+            chat_template: None,
         }
     }
 }

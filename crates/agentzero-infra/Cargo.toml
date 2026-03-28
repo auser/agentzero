@@ -22,6 +22,7 @@ wasm-jit = ["wasm-plugins", "agentzero-plugins/wasm-jit"]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
 local-model = ["agentzero-providers/local-model"]
 candle = ["agentzero-providers/candle"]
+rag = ["agentzero-tools/rag"]
 
 [dependencies]
 anyhow.workspace = true

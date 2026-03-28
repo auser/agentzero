@@ -8,8 +8,12 @@ mod anthropic;
 #[cfg(feature = "local-model")]
 pub mod builtin;
 #[cfg(feature = "candle")]
+pub mod candle_embedding;
+#[cfg(feature = "candle")]
 pub mod candle_provider;
 mod catalog;
+#[cfg(feature = "candle")]
+pub mod constrained;
 pub mod embedding;
 mod fallback;
 pub mod guardrails;

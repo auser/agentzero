@@ -223,6 +223,16 @@ fn default_tools_inner(
         tools.extend(mcp_tools);
     }
 
+    // ── RAG tools (rag feature) ─────────────────────────────────────
+    #[cfg(feature = "rag")]
+    {
+        tools.push(Box::new(
+            agentzero_tools::chunk_document::ChunkDocumentTool::new(
+                policy.write_file.allowed_root.clone(),
+            ),
+        ));
+    }
+
     // ── Full tier tools (tools-full feature) ─────────────────────────
     #[cfg(feature = "tools-full")]
     {
