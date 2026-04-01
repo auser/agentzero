@@ -6,6 +6,7 @@ pub mod dynamic_tool;
 mod mcp;
 #[cfg(feature = "tools-full")]
 mod plugin_scaffold;
+pub mod shim_server;
 #[cfg(feature = "tools-full")]
 mod skill_manage;
 pub mod tier_stub;

@@ -62,6 +62,26 @@ Each sub-agent:
 - `max_depth = 2` — the sub-agent can delegate once more
 - `max_depth = 0` — delegation disabled for this agent
 
+### Instruction Method
+
+By default, instructions are injected as the LLM system prompt. For sub-agents that accept instructions differently, configure `instruction_method`:
+
+```toml
+# Default: inject as system prompt
+[agents.researcher.instruction_method]
+type = "system_prompt"
+
+# Inject instructions as a tool definition's description
+[agents.code_agent.instruction_method]
+type = "tool_definition"
+tool_name = "instructions_reader"
+
+# Custom template with {instructions} placeholder
+[agents.custom_agent.instruction_method]
+type = "custom"
+template = "CONTEXT: {instructions}\nRespond in JSON format."
+```
+
 ---
 
 ## Agent Conversations

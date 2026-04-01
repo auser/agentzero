@@ -534,10 +534,19 @@ async fn run_delegation(
         config.model.clone(),
     );
 
+    // Apply instruction method to prepare the system prompt.
+    let (prepared_prompt, _extra_tool_def) = agentzero_core::delegation::prepare_instructions(
+        config.system_prompt.as_deref(),
+        &config.instruction_method,
+    );
+
     if config.agentic {
+        // Override the system_prompt in config with the prepared version.
+        let mut effective_config = config.clone();
+        effective_config.system_prompt = prepared_prompt;
         run_agentic(
             provider,
-            config,
+            &effective_config,
             prompt,
             child_ctx,
             tool_builder,
@@ -545,7 +554,7 @@ async fn run_delegation(
         )
         .await
     } else {
-        let effective_prompt = match &config.system_prompt {
+        let effective_prompt = match &prepared_prompt {
             Some(sp) => format!("<system>{sp}</system>\n{prompt}"),
             None => prompt.to_string(),
         };

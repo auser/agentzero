@@ -7,11 +7,11 @@ use crate::models::{
     CompletionChoiceMessage, ConfigResponse, ConfigSection, ConfigUpdateRequest,
     ConfigUpdateResponse, CreateAgentRequest, CreateAgentResponse, CreateCronRequest,
     CronJobResponse, CronListResponse, EstopResponse, EventItem, EventListResponse,
-    EventStreamQuery, GatewayError, HealthResponse, JobListItem, JobListQuery, JobListResponse,
-    JobStatusResponse, LivenessResponse, MemoryForgetRequest, MemoryForgetResponse, MemoryListItem,
-    MemoryListQuery, MemoryListResponse, MemoryRecallRequest, ModelItem, ModelsResponse,
-    PairRequest, PairResponse, PingRequest, PingResponse, ReadyResponse, ToolSummary,
-    ToolsResponse, TopologyEdge, TopologyNode, TopologyResponse, TranscriptResponse,
+    EventStreamQuery, EventsQuery, GatewayError, HealthResponse, JobListItem, JobListQuery,
+    JobListResponse, JobStatusResponse, LivenessResponse, MemoryForgetRequest,
+    MemoryForgetResponse, MemoryListItem, MemoryListQuery, MemoryListResponse, MemoryRecallRequest,
+    ModelItem, ModelsResponse, PairRequest, PairResponse, PingRequest, PingResponse, ReadyResponse,
+    ToolSummary, ToolsResponse, TopologyEdge, TopologyNode, TopologyResponse, TranscriptResponse,
     UpdateAgentRequest, UpdateCronRequest, WebhookPayload, WebhookQuery, WebhookResponse,
     WsRunQuery,
 };
@@ -25,7 +25,7 @@ use axum::{
     body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, State,
+        Path, Query, State,
     },
     http::HeaderMap,
     response::{Html, IntoResponse, Response},
@@ -1229,6 +1229,7 @@ pub(crate) async fn job_events(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
+    Query(query): Query<EventsQuery>,
 ) -> Result<Json<EventListResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
@@ -1246,12 +1247,16 @@ pub(crate) async fn job_events(
 
     // Use the persistent event log instead of reconstructing from state.
     let log_events = job_store.get_events(&run_id).await;
+    let since_seq = query.since_seq.unwrap_or(0);
     let events: Vec<EventItem> = log_events
         .iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(i, e)| {
+            let seq = i + 1; // 1-based sequence numbers
             use agentzero_orchestrator::EventKind;
             match &e.kind {
                 EventKind::Created => EventItem {
+                    seq,
                     event_type: "created",
                     run_id: run_id_str.clone(),
                     tool: None,
@@ -1259,6 +1264,7 @@ pub(crate) async fn job_events(
                     error: None,
                 },
                 EventKind::Running => EventItem {
+                    seq,
                     event_type: "running",
                     run_id: run_id_str.clone(),
                     tool: None,
@@ -1266,6 +1272,7 @@ pub(crate) async fn job_events(
                     error: None,
                 },
                 EventKind::ToolCall { name } => EventItem {
+                    seq,
                     event_type: "tool_call",
                     run_id: run_id_str.clone(),
                     tool: Some(name.clone()),
@@ -1273,6 +1280,7 @@ pub(crate) async fn job_events(
                     error: None,
                 },
                 EventKind::ToolResult { name } => EventItem {
+                    seq,
                     event_type: "tool_result",
                     run_id: run_id_str.clone(),
                     tool: Some(name.clone()),
@@ -1280,6 +1288,7 @@ pub(crate) async fn job_events(
                     error: None,
                 },
                 EventKind::Completed { summary } => EventItem {
+                    seq,
                     event_type: "completed",
                     run_id: run_id_str.clone(),
                     tool: None,
@@ -1287,6 +1296,7 @@ pub(crate) async fn job_events(
                     error: None,
                 },
                 EventKind::Failed { error } => EventItem {
+                    seq,
                     event_type: "failed",
                     run_id: run_id_str.clone(),
                     tool: None,
@@ -1294,6 +1304,7 @@ pub(crate) async fn job_events(
                     error: Some(error.clone()),
                 },
                 EventKind::Cancelled => EventItem {
+                    seq,
                     event_type: "cancelled",
                     run_id: run_id_str.clone(),
                     tool: None,
@@ -1302,6 +1313,7 @@ pub(crate) async fn job_events(
                 },
             }
         })
+        .filter(|e| e.seq > since_seq)
         .collect();
 
     let total = events.len();

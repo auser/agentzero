@@ -203,6 +203,11 @@ allow_workspace_read = false
 allow_workspace_write = false
 allowed_hosts = []
 
+# Host tools exposed to WASM plugins via CLI shim bridge (HTTP+shell shims)
+# allowed_host_tools = ["read_file", "shell"]   # empty = none exposed
+# Filesystem overlay mode for sandboxed writes
+# overlay_mode = "disabled"                      # disabled, auto_commit, explicit_commit, dry_run
+
 [runtime.wasm.security]
 require_workspace_relative_tools_dir = true
 reject_symlink_modules = true
@@ -299,6 +304,14 @@ max_iterations = 5
 # privacy_boundary = "encrypted_only"            # inherit, local_only, encrypted_only, any
 # allowed_providers = ["anthropic"]               # restrict to specific provider kinds
 # blocked_providers = []                          # block specific provider kinds
+# [agents.researcher.instruction_method]
+# type = "system_prompt"                          # system_prompt (default), tool_definition, custom
+# # For tool_definition: instructions injected as a tool description
+# # type = "tool_definition"
+# # tool_name = "instructions_reader"
+# # For custom: template with {instructions} placeholder
+# # type = "custom"
+# # template = "SYSTEM: {instructions}"
 
 # ─── Privacy ────────────────────────────────────────────
 [privacy]

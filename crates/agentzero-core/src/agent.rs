@@ -452,6 +452,8 @@ impl Agent {
         if let Some(sink) = &self.audit {
             let _ = sink
                 .record(AuditEvent {
+                    seq: 0,
+                    session_id: String::new(),
                     stage: stage.to_string(),
                     detail,
                 })

@@ -45,6 +45,66 @@ impl std::fmt::Display for RunId {
     }
 }
 
+/// Unique identifier for a session (groups related runs/events for replay).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionId(pub String);
+
+impl SessionId {
+    pub fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        Self(format!("ses-{ts}-{seq}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for SessionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Unique identifier for an agent in the swarm.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AgentId(pub String);
+
+impl AgentId {
+    pub fn new(name: &str) -> Self {
+        Self(name.to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for AgentId {
+    fn default() -> Self {
+        Self("default".to_string())
+    }
+}
+
+impl std::fmt::Display for AgentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Status of an async job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -946,6 +1006,12 @@ pub struct ToolExecutionRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
+    /// Monotonic sequence number within a session (0 = unsequenced).
+    #[serde(default)]
+    pub seq: u64,
+    /// Session identifier grouping related events for replay.
+    #[serde(default)]
+    pub session_id: String,
     pub stage: String,
     pub detail: Value,
 }

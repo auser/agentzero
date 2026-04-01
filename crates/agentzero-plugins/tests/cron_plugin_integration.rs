@@ -38,6 +38,8 @@ mod cron_plugins {
             allow_fs_read: true,
             allowed_host_calls: vec!["az_log".to_string()],
             require_signed: false,
+            allowed_host_tools: Vec::new(),
+            overlay_mode: agentzero_plugins::overlay::OverlayMode::default(),
         }
     }
 

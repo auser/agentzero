@@ -2441,6 +2441,101 @@ Support Llama 3, Mistral, Gemma, and other chat formats beyond hardcoded ChatML.
 
 ---
 
+## Sprint 78: KV Cache Reuse Across Conversation Turns
+
+**Goal:** Stop reprocessing the entire prompt from scratch on every generation call. Track the KV cache state across turns and skip reprocessing the common prefix (system prompt, tools, prior messages). Saves ~2-4K tokens of recomputation per turn in multi-turn conversations.
+
+**Baseline:** Sprint 77 complete. Metal GPU enabled. Candle provider reprocesses full prompt every `generate()` call with `index_pos=0`.
+
+**Plan:** `specs/plans/37-candle-kv-cache-reuse.md`
+
+---
+
+### Phase A: Cache Tracking (LOW)
+
+- [ ] **Add `cached_tokens: Vec<u32>` to `LoadedModel`** — Tracks the full token sequence in the KV cache (prompt + generated). Initialized empty on model load.
+- [ ] **Add `find_common_prefix_len()` helper** — Compares cached tokens with new prompt tokens. Unit test with edge cases (empty, exact match, partial, divergence, extension).
+
+### Phase B: Cache-Aware Prompt Feeding (MEDIUM)
+
+- [ ] **`feed_prompt_cached()` helper** — Replaces the manual `forward(tokens, 0)` pattern. If cached tokens are an exact prefix of new tokens, feeds only the suffix with `index_pos = prefix_len`. Otherwise falls back to `index_pos = 0` (current behavior). Updates `cached_tokens` after feeding.
+- [ ] **Track generated tokens** — Push each accepted `next_token` to `cached_tokens` during the autoregressive loop in all three generate methods.
+- [ ] **Wire into `generate()`** — Replace prompt feed + update loop.
+- [ ] **Wire into `generate_streaming()`** — Same changes.
+- [ ] **Wire into `generate_constrained()`** — Same changes. Constrained retry uses different prompt, so prefix match fails naturally → no regression.
+
+### Acceptance Criteria
+
+- [ ] Multi-turn conversation reuses cached prefix (visible in debug logs: "KV cache hit")
+- [ ] Single-turn / first-turn behavior unchanged (falls back to full reprocess)
+- [ ] `generate_constrained` (retry) doesn't corrupt cache for next normal turn
+- [ ] 0 clippy warnings, all tests pass
+- [ ] No changes to Provider trait or any external API
+
+---
+
+## Sprint 79 (renumbered): Runtime Enhancements — Audit Replay, Typed IDs, Delegation Injection, Plugin Shims, CoW Overlay
+
+**Goal:** Integrate five runtime enhancements inspired by external agent runtime research: monotonic audit events for session replay, typed ID newtypes for gateway/FFI, agent-agnostic instruction injection for heterogeneous delegation, CLI shim bridge for WASM plugins, and CoW overlay filesystem for sandboxed plugin execution.
+
+**Baseline:** Sprint 77 complete. 1,832 tests, 0 clippy warnings. Candle Metal GPU live.
+
+**Plan:** `specs/plans/37-runtime-enhancements.md`
+
+---
+
+### Phase A: Monotonic Sequence Numbers on AuditEvent (LOW)
+
+- [x] **`AuditEvent` fields** — Added `seq: u64` (monotonic per-session) and `session_id: String` to `AuditEvent` in `agentzero-core/src/types.rs`.
+- [x] **`SequencedAuditSink`** — Decorator wrapping any `AuditSink` with `Arc<AtomicU64>` counter and session ID stamping.
+- [x] **`FileAuditSink` update** — Includes `seq` and `session_id` in JSON log lines. Single `write_all` for atomic line writes.
+- [x] **Runtime threading** — `SequencedAuditSink` created in `build_runtime_execution()` wrapping `FileAuditSink`.
+- [x] **Gateway endpoint** — `GET /v1/runs/{run_id}/events?since_seq=N` with `EventsQuery` for incremental polling. `EventItem` now carries `seq`.
+- [x] **Tests** — 2 new: monotonic ordering (`sequenced_sink_stamps_monotonic_seq`), concurrent uniqueness (`sequenced_sink_concurrent_ordering`).
+
+### Phase B: Agent-Agnostic Instruction Injection (LOW)
+
+- [x] **`InstructionMethod` enum** — `SystemPrompt` (default), `ToolDefinition`, `Custom` in `agentzero-core/src/delegation.rs`. (`EnvVar`/`CliFlag` deferred — no external process execution yet.)
+- [x] **`prepare_instructions()`** — Dispatches per method: passthrough, tool definition injection, or template substitution.
+- [x] **Delegation dispatch** — `execute_delegate()` in `delegate.rs` applies `prepare_instructions()` for both agentic and single-shot paths.
+- [x] **Config** — `instruction_method` field on `DelegateAgentConfig` (TOML) and `DelegateConfig` (runtime). Wired through `build_delegate_agents()` and `toml_bridge.rs`.
+- [x] **Tests** — 7 new: per-variant, serde roundtrip, defaults, None prompt handling.
+
+### Phase C: Typed ID Newtypes for Gateway/FFI (MEDIUM)
+
+- [x] **Newtype wrappers** — `SessionId`, `AgentId` in `agentzero-core/src/types.rs` following existing `RunId` pattern. Exported from `agentzero-core`.
+- [x] **Gateway models** — `EventItem` carries `seq: usize`. Gateway response models ready for incremental typed ID migration (newtypes serialize as strings, wire-compatible).
+- [x] **Tests** — All existing gateway tests pass unchanged.
+
+### Phase D: CLI Shim Bridge for WASM Plugin Host Calls (MEDIUM)
+
+- [x] **Shim server** — `shim_server.rs` in `agentzero-infra/src/tools/`: HTTP on `127.0.0.1:0` with per-execution bearer token, POST `/tools/{name}` → host tool execution. Auto-shutdown on drop.
+- [x] **Shim generation** — `generate_shims()` creates shell scripts using `--data @-` stdin pattern (no injection risk).
+- [x] **Policy** — `allowed_host_tools: Vec<String>` on `WasmIsolationPolicy`.
+- [x] **Tests** — 4 new: tool call success, bad token rejection, unknown tool 404, shim script validation.
+
+### Phase E: CoW Overlay for WASM Plugin Filesystem (MEDIUM)
+
+- [x] **`WasiOverlayFs`** — `overlay.rs` in `agentzero-plugins/src/`: base dir (read-only) + scratch dir (writes) + whiteout set. `read()`, `write()`, `delete()`, `exists()`, `diff()`, `commit()`, `discard()`.
+- [x] **`OverlayMode`** — `Disabled` | `AutoCommit` | `ExplicitCommit` | `DryRun` on `WasmIsolationPolicy`.
+- [x] **Conflict detection** — `commit()` checks mtime of base files, errors on conflict instead of silent overwrite.
+- [x] **Symlink protection** — `resolve()` rejects `Component::ParentDir` traversals.
+- [x] **Tests** — 10 new: read fallthrough, write to scratch, write override, delete whiteout, delete nonexistent, diff, commit, discard, traversal rejection, nested directory commit.
+
+### Acceptance Criteria
+
+- [x] `cargo clippy --all-targets` — 0 warnings
+- [x] All 1,666 workspace tests pass
+- [x] Gateway events endpoint returns events with monotonic sequence numbers and `since_seq` filtering
+- [x] Delegation with `InstructionMethod::Custom` works end-to-end
+- [x] Shim server exposes host tools via HTTP with bearer token auth
+- [x] CoW overlay commit/discard/diff works with conflict detection
+- [x] Site docs updated (config reference, multi-agent guide)
+
+**Sprint 79 complete.** 23 new tests added (2 audit + 7 delegation + 4 shim + 10 overlay). 1,666 total workspace tests passing, 0 clippy warnings.
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

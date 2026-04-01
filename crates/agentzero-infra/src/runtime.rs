@@ -1,5 +1,5 @@
 use crate::audio::process_audio_markers;
-use crate::audit::FileAuditSink;
+use crate::audit::{FileAuditSink, SequencedAuditSink};
 use crate::tools::default_tools_with_store;
 use agentzero_auth::AuthManager;
 use agentzero_config::{
@@ -106,6 +106,8 @@ impl HookSink for AuditHookSink {
     async fn record(&self, event: HookEvent) -> anyhow::Result<()> {
         self.sink
             .record(AuditEvent {
+                seq: 0,
+                session_id: String::new(),
                 stage: format!("hook.{}", event.stage),
                 detail: json!({ "hook": event.detail }),
             })
@@ -500,7 +502,19 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         memory,
         tools,
         audit_sink: if audit_policy.enabled {
-            Some(Box::new(FileAuditSink::new(audit_path.clone())) as Box<dyn AuditSink>)
+            let session_id = format!(
+                "ses-{}-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis(),
+                std::process::id()
+            );
+            let sequenced = SequencedAuditSink::new(
+                Box::new(FileAuditSink::new(audit_path.clone())),
+                session_id,
+            );
+            Some(Box::new(sequenced) as Box<dyn AuditSink>)
         } else {
             None
         },
@@ -1326,6 +1340,7 @@ fn build_delegate_agents(
                         .map(|usd| (usd * 1_000_000.0) as u64)
                         .unwrap_or(0),
                     system_prompt_hash: None,
+                    instruction_method: agent.instruction_method.clone(),
                 },
             )
         })

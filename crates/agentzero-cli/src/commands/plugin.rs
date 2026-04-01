@@ -106,6 +106,8 @@ impl AgentZeroCommand for PluginCommand {
                     allow_fs_read: false,
                     allowed_host_calls: manifest.allowed_host_calls.clone(),
                     require_signed: false,
+                    allowed_host_tools: Vec::new(),
+                    overlay_mode: agentzero_plugins::overlay::OverlayMode::default(),
                 };
                 runtime.preflight_with_policy(&container, &policy)?;
                 if execute {
@@ -154,6 +156,8 @@ impl AgentZeroCommand for PluginCommand {
                     allow_fs_read: false,
                     allowed_host_calls: manifest.allowed_host_calls.clone(),
                     require_signed: false,
+                    allowed_host_tools: Vec::new(),
+                    overlay_mode: agentzero_plugins::overlay::OverlayMode::default(),
                 };
                 let runtime = WasmPluginRuntime::new();
                 let container = WasmPluginContainer {

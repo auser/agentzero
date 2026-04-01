@@ -304,6 +304,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "temp-env",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-opentelemetry",

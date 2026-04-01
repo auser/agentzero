@@ -315,6 +315,8 @@ pub(crate) struct EventListResponse {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct EventItem {
+    /// Monotonic sequence number within the run's event stream.
+    pub(crate) seq: usize,
     #[serde(rename = "type")]
     pub(crate) event_type: &'static str,
     pub(crate) run_id: String,
@@ -324,6 +326,14 @@ pub(crate) struct EventItem {
     pub(crate) result: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
+}
+
+/// Query parameters for `GET /v1/runs/:run_id/events`.
+#[derive(Debug, Deserialize)]
+pub(crate) struct EventsQuery {
+    /// Return only events with `seq > since_seq`. Enables incremental polling.
+    #[serde(default)]
+    pub(crate) since_seq: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]

@@ -55,3 +55,4 @@ tracing-subscriber = { workspace = true, optional = true }
 agentzero-orchestrator = { workspace = true }
 agentzero-testkit = { workspace = true }
 temp-env = "0.3"
+tempfile = "3"

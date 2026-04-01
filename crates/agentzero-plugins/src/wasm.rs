@@ -29,6 +29,12 @@ pub struct WasmIsolationPolicy {
     /// When true, reject plugins without a valid Ed25519 signature.
     #[serde(default)]
     pub require_signed: bool,
+    /// Which host tools to expose via the CLI shim bridge.
+    #[serde(default)]
+    pub allowed_host_tools: Vec<String>,
+    /// Filesystem overlay mode for sandboxed writes.
+    #[serde(default)]
+    pub overlay_mode: crate::overlay::OverlayMode,
 }
 
 impl Default for WasmIsolationPolicy {
@@ -43,6 +49,8 @@ impl Default for WasmIsolationPolicy {
             allowed_host_calls: Vec::new(),
             // Require signed plugins in release builds; allow unsigned in debug.
             require_signed: cfg!(not(debug_assertions)),
+            allowed_host_tools: Vec::new(),
+            overlay_mode: crate::overlay::OverlayMode::default(),
         }
     }
 }

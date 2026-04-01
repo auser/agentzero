@@ -7,6 +7,24 @@ use std::collections::HashSet;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// How instructions (system prompt) are delivered to a delegate sub-agent.
+///
+/// Different agent runtimes accept instructions differently. This enum lets
+/// AgentZero adapt its instruction injection to the target agent's protocol.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum InstructionMethod {
+    /// Inject as the LLM system prompt (current default behavior).
+    #[default]
+    SystemPrompt,
+    /// Inject as a tool definition whose description carries the instructions.
+    ToolDefinition { tool_name: String },
+    /// Inject via a user-defined template with `{instructions}` placeholder.
+    /// The template is used as the system prompt text with the placeholder
+    /// replaced by the actual instructions.
+    Custom { template: String },
+}
+
 /// Configuration for a delegate sub-agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelegateConfig {
@@ -39,6 +57,10 @@ pub struct DelegateConfig {
     /// the prompt has not been tampered with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt_hash: Option<String>,
+    /// How instructions are delivered to this sub-agent. Defaults to
+    /// `SystemPrompt` which injects as the LLM system prompt.
+    #[serde(default)]
+    pub instruction_method: InstructionMethod,
 }
 
 impl Default for DelegateConfig {
@@ -59,6 +81,7 @@ impl Default for DelegateConfig {
             max_tokens: 0,
             max_cost_microdollars: 0,
             system_prompt_hash: None,
+            instruction_method: InstructionMethod::default(),
         }
     }
 }
@@ -77,6 +100,35 @@ pub struct DelegateResult {
     pub agent_name: String,
     pub output: String,
     pub iterations_used: usize,
+}
+
+/// Apply the instruction method to prepare the system prompt for a sub-agent.
+///
+/// Returns `(effective_system_prompt, extra_tool_definition)`.
+/// - For `SystemPrompt`: returns the original prompt as-is with no extra tool.
+/// - For `ToolDefinition`: returns `None` system prompt and a tool definition
+///   whose description carries the instructions.
+/// - For `Custom`: substitutes `{instructions}` in the template.
+pub fn prepare_instructions(
+    system_prompt: Option<&str>,
+    method: &InstructionMethod,
+) -> (Option<String>, Option<crate::ToolDefinition>) {
+    let instructions = system_prompt.unwrap_or_default();
+    match method {
+        InstructionMethod::SystemPrompt => (system_prompt.map(String::from), None),
+        InstructionMethod::ToolDefinition { tool_name } => {
+            let tool_def = crate::ToolDefinition {
+                name: tool_name.clone(),
+                description: instructions.to_string(),
+                input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            };
+            (None, Some(tool_def))
+        }
+        InstructionMethod::Custom { template } => {
+            let rendered = template.replace("{instructions}", instructions);
+            (Some(rendered), None)
+        }
+    }
 }
 
 /// Compute an HMAC-SHA256 hex digest for a system prompt.
@@ -394,5 +446,85 @@ mod tests {
             current_depth: 0,
         };
         assert!(validate_delegation(&req, &cfg).is_ok());
+    }
+
+    // --- InstructionMethod tests ---
+
+    #[test]
+    fn instruction_method_system_prompt_passthrough() {
+        let (prompt, tool) =
+            prepare_instructions(Some("You are helpful."), &InstructionMethod::SystemPrompt);
+        assert_eq!(prompt.as_deref(), Some("You are helpful."));
+        assert!(tool.is_none());
+    }
+
+    #[test]
+    fn instruction_method_system_prompt_none() {
+        let (prompt, tool) = prepare_instructions(None, &InstructionMethod::SystemPrompt);
+        assert!(prompt.is_none());
+        assert!(tool.is_none());
+    }
+
+    #[test]
+    fn instruction_method_tool_definition() {
+        let (prompt, tool) = prepare_instructions(
+            Some("Be concise and accurate."),
+            &InstructionMethod::ToolDefinition {
+                tool_name: "instructions_reader".into(),
+            },
+        );
+        assert!(prompt.is_none());
+        let tool = tool.expect("should produce a tool definition");
+        assert_eq!(tool.name, "instructions_reader");
+        assert_eq!(tool.description, "Be concise and accurate.");
+    }
+
+    #[test]
+    fn instruction_method_custom_template() {
+        let (prompt, tool) = prepare_instructions(
+            Some("Be concise."),
+            &InstructionMethod::Custom {
+                template: "SYSTEM: {instructions} END".into(),
+            },
+        );
+        assert_eq!(prompt.as_deref(), Some("SYSTEM: Be concise. END"));
+        assert!(tool.is_none());
+    }
+
+    #[test]
+    fn instruction_method_custom_with_no_prompt() {
+        let (prompt, _) = prepare_instructions(
+            None,
+            &InstructionMethod::Custom {
+                template: "PREFIX: {instructions} SUFFIX".into(),
+            },
+        );
+        assert_eq!(prompt.as_deref(), Some("PREFIX:  SUFFIX"));
+    }
+
+    #[test]
+    fn instruction_method_default_is_system_prompt() {
+        assert_eq!(
+            InstructionMethod::default(),
+            InstructionMethod::SystemPrompt
+        );
+    }
+
+    #[test]
+    fn instruction_method_serde_roundtrip() {
+        let methods = vec![
+            InstructionMethod::SystemPrompt,
+            InstructionMethod::ToolDefinition {
+                tool_name: "guide".into(),
+            },
+            InstructionMethod::Custom {
+                template: "T: {instructions}".into(),
+            },
+        ];
+        for method in methods {
+            let json = serde_json::to_string(&method).expect("serialize");
+            let back: InstructionMethod = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, method);
+        }
     }
 }

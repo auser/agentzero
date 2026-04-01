@@ -1693,6 +1693,10 @@ pub struct DelegateAgentConfig {
     /// Per-run token limit for this sub-agent.
     #[serde(default)]
     pub max_tokens: Option<u64>,
+    /// How instructions are delivered to this sub-agent.
+    /// Defaults to `SystemPrompt` (inject as LLM system prompt).
+    #[serde(default)]
+    pub instruction_method: agentzero_core::delegation::InstructionMethod,
 }
 
 impl Default for DelegateAgentConfig {
@@ -1712,6 +1716,7 @@ impl Default for DelegateAgentConfig {
             blocked_providers: Vec::new(),
             max_cost_usd: None,
             max_tokens: None,
+            instruction_method: agentzero_core::delegation::InstructionMethod::default(),
         }
     }
 }
