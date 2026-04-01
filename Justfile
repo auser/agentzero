@@ -91,6 +91,14 @@ ffi-node:
     cd crates/agentzero-ffi && cargo build --release --no-default-features --features node
 
 
+# Build release binary and symlink to ~/.local/bin/agentzero
+install: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$(pwd)/target/release/agentzero" "$HOME/.local/bin/agentzero"
+    echo "Linked target/release/agentzero → ~/.local/bin/agentzero"
+
 # ── Build Variants ────────────────────────────
 
 # Build full release (all features, ~19MB)

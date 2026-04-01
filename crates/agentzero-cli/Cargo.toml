@@ -61,7 +61,7 @@ base64 = "0.22"
 console = { version = "0.15", optional = true }
 crossterm = { version = "0.28", optional = true }
 futures-util.workspace = true
-inquire = { version = "0.7", optional = true }
+inquire = { version = "0.8", optional = true }
 rand = "0.8"
 ratatui = { version = "0.29", optional = true }
 reqwest = { workspace = true, features = ["stream"] }
@@ -69,7 +69,6 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"
 sha2 = "0.10"
-gag = "1.0"
 rusqlite.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

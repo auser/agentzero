@@ -201,11 +201,14 @@ impl AgentZeroCommand for PluginCommand {
 
                 if let Some(url) = url {
                     // Resolve dependencies when a registry is available
-                    let registry = load_registry_index(&ctx.data_dir, registry_url.as_deref()).ok();
+                    let registry = load_registry_index(&ctx.data_dir, registry_url.as_deref())
+                        .await
+                        .ok();
                     let all = if let Some(ref reg) = registry {
-                        install_with_dependencies(&url, &install_root, sha256.as_deref(), reg)?
+                        install_with_dependencies(&url, &install_root, sha256.as_deref(), reg)
+                            .await?
                     } else {
-                        vec![install_from_url(&url, &install_root, sha256.as_deref())?]
+                        vec![install_from_url(&url, &install_root, sha256.as_deref()).await?]
                     };
                     for installed in &all {
                         state.record_install(
@@ -366,7 +369,7 @@ impl AgentZeroCommand for PluginCommand {
                 query,
                 registry_url,
             } => {
-                let index = load_registry_index(&ctx.data_dir, registry_url.as_deref())?;
+                let index = load_registry_index(&ctx.data_dir, registry_url.as_deref()).await?;
                 let results = index.search(&query);
                 if results.is_empty() {
                     println!("No plugins found matching '{query}'");
@@ -385,7 +388,7 @@ impl AgentZeroCommand for PluginCommand {
                 }
             }
             PluginCommands::Outdated { registry_url } => {
-                let index = load_registry_index(&ctx.data_dir, registry_url.as_deref())?;
+                let index = load_registry_index(&ctx.data_dir, registry_url.as_deref()).await?;
                 let state = PluginState::load(&ctx.data_dir);
                 let outdated = check_outdated(&state, &index);
 
@@ -405,7 +408,7 @@ impl AgentZeroCommand for PluginCommand {
                 registry_url,
                 install_dir,
             } => {
-                let index = load_registry_index(&ctx.data_dir, registry_url.as_deref())?;
+                let index = load_registry_index(&ctx.data_dir, registry_url.as_deref()).await?;
                 let state = PluginState::load(&ctx.data_dir);
                 let install_root = install_dir
                     .map(PathBuf::from)
@@ -429,8 +432,10 @@ impl AgentZeroCommand for PluginCommand {
                     }
                 } else {
                     for (id, installed_ver, latest_ver) in &to_update {
-                        let entry = index.get(id).unwrap();
-                        let version_entry = entry.latest_version().unwrap();
+                        let entry = index.get(id).expect("outdated entry should exist in index");
+                        let version_entry = entry
+                            .latest_version()
+                            .expect("outdated entry should have a latest version");
                         println!(
                             "Updating {id}: {installed_ver} → {latest_ver} from {}",
                             version_entry.download_url
@@ -439,7 +444,9 @@ impl AgentZeroCommand for PluginCommand {
                             &version_entry.download_url,
                             &install_root,
                             Some(&version_entry.sha256),
-                        ) {
+                        )
+                        .await
+                        {
                             Ok(installed) => {
                                 let mut state = PluginState::load(&ctx.data_dir);
                                 state.record_install(
@@ -458,7 +465,7 @@ impl AgentZeroCommand for PluginCommand {
                 }
             }
             PluginCommands::Refresh { registry_url } => {
-                let index = refresh_registry_index(&ctx.data_dir, registry_url.as_deref())?;
+                let index = refresh_registry_index(&ctx.data_dir, registry_url.as_deref()).await?;
                 println!(
                     "Registry cache refreshed ({} plugin(s))",
                     index.plugins.len()

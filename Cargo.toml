@@ -79,7 +79,7 @@ snow = "0.9"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 dashmap = "6"
 metrics = "0.24"
-metrics-exporter-prometheus = { version = "0.16", default-features = false }
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
 wasmi = "1"
 wasmi_wasi = "1"
 llama-cpp-2 = { version = "0.1", default-features = false }
