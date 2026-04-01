@@ -11,10 +11,9 @@ repository.workspace = true
 default = []
 privacy = ["agentzero-core/privacy"]
 local-model = ["dep:llama-cpp-2", "dep:hf-hub", "dep:indicatif", "dep:dirs"]
-candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:hf-hub", "dep:indicatif", "dep:dirs"]
-# GPU acceleration features — enable when candle-metal-kernels stabilizes.
-# candle-metal = ["candle", "candle-core/metal"]
-# candle-cuda = ["candle", "candle-core/cuda"]
+candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:outlines-core", "dep:hf-hub", "dep:indicatif", "dep:dirs"]
+candle-metal = ["candle", "candle-core/metal"]
+candle-cuda = ["candle", "candle-core/cuda"]
 
 [dependencies]
 anyhow.workspace = true
@@ -33,6 +32,7 @@ candle-core = { workspace = true, optional = true }
 candle-nn = { workspace = true, optional = true }
 candle-transformers = { workspace = true, optional = true }
 tokenizers = { workspace = true, optional = true }
+outlines-core = { workspace = true, optional = true }
 hf-hub = { workspace = true, optional = true }
 indicatif = { workspace = true, optional = true }
 dirs = { version = "5", optional = true }

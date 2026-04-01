@@ -38,6 +38,9 @@ pub struct CandleConfig {
     pub seed: u64,
     pub repeat_penalty: f32,
     pub device: String,
+    /// Override the auto-detected chat template. If `None`, the template is
+    /// detected from the tokenizer's special tokens at load time.
+    pub chat_template: Option<String>,
 }
 
 impl Default for CandleConfig {
@@ -52,6 +55,7 @@ impl Default for CandleConfig {
             seed: 42,
             repeat_penalty: 1.1,
             device: "auto".to_string(),
+            chat_template: None,
         }
     }
 }
@@ -67,6 +71,7 @@ struct LoadedModel {
     weights: ModelWeights,
     tokenizer: Tokenizer,
     device: Device,
+    template: local_tools::ChatTemplate,
 }
 
 // Safety: LoadedModel is only accessed behind a Mutex and within spawn_blocking.
@@ -85,22 +90,77 @@ impl CandleProvider {
 
     /// Select the appropriate Candle device based on config.
     ///
-    /// Currently only CPU is supported. Metal and CUDA support will be added
-    /// when candle-metal-kernels stabilises on crates.io (currently alpha).
-    fn select_device(preference: &str) -> Result<Device> {
+    /// When compiled with `candle-metal`, Apple Silicon GPU acceleration is used.
+    /// When compiled with `candle-cuda`, NVIDIA GPU acceleration is used.
+    /// Falls back to CPU when GPU features are not enabled or unavailable.
+    pub fn select_device(preference: &str) -> Result<Device> {
         match preference {
-            "metal" | "cuda" => {
-                warn!(
-                    device = preference,
-                    "GPU acceleration not yet available for Candle provider, falling back to CPU"
-                );
-                Ok(Device::Cpu)
+            "metal" => {
+                #[cfg(feature = "candle-metal")]
+                {
+                    let device =
+                        Device::new_metal(0).context("failed to initialize Metal device")?;
+                    info!("using Metal GPU for Candle inference");
+                    Ok(device)
+                }
+                #[cfg(not(feature = "candle-metal"))]
+                {
+                    warn!(
+                        "Metal requested but candle-metal feature not enabled, falling back to CPU"
+                    );
+                    Ok(Device::Cpu)
+                }
             }
-            _ => {
+            "cuda" => {
+                #[cfg(feature = "candle-cuda")]
+                {
+                    let device = Device::new_cuda(0).context("failed to initialize CUDA device")?;
+                    info!("using CUDA GPU for Candle inference");
+                    Ok(device)
+                }
+                #[cfg(not(feature = "candle-cuda"))]
+                {
+                    warn!(
+                        "CUDA requested but candle-cuda feature not enabled, falling back to CPU"
+                    );
+                    Ok(Device::Cpu)
+                }
+            }
+            "cpu" => {
                 info!("using CPU for Candle inference");
                 Ok(Device::Cpu)
             }
+            _ => {
+                // "auto" — try Metal, then CUDA, then CPU
+                Self::select_device_auto()
+            }
         }
+    }
+
+    /// Auto-detect the best available device: Metal > CUDA > CPU.
+    fn select_device_auto() -> Result<Device> {
+        #[cfg(feature = "candle-metal")]
+        match Device::new_metal(0) {
+            Ok(device) => {
+                info!("auto-detected Metal GPU for Candle inference");
+                return Ok(device);
+            }
+            Err(e) => {
+                warn!("Metal init failed, falling back: {e}");
+            }
+        }
+        #[cfg(feature = "candle-cuda")]
+        match Device::new_cuda(0) {
+            Ok(device) => {
+                info!("auto-detected CUDA GPU for Candle inference");
+                return Ok(device);
+            }
+            Err(e) => {
+                warn!("CUDA init failed, falling back: {e}");
+            }
+        }
+        info!("using CPU for Candle inference");
+        Ok(Device::Cpu)
     }
 
     /// Ensure the model is downloaded and loaded.
@@ -133,13 +193,23 @@ impl CandleProvider {
         // Load tokenizer from HuggingFace Hub
         let tokenizer = self.load_tokenizer()?;
 
-        eprintln!("\x1b[1;32m✓ Candle model loaded\x1b[0m ({device:?})");
-        info!("Candle model loaded successfully");
+        // Detect chat template: config override > tokenizer detection > default ChatML
+        let template = self
+            .config
+            .chat_template
+            .as_deref()
+            .and_then(local_tools::ChatTemplate::from_name)
+            .or_else(|| local_tools::ChatTemplate::detect(&tokenizer))
+            .unwrap_or(local_tools::ChatTemplate::ChatML);
+
+        eprintln!("\x1b[1;32m✓ Candle model loaded\x1b[0m ({device:?}, template={template})");
+        info!(template = %template, "Candle model loaded successfully");
 
         *guard = Some(LoadedModel {
             weights,
             tokenizer,
             device,
+            template,
         });
         Ok(())
     }
@@ -204,7 +274,7 @@ impl CandleProvider {
             );
         }
 
-        let eos_token = self.resolve_eos_token(&loaded.tokenizer);
+        let eos_token = self.resolve_eos_token(&loaded.tokenizer, loaded.template);
 
         let mut logits_processor = LogitsProcessor::from_sampling(
             self.config.seed,
@@ -302,7 +372,7 @@ impl CandleProvider {
             );
         }
 
-        let eos_token = self.resolve_eos_token(&loaded.tokenizer);
+        let eos_token = self.resolve_eos_token(&loaded.tokenizer, loaded.template);
 
         let mut logits_processor = LogitsProcessor::from_sampling(
             self.config.seed,
@@ -382,15 +452,150 @@ impl CandleProvider {
         Ok((output, input_tokens, output_tokens))
     }
 
-    /// Resolve the EOS token ID for the loaded model.
-    fn resolve_eos_token(&self, tokenizer: &Tokenizer) -> Option<u32> {
-        // Try common EOS tokens
+    /// Get the detected chat template from the loaded model.
+    fn loaded_template(&self) -> local_tools::ChatTemplate {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|l| l.template))
+            .unwrap_or(local_tools::ChatTemplate::ChatML)
+    }
+
+    /// Resolve the EOS token ID for the loaded model using the detected template.
+    fn resolve_eos_token(
+        &self,
+        tokenizer: &Tokenizer,
+        template: local_tools::ChatTemplate,
+    ) -> Option<u32> {
+        // Try the template's specific EOS token first
+        if let Some(id) = tokenizer.token_to_id(template.eos_token()) {
+            return Some(id);
+        }
+        // Fallback to common EOS tokens
         for candidate in &["<|im_end|>", "<|endoftext|>", "</s>", "<eos>"] {
             if let Some(id) = tokenizer.token_to_id(candidate) {
                 return Some(id);
             }
         }
         None
+    }
+
+    /// Retry tool call generation with constrained decoding.
+    ///
+    /// Builds a constrained decoder from the tool call schema and generates
+    /// a valid JSON tool call object.
+    fn retry_with_constrained(
+        &self,
+        tool_names: &[&str],
+    ) -> Result<Vec<agentzero_core::types::ToolUseRequest>> {
+        let schema = crate::constrained::tool_call_schema(tool_names);
+
+        let guard = self.inner.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let loaded = guard.as_ref().context("model not loaded")?;
+
+        let mut decoder =
+            crate::constrained::ConstrainedDecoder::from_schema(&schema, &loaded.tokenizer)?;
+        drop(guard); // Release lock before generation
+
+        let retry_prompt = "<|im_start|>system\nRespond with ONLY a JSON object matching: \
+            {\"name\": \"tool_name\", \"arguments\": {}}. No other text.<|im_end|>\n\
+            <|im_start|>assistant\n";
+
+        let (json_output, _, _) = self.generate_constrained(retry_prompt, 256, &mut decoder)?;
+
+        let trimmed = json_output.trim();
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
+                let arguments = v
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Object(Default::default()));
+                return Ok(vec![agentzero_core::types::ToolUseRequest {
+                    id: "constrained_tc_0".to_string(),
+                    name: name.to_string(),
+                    input: arguments,
+                }]);
+            }
+        }
+
+        Ok(vec![])
+    }
+
+    /// Generate with constrained decoding — output is guaranteed to match the schema.
+    ///
+    /// Used as a retry mechanism when unconstrained generation produces malformed
+    /// tool call JSON. The prompt should ask for ONLY the JSON object.
+    fn generate_constrained(
+        &self,
+        prompt: &str,
+        max_tokens: u32,
+        decoder: &mut crate::constrained::ConstrainedDecoder,
+    ) -> Result<(String, u64, u64)> {
+        self.ensure_loaded()?;
+
+        let mut guard = self.inner.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let loaded = guard
+            .as_mut()
+            .context("model not loaded after ensure_loaded")?;
+
+        let encoding = loaded
+            .tokenizer
+            .encode(prompt, true)
+            .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
+        let tokens = encoding.get_ids();
+        let input_tokens = tokens.len() as u64;
+
+        let eos_token = self.resolve_eos_token(&loaded.tokenizer, loaded.template);
+
+        let mut logits_processor = LogitsProcessor::from_sampling(
+            self.config.seed,
+            candle_transformers::generation::Sampling::TopKThenTopP {
+                k: 40,
+                p: self.config.top_p,
+                temperature: self.config.temperature,
+            },
+        );
+
+        // Feed prompt tokens
+        let input_tensor = Tensor::new(tokens, &loaded.device)?.unsqueeze(0)?;
+        let logits = loaded.weights.forward(&input_tensor, 0)?;
+        let logits = logits.squeeze(0)?;
+        let logits = logits.get(logits.dim(0)? - 1)?;
+
+        // Apply constraint mask before first sample
+        let masked = decoder.mask_logits(&logits, &loaded.device)?;
+        let mut next_token = logits_processor.sample(&masked)?;
+        decoder.advance(next_token);
+
+        let mut output = String::new();
+        let mut output_tokens = 0u64;
+        let mut pos = tokens.len();
+
+        for _ in 0..max_tokens {
+            if Some(next_token) == eos_token || decoder.is_finished() {
+                break;
+            }
+
+            let text = loaded
+                .tokenizer
+                .decode(&[next_token], true)
+                .map_err(|e| anyhow::anyhow!("token decode failed: {e}"))?;
+            output.push_str(&text);
+            output_tokens += 1;
+
+            let input = Tensor::new(&[next_token], &loaded.device)?.unsqueeze(0)?;
+            let logits = loaded.weights.forward(&input, pos)?;
+            let logits = logits.squeeze(0)?;
+            let logits = logits.get(logits.dim(0)? - 1)?;
+
+            // Apply constraint mask
+            let masked = decoder.mask_logits(&logits, &loaded.device)?;
+            next_token = logits_processor.sample(&masked)?;
+            decoder.advance(next_token);
+            pos += 1;
+        }
+
+        Ok((output, input_tokens, output_tokens))
     }
 }
 
@@ -408,7 +613,13 @@ impl Provider for CandleProvider {
     }
 
     async fn complete(&self, prompt: &str) -> Result<ChatResult> {
-        let formatted = format!("<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n");
+        self.ensure_loaded()?;
+        let template = self.loaded_template();
+        let user_msg = ConversationMessage::User {
+            content: prompt.to_string(),
+            parts: vec![],
+        };
+        let formatted = local_tools::format_prompt(template, &[user_msg], &[]);
 
         let (output_text, input_tokens, output_tokens) = tokio::task::block_in_place(|| {
             self.generate(&formatted, self.config.max_output_tokens)
@@ -428,7 +639,13 @@ impl Provider for CandleProvider {
         prompt: &str,
         sender: mpsc::UnboundedSender<StreamChunk>,
     ) -> Result<ChatResult> {
-        let formatted = format!("<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n");
+        self.ensure_loaded()?;
+        let template = self.loaded_template();
+        let user_msg = ConversationMessage::User {
+            content: prompt.to_string(),
+            parts: vec![],
+        };
+        let formatted = local_tools::format_prompt(template, &[user_msg], &[]);
 
         let (output_text, input_tokens, output_tokens) = tokio::task::block_in_place(|| {
             self.generate_streaming(&formatted, self.config.max_output_tokens, &sender)
@@ -449,12 +666,26 @@ impl Provider for CandleProvider {
         tools: &[ToolDefinition],
         _reasoning: &ReasoningConfig,
     ) -> Result<ChatResult> {
-        let prompt = local_tools::format_chatml_prompt(messages, tools);
+        self.ensure_loaded()?;
+        let template = self.loaded_template();
+        let prompt = local_tools::format_prompt(template, messages, tools);
 
         let (raw_output, input_tokens, output_tokens) =
             tokio::task::block_in_place(|| self.generate(&prompt, self.config.max_output_tokens))?;
 
-        let (text, tool_calls) = local_tools::parse_tool_calls(&raw_output);
+        let (text, mut tool_calls) = local_tools::parse_tool_calls(&raw_output);
+
+        // If the model attempted a tool call but produced malformed JSON,
+        // retry with constrained decoding to guarantee valid output.
+        if tool_calls.is_empty() && local_tools::looks_like_failed_tool_call(&raw_output) {
+            debug!("malformed tool call detected, retrying with constrained decoding");
+            let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+            if let Ok(retry_calls) =
+                tokio::task::block_in_place(|| self.retry_with_constrained(&tool_names))
+            {
+                tool_calls = retry_calls;
+            }
+        }
 
         let stop_reason = if tool_calls.is_empty() {
             StopReason::EndTurn
@@ -484,14 +715,27 @@ impl Provider for CandleProvider {
         _reasoning: &ReasoningConfig,
         sender: mpsc::UnboundedSender<StreamChunk>,
     ) -> Result<ChatResult> {
-        let prompt = local_tools::format_chatml_prompt(messages, tools);
+        self.ensure_loaded()?;
+        let template = self.loaded_template();
+        let prompt = local_tools::format_prompt(template, messages, tools);
 
         let (raw_output, input_tokens, output_tokens) = tokio::task::block_in_place(|| {
             self.generate_streaming(&prompt, self.config.max_output_tokens, &sender)
         })?;
 
         // Parse tool calls from accumulated output
-        let (text, tool_calls) = local_tools::parse_tool_calls(&raw_output);
+        let (text, mut tool_calls) = local_tools::parse_tool_calls(&raw_output);
+
+        // Constrained retry on malformed tool calls
+        if tool_calls.is_empty() && local_tools::looks_like_failed_tool_call(&raw_output) {
+            debug!("malformed tool call detected in streaming output, retrying with constrained decoding");
+            let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+            if let Ok(retry_calls) =
+                tokio::task::block_in_place(|| self.retry_with_constrained(&tool_names))
+            {
+                tool_calls = retry_calls;
+            }
+        }
 
         let stop_reason = if tool_calls.is_empty() {
             StopReason::EndTurn

@@ -39,6 +39,8 @@ telemetry = ["agentzero-cli/telemetry"]
 document-tools = ["agentzero-cli/document-tools"]
 local-model = ["agentzero-cli/local-model"]
 candle = ["agentzero-cli/candle"]
+candle-metal = ["agentzero-cli/candle-metal"]
+candle-cuda = ["agentzero-cli/candle-cuda"]
 config-ui = ["agentzero-cli/config-ui"]
 
 [lib]

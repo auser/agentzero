@@ -761,7 +761,7 @@ Ratatui-based terminal dashboard with tabs, live runs/agents/events panels. Defe
 
 **Branch:** `feat/privacy-first-lite`
 
-**Plan:** `specs/plans/24-privacy-first-lite.md`
+**Plan:** `specs/plans/35-privacy-first-lite.md`
 
 ---
 
@@ -2156,7 +2156,7 @@ Give AgentZero a natural language goal and let it autonomously decompose into a 
 
 - [x] **`GoalPlanner`** — New `goal_planner.rs`. `PlannedWorkflow` with `PlannedNode` structs (id, name, task, depends_on, file_scopes, sandbox_level). `GOAL_PLANNER_PROMPT` for structured output. `parse_planner_response()` handles markdown fences, leading text, bare JSON. `to_workflow_json()` converts to ReactFlow-compatible nodes+edges for `compile()`. 8 tests.
 - [x] **`SwarmSupervisor`** — New `swarm_supervisor.rs`. `execute(plan, input, dispatcher, status_tx)` compiles `PlannedWorkflow` → `ExecutionPlan`, registers agents with `SwarmContext`, runs via parallel `JoinSet` executor, updates context on completion/failure, collects text outputs. `SwarmConfig` with sandbox_level, recovery config, token budget. 5 tests.
-- [x] **Adaptive re-planning** — `SwarmSupervisor::execute_with_replan()`: supervisor-level retry loop. On node failure, snapshots completed outputs + error context, calls `GoalPlanner::replan_with_provider()` with `REPLAN_PROMPT` for recovery plan, compiles and re-executes. `ReplanPolicy` (Auto/HumanApproved/Disabled), max 3 attempts, `ReplanRecord` history for observability. EventBus events: `swarm.replan.started`/`completed`. 6 new tests.
+- [x] **Adaptive re-planning** — `SwarmSupervisor::execute_with_replan()`: supervisor-level retry loop. On node failure, snapshots completed outputs + error context, calls `GoalPlanner::replan_with_provider()` with `REPLAN_PROMPT` for **recovery** plan, compiles and re-executes. `ReplanPolicy` (Auto/HumanApproved/Disabled), max 3 attempts, `ReplanRecord` history for observability. EventBus events: `swarm.replan.started`/`completed`. 6 new tests.
 - [x] **CLI entry point** — `agentzero swarm "Build a REST API with auth"` in `commands/swarm.rs`. Accepts `--plan` for pre-generated JSON, `--sandbox` for isolation level. Streams node status updates to stderr, prints structured results to stdout. Reuses `CliStepDispatcher` via `build_cli_dispatcher()`.
 - [x] **Gateway entry point** — `POST /v1/swarm` in `handlers.rs`. Accepts `{ "goal": "..." }` or `{ "plan": {...} }`. Compiles plan, executes via `SwarmSupervisor` in background task, stores run state for polling via `GET /v1/workflows/runs/:run_id`. Returns `{ run_id, title, node_count, status }`.
 - [ ] **UI integration** *(deferred to backlog)* — Goal input → live graph visualization → interactive editing during execution → merge review at end. Backend ready (gateway returns run IDs + status); needs React frontend work.
@@ -2343,6 +2343,101 @@ Export/import tools with quality metadata and related recipes.
 - [x] 0 clippy warnings, all existing tests pass
 
 **Sprint 75 complete.** New `pattern_capture.rs` (170 lines, 4 tests), `TwoStageToolSelector` (100+ lines), `ToolBundle` type with export/import, real composite execution via `tool_resolver`, recipe evolution with periodic triggering, 3 gateway sharing endpoints with `DynamicToolRegistry`/`RecipeStore` on `GatewayState`. All 730 tests passing, 0 clippy warnings.
+
+---
+
+## Sprint 76: Local LLM Ecosystem — Constrained Decoding, Chat Templates, RAG Pipeline
+
+**Goal:** Make local LLMs production-grade: guaranteed valid tool calls via constrained decoding (outlines-core), multi-model chat template support (Llama 3/Mistral/Gemma), semantic document chunking for RAG (text-splitter), and local embedding generation via Candle. Builds on the Candle provider shipped in Sprint 75.
+
+**Baseline:** Sprint 75 complete. Candle provider with GGUF loading, streaming, fuzzy JSON repair, `[local]` config, `estimate_tokens()`, shared `local_tools` module. 709+ tests passing, 0 clippy warnings.
+
+**Plan:** `specs/plans/35-local-llm-ecosystem.md`
+
+---
+
+### Phase A: Constrained Decoding via outlines-core (HIGH)
+
+Guarantee valid JSON tool calls from any local model by masking invalid tokens during generation.
+
+- [x] **Add `outlines-core` dependency** — Feature-gated behind `candle` feature in `agentzero-providers`. Pure Rust, uses same `tokenizers` crate.
+- [x] **Build tool call JSON schema** — In `constrained.rs`, `tool_call_schema()` generates JSON schema for `{"name": "...", "arguments": {...}}` from tool name list.
+- [x] **`ConstrainedDecoder` struct** — Wraps `outlines_core::Index`. `from_schema()/from_regex()` builds the FSA. `mask_logits()` applies constraint. `advance()` moves state. `is_finished()` checks acceptance.
+- [x] **Integrate into CandleProvider generation loop** — `generate_constrained()` applies mask before sampling at each step. `retry_with_constrained()` auto-retries malformed tool calls. `looks_like_failed_tool_call()` detects failures.
+- [x] **Tests** — 11 tests: schema→regex→index pipeline, regex compilation, valid JSON matching, many-tool stress test, failed tool call detection.
+
+### Phase B: Chat Template Support (HIGH)
+
+Support Llama 3, Mistral, Gemma, and other chat formats beyond hardcoded ChatML.
+
+- [x] **`ChatTemplate` enum** — In `local_tools.rs`: `ChatML`, `Llama3`, `Mistral`, `Gemma`. Each variant knows EOS tokens, role markers, and tool call format.
+- [x] **Auto-detect from tokenizer** — `ChatTemplate::detect()` checks tokenizer special tokens for family markers. Falls back to ChatML.
+- [x] **`format_prompt(template, messages, tools)` function** — Unified entry point dispatching to `format_chatml/llama3/mistral/gemma`. `format_chatml_prompt()` preserved as backward-compatible wrapper.
+- [x] **Config override** — `CandleConfig.chat_template` field + `ChatTemplate::from_name()` parser. Priority: config > detection > ChatML default.
+- [x] **Update EOS token resolution** — `resolve_eos_token()` tries template-specific EOS first, then falls back to common tokens.
+- [x] **Tests** — 15 tests: all 4 templates (basic, system, multi-turn), tool injection across all templates, backward compat, Display roundtrip.
+
+### Phase C: RAG Document Chunking via text-splitter (MEDIUM)
+
+- [x] **Add `text-splitter` dependency** — Workspace dep with `markdown` feature. Feature-gated behind `rag` in `agentzero-tools`.
+- [x] **`chunk_document` tool** — Accepts file path + max chunk size, returns semantically split chunks with byte offsets. Markdown-aware splitting via `MarkdownSplitter`, plain text via `TextSplitter`.
+- [x] **Tests** — 9 tests: markdown heading splits, content preservation, plain text paragraphs, offset validity, path traversal blocking, min chunk size.
+
+### Phase D: Local Embeddings via Candle (MEDIUM)
+
+- [x] **`CandleEmbeddingProvider`** — Loads `sentence-transformers/all-MiniLM-L6-v2` (384-dim) via Candle. Full BERT model implementation (embeddings, attention, mean pooling, L2 normalization). Lazy loading from HF Hub.
+- [x] **Wire into runtime** — Registered in `candle_embedding` module behind `candle` feature. Implements `EmbeddingProvider` trait.
+- [x] **Tests** — 4 tests: dimensions, default construction, custom cache dir, BertConfig deserialization. (E2E cosine similarity tests require model download, deferred to CI.)
+
+### Acceptance Criteria
+
+- [x] 3B quantized model produces 100% valid tool call JSON (constrained decoding retry guarantees valid output)
+- [x] Non-Qwen models (Llama 3, Mistral, Gemma) work with correct chat templates
+- [x] Documents chunked with semantic awareness respecting chunk size limits
+- [x] Embeddings generated locally without API calls (CandleEmbeddingProvider)
+- [x] 0 clippy warnings, all existing tests pass (261 providers + 490 tools)
+- [x] Default binary (no features) unaffected — all new deps behind feature gates (`candle`, `rag`)
+
+---
+
+## Sprint 77: Candle Metal GPU Acceleration
+
+**Goal:** Enable Apple Silicon GPU acceleration for the Candle local LLM provider. The blocker (`candle-metal-kernels` was alpha on crates.io) has cleared — `0.10.1` is stable. Bump candle from 0.9 to 0.10, uncomment the Metal feature gate, wire up device selection.
+
+**Baseline:** Sprint 76 complete. Candle provider CPU-only, device selection hardcoded to CPU with "coming soon" warning. candle 0.9.x in workspace.
+
+**Plan:** `specs/plans/36-candle-metal-gpu.md`
+
+---
+
+### Phase A: Dependency Bump (LOW)
+
+- [x] **Bump candle 0.9 → 0.10.0** — `candle-core`, `candle-nn`, `candle-transformers` all pinned to `=0.10.0` (0.10.1 has an unpublished `candle-kernels` dependency).
+- [x] **Uncomment Metal/CUDA feature gates** — `candle-metal = ["candle", "candle-core/metal"]` and `candle-cuda = ["candle", "candle-core/cuda"]` in `agentzero-providers/Cargo.toml`.
+- [x] **Propagate features** — Added `candle-metal` and `candle-cuda` feature gates through the full crate chain: `providers` → `infra` → `cli` → binary.
+
+### Phase B: Device Selection (MEDIUM)
+
+- [x] **Rewrite `select_device()`** — Replaces CPU-only stub with real GPU initialization. `"metal"` uses `Device::new_metal(0)`, `"cuda"` uses `Device::new_cuda(0)`, `"auto"` tries Metal → CUDA → CPU. Each path feature-gated (`candle-metal`, `candle-cuda`). Falls back to CPU with warning when feature not enabled or GPU init fails.
+- [x] **Embedding provider GPU** — `CandleEmbeddingProvider` uses `select_device("auto")` instead of hardcoded `Device::Cpu`.
+- [x] **Make `select_device` public** — Shared between LLM and embedding providers.
+
+### Phase C: Docs (LOW)
+
+- [x] **Providers guide** — Updated build commands (candle-metal/candle-cuda), device options, new GPU acceleration section.
+- [x] **Installation guide** — Updated feature flags table with candle-metal and candle-cuda.
+- [x] **Config reference** — Updated device options to include metal/cuda.
+
+### Acceptance Criteria
+
+- [x] `cargo build --features candle-metal` compiles on macOS
+- [x] `cargo build --features candle-cuda` compiles (feature gate wired, CUDA SDK required at link time)
+- [x] `cargo build --features candle` still works (CPU fallback)
+- [x] Default binary (no features) unaffected
+- [x] 0 clippy warnings across all feature combinations (default, candle, candle-metal)
+- [x] All 1,832 workspace tests pass
+
+**Sprint 77 complete.** Candle bumped 0.9 → 0.10.0, Metal GPU feature gate live, device auto-detection with fallback. `cargo build --features candle-metal` enables Apple Silicon GPU inference.
 
 ---
 

@@ -92,6 +92,9 @@ pub struct RuntimeExecution {
     pub recipe_store: Option<std::sync::Arc<std::sync::Mutex<crate::tool_recipes::RecipeStore>>>,
     /// Optional pattern capture for AUTO-LEARN (novel tool combo detection).
     pub pattern_capture: Option<std::sync::Arc<crate::pattern_capture::PatternCapture>>,
+    /// Optional local embedding provider for cosine-similarity re-ranking.
+    pub embedding_provider:
+        Option<std::sync::Arc<dyn agentzero_core::embedding::EmbeddingProvider>>,
 }
 
 struct AuditHookSink {
@@ -548,7 +551,23 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             )),
             _ => None,
         },
+        embedding_provider: build_embedding_provider(),
     })
+}
+
+/// Build a local embedding provider when the `candle` feature is active.
+fn build_embedding_provider(
+) -> Option<std::sync::Arc<dyn agentzero_core::embedding::EmbeddingProvider>> {
+    #[cfg(feature = "candle")]
+    {
+        Some(std::sync::Arc::new(
+            agentzero_providers::candle_embedding::CandleEmbeddingProvider::new(),
+        ))
+    }
+    #[cfg(not(feature = "candle"))]
+    {
+        None
+    }
 }
 
 /// Convert a guardrails config mode string to [`GuardEntry`] entries.
@@ -1112,6 +1131,7 @@ fn build_candle_from_config(
                 seed: local.seed,
                 repeat_penalty: local.repeat_penalty,
                 device: local.device.clone(),
+                chat_template: local.chat_template.clone(),
             },
         )
     }
@@ -1678,6 +1698,7 @@ mod tests {
             tool_evolver: None,
             recipe_store: None,
             pattern_capture: None,
+            embedding_provider: None,
         }
     }
 

@@ -32,7 +32,7 @@ default_temperature = 0.7                        # 0.0 – 2.0
 # temperature = 0.7                              # sampling temperature
 # top_p = 0.9                                    # nucleus sampling
 # max_output_tokens = 2048                       # max tokens per response
-# device = "auto"                                # "auto" | "cpu"
+# device = "auto"                                # "auto" | "cpu" | "metal" | "cuda"
 
 # ─── Memory ──────────────────────────────────────────────
 [memory]
