@@ -2400,6 +2400,47 @@ Support Llama 3, Mistral, Gemma, and other chat formats beyond hardcoded ChatML.
 
 ---
 
+## Sprint 77: Candle Metal GPU Acceleration
+
+**Goal:** Enable Apple Silicon GPU acceleration for the Candle local LLM provider. The blocker (`candle-metal-kernels` was alpha on crates.io) has cleared — `0.10.1` is stable. Bump candle from 0.9 to 0.10, uncomment the Metal feature gate, wire up device selection.
+
+**Baseline:** Sprint 76 complete. Candle provider CPU-only, device selection hardcoded to CPU with "coming soon" warning. candle 0.9.x in workspace.
+
+**Plan:** `specs/plans/36-candle-metal-gpu.md`
+
+---
+
+### Phase A: Dependency Bump (LOW)
+
+- [x] **Bump candle 0.9 → 0.10.0** — `candle-core`, `candle-nn`, `candle-transformers` all pinned to `=0.10.0` (0.10.1 has an unpublished `candle-kernels` dependency).
+- [x] **Uncomment Metal/CUDA feature gates** — `candle-metal = ["candle", "candle-core/metal"]` and `candle-cuda = ["candle", "candle-core/cuda"]` in `agentzero-providers/Cargo.toml`.
+- [x] **Propagate features** — Added `candle-metal` and `candle-cuda` feature gates through the full crate chain: `providers` → `infra` → `cli` → binary.
+
+### Phase B: Device Selection (MEDIUM)
+
+- [x] **Rewrite `select_device()`** — Replaces CPU-only stub with real GPU initialization. `"metal"` uses `Device::new_metal(0)`, `"cuda"` uses `Device::new_cuda(0)`, `"auto"` tries Metal → CUDA → CPU. Each path feature-gated (`candle-metal`, `candle-cuda`). Falls back to CPU with warning when feature not enabled or GPU init fails.
+- [x] **Embedding provider GPU** — `CandleEmbeddingProvider` uses `select_device("auto")` instead of hardcoded `Device::Cpu`.
+- [x] **Make `select_device` public** — Shared between LLM and embedding providers.
+
+### Phase C: Docs (LOW)
+
+- [x] **Providers guide** — Updated build commands (candle-metal/candle-cuda), device options, new GPU acceleration section.
+- [x] **Installation guide** — Updated feature flags table with candle-metal and candle-cuda.
+- [x] **Config reference** — Updated device options to include metal/cuda.
+
+### Acceptance Criteria
+
+- [x] `cargo build --features candle-metal` compiles on macOS
+- [x] `cargo build --features candle-cuda` compiles (feature gate wired, CUDA SDK required at link time)
+- [x] `cargo build --features candle` still works (CPU fallback)
+- [x] Default binary (no features) unaffected
+- [x] 0 clippy warnings across all feature combinations (default, candle, candle-metal)
+- [x] All 1,832 workspace tests pass
+
+**Sprint 77 complete.** Candle bumped 0.9 → 0.10.0, Metal GPU feature gate live, device auto-detection with fallback. `cargo build --features candle-metal` enables Apple Silicon GPU inference.
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

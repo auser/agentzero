@@ -90,22 +90,77 @@ impl CandleProvider {
 
     /// Select the appropriate Candle device based on config.
     ///
-    /// Currently only CPU is supported. Metal and CUDA support will be added
-    /// when candle-metal-kernels stabilises on crates.io (currently alpha).
-    fn select_device(preference: &str) -> Result<Device> {
+    /// When compiled with `candle-metal`, Apple Silicon GPU acceleration is used.
+    /// When compiled with `candle-cuda`, NVIDIA GPU acceleration is used.
+    /// Falls back to CPU when GPU features are not enabled or unavailable.
+    pub fn select_device(preference: &str) -> Result<Device> {
         match preference {
-            "metal" | "cuda" => {
-                warn!(
-                    device = preference,
-                    "GPU acceleration not yet available for Candle provider, falling back to CPU"
-                );
-                Ok(Device::Cpu)
+            "metal" => {
+                #[cfg(feature = "candle-metal")]
+                {
+                    let device =
+                        Device::new_metal(0).context("failed to initialize Metal device")?;
+                    info!("using Metal GPU for Candle inference");
+                    Ok(device)
+                }
+                #[cfg(not(feature = "candle-metal"))]
+                {
+                    warn!(
+                        "Metal requested but candle-metal feature not enabled, falling back to CPU"
+                    );
+                    Ok(Device::Cpu)
+                }
             }
-            _ => {
+            "cuda" => {
+                #[cfg(feature = "candle-cuda")]
+                {
+                    let device = Device::new_cuda(0).context("failed to initialize CUDA device")?;
+                    info!("using CUDA GPU for Candle inference");
+                    Ok(device)
+                }
+                #[cfg(not(feature = "candle-cuda"))]
+                {
+                    warn!(
+                        "CUDA requested but candle-cuda feature not enabled, falling back to CPU"
+                    );
+                    Ok(Device::Cpu)
+                }
+            }
+            "cpu" => {
                 info!("using CPU for Candle inference");
                 Ok(Device::Cpu)
             }
+            _ => {
+                // "auto" — try Metal, then CUDA, then CPU
+                Self::select_device_auto()
+            }
         }
+    }
+
+    /// Auto-detect the best available device: Metal > CUDA > CPU.
+    fn select_device_auto() -> Result<Device> {
+        #[cfg(feature = "candle-metal")]
+        match Device::new_metal(0) {
+            Ok(device) => {
+                info!("auto-detected Metal GPU for Candle inference");
+                return Ok(device);
+            }
+            Err(e) => {
+                warn!("Metal init failed, falling back: {e}");
+            }
+        }
+        #[cfg(feature = "candle-cuda")]
+        match Device::new_cuda(0) {
+            Ok(device) => {
+                info!("auto-detected CUDA GPU for Candle inference");
+                return Ok(device);
+            }
+            Err(e) => {
+                warn!("CUDA init failed, falling back: {e}");
+            }
+        }
+        info!("using CPU for Candle inference");
+        Ok(Device::Cpu)
     }
 
     /// Ensure the model is downloaded and loaded.

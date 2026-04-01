@@ -93,7 +93,8 @@ impl CandleEmbeddingProvider {
         )
         .context("failed to parse config.json")?;
 
-        let device = Device::Cpu;
+        let device =
+            crate::candle_provider::CandleProvider::select_device("auto").unwrap_or(Device::Cpu);
 
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&[weights_path], candle_core::DType::F32, &device)

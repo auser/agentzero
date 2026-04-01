@@ -111,10 +111,17 @@ AgentZero includes a local LLM provider powered by [Candle](https://github.com/h
 
 ### Setup
 
-1. Build with the `candle` feature:
+1. Build with the `candle` feature (CPU), or `candle-metal` for Apple Silicon GPU acceleration:
 
 ```bash
+# CPU only
 cargo build --release --features candle
+
+# Apple Silicon GPU (Metal) — recommended on Mac
+cargo build --release --features candle-metal
+
+# NVIDIA GPU (CUDA)
+cargo build --release --features candle-cuda
 ```
 
 2. Configure:
@@ -139,7 +146,7 @@ n_ctx = 8192              # context window (tokens)
 temperature = 0.7         # 0.0 = greedy, higher = more random
 top_p = 0.9               # nucleus sampling
 max_output_tokens = 2048  # max tokens per response
-device = "auto"           # "auto" | "cpu" (Metal/CUDA coming soon)
+device = "auto"           # "auto" | "cpu" | "metal" | "cuda"
 ```
 
 ### Custom GGUF models
@@ -166,12 +173,15 @@ The Candle provider streams tokens as they are generated — you see output incr
 
 The Candle provider includes an in-process tokenizer, enabling accurate token estimation for context window management. The `estimate_tokens()` method is available on the `Provider` trait for context overflow prevention.
 
+### GPU acceleration
+
+Build with `candle-metal` (Apple Silicon) or `candle-cuda` (NVIDIA) for GPU-accelerated inference. Set `device = "auto"` (default) to auto-detect, or `"metal"` / `"cuda"` to force a specific backend. Falls back to CPU if the GPU feature is not enabled or unavailable.
+
 ### Limitations
 
 - The default 3B model is best for simple tasks — coding assistance, file operations, basic research
 - For complex multi-step pipelines, consider using a larger model or a cloud provider
 - Vision/image inputs are not supported
-- GPU acceleration (Metal/CUDA) is coming soon — currently runs on CPU
 
 ## Built-in Local Model (legacy)
 
