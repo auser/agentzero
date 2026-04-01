@@ -94,9 +94,9 @@ fn build_env_filter(base_level: &str, modules: &HashMap<String, String>) -> EnvF
 
 fn verbosity_to_level(verbosity: u8) -> &'static str {
     match verbosity {
-        0 | 1 => "error",
-        2 => "info",
-        3 => "debug",
+        0 => "error",
+        1 => "info",
+        2 => "debug",
         _ => "trace",
     }
 }

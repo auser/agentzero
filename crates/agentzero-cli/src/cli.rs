@@ -1542,6 +1542,11 @@ pub enum ChannelCommands {
     },
     /// Start configured channels.
     Start,
+    /// Send a test message through a channel.
+    Test {
+        /// Channel name to test. If omitted, prompts interactively or reads AGENTZERO_CHANNEL.
+        name: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

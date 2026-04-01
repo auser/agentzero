@@ -251,12 +251,26 @@ fn normalize_base_url(config: &mut AgentZeroConfig) {
 }
 
 fn resolve_local_provider_defaults(config: &mut AgentZeroConfig) {
+    let url_empty_or_stale = config.provider.base_url == DEFAULT_CLOUD_BASE_URL
+        || config.provider.base_url.trim().is_empty();
+
+    // Local/in-process providers: resolve from local provider catalog.
     if let Some(meta) = local_provider_meta(&config.provider.kind) {
-        let is_default_url = config.provider.base_url == DEFAULT_CLOUD_BASE_URL
-            || config.provider.base_url.trim().is_empty();
-        if is_default_url {
+        if url_empty_or_stale {
             config.provider.base_url = meta.default_base_url.to_string();
         }
+        return;
+    }
+
+    // Cloud providers with no explicit base_url: resolve from well-known defaults.
+    if url_empty_or_stale {
+        let default_url = match config.provider.kind.as_str() {
+            "openrouter" => "https://openrouter.ai/api",
+            "anthropic" => "https://api.anthropic.com",
+            "openai" => "https://api.openai.com",
+            _ => return,
+        };
+        config.provider.base_url = default_url.to_string();
     }
 }
 

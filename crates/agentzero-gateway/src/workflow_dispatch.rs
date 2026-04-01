@@ -158,6 +158,7 @@ impl StepDispatcher for GatewayStepDispatcher {
             agent_store: self.agent_store.clone(),
             // Workflow agents are ephemeral — no persistent memory needed.
             memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
+            memory_window_override: None,
         };
 
         let output = run_agent_once(req).await?;
@@ -306,6 +307,7 @@ impl AgentEndpoint for WorkflowAgentEndpoint {
             conversation_id: None,
             agent_store: self.agent_store.clone(),
             memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
+            memory_window_override: None,
         };
 
         let output = run_agent_once(req).await?;

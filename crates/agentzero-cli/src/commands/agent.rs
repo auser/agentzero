@@ -32,6 +32,15 @@ impl AgentZeroCommand for AgentCommand {
         }
 
         let agent_store = build_agent_store(ctx);
+        // One-shot `-m` commands are stateless: only load conversation memory
+        // when the user has explicitly switched to an active conversation.
+        let conversation_id = super::conversation::read_active_conversation(ctx);
+        let memory_window_override = if conversation_id.is_some() {
+            None // use config default
+        } else {
+            Some(0) // no memory for one-shot commands
+        };
+
         let output = run_agent_once(RunAgentRequest {
             workspace_root: ctx.workspace_root.clone(),
             config_path: ctx.config_path.clone(),
@@ -40,9 +49,10 @@ impl AgentZeroCommand for AgentCommand {
             model_override: opts.model,
             profile_override: opts.profile,
             extra_tools: vec![],
-            conversation_id: super::conversation::read_active_conversation(ctx),
+            conversation_id,
             agent_store,
             memory_override: None,
+            memory_window_override,
         })
         .await?;
 
@@ -67,6 +77,12 @@ fn build_agent_store(
 async fn run_streaming(ctx: &CommandContext, opts: AgentOptions) -> anyhow::Result<()> {
     let message = opts.message.clone();
     let agent_store = build_agent_store(ctx);
+    let conversation_id = super::conversation::read_active_conversation(ctx);
+    let memory_window_override = if conversation_id.is_some() {
+        None
+    } else {
+        Some(0)
+    };
     let execution = build_runtime_execution(RunAgentRequest {
         workspace_root: ctx.workspace_root.clone(),
         config_path: ctx.config_path.clone(),
@@ -75,9 +91,10 @@ async fn run_streaming(ctx: &CommandContext, opts: AgentOptions) -> anyhow::Resu
         model_override: opts.model,
         profile_override: opts.profile,
         extra_tools: vec![],
-        conversation_id: super::conversation::read_active_conversation(ctx),
+        conversation_id,
         agent_store,
         memory_override: None,
+        memory_window_override,
     })
     .await?;
 

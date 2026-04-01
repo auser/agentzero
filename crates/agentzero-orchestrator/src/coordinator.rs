@@ -103,6 +103,9 @@ pub struct Coordinator {
     /// When set, agents receive a clone of this `Arc` instead of each opening
     /// their own SQLite connection — eliminating file-level lock contention.
     shared_memory: Option<Arc<dyn agentzero_core::MemoryStore>>,
+    /// Agent IDs that were registered from the swarm config (not the store).
+    /// Store sync must not deregister these.
+    config_agent_ids: std::collections::HashSet<String>,
 }
 
 /// Configuration for periodic agent store synchronization.
@@ -133,6 +136,7 @@ impl Coordinator {
             presence: None,
             store_sync: None,
             shared_memory: None,
+            config_agent_ids: std::collections::HashSet::new(),
         }
     }
 
@@ -156,6 +160,12 @@ impl Coordinator {
     /// When set, agents receive a clone of this `Arc` via `memory_override`
     /// instead of each opening their own SQLite connection. This eliminates
     /// file-level lock contention when running multiple persistent agents.
+    /// Mark agent IDs as config-originated so store sync won't remove them.
+    pub fn with_config_agent_ids(mut self, ids: std::collections::HashSet<String>) -> Self {
+        self.config_agent_ids = ids;
+        self
+    }
+
     pub fn with_shared_memory(mut self, store: Arc<dyn agentzero_core::MemoryStore>) -> Self {
         self.shared_memory = Some(store);
         self
@@ -341,6 +351,7 @@ impl Coordinator {
                 .shared_memory
                 .as_ref()
                 .map(|m| Box::new(Arc::clone(m)) as Box<dyn agentzero_core::MemoryStore>),
+            memory_window_override: None,
         };
 
         let exec = build_runtime_execution(req).await?;
@@ -424,10 +435,11 @@ impl Coordinator {
         }
 
         // Deregister agents that are no longer active or were deleted.
+        // Skip config-originated agents — they weren't loaded from the store.
         let registered_ids: Vec<String> = self.agents.read().await.keys().cloned().collect();
 
         for id in registered_ids {
-            if !desired_ids.contains(&id) {
+            if !desired_ids.contains(&id) && !self.config_agent_ids.contains(&id) {
                 self.deregister_agent(&id).await;
             }
         }
@@ -575,6 +587,11 @@ impl Coordinator {
                     .with_correlation(correlation_id)
                     .with_boundary(&msg.privacy_boundary);
 
+                    tracing::info!(
+                        topic = %event.topic,
+                        subscribers = bus.subscriber_count(),
+                        "publishing channel message to bus"
+                    );
                     if let Err(e) = bus.publish(event).await {
                         tracing::error!(error = %e, "failed to publish channel message to bus");
                     }
@@ -623,12 +640,26 @@ impl Coordinator {
 
             // Extract origin info for later channel reply.
             if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) {
+                let channel = payload["channel"].as_str().unwrap_or_default().to_string();
+                let reply_target = payload["reply_target"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+
+                // Send an acknowledgment back to the originating channel.
+                // Skip ack for internal/local channels (cli, gateway, webhook, test).
+                let is_external = !channel.is_empty()
+                    && !matches!(channel.as_str(), "cli" | "gateway" | "webhook" | "test");
+                if is_external {
+                    if let Some(ch) = self.channels.get(&channel) {
+                        let ack = pick_ack_message();
+                        let _ = ch.send(&SendMessage::new(ack, &*reply_target)).await;
+                    }
+                }
+
                 let origin = CorrelationOrigin {
-                    channel: payload["channel"].as_str().unwrap_or_default().to_string(),
-                    reply_target: payload["reply_target"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
+                    channel,
+                    reply_target,
                 };
                 self.correlation_store
                     .lock()
@@ -637,6 +668,12 @@ impl Coordinator {
             }
 
             let content = extract_content(&event.payload);
+            tracing::info!(
+                topic = %event.topic,
+                correlation_id = %correlation_id,
+                content_len = content.len(),
+                "routing channel message"
+            );
 
             // Check pipelines first
             if let Some(pipeline) = self.match_pipeline(&content) {
@@ -677,13 +714,15 @@ impl Coordinator {
                     if ps.is_alive(&d.id).await {
                         alive_descriptors.push(d);
                     } else {
-                        tracing::debug!(agent = %d.id, "skipping dead agent in routing");
+                        tracing::warn!(agent = %d.id, "skipping dead agent in routing");
                     }
                 }
                 descriptors = alive_descriptors;
             }
+            tracing::info!(candidates = descriptors.len(), "routing to agents");
             match self.router.route(&content, &descriptors).await {
                 Ok(Some(agent_id)) => {
+                    tracing::info!(agent = %agent_id, "routed message to agent");
                     let agents = self.agents.read().await;
                     if let Some(worker) = agents.get(&agent_id) {
                         // Privacy check
@@ -712,7 +751,7 @@ impl Coordinator {
                     }
                 }
                 Ok(None) => {
-                    tracing::debug!(content = %content, "no agent matched for message");
+                    tracing::warn!(content = %content, "no agent matched for message");
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "routing failed");
@@ -933,8 +972,10 @@ async fn agent_worker(
     tracing::info!(agent = %descriptor.id, "agent worker started");
 
     // Register with presence store if available.
+    // Use a long TTL — the worker heartbeats on every task start/end,
+    // so it only goes stale if the process truly dies.
     if let Some(ref ps) = presence {
-        ps.register(&descriptor.id, Duration::from_secs(30)).await;
+        ps.register(&descriptor.id, Duration::from_secs(3600)).await;
     }
 
     while let Some(task) = task_rx.recv().await {
@@ -1099,6 +1140,25 @@ async fn agent_worker(
 
     status.store(STATUS_STOPPED, Ordering::Relaxed);
     tracing::info!(agent = %descriptor.id, "agent worker stopped");
+}
+
+/// Pick a random acknowledgment message for channel replies.
+fn pick_ack_message() -> &'static str {
+    const ACKS: &[&str] = &[
+        "Received! Working on it...",
+        "Got it! One moment...",
+        "On it!",
+        "At your command! Thinking...",
+        "Copy that! Let me work on this...",
+        "Roger! Processing...",
+        "Understood! Give me a sec...",
+    ];
+    let idx = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as usize
+        % ACKS.len();
+    ACKS[idx]
 }
 
 // ─── Pipeline Executor ──────────────────────────────────────────────────────

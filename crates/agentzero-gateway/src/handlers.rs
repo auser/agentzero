@@ -312,6 +312,7 @@ fn build_agent_request(
         conversation_id: None,
         agent_store: None,
         memory_override: None,
+        memory_window_override: None,
     })
 }
 
@@ -717,6 +718,7 @@ async fn handle_text_message(
         conversation_id: None,
         agent_store: agent_store.clone(),
         memory_override: None,
+        memory_window_override: None,
     };
     let execution = match build_runtime_execution(req).await {
         Ok(exec) => exec,

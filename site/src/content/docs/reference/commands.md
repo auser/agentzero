@@ -1623,6 +1623,15 @@ agentzero channel remove                         # Interactive prompt
 agentzero channel remove telegram                # Remove by name
 ```
 
+#### `channel test`
+
+Send a test message through a configured channel to verify connectivity.
+
+```bash
+agentzero channel test telegram                  # Test by name
+agentzero channel test                           # Interactive prompt
+```
+
 ### `integrations`
 
 Browse and validate available third-party integrations.

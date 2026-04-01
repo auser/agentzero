@@ -157,6 +157,9 @@ pub(crate) struct ChatRequest {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<OpenAiToolDef>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    tool_choice: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -244,7 +247,20 @@ struct OpenAiToolCall {
 #[derive(Debug, Deserialize)]
 struct OpenAiFunctionCall {
     name: String,
+    /// Accepts both stringified JSON (OpenAI) and raw JSON objects (Ollama).
+    #[serde(deserialize_with = "deserialize_arguments")]
     arguments: String,
+}
+
+fn deserialize_arguments<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::String(s) => Ok(s),
+        other => serde_json::to_string(&other).map_err(serde::de::Error::custom),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -359,6 +375,7 @@ impl Provider for OpenAiCompatibleProvider {
                 reasoning_effort,
                 stream: false,
                 tools: None,
+                tool_choice: None,
             };
 
             log_request("openai-compat", &url, &self.model);
@@ -464,6 +481,7 @@ impl Provider for OpenAiCompatibleProvider {
                 reasoning_effort: None,
                 stream: true,
                 tools: None,
+                tool_choice: None,
             };
 
             log_request("openai-compat", &url, &self.model);
@@ -581,6 +599,7 @@ impl Provider for OpenAiCompatibleProvider {
                 } else {
                     Some(openai_tools)
                 },
+                tool_choice: Some("auto".to_string()),
             };
 
             log_request("openai-compat", &url, &self.model);
@@ -703,6 +722,7 @@ impl Provider for OpenAiCompatibleProvider {
                 } else {
                     Some(openai_tools)
                 },
+                tool_choice: Some("auto".to_string()),
             };
 
             log_request("openai-compat", &url, &self.model);
@@ -1556,6 +1576,7 @@ mod tests {
             reasoning_effort: None,
             stream: true,
             tools: None,
+            tool_choice: None,
         };
         let json = serde_json::to_value(&req).expect("should serialize");
         assert_eq!(json["stream"], true);
@@ -1569,6 +1590,7 @@ mod tests {
             reasoning_effort: None,
             stream: false,
             tools: None,
+            tool_choice: None,
         };
         let json = serde_json::to_value(&req).expect("should serialize");
         assert!(json.get("stream").is_none());
@@ -1775,6 +1797,7 @@ mod tests {
             reasoning_effort: None,
             stream: false,
             tools: Some(tools),
+            tool_choice: Some("auto".to_string()),
         };
         let json = serde_json::to_value(&req).expect("should serialize");
         let tools_arr = json["tools"].as_array().expect("tools should be array");
@@ -1790,6 +1813,7 @@ mod tests {
             reasoning_effort: None,
             stream: false,
             tools: None,
+            tool_choice: None,
         };
         let json = serde_json::to_value(&req).expect("should serialize");
         assert!(json.get("tools").is_none());
@@ -1832,6 +1856,46 @@ mod tests {
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].name, "web_search");
         assert_eq!(result.stop_reason, Some(StopReason::ToolUse));
+    }
+
+    #[tokio::test]
+    async fn complete_with_tools_ollama_object_arguments() {
+        // Ollama returns arguments as a JSON object, not a stringified JSON.
+        let body = r#"{"choices":[{
+            "message":{
+                "content":"",
+                "tool_calls":[{
+                    "id":"call_123",
+                    "type":"function",
+                    "function":{"name":"content_search","arguments":{"pattern":"TODO","path":"."}}
+                }]
+            },
+            "finish_reason":"tool_calls"
+        }]}"#;
+        let transport = Arc::new(ScriptedTransport::new(vec![ok_response(body)]));
+        let provider = OpenAiCompatibleProvider::with_transport(
+            "https://example.invalid".to_string(),
+            "key".to_string(),
+            "model".to_string(),
+            transport.clone(),
+        );
+
+        let messages = vec![ConversationMessage::user("Find TODOs".to_string())];
+        let tools = vec![ToolDefinition {
+            name: "content_search".to_string(),
+            description: "Search file contents".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+
+        let result = provider
+            .complete_with_tools(&messages, &tools, &ReasoningConfig::default())
+            .await
+            .expect("should parse Ollama object arguments");
+
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "content_search");
+        assert_eq!(result.tool_calls[0].input["pattern"], "TODO");
+        assert_eq!(result.tool_calls[0].input["path"], ".");
     }
 
     #[tokio::test]

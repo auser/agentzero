@@ -12,7 +12,7 @@ categories = ["command-line-utilities", "development-tools"]
 autobins = false
 
 [features]
-default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "tls-rustls", "document-tools", "tools-full"]
+default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "tls-rustls", "document-tools", "tools-full", "candle", "channels-standard"]
 tools-core = ["agentzero-cli/tools-core"]
 tools-extended = ["tools-core", "agentzero-cli/tools-extended"]
 tools-full = ["tools-extended", "agentzero-cli/tools-full"]

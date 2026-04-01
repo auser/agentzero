@@ -153,19 +153,15 @@ pub fn build_provider_with_transport(
         "builtin" => build_builtin_provider(model),
         #[cfg(not(feature = "local-model"))]
         "builtin" => {
-            eprintln!(
-                "\x1b[1;31merror:\x1b[0m provider 'builtin' requires the 'local-model' feature."
-            );
-            eprintln!("       Rebuild with: cargo run --features local-model");
-            std::process::exit(1);
+            tracing::error!("provider 'builtin' requires the 'local-model' feature — falling back to OpenAI-compatible stub");
+            Box::new(OpenAiCompatibleProvider::new(base_url, api_key, model))
         }
         #[cfg(feature = "candle")]
         "candle" => build_candle_provider(candle_provider::CandleConfig::default()),
         #[cfg(not(feature = "candle"))]
         "candle" => {
-            eprintln!("\x1b[1;31merror:\x1b[0m provider 'candle' requires the 'candle' feature.");
-            eprintln!("       Rebuild with: cargo run --features candle");
-            std::process::exit(1);
+            tracing::error!("provider 'candle' requires the 'candle' feature — falling back to OpenAI-compatible stub");
+            Box::new(OpenAiCompatibleProvider::new(base_url, api_key, model))
         }
         "anthropic" => Box::new(AnthropicProvider::with_config(
             base_url, api_key, model, transport,

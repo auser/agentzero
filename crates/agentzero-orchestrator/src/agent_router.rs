@@ -128,7 +128,19 @@ impl AgentRouter {
             }
         }
 
-        best.map(|(a, _)| a.id.clone())
+        if let Some((a, _)) = best {
+            return Some(a.id.clone());
+        }
+
+        // No keyword match — fall back to the first agent with empty keywords
+        // (a catch-all / default agent), or the first agent if only one exists.
+        if agents.len() == 1 {
+            return Some(agents[0].id.clone());
+        }
+        agents
+            .iter()
+            .find(|a| a.keywords.is_empty())
+            .map(|a| a.id.clone())
     }
 }
 

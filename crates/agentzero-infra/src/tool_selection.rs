@@ -34,8 +34,15 @@ impl ToolSelector for AllToolSelector {
 // KeywordToolSelector — TF-IDF / keyword matching
 // ---------------------------------------------------------------------------
 
+/// Core tools always included by the keyword selector so local models
+/// always have access to basic filesystem and search capabilities.
+const KEYWORD_ALWAYS_INCLUDE: &[&str] = &["read_file", "content_search", "glob_search", "shell"];
+
 /// Selects tools by keyword overlap between the task description and tool
 /// name + description. Uses normalized TF-IDF scoring. No LLM call needed.
+///
+/// Core tools (`read_file`, `content_search`, `glob_search`, `shell`) are
+/// always included regardless of score so the model can always explore files.
 pub struct KeywordToolSelector {
     /// Maximum number of tools to return (0 = return all matches above threshold).
     pub max_tools: usize,
@@ -146,10 +153,21 @@ impl ToolSelector for KeywordToolSelector {
             scored.truncate(self.max_tools);
         }
 
-        Ok(scored
+        let mut selected: Vec<String> = scored
             .iter()
             .map(|(i, _)| available_tools[*i].name.clone())
-            .collect())
+            .collect();
+
+        // Ensure core tools are always present so the model can explore files.
+        for &core in KEYWORD_ALWAYS_INCLUDE {
+            if !selected.contains(&core.to_string())
+                && available_tools.iter().any(|t| t.name == core)
+            {
+                selected.push(core.to_string());
+            }
+        }
+
+        Ok(selected)
     }
 }
 

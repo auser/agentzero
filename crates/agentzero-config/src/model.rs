@@ -57,39 +57,39 @@ impl AgentZeroConfig {
         if self.provider.kind.trim().is_empty() {
             return Err(anyhow!("provider.kind must not be empty"));
         }
-        // In-process providers run locally — no base_url needed.
-        if self.provider.kind == "builtin" || self.provider.kind == "candle" {
-            return Ok(());
-        }
-        if self.provider.base_url.trim().is_empty() {
-            return Err(anyhow!("provider.base_url must not be empty"));
-        }
-        let provider_url = Url::parse(&self.provider.base_url)
-            .map_err(|_| anyhow!("provider.base_url must be a valid URL"))?;
-        if !matches!(provider_url.scheme(), "http" | "https") {
-            return Err(anyhow!("provider.base_url scheme must be http or https"));
-        }
-        if is_local_provider(&self.provider.kind) {
-            let is_localhost = matches!(
-                provider_url.host_str(),
-                Some("localhost") | Some("127.0.0.1") | Some("0.0.0.0") | Some("::1")
-            );
-            if !is_localhost {
-                if self.privacy.mode == "local_only" || self.privacy.enforce_local_provider {
-                    return Err(anyhow!(
-                        "privacy mode '{}' requires localhost base_url for local provider '{}', \
-                         but got '{}'. Use http://localhost:<port> or change your provider.",
-                        self.privacy.mode,
+        // In-process providers (builtin, candle) run locally — skip URL validation.
+        let in_process = self.provider.kind == "builtin" || self.provider.kind == "candle";
+        if !in_process {
+            if self.provider.base_url.trim().is_empty() {
+                return Err(anyhow!("provider.base_url must not be empty"));
+            }
+            let provider_url = Url::parse(&self.provider.base_url)
+                .map_err(|_| anyhow!("provider.base_url must be a valid URL"))?;
+            if !matches!(provider_url.scheme(), "http" | "https") {
+                return Err(anyhow!("provider.base_url scheme must be http or https"));
+            }
+            if is_local_provider(&self.provider.kind) {
+                let is_localhost = matches!(
+                    provider_url.host_str(),
+                    Some("localhost") | Some("127.0.0.1") | Some("0.0.0.0") | Some("::1")
+                );
+                if !is_localhost {
+                    if self.privacy.mode == "local_only" || self.privacy.enforce_local_provider {
+                        return Err(anyhow!(
+                            "privacy mode '{}' requires localhost base_url for local provider '{}', \
+                             but got '{}'. Use http://localhost:<port> or change your provider.",
+                            self.privacy.mode,
+                            self.provider.kind,
+                            self.provider.base_url,
+                        ));
+                    }
+                    tracing::warn!(
+                        "provider '{}' is a local provider but base_url '{}' is not localhost \
+                         — did you mean to use a different provider?",
                         self.provider.kind,
                         self.provider.base_url,
-                    ));
+                    );
                 }
-                tracing::warn!(
-                    "provider '{}' is a local provider but base_url '{}' is not localhost \
-                     — did you mean to use a different provider?",
-                    self.provider.kind,
-                    self.provider.base_url,
-                );
             }
         }
         if self.provider.model.trim().is_empty() {
@@ -500,9 +500,9 @@ impl Default for TransportSettings {
 impl Default for ProviderConfig {
     fn default() -> Self {
         Self {
-            kind: "openrouter".to_string(),
-            base_url: "https://openrouter.ai/api".to_string(),
-            model: "anthropic/claude-sonnet-4-6".to_string(),
+            kind: "candle".to_string(),
+            base_url: String::new(),
+            model: "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF".to_string(),
             default_temperature: 0.7,
             provider_api: None,
             model_support_vision: None,

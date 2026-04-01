@@ -225,6 +225,26 @@ pub fn build_channel_instance(
             }
             Ok(Some(Arc::new(channel)))
         }
+        #[cfg(feature = "channel-signal")]
+        "signal" => {
+            let base_url = config
+                .base_url
+                .as_ref()
+                .ok_or("signal requires base_url (signal-cli REST API endpoint)")?;
+            let phone_number = config
+                .channel_id
+                .as_ref()
+                .ok_or("signal requires channel_id (your phone number in E.164 format)")?;
+            let mut channel = super::SignalChannel::new(
+                base_url.clone(),
+                phone_number.clone(),
+                config.allowed_users.clone(),
+            );
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 30)?);
+            }
+            Ok(Some(Arc::new(channel)))
+        }
         _ => Ok(None),
     }
 }
@@ -445,6 +465,28 @@ fn register_one(
                 account_sid.clone(),
                 auth_token.clone(),
                 from_number.clone(),
+                config.allowed_users.clone(),
+            );
+            if config.has_proxy() {
+                channel = channel.with_client(build_channel_client(config, 30)?);
+            }
+            registry.register(Arc::new(channel));
+            Ok(true)
+        }
+
+        #[cfg(feature = "channel-signal")]
+        "signal" => {
+            let base_url = config
+                .base_url
+                .as_ref()
+                .ok_or("signal requires base_url (signal-cli REST API endpoint)")?;
+            let phone_number = config
+                .channel_id
+                .as_ref()
+                .ok_or("signal requires channel_id (your phone number in E.164 format)")?;
+            let mut channel = super::SignalChannel::new(
+                base_url.clone(),
+                phone_number.clone(),
                 config.allowed_users.clone(),
             );
             if config.has_proxy() {

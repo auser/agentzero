@@ -179,6 +179,12 @@ fn single_required_string_field(schema: &serde_json::Value) -> Option<String> {
     }
     let field_name = required[0].as_str()?;
     let properties = schema.get("properties")?.as_object()?;
+    // Only extract the bare string when this is truly a single-property schema.
+    // Schemas with optional fields (e.g. content_search with pattern + path + glob)
+    // must be passed as full JSON so the tool can parse all fields.
+    if properties.len() != 1 {
+        return None;
+    }
     let field_schema = properties.get(field_name)?;
     if field_schema.get("type")?.as_str()? == "string" {
         Some(field_name.to_string())
@@ -1540,6 +1546,12 @@ impl Agent {
                             let input_str = match prepare_tool_input(&**tool, &tc.input) {
                                 Ok(s) => s,
                                 Err(validation_err) => {
+                                    warn!(
+                                        tool = %tc.name,
+                                        error = %validation_err,
+                                        iteration,
+                                        "tool input validation failed"
+                                    );
                                     failure_streak += 1;
                                     tool_results.push(ToolResultMessage {
                                         tool_use_id: tc.id.clone(),
@@ -1580,6 +1592,12 @@ impl Agent {
                                     }
                                 }
                                 Err(e) => {
+                                    warn!(
+                                        tool = %tc.name,
+                                        error = %e,
+                                        iteration,
+                                        "tool execution failed"
+                                    );
                                     failure_streak += 1;
                                     ToolResultMessage {
                                         tool_use_id: tc.id.clone(),
@@ -4723,6 +4741,21 @@ mod tests {
                 "count": { "type": "integer" }
             },
             "required": ["count"]
+        });
+        assert_eq!(single_required_string_field(&schema), None);
+    }
+
+    #[test]
+    fn single_required_string_field_none_for_optional_properties() {
+        // content_search: one required field but multiple optional properties
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "pattern": { "type": "string" },
+                "path": { "type": "string" },
+                "glob": { "type": "string" }
+            },
+            "required": ["pattern"]
         });
         assert_eq!(single_required_string_field(&schema), None);
     }

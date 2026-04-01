@@ -120,9 +120,9 @@ struct OnboardConfig {
 impl Default for OnboardConfig {
     fn default() -> Self {
         Self {
-            provider: "openrouter".to_string(),
-            base_url: "https://openrouter.ai/api/v1".to_string(),
-            model: "anthropic/claude-sonnet-4-6".to_string(),
+            provider: "candle".to_string(),
+            base_url: String::new(),
+            model: "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF".to_string(),
             memory_path: default_memory_path(),
             allowed_root: ".".to_string(),
             allowed_commands: vec![
@@ -351,7 +351,7 @@ fn resolve_optional<S: OnboardOptionSpec>(
 fn parse_provider(raw: &str) -> anyhow::Result<String> {
     let value = raw.trim().to_ascii_lowercase();
     if value.is_empty() {
-        return Ok("openrouter".to_string());
+        return Ok("candle".to_string());
     }
     if let Some(descriptor) = find_provider(&value) {
         return Ok(descriptor.id.to_string());

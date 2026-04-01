@@ -48,6 +48,9 @@ pub struct RunAgentRequest {
     /// SQLite/Turso memory store and uses this instead. Useful for ephemeral
     /// workflow agents that don't need persistent conversation memory.
     pub memory_override: Option<Box<dyn MemoryStore>>,
+    /// Override memory_window_size from config. When `Some(0)`, no prior
+    /// conversation history is loaded (useful for stateless one-shot commands).
+    pub memory_window_override: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -227,7 +230,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
     let key_for_dynamic_tools = key.clone();
 
     let primary_provider: Box<dyn agentzero_core::Provider> = if config.provider.kind == "candle" {
-        build_candle_from_config(&config)
+        build_candle_from_config(&config)?
     } else if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
         agentzero_providers::build_provider_with_privacy(
             &config.provider.kind,
@@ -418,7 +421,9 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         config: AgentConfig {
             max_tool_iterations: config.agent.max_tool_iterations,
             request_timeout_ms: config.agent.request_timeout_ms,
-            memory_window_size: config.agent.memory_window_size,
+            memory_window_size: req
+                .memory_window_override
+                .unwrap_or(config.agent.memory_window_size),
             max_prompt_chars: config.agent.max_prompt_chars,
             parallel_tools: config.agent.parallel_tools,
             gated_tools: config.autonomy.always_ask.iter().cloned().collect(),
@@ -475,18 +480,38 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             },
             model_supports_tool_use: caps.map_or(true, |c| c.tool_use),
             model_supports_vision: caps.is_some_and(|c| c.vision),
-            system_prompt: config.agent.system_prompt.clone(),
+            system_prompt: config.agent.system_prompt.clone().or_else(|| {
+                if is_local_provider(&config.provider.kind) {
+                    Some(
+                        "You are a helpful assistant running inside a workspace directory. \
+                         You have full access to the project files through your tools. \
+                         ALWAYS use your tools to answer questions — never say you cannot \
+                         access files or ask the user to provide information you can look up. \
+                         For any task involving the project, start by using glob_search to \
+                         discover files, content_search to find patterns, and read_file to \
+                         read contents. Act autonomously."
+                            .to_string(),
+                    )
+                } else {
+                    None
+                }
+            }),
             privacy_boundary: config.privacy.mode.clone(),
             tool_boundaries: config.security.tool_boundaries.clone(),
             cost_calculator,
             tool_timeout_ms: config.agent.tool_timeout_ms,
-            tool_selection: config
-                .agent
-                .tool_selection
-                .clone()
-                .unwrap_or_default()
-                .parse()
-                .unwrap_or(agentzero_core::ToolSelectionMode::All),
+            tool_selection: {
+                let explicit = config.agent.tool_selection.clone().unwrap_or_default();
+                if explicit.is_empty() && is_local_provider(&config.provider.kind) {
+                    // Local models struggle with large tool sets — auto-enable
+                    // keyword-based tool selection to keep the prompt manageable.
+                    agentzero_core::ToolSelectionMode::Keyword
+                } else {
+                    explicit
+                        .parse()
+                        .unwrap_or(agentzero_core::ToolSelectionMode::All)
+                }
+            },
             tool_selection_model: config.agent.tool_selection_model.clone(),
             summarization: agentzero_core::SummarizationConfig {
                 enabled: config.agent.summarization.enabled,
@@ -543,12 +568,16 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf(),
-        tool_selector: match config.agent.tool_selection.as_deref().unwrap_or("all") {
-            "keyword" => Some(Box::new(
-                crate::tool_selection::KeywordToolSelector::default(),
-            )),
-            // "ai" selector requires a provider — wired at a higher level.
-            _ => None,
+        tool_selector: {
+            let mode = config.agent.tool_selection.as_deref().unwrap_or("");
+            if mode == "keyword" || (mode.is_empty() && is_local_provider(&config.provider.kind)) {
+                Some(Box::new(
+                    crate::tool_selection::KeywordToolSelector::default(),
+                ))
+            } else {
+                // "ai" selector requires a provider — wired at a higher level.
+                None
+            }
         },
         source_channel: None,
         sender_id: None,
@@ -1130,11 +1159,11 @@ fn resolve_api_key_for_provider(config_path: &Path, provider_kind: &str) -> anyh
 /// When compiled without the `candle` feature, prints an error and exits.
 fn build_candle_from_config(
     config: &agentzero_config::AgentZeroConfig,
-) -> Box<dyn agentzero_core::Provider> {
+) -> anyhow::Result<Box<dyn agentzero_core::Provider>> {
     #[cfg(feature = "candle")]
     {
         let local = &config.local;
-        agentzero_providers::build_candle_provider(
+        Ok(agentzero_providers::build_candle_provider(
             agentzero_providers::candle_provider::CandleConfig {
                 model: local.model.clone(),
                 filename: local.filename.clone(),
@@ -1147,14 +1176,15 @@ fn build_candle_from_config(
                 device: local.device.clone(),
                 chat_template: local.chat_template.clone(),
             },
-        )
+        ))
     }
     #[cfg(not(feature = "candle"))]
     {
         let _ = config;
-        eprintln!("\x1b[1;31merror:\x1b[0m provider 'candle' requires the 'candle' feature.");
-        eprintln!("       Rebuild with: cargo run --features candle");
-        std::process::exit(1);
+        anyhow::bail!(
+            "provider 'candle' requires the 'candle' feature. \
+             Rebuild with: cargo build --features candle"
+        );
     }
 }
 

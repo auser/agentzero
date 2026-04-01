@@ -475,6 +475,27 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
                 let channels = Arc::get_mut(&mut state.channels)
                     .expect("channels registry should be uniquely owned at this point");
                 channels.register(gw_channel.clone());
+
+                // Register configured channels (Signal, Telegram, etc.) so the
+                // coordinator spawns listen() loops for inbound messages.
+                if let Some(ref cp) = state.config_path {
+                    tracing::info!(path = %cp.display(), "loading channel instance configs");
+                    let instance_configs = load_channel_instance_configs(cp);
+                    let errors = agentzero_channels::register_configured_channels(
+                        channels,
+                        &instance_configs,
+                    );
+                    for (name, err) in &errors {
+                        tracing::warn!(channel = %name, error = %err, "failed to register channel");
+                    }
+                    let registered: Vec<_> = instance_configs
+                        .keys()
+                        .filter(|k| !errors.iter().any(|(n, _)| n == k.as_str()))
+                        .collect();
+                    if !registered.is_empty() {
+                        tracing::info!(?registered, "registered configured channels");
+                    }
+                }
             }
             state = state.with_gateway_channel(gw_channel);
 
@@ -787,6 +808,47 @@ async fn force_shutdown_signal() {
         () = ctrl_c => {},
         () = terminate => {},
     }
+}
+
+/// Load `[channels.<name>]` sections from the TOML config file into
+/// `ChannelInstanceConfig` values so the gateway can register configured
+/// channels (Signal, Telegram, etc.) into the coordinator.
+fn load_channel_instance_configs(
+    config_path: &Arc<std::path::PathBuf>,
+) -> std::collections::HashMap<String, agentzero_channels::ChannelInstanceConfig> {
+    let path = config_path.as_ref();
+    if !path.exists() {
+        return std::collections::HashMap::new();
+    }
+    let raw = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to read config for channel registration");
+            return std::collections::HashMap::new();
+        }
+    };
+    let table: toml::Value = match toml::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to parse config for channel registration");
+            return std::collections::HashMap::new();
+        }
+    };
+    let Some(channels) = table.get("channels").and_then(|v| v.as_table()) else {
+        return std::collections::HashMap::new();
+    };
+    let mut out = std::collections::HashMap::new();
+    for (name, value) in channels {
+        match value.clone().try_into() {
+            Ok(cfg) => {
+                out.insert(name.clone(), cfg);
+            }
+            Err(e) => {
+                tracing::warn!(channel = %name, error = %e, "bad channel config, skipping");
+            }
+        }
+    }
+    out
 }
 
 /// Build a memory store from gateway config for transcript retrieval.

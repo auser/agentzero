@@ -149,16 +149,32 @@ fn set_config_value(
     Ok(())
 }
 
-/// Infer a TOML value from a raw string: bool, integer, float, or string.
+/// Infer a TOML value from a raw string: bool, integer, float, JSON array/object, or string.
 fn infer_toml_value(raw: &str) -> toml::Value {
     match raw {
         "true" => toml::Value::Boolean(true),
         "false" => toml::Value::Boolean(false),
         _ => {
+            // Only parse as integer when the round-trip matches the original
+            // string. This prevents `+15203609215` from being silently coerced
+            // to the integer `15203609215`.
             if let Ok(i) = raw.parse::<i64>() {
-                toml::Value::Integer(i)
-            } else if let Ok(f) = raw.parse::<f64>() {
-                toml::Value::Float(f)
+                if i.to_string() == raw {
+                    return toml::Value::Integer(i);
+                }
+            }
+            if let Ok(f) = raw.parse::<f64>() {
+                if raw.contains('.') || raw.contains('e') || raw.contains('E') {
+                    return toml::Value::Float(f);
+                }
+            }
+            if raw.starts_with('[') || raw.starts_with('{') {
+                // Try parsing as JSON array/object → convert to TOML value.
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(raw) {
+                    json_to_toml(&json)
+                } else {
+                    toml::Value::String(raw.to_string())
+                }
             } else {
                 toml::Value::String(raw.to_string())
             }
@@ -166,13 +182,41 @@ fn infer_toml_value(raw: &str) -> toml::Value {
     }
 }
 
+/// Convert a `serde_json::Value` into a `toml::Value`.
+fn json_to_toml(json: &serde_json::Value) -> toml::Value {
+    match json {
+        serde_json::Value::Null => toml::Value::String(String::new()),
+        serde_json::Value::Bool(b) => toml::Value::Boolean(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                toml::Value::Integer(i)
+            } else if let Some(f) = n.as_f64() {
+                toml::Value::Float(f)
+            } else {
+                toml::Value::String(n.to_string())
+            }
+        }
+        serde_json::Value::String(s) => toml::Value::String(s.clone()),
+        serde_json::Value::Array(arr) => toml::Value::Array(arr.iter().map(json_to_toml).collect()),
+        serde_json::Value::Object(map) => {
+            let mut table = toml::map::Map::new();
+            for (k, v) in map {
+                table.insert(k.clone(), json_to_toml(v));
+            }
+            toml::Value::Table(table)
+        }
+    }
+}
+
 fn toml_schema_template() -> &'static str {
     r#"# agentzero.toml schema template
 
+# Default: runs locally via Candle (no API key needed).
+# For Ollama: kind = "ollama", model = "llama3.1:8b"
+# For cloud:  kind = "openrouter", model = "anthropic/claude-sonnet-4-6"
 [provider]
-kind = "openrouter"
-base_url = "https://openrouter.ai/api/v1"
-model = "anthropic/claude-sonnet-4-6"
+kind = "candle"
+model = "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF"
 default_temperature = 0.7
 
 [memory]
@@ -298,6 +342,43 @@ mod tests {
             infer_toml_value("hello"),
             toml::Value::String("hello".to_string())
         );
+    }
+
+    #[test]
+    fn infer_toml_value_preserves_plus_prefixed_numbers_as_string() {
+        // Phone numbers like +15203609215 must stay as strings.
+        assert_eq!(
+            infer_toml_value("+15203609215"),
+            toml::Value::String("+15203609215".to_string())
+        );
+        // Negative numbers should still parse as integers.
+        assert_eq!(infer_toml_value("-5"), toml::Value::Integer(-5));
+    }
+
+    #[test]
+    fn infer_toml_value_parses_json_array() {
+        let val = infer_toml_value(r#"["ls","grep","find"]"#);
+        let expected = toml::Value::Array(vec![
+            toml::Value::String("ls".to_string()),
+            toml::Value::String("grep".to_string()),
+            toml::Value::String("find".to_string()),
+        ]);
+        assert_eq!(val, expected);
+    }
+
+    #[test]
+    fn infer_toml_value_parses_json_object() {
+        let val = infer_toml_value(r#"{"enabled":true,"level":"info"}"#);
+        let mut expected = toml::map::Map::new();
+        expected.insert("enabled".to_string(), toml::Value::Boolean(true));
+        expected.insert("level".to_string(), toml::Value::String("info".to_string()));
+        assert_eq!(val, toml::Value::Table(expected));
+    }
+
+    #[test]
+    fn infer_toml_value_invalid_json_falls_back_to_string() {
+        let val = infer_toml_value("[not valid json");
+        assert_eq!(val, toml::Value::String("[not valid json".to_string()));
     }
 
     #[test]

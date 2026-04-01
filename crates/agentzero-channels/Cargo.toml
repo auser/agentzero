@@ -68,6 +68,7 @@ channels-standard = [
     "channel-slack",
     "channel-mattermost",
     "channel-matrix",
+    "channel-signal",
     "channel-email",
     "channel-irc",
     "channel-nostr",

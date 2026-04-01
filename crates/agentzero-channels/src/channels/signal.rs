@@ -80,9 +80,16 @@ mod impl_ {
             &self,
             tx: tokio::sync::mpsc::Sender<ChannelMessage>,
         ) -> anyhow::Result<()> {
+            // URL-encode the phone number so `+` isn't misinterpreted.
+            let encoded_number = self.phone_number.replace('+', "%2B");
+            tracing::info!(
+                phone = %self.phone_number,
+                base_url = %self.base_url,
+                "signal listener started"
+            );
             loop {
                 let url =
-                    self.api_url(&format!("/v1/receive/{}", self.phone_number));
+                    self.api_url(&format!("/v1/receive/{}", encoded_number));
                 let resp = match self.client.get(&url).send().await {
                     Ok(r) => r,
                     Err(e) => {
@@ -91,31 +98,40 @@ mod impl_ {
                         continue;
                     }
                 };
+                let status = resp.status();
                 let json: serde_json::Value = match resp.json().await {
                     Ok(j) => j,
                     Err(e) => {
-                        tracing::error!(error = %e, "signal parse failed");
+                        tracing::error!(status = %status, error = %e, "signal parse failed");
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         continue;
                     }
                 };
                 if let Some(messages) = json.as_array() {
+                    if !messages.is_empty() {
+                        tracing::info!(count = messages.len(), "signal received messages");
+                    }
                     for msg in messages {
                         let envelope = &msg["envelope"];
                         let sender =
                             envelope["sourceNumber"].as_str().unwrap_or("");
                         if sender.is_empty() {
+                            tracing::warn!(raw = %msg, "signal message has no sourceNumber, skipping");
                             continue;
                         }
                         if !helpers::is_user_allowed(sender, &self.allowed_users) {
+                            tracing::warn!(sender = %sender, "signal sender not in allowlist, skipping");
                             continue;
                         }
                         let text = envelope["dataMessage"]["message"]
                             .as_str()
+                            .or_else(|| envelope["syncMessage"]["sentMessage"]["message"].as_str())
                             .unwrap_or("");
                         if text.is_empty() {
+                            tracing::warn!(sender = %sender, envelope = %envelope, "signal message has no text content, skipping");
                             continue;
                         }
+                        tracing::info!(sender = %sender, content_len = text.len(), "signal message accepted, dispatching");
                         let channel_msg = ChannelMessage {
                             id: helpers::new_message_id(),
                             sender: sender.to_string(),
@@ -128,9 +144,12 @@ mod impl_ {
                             attachments: Vec::new(),
                         };
                         if tx.send(channel_msg).await.is_err() {
+                            tracing::error!("signal relay channel closed, exiting listener");
                             return Ok(());
                         }
                     }
+                } else {
+                    tracing::warn!(raw = %json, "signal response is not an array");
                 }
                 tokio::time::sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
             }
