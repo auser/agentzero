@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -28,6 +29,9 @@ pub struct WebSearchConfig {
     pub jina_api_key: Option<String>,
     pub timeout_secs: u64,
     pub user_agent: String,
+    pub fallback_providers: Vec<String>,
+    pub retries_per_provider: u32,
+    pub retry_backoff_ms: u64,
 }
 
 impl Default for WebSearchConfig {
@@ -37,11 +41,25 @@ impl Default for WebSearchConfig {
             brave_api_key: None,
             jina_api_key: None,
             timeout_secs: DEFAULT_TIMEOUT_SECS,
-            user_agent: "AgentZero/1.0".to_string(),
+            user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".to_string(),
+            fallback_providers: Vec::new(),
+            retries_per_provider: 2,
+            retry_backoff_ms: 500,
         }
     }
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct WebSearchSchema {
+    /// The search query
+    query: String,
+}
+
+#[tool(
+    name = "web_search",
+    description = "Search the web using DuckDuckGo, Brave, or Jina and return a summary of results."
+)]
 pub struct WebSearchTool {
     client: reqwest::Client,
     config: WebSearchConfig,
@@ -246,65 +264,123 @@ fn clean_html(s: &str) -> String {
 #[async_trait]
 impl Tool for WebSearchTool {
     fn name(&self) -> &'static str {
-        "web_search"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Search the web using DuckDuckGo, Brave, or Jina and return a summary of results."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query"
-                }
-            },
-            "required": ["query"]
-        }))
+        Some(WebSearchSchema::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
-        let req: WebSearchInput =
-            serde_json::from_str(input).context("web_search expects JSON: {\"query\": \"...\"}")?;
+        // Be forgiving: try JSON first, then treat the whole input as a query string.
+        let req: WebSearchInput = match serde_json::from_str(input) {
+            Ok(r) => r,
+            Err(_) => {
+                // The model may send a bare string, or {"search": "..."}, etc.
+                // Extract anything that looks like a query.
+                let query = if let Ok(val) = serde_json::from_str::<serde_json::Value>(input) {
+                    // Try common field names the model might use.
+                    val.get("query")
+                        .or_else(|| val.get("search"))
+                        .or_else(|| val.get("q"))
+                        .or_else(|| val.get("search_query"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string()
+                } else {
+                    // Bare string input — use it directly.
+                    input.trim().trim_matches('"').to_string()
+                };
+                WebSearchInput {
+                    query,
+                    max_results: default_max_results(),
+                    provider: None,
+                }
+            }
+        };
 
         if req.query.trim().is_empty() {
             return Err(anyhow!("query must not be empty"));
         }
 
         let max = req.max_results.clamp(1, MAX_RESULTS_CAP);
-        let provider = req.provider.as_deref().unwrap_or(&self.config.provider);
+        let primary = req.provider.as_deref().unwrap_or(&self.config.provider);
 
         let brave_env_key = std::env::var("BRAVE_API_KEY").ok();
         let jina_env_key = std::env::var("JINA_API_KEY").ok();
 
-        let output = match provider {
-            "brave" => {
-                let key = self
-                    .config
-                    .brave_api_key
-                    .as_deref()
-                    .or(brave_env_key.as_deref())
-                    .ok_or_else(|| {
-                        anyhow!("brave_api_key is required for Brave search provider")
-                    })?;
-                self.search_brave(&req.query, max, key).await?
+        // Build provider chain: primary + fallbacks.
+        let mut providers = vec![primary.to_string()];
+        for fb in &self.config.fallback_providers {
+            if fb != primary {
+                providers.push(fb.clone());
             }
-            "jina" => {
-                let key = self
-                    .config
-                    .jina_api_key
-                    .as_deref()
-                    .or(jina_env_key.as_deref())
-                    .ok_or_else(|| anyhow!("jina_api_key is required for Jina search provider"))?;
-                self.search_jina(&req.query, max, key).await?
-            }
-            _ => self.search_duckduckgo(&req.query, max).await?,
-        };
+        }
 
-        Ok(ToolResult { output })
+        let retries = self.config.retries_per_provider.max(1) as usize;
+        let backoff_ms = self.config.retry_backoff_ms;
+        let mut last_err = None;
+
+        for provider in &providers {
+            for attempt in 0..retries {
+                let result = match provider.as_str() {
+                    "brave" => {
+                        let key = self
+                            .config
+                            .brave_api_key
+                            .as_deref()
+                            .or(brave_env_key.as_deref())
+                            .ok_or_else(|| {
+                                anyhow!("brave_api_key is required for Brave search provider")
+                            });
+                        match key {
+                            Ok(k) => self.search_brave(&req.query, max, k).await,
+                            Err(e) => Err(e),
+                        }
+                    }
+                    "jina" => {
+                        let key = self
+                            .config
+                            .jina_api_key
+                            .as_deref()
+                            .or(jina_env_key.as_deref())
+                            .ok_or_else(|| {
+                                anyhow!("jina_api_key is required for Jina search provider")
+                            });
+                        match key {
+                            Ok(k) => self.search_jina(&req.query, max, k).await,
+                            Err(e) => Err(e),
+                        }
+                    }
+                    _ => self.search_duckduckgo(&req.query, max).await,
+                };
+
+                match result {
+                    Ok(output) => return Ok(ToolResult { output }),
+                    Err(e) => {
+                        tracing::warn!(
+                            provider = %provider,
+                            attempt = attempt + 1,
+                            error = %e,
+                            "web search failed, retrying"
+                        );
+                        last_err = Some(e);
+                        if attempt + 1 < retries {
+                            tokio::time::sleep(Duration::from_millis(
+                                backoff_ms * (attempt as u64 + 1),
+                            ))
+                            .await;
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| anyhow!("all web search providers failed")))
     }
 }
 
@@ -323,13 +399,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn web_search_rejects_invalid_json() {
-        let tool = WebSearchTool::default();
-        let err = tool
+    async fn web_search_accepts_bare_string_as_query() {
+        // Verify bare strings are accepted as queries (forgiving parsing)
+        // without making a real network call. We use a Brave provider with
+        // a dummy API key — it will fail at the API level (not parsing).
+        let tool = WebSearchTool::new(WebSearchConfig {
+            provider: "brave".to_string(),
+            brave_api_key: Some("test-key-not-real".to_string()),
+            timeout_secs: 1,
+            ..Default::default()
+        });
+        let result = tool
             .execute("not json", &ToolContext::new(".".to_string()))
-            .await
-            .expect_err("invalid JSON should fail");
-        assert!(err.to_string().contains("web_search expects JSON"));
+            .await;
+        // Either succeeds or fails with a network error, NOT a parse error.
+        if let Err(e) = &result {
+            assert!(
+                !e.to_string().contains("web_search expects JSON"),
+                "bare string should not be rejected as invalid JSON"
+            );
+        }
     }
 
     #[tokio::test]

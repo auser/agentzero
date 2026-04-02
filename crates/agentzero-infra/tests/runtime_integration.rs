@@ -53,6 +53,13 @@ fn static_execution(response: &str) -> RuntimeExecution {
         source_channel: None,
         sender_id: None,
         dynamic_registry: None,
+        task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
+        embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     }
 }
 
@@ -79,6 +86,13 @@ fn streaming_execution(response: &str) -> RuntimeExecution {
         source_channel: None,
         sender_id: None,
         dynamic_registry: None,
+        task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
+        embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     }
 }
 
@@ -182,6 +196,13 @@ async fn run_agent_once_records_audit_events() {
         source_channel: None,
         sender_id: None,
         dynamic_registry: None,
+        task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
+        embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "test".to_string())
@@ -216,6 +237,13 @@ async fn run_agent_once_provider_error_propagates() {
         source_channel: None,
         sender_id: None,
         dynamic_registry: None,
+        task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
+        embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hello".to_string())
@@ -423,6 +451,13 @@ async fn full_loop_agent_with_tool_call_round_trip() {
         source_channel: None,
         sender_id: None,
         dynamic_registry: None,
+        task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
+        embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let output = run_agent_with_runtime(

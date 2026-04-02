@@ -7,37 +7,54 @@
 
 use agentzero_core::agent_store::{AgentRecord, AgentStatus, AgentStoreApi, AgentUpdate};
 use agentzero_core::{Provider, Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToolSchema)]
 struct Input {
+    /// The management action to perform
+    #[schema(enum_values = ["create", "create_from_description", "list", "get", "update", "delete", "set_status"])]
     action: String,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    agent_id: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    provider: Option<String>,
-    #[serde(default)]
-    system_prompt: Option<String>,
-    #[serde(default)]
-    keywords: Option<Vec<String>>,
-    #[serde(default)]
-    allowed_tools: Option<Vec<String>>,
-    #[serde(default)]
-    status: Option<String>,
-    /// Natural language description for `create_from_description` action.
+    /// Natural language description of the agent (for create_from_description). Example: 'an agent that monitors my GitHub PRs and summarizes them daily'
     #[serde(default)]
     nl_description: Option<String>,
+    /// Agent name (required for create)
+    #[serde(default)]
+    name: Option<String>,
+    /// Agent ID (required for get/update/delete/set_status)
+    #[serde(default)]
+    agent_id: Option<String>,
+    /// What this agent does
+    #[serde(default)]
+    description: Option<String>,
+    /// Model to use (e.g. claude-sonnet-4-20250514)
+    #[serde(default)]
+    model: Option<String>,
+    /// Provider (e.g. anthropic, openai, openrouter)
+    #[serde(default)]
+    provider: Option<String>,
+    /// System prompt / persona for the agent
+    #[serde(default)]
+    system_prompt: Option<String>,
+    /// Keywords for routing messages to this agent
+    #[serde(default)]
+    keywords: Option<Vec<String>>,
+    /// Tool names this agent can use (empty = all)
+    #[serde(default)]
+    allowed_tools: Option<Vec<String>>,
+    /// Agent status (for set_status action)
+    #[schema(enum_values = ["active", "stopped"])]
+    #[serde(default)]
+    status: Option<String>,
 }
 
+#[tool(
+    name = "agent_manage",
+    description = "Create, list, update, or delete persistent agents. Supports natural language agent creation via create_from_description — describe an agent in plain English and the system derives name, system prompt, keywords, and tools automatically."
+)]
 pub struct AgentManageTool {
     store: Arc<dyn AgentStoreApi>,
     /// Optional provider for LLM-based agent derivation (`create_from_description`).
@@ -62,71 +79,15 @@ impl AgentManageTool {
 #[async_trait]
 impl Tool for AgentManageTool {
     fn name(&self) -> &'static str {
-        "agent_manage"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Create, list, update, or delete persistent agents. Supports natural language agent \
-         creation via create_from_description — describe an agent in plain English and the system \
-         derives name, system prompt, keywords, and tools automatically."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["create", "create_from_description", "list", "get", "update", "delete", "set_status"],
-                    "description": "The management action to perform"
-                },
-                "nl_description": {
-                    "type": "string",
-                    "description": "Natural language description of the agent (for create_from_description). Example: 'an agent that monitors my GitHub PRs and summarizes them daily'"
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Agent name (required for create)"
-                },
-                "agent_id": {
-                    "type": "string",
-                    "description": "Agent ID (required for get/update/delete/set_status)"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "What this agent does"
-                },
-                "model": {
-                    "type": "string",
-                    "description": "Model to use (e.g. claude-sonnet-4-20250514)"
-                },
-                "provider": {
-                    "type": "string",
-                    "description": "Provider (e.g. anthropic, openai, openrouter)"
-                },
-                "system_prompt": {
-                    "type": "string",
-                    "description": "System prompt / persona for the agent"
-                },
-                "keywords": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Keywords for routing messages to this agent"
-                },
-                "allowed_tools": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Tool names this agent can use (empty = all)"
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["active", "stopped"],
-                    "description": "Agent status (for set_status action)"
-                }
-            },
-            "required": ["action"],
-            "additionalProperties": false
-        }))
+        Some(Input::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -379,6 +340,80 @@ Rules:
 - suggested_schedule: cron expression if the description implies periodicity (e.g. "0 9 * * *" for daily at 9am). Empty string if no scheduling implied.
 - Output ONLY the JSON object, no markdown fences or explanation"#;
 
+/// Create an agent from a natural language description using the LLM.
+///
+/// Returns the created `AgentRecord` and an optional suggested cron schedule.
+pub async fn create_agent_from_nl(
+    store: &dyn AgentStoreApi,
+    provider: &dyn Provider,
+    description: &str,
+) -> anyhow::Result<(AgentRecord, String)> {
+    let existing = store.list();
+    let existing_summary = if existing.is_empty() {
+        String::new()
+    } else {
+        let lines: Vec<String> = existing
+            .iter()
+            .map(|a| format!("- {} (keywords: [{}])", a.name, a.keywords.join(", ")))
+            .collect();
+        format!(
+            "\n\nExisting agents (avoid creating duplicates):\n{}",
+            lines.join("\n")
+        )
+    };
+
+    let prompt = format!("{NL_AGENT_PROMPT}{existing_summary}\n\nAgent description: {description}");
+
+    let result = provider.complete(&prompt).await?;
+    let response = result.output_text.trim();
+
+    let parsed = parse_agent_json(response)?;
+
+    let name = parsed["name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("LLM response missing 'name'"))?;
+    let agent_desc = parsed["description"].as_str().unwrap_or(description);
+    let system_prompt = parsed["system_prompt"].as_str().unwrap_or("");
+    let keywords: Vec<String> = parsed["keywords"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let allowed_tools: Vec<String> = parsed["allowed_tools"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let suggested_schedule = parsed["suggested_schedule"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    let record = AgentRecord {
+        agent_id: String::new(),
+        name: name.to_string(),
+        description: agent_desc.to_string(),
+        system_prompt: Some(system_prompt.to_string()),
+        provider: String::new(),
+        model: String::new(),
+        keywords,
+        allowed_tools,
+        channels: HashMap::new(),
+        created_at: 0,
+        updated_at: 0,
+        status: AgentStatus::Active,
+    };
+
+    let created = store.create(record)?;
+    Ok((created, suggested_schedule))
+}
+
 impl AgentManageTool {
     async fn action_create_from_description(
         &self,
@@ -402,70 +437,15 @@ impl AgentManageTool {
             )
         })?;
 
-        // Include existing agents so the LLM can avoid duplicates.
-        let existing = store.list();
-        let existing_summary = if existing.is_empty() {
-            String::new()
-        } else {
-            let lines: Vec<String> = existing
-                .iter()
-                .map(|a| format!("- {} (keywords: [{}])", a.name, a.keywords.join(", ")))
-                .collect();
-            format!(
-                "\n\nExisting agents (avoid creating duplicates):\n{}",
-                lines.join("\n")
-            )
-        };
+        let (mut created, suggested_schedule) =
+            create_agent_from_nl(store, provider.as_ref(), nl_desc).await?;
 
-        let prompt = format!("{NL_AGENT_PROMPT}{existing_summary}\n\nAgent description: {nl_desc}");
-
-        let result = provider.complete(&prompt).await?;
-        let response = result.output_text.trim();
-
-        let parsed = parse_agent_json(response)?;
-
-        let name = parsed["name"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("LLM response missing 'name'"))?;
-        let description = parsed["description"].as_str().unwrap_or(nl_desc);
-        let system_prompt = parsed["system_prompt"].as_str().unwrap_or("");
-        let keywords: Vec<String> = parsed["keywords"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let allowed_tools: Vec<String> = parsed["allowed_tools"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let suggested_schedule = parsed["suggested_schedule"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-
-        let record = AgentRecord {
-            agent_id: String::new(),
-            name: name.to_string(),
-            description: description.to_string(),
-            system_prompt: Some(system_prompt.to_string()),
-            provider: input.provider.clone().unwrap_or_default(),
-            model: input.model.clone().unwrap_or_default(),
-            keywords,
-            allowed_tools,
-            channels: HashMap::new(),
-            created_at: 0,
-            updated_at: 0,
-            status: AgentStatus::Active,
-        };
-
-        let created = store.create(record)?;
+        if let Some(ref p) = input.provider {
+            created.provider = p.clone();
+        }
+        if let Some(ref m) = input.model {
+            created.model = m.clone();
+        }
 
         let mut output = format!(
             "Agent created from description.\n\

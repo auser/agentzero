@@ -11,7 +11,8 @@ repository.workspace = true
 default = ["memory-sqlite", "document-tools", "tools-full"]
 tools-core = ["agentzero-tools/tools-core"]
 tools-extended = ["tools-core", "agentzero-tools/tools-extended"]
-tools-full = ["tools-extended", "agentzero-tools/tools-full"]
+tools-full = ["tools-extended", "nl-evolving", "agentzero-tools/tools-full"]
+nl-evolving = []
 memory-sqlite = []
 document-tools = ["agentzero-tools/document-tools"]
 memory-turso = ["agentzero-storage/memory-turso"]
@@ -20,6 +21,10 @@ wasm-plugins = ["dep:agentzero-plugins"]
 wasm-jit = ["wasm-plugins", "agentzero-plugins/wasm-jit"]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
 local-model = ["agentzero-providers/local-model"]
+candle = ["agentzero-providers/candle"]
+candle-metal = ["agentzero-providers/candle-metal"]
+candle-cuda = ["agentzero-providers/candle-cuda"]
+rag = ["agentzero-tools/rag"]
 
 [dependencies]
 anyhow.workspace = true
@@ -27,6 +32,7 @@ async-trait.workspace = true
 agentzero-auth = { workspace = true }
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }
+agentzero-macros = { workspace = true }
 agentzero-tools = { workspace = true }
 agentzero-storage = { workspace = true }
 agentzero-autopilot = { workspace = true, optional = true }
@@ -40,6 +46,7 @@ tracing-opentelemetry = { version = "0.30", optional = true }
 reqwest = { workspace = true, features = ["multipart"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, optional = true }
@@ -48,3 +55,4 @@ tracing-subscriber = { workspace = true, optional = true }
 agentzero-orchestrator = { workspace = true }
 agentzero-testkit = { workspace = true }
 temp-env = "0.3"
+tempfile = "3"

@@ -69,6 +69,11 @@ pub enum Commands {
         /// Allowed shell commands (repeat or pass comma-separated values).
         #[arg(long, value_delimiter = ',')]
         allowed_commands: Vec<String>,
+        /// Bootstrap agents, tools, and channels from a natural language description.
+        /// When provided, onboard creates config as usual then uses the LLM to
+        /// create the agents/tools/channels described.
+        #[arg(short = 'm', long = "message")]
+        message: Option<String>,
     },
     /// Start the HTTP gateway server.
     #[cfg(feature = "gateway")]
@@ -258,6 +263,11 @@ pub enum Commands {
         check: bool,
         #[command(subcommand)]
         command: Option<UpdateCommands>,
+    },
+    /// Manage binary tier (core / extended / full).
+    Tier {
+        #[command(subcommand)]
+        command: TierCommands,
     },
     /// Emit shell completion script to stdout.
     Completions {
@@ -1206,6 +1216,38 @@ pub enum UpdateCommands {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum TierCommands {
+    /// Show current binary tier and available tools.
+    Status {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all available tiers with descriptions.
+    List {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Upgrade to a higher-tier binary with more tools.
+    Upgrade {
+        /// Target tier (defaults to the next tier up).
+        tier: Option<String>,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Downgrade to a lower-tier binary (smaller, fewer tools).
+    Downgrade {
+        /// Target tier to downgrade to.
+        tier: String,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum RagCommands {
     /// Ingest a text document into the local RAG index.
     Ingest {
@@ -1500,6 +1542,11 @@ pub enum ChannelCommands {
     },
     /// Start configured channels.
     Start,
+    /// Send a test message through a channel.
+    Test {
+        /// Channel name to test. If omitted, prompts interactively or reads AGENTZERO_CHANNEL.
+        name: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

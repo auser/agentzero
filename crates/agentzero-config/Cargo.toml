@@ -14,7 +14,7 @@ yaml-policy = ["dep:serde_yaml"]
 [dependencies]
 anyhow.workspace = true
 agentzero-core = { workspace = true }
-agentzero-tools = { workspace = true }
+agentzero-tools = { workspace = true, features = ["tools-extended"] }
 config.workspace = true
 dotenvy.workspace = true
 serde.workspace = true

@@ -3,7 +3,7 @@
 # Copy this file to your project root as `agentzero.toml` and edit.
 
 [provider]
-kind = "openrouter"                        # openrouter | openai | anthropic | ollama
+kind = "openrouter"                        # openrouter | openai | anthropic | ollama | candle
 model = "anthropic/claude-sonnet-4-6"      # model identifier for the provider
 # api_key is read from OPENAI_API_KEY env var, .env file, or `agentzero auth`
 

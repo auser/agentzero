@@ -5,9 +5,9 @@
 //! as an independent agent with its own tool set and context.
 
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::json;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
@@ -70,10 +70,27 @@ struct Input {
     max_output_bytes: Option<usize>,
 }
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct GeminiCliSchema {
+    /// The task or prompt to delegate to Gemini CLI
+    task: String,
+    /// Optional timeout in seconds (default: 300)
+    #[serde(default)]
+    timeout_secs: Option<i64>,
+    /// Optional maximum output bytes (default: 65536)
+    #[serde(default)]
+    max_output_bytes: Option<i64>,
+}
+
 /// Tool that delegates tasks to the `gemini` CLI (Google's Gemini CLI).
 ///
 /// Runs `gemini -p "{task}"` as a subprocess, captures output,
 /// and returns it to the calling agent.
+#[tool(
+    name = "gemini_cli",
+    description = "Delegate a task to Gemini CLI (Google's coding agent). Runs as an independent agent with filesystem and shell access."
+)]
 pub struct GeminiCliTool {
     config: GeminiCliConfig,
 }
@@ -93,33 +110,15 @@ impl Default for GeminiCliTool {
 #[async_trait]
 impl Tool for GeminiCliTool {
     fn name(&self) -> &'static str {
-        "gemini_cli"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Delegate a task to Gemini CLI (Google's coding agent). Runs as an independent \
-         agent with filesystem and shell access."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "required": ["task"],
-            "properties": {
-                "task": {
-                    "type": "string",
-                    "description": "The task or prompt to delegate to Gemini CLI"
-                },
-                "timeout_secs": {
-                    "type": "integer",
-                    "description": "Optional timeout in seconds (default: 300)"
-                },
-                "max_output_bytes": {
-                    "type": "integer",
-                    "description": "Optional maximum output bytes (default: 65536)"
-                }
-            }
-        }))
+        Some(GeminiCliSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

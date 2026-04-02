@@ -7,14 +7,18 @@
 pub mod audio;
 pub mod audit;
 pub mod cost_tracker;
+pub mod insights;
 pub mod mcp_server;
+pub mod pattern_capture;
 pub mod runtime;
 pub mod sender_rate_limiter;
 #[cfg(feature = "telemetry")]
 pub mod telemetry;
+pub mod tool_evolver;
 pub mod tool_recipes;
 pub mod tool_selection;
 pub mod tools;
+pub mod trajectory;
 
 // Compatibility re-exports while crates are split out from infra.
 pub use agentzero_providers as provider;

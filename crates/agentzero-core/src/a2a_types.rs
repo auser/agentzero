@@ -124,6 +124,15 @@ pub enum Part {
         #[serde(skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
     },
+    #[serde(rename = "file")]
+    File {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        /// base64-encoded file data (inline) or a URL reference.
+        data: String,
+    },
 }
 
 impl<'de> serde::Deserialize<'de> for Part {
@@ -154,12 +163,29 @@ impl<'de> serde::Deserialize<'de> for Part {
                 #[serde(default)]
                 mime_type: Option<String>,
             },
+            #[serde(rename = "file")]
+            File {
+                #[serde(default)]
+                name: Option<String>,
+                #[serde(default)]
+                mime_type: Option<String>,
+                data: String,
+            },
         }
 
         let helper: PartHelper = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
         match helper {
             PartHelper::Text { text } => Ok(Part::Text { text }),
             PartHelper::Data { data, mime_type } => Ok(Part::Data { data, mime_type }),
+            PartHelper::File {
+                name,
+                mime_type,
+                data,
+            } => Ok(Part::File {
+                name,
+                mime_type,
+                data,
+            }),
         }
     }
 }
@@ -217,6 +243,26 @@ pub struct TaskGetParams {
 #[serde(rename_all = "camelCase")]
 pub struct TaskCancelParams {
     pub id: String,
+}
+
+// --- SSE Streaming Events (for tasks/sendSubscribe) ---
+
+/// Server-Sent Event for task status updates during streaming.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskStatusUpdateEvent {
+    pub id: String,
+    pub status: TaskStatus,
+    #[serde(rename = "final")]
+    pub is_final: bool,
+}
+
+/// Server-Sent Event for artifact updates during streaming.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskArtifactUpdateEvent {
+    pub id: String,
+    pub artifact: Artifact,
 }
 
 #[cfg(test)]
@@ -323,6 +369,58 @@ mod tests {
             Part::Text { text } => assert_eq!(text, "hello via type"),
             _ => panic!("expected Text part"),
         }
+    }
+
+    #[test]
+    fn file_part_roundtrip() {
+        let part = Part::File {
+            name: Some("report.pdf".to_string()),
+            mime_type: Some("application/pdf".to_string()),
+            data: "base64data==".to_string(),
+        };
+        let json = serde_json::to_value(&part).expect("serialize");
+        assert_eq!(json["type"], "file");
+        assert_eq!(json["name"], "report.pdf");
+        let parsed: Part = serde_json::from_value(json).expect("deserialize");
+        match parsed {
+            Part::File { name, data, .. } => {
+                assert_eq!(name.as_deref(), Some("report.pdf"));
+                assert_eq!(data, "base64data==");
+            }
+            _ => panic!("expected File part"),
+        }
+    }
+
+    #[test]
+    fn task_status_update_event_serializes() {
+        let event = TaskStatusUpdateEvent {
+            id: "task-1".to_string(),
+            status: TaskStatus {
+                state: TaskState::Working,
+                message: Some(Message {
+                    role: MessageRole::Agent,
+                    parts: vec![Part::text("processing...")],
+                }),
+            },
+            is_final: false,
+        };
+        let json = serde_json::to_value(&event).expect("serialize");
+        assert_eq!(json["final"], false);
+        assert_eq!(json["status"]["state"], "working");
+    }
+
+    #[test]
+    fn task_artifact_update_event_serializes() {
+        let event = TaskArtifactUpdateEvent {
+            id: "task-1".to_string(),
+            artifact: Artifact {
+                name: Some("output.txt".to_string()),
+                parts: vec![Part::text("result content")],
+                index: Some(0),
+            },
+        };
+        let json = serde_json::to_value(&event).expect("serialize");
+        assert_eq!(json["artifact"]["name"], "output.txt");
     }
 
     #[test]

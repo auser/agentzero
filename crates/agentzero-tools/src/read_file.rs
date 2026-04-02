@@ -1,6 +1,8 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
+use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncReadExt;
@@ -24,10 +26,21 @@ impl ReadFilePolicy {
     }
 }
 
+#[tool(
+    name = "read_file",
+    description = "Read the contents of a file at the given path. Returns the file text or an error if the path is outside the workspace or the file is too large."
+)]
 pub struct ReadFileTool {
     allowed_root: PathBuf,
     max_read_bytes: u64,
     allow_binary: bool,
+}
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct ReadFileInput {
+    /// Relative path to the file to read
+    path: String,
 }
 
 impl ReadFileTool {
@@ -118,24 +131,15 @@ impl ReadFileTool {
 #[async_trait]
 impl Tool for ReadFileTool {
     fn name(&self) -> &'static str {
-        "read_file"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Read the contents of a file at the given path. Returns the file text or an error if the path is outside the workspace or the file is too large."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Relative path to the file to read"
-                }
-            },
-            "required": ["path"]
-        }))
+        Some(ReadFileInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

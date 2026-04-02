@@ -64,6 +64,7 @@ mod tests {
             enabled: true,
             action: LeakAction::Redact,
             sensitivity: 0.7,
+            extra_patterns: Vec::new(),
         };
         let result = process_outbound(
             msg("Here is the key: sk-abc123def456ghi789jkl012mno345"),
@@ -84,6 +85,7 @@ mod tests {
             enabled: true,
             action: LeakAction::Block,
             sensitivity: 0.7,
+            extra_patterns: Vec::new(),
         };
         let result = process_outbound(
             msg("Here is the key: sk-abc123def456ghi789jkl012mno345"),
@@ -103,6 +105,7 @@ mod tests {
             enabled: false,
             action: LeakAction::Block,
             sensitivity: 0.7,
+            extra_patterns: Vec::new(),
         };
         let result = process_outbound(msg("sk-abc123def456ghi789jkl012mno345"), &guard);
         match result {

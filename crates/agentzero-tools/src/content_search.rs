@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -7,15 +8,21 @@ use std::path::{Component, Path, PathBuf};
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LINE_DISPLAY: usize = 200;
 
-#[derive(Debug, Deserialize)]
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct ContentSearchInput {
+    /// Regex pattern to search for
     pattern: String,
+    /// Subdirectory to search within (optional)
     #[serde(default)]
     path: Option<String>,
+    /// File glob filter (e.g. "*.rs", "*.py")
     #[serde(default)]
     glob: Option<String>,
+    /// Maximum number of matches to return (default: 50)
     #[serde(default = "default_limit")]
     limit: usize,
+    /// If true, perform case-insensitive matching
     #[serde(default)]
     case_insensitive: bool,
 }
@@ -24,6 +31,10 @@ fn default_limit() -> usize {
     DEFAULT_LIMIT
 }
 
+#[tool(
+    name = "content_search",
+    description = "Search file contents for a regex pattern. Returns matching lines with file paths and line numbers."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ContentSearchTool;
 
@@ -119,40 +130,15 @@ impl ContentSearchTool {
 #[async_trait]
 impl Tool for ContentSearchTool {
     fn name(&self) -> &'static str {
-        "content_search"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Search file contents for a regex pattern. Returns matching lines with file paths and line numbers."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Regex pattern to search for"
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Subdirectory to search within (optional)"
-                },
-                "glob": {
-                    "type": "string",
-                    "description": "File glob filter (e.g. \"*.rs\", \"*.py\")"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of matches to return (default: 50)"
-                },
-                "case_insensitive": {
-                    "type": "boolean",
-                    "description": "If true, perform case-insensitive matching"
-                }
-            },
-            "required": ["pattern"]
-        }))
+        Some(ContentSearchInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

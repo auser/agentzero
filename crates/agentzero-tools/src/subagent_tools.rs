@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -34,14 +35,22 @@ pub struct SubAgentRegistry {
 
 // ── subagent_spawn ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct SubAgentSpawnInput {
+    /// Name of the sub-agent to spawn
     agent: String,
+    /// Task description for the sub-agent
     task: String,
+    /// Optional context to pass to the sub-agent
     #[serde(default)]
     context: Option<String>,
 }
 
+#[tool(
+    name = "subagent_spawn",
+    description = "Spawn a sub-agent to handle a task asynchronously. Returns a session ID for tracking."
+)]
 pub struct SubAgentSpawnTool {
     registry: Mutex<SubAgentRegistry>,
 }
@@ -63,24 +72,15 @@ impl SubAgentSpawnTool {
 #[async_trait]
 impl Tool for SubAgentSpawnTool {
     fn name(&self) -> &'static str {
-        "subagent_spawn"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Spawn a sub-agent to handle a task asynchronously. Returns a session ID for tracking."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "agent": { "type": "string", "description": "Name of the sub-agent to spawn" },
-                "task": { "type": "string", "description": "Task description for the sub-agent" },
-                "context": { "type": "string", "description": "Optional context to pass to the sub-agent" }
-            },
-            "required": ["agent", "task"],
-            "additionalProperties": false
-        }))
+        Some(SubAgentSpawnInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -141,25 +141,29 @@ impl Tool for SubAgentSpawnTool {
 
 // ── subagent_list ──
 
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct SubAgentListInput {}
+
+#[tool(
+    name = "subagent_list",
+    description = "List all running sub-agent sessions and their statuses."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SubAgentListTool;
 
 #[async_trait]
 impl Tool for SubAgentListTool {
     fn name(&self) -> &'static str {
-        "subagent_list"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "List all running sub-agent sessions and their statuses."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }))
+        Some(SubAgentListInput::schema())
     }
 
     async fn execute(&self, _input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -171,9 +175,13 @@ impl Tool for SubAgentListTool {
 
 // ── subagent_manage ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct SubAgentManageInput {
+    /// The session ID of the sub-agent to manage
     session_id: String,
+    /// The management action to perform
+    #[schema(enum_values = ["status", "kill", "result"])]
     action: SubAgentManageAction,
 }
 
@@ -185,29 +193,25 @@ enum SubAgentManageAction {
     Result,
 }
 
+#[tool(
+    name = "subagent_manage",
+    description = "Manage a sub-agent session: cancel, get result, or check status."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SubAgentManageTool;
 
 #[async_trait]
 impl Tool for SubAgentManageTool {
     fn name(&self) -> &'static str {
-        "subagent_manage"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Manage a sub-agent session: cancel, get result, or check status."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "session_id": { "type": "string", "description": "The session ID of the sub-agent to manage" },
-                "action": { "type": "string", "enum": ["status", "kill", "result"], "description": "The management action to perform" }
-            },
-            "required": ["session_id", "action"],
-            "additionalProperties": false
-        }))
+        Some(SubAgentManageInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

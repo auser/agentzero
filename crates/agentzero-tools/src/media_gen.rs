@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -60,6 +61,10 @@ impl Default for TtsConfig {
     }
 }
 
+#[tool(
+    name = "tts",
+    description = "Convert text to speech audio. Saves the audio file to the workspace and returns the file path."
+)]
 pub struct TtsTool {
     client: reqwest::Client,
     config: TtsConfig,
@@ -83,11 +88,16 @@ impl TtsTool {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct TtsInput {
+    /// The text to convert to speech
     text: String,
+    /// Voice to use (e.g. "alloy", "echo", "fable", "onyx", "nova", "shimmer")
     #[serde(default)]
     voice: Option<String>,
+    /// Audio format: mp3, wav, opus, aac, flac
+    #[schema(enum_values = ["mp3", "wav", "opus", "aac", "flac"])]
     #[serde(default = "default_audio_format")]
     format: String,
 }
@@ -99,33 +109,15 @@ fn default_audio_format() -> String {
 #[async_trait]
 impl Tool for TtsTool {
     fn name(&self) -> &'static str {
-        "tts"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Convert text to speech audio. Saves the audio file to the workspace and returns the file path."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "The text to convert to speech"
-                },
-                "voice": {
-                    "type": "string",
-                    "description": "Voice to use (e.g. \"alloy\", \"echo\", \"fable\", \"onyx\", \"nova\", \"shimmer\")"
-                },
-                "format": {
-                    "type": "string",
-                    "description": "Audio format: mp3, wav, opus, aac, flac",
-                    "enum": ["mp3", "wav", "opus", "aac", "flac"]
-                }
-            },
-            "required": ["text"]
-        }))
+        Some(TtsInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -215,6 +207,10 @@ impl Default for ImageGenConfig {
     }
 }
 
+#[tool(
+    name = "image_generate",
+    description = "Generate an image from a text prompt. Saves the image to the workspace and returns the file path."
+)]
 pub struct ImageGenTool {
     client: reqwest::Client,
     config: ImageGenConfig,
@@ -238,11 +234,17 @@ impl ImageGenTool {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct ImageGenInput {
+    /// Text description of the image to generate
     prompt: String,
+    /// Image size: 1024x1024, 1792x1024, or 1024x1792
+    #[schema(enum_values = ["1024x1024", "1792x1024", "1024x1792"])]
     #[serde(default)]
     size: Option<String>,
+    /// Image style: natural or vivid
+    #[schema(enum_values = ["natural", "vivid"])]
     #[serde(default)]
     style: Option<String>,
 }
@@ -263,34 +265,15 @@ struct ImageGenData {
 #[async_trait]
 impl Tool for ImageGenTool {
     fn name(&self) -> &'static str {
-        "image_generate"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Generate an image from a text prompt. Saves the image to the workspace and returns the file path."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "Text description of the image to generate"
-                },
-                "size": {
-                    "type": "string",
-                    "description": "Image size: 1024x1024, 1792x1024, or 1024x1792",
-                    "enum": ["1024x1024", "1792x1024", "1024x1792"]
-                },
-                "style": {
-                    "type": "string",
-                    "description": "Image style: natural or vivid",
-                    "enum": ["natural", "vivid"]
-                }
-            },
-            "required": ["prompt"]
-        }))
+        Some(ImageGenInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -418,6 +401,10 @@ impl Default for VideoGenConfig {
     }
 }
 
+#[tool(
+    name = "video_generate",
+    description = "Generate a video from a text prompt. Submits the job and polls for completion. Saves the video to the workspace and returns the file path."
+)]
 pub struct VideoGenTool {
     client: reqwest::Client,
     config: VideoGenConfig,
@@ -441,9 +428,12 @@ impl VideoGenTool {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct VideoGenInput {
+    /// Text description of the video to generate
     prompt: String,
+    /// Desired video duration in seconds (default: 5)
     #[serde(default)]
     duration_secs: Option<u32>,
 }
@@ -469,28 +459,15 @@ struct VideoStatusResponse {
 #[async_trait]
 impl Tool for VideoGenTool {
     fn name(&self) -> &'static str {
-        "video_generate"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Generate a video from a text prompt. Submits the job and polls for completion. Saves the video to the workspace and returns the file path."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "Text description of the video to generate"
-                },
-                "duration_secs": {
-                    "type": "integer",
-                    "description": "Desired video duration in seconds (default: 5)"
-                }
-            },
-            "required": ["prompt"]
-        }))
+        Some(VideoGenInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

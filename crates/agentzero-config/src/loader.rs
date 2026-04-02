@@ -13,13 +13,19 @@ pub fn load(path: &Path) -> anyhow::Result<AgentZeroConfig> {
     // Only set values that aren't already in the environment to avoid
     // overriding explicit env vars.
     //
-    // SAFETY: This runs during single-threaded config initialization, before
-    // the async runtime spawns worker threads.
-    for (key, value) in &dotenv_overrides {
-        if std::env::var(key).is_err() {
-            unsafe { std::env::set_var(key, value) };
+    // SAFETY: `set_var` is unsafe because concurrent reads/writes to the
+    // environment are data races. We enforce single-execution via
+    // `std::sync::Once` and this runs before the async runtime spawns
+    // worker threads, so no other thread can observe partial state.
+    static ENV_INIT: std::sync::Once = std::sync::Once::new();
+    ENV_INIT.call_once(|| {
+        for (key, value) in &dotenv_overrides {
+            if std::env::var(key).is_err() {
+                // SAFETY: inside Once::call_once, guaranteed single-threaded.
+                unsafe { std::env::set_var(key, value) };
+            }
         }
-    }
+    });
 
     let settings = Config::builder()
         .add_source(File::from(path.to_path_buf()).required(false))
@@ -245,12 +251,26 @@ fn normalize_base_url(config: &mut AgentZeroConfig) {
 }
 
 fn resolve_local_provider_defaults(config: &mut AgentZeroConfig) {
+    let url_empty_or_stale = config.provider.base_url == DEFAULT_CLOUD_BASE_URL
+        || config.provider.base_url.trim().is_empty();
+
+    // Local/in-process providers: resolve from local provider catalog.
     if let Some(meta) = local_provider_meta(&config.provider.kind) {
-        let is_default_url = config.provider.base_url == DEFAULT_CLOUD_BASE_URL
-            || config.provider.base_url.trim().is_empty();
-        if is_default_url {
+        if url_empty_or_stale {
             config.provider.base_url = meta.default_base_url.to_string();
         }
+        return;
+    }
+
+    // Cloud providers with no explicit base_url: resolve from well-known defaults.
+    if url_empty_or_stale {
+        let default_url = match config.provider.kind.as_str() {
+            "openrouter" => "https://openrouter.ai/api",
+            "anthropic" => "https://api.anthropic.com",
+            "openai" => "https://api.openai.com",
+            _ => return,
+        };
+        config.provider.base_url = default_url.to_string();
     }
 }
 

@@ -4,6 +4,7 @@ use agentzero_core::delegation::{
     filter_tools, validate_delegation, DelegateConfig, DelegateRequest,
 };
 use agentzero_core::{Agent, AgentConfig, ChatResult, Provider, Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -23,6 +24,27 @@ pub type ToolBuilder = Arc<dyn Fn() -> anyhow::Result<Vec<Box<dyn Tool>>> + Send
 /// Wired to `LeakGuardPolicy::process()` at the call site.
 pub type OutputScanner = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
 
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DelegateSchema {
+    /// Action to perform: 'delegate' (default), 'check_result', 'list_results', 'cancel_task'
+    #[schema(enum_values = ["delegate", "check_result", "list_results", "cancel_task"])]
+    #[serde(default)]
+    action: Option<String>,
+    /// Name of the sub-agent to delegate to (required for 'delegate' action)
+    #[serde(default)]
+    agent: Option<String>,
+    /// The prompt/task to send to the sub-agent (required for 'delegate' action)
+    #[serde(default)]
+    prompt: Option<String>,
+    /// Run delegation in background mode — returns task_id immediately without waiting for completion
+    #[serde(default)]
+    background: Option<bool>,
+    /// Task ID to check or cancel (required for 'check_result' and 'cancel_task' actions)
+    #[serde(default)]
+    task_id: Option<String>,
+}
+
 fn default_action() -> String {
     "delegate".to_string()
 }
@@ -39,10 +61,18 @@ struct Input {
     /// Run in background mode — returns task_id immediately
     #[serde(default)]
     background: bool,
+    /// Multiple agents to delegate to in parallel (fan-out mode).
+    /// When set, each agent receives the same prompt and results are collected.
+    #[serde(default)]
+    agents: Option<Vec<String>>,
     /// Task ID (required for check_result, cancel_task)
     task_id: Option<String>,
 }
 
+#[tool(
+    name = "delegate",
+    description = "Delegate a subtask to a named sub-agent. Supports synchronous, background (fire-and-forget), and task lifecycle management (check, list, cancel)."
+)]
 pub struct DelegateTool {
     agents: HashMap<String, DelegateConfig>,
     current_depth: usize,
@@ -105,43 +135,15 @@ impl DelegateTool {
 #[async_trait]
 impl Tool for DelegateTool {
     fn name(&self) -> &'static str {
-        "delegate"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Delegate a subtask to a named sub-agent. Supports synchronous, background (fire-and-forget), and task lifecycle management (check, list, cancel)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "description": "Action to perform: 'delegate' (default), 'check_result', 'list_results', 'cancel_task'",
-                    "enum": ["delegate", "check_result", "list_results", "cancel_task"],
-                    "default": "delegate"
-                },
-                "agent": {
-                    "type": "string",
-                    "description": "Name of the sub-agent to delegate to (required for 'delegate' action)"
-                },
-                "prompt": {
-                    "type": "string",
-                    "description": "The prompt/task to send to the sub-agent (required for 'delegate' action)"
-                },
-                "background": {
-                    "type": "boolean",
-                    "description": "Run delegation in background mode — returns task_id immediately without waiting for completion",
-                    "default": false
-                },
-                "task_id": {
-                    "type": "string",
-                    "description": "Task ID to check or cancel (required for 'check_result' and 'cancel_task' actions)"
-                }
-            },
-            "additionalProperties": false
-        }))
+        Some(DelegateSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -156,7 +158,14 @@ impl Tool for DelegateTool {
             serde_json::from_str(input).map_err(|e| anyhow::anyhow!("invalid input: {e}"))?;
 
         match parsed.action.as_str() {
-            "delegate" => self.execute_delegate(parsed, ctx).await,
+            "delegate" => {
+                // Parallel fan-out when `agents` is provided.
+                if parsed.agents.is_some() {
+                    self.execute_parallel(parsed, ctx).await
+                } else {
+                    self.execute_delegate(parsed, ctx).await
+                }
+            }
             "check_result" => self.execute_check_result(parsed).await,
             "list_results" => self.execute_list_results().await,
             "cancel_task" => self.execute_cancel_task(parsed).await,
@@ -291,6 +300,111 @@ impl DelegateTool {
         }
     }
 
+    /// Execute parallel fan-out: delegate the same prompt to multiple agents concurrently.
+    async fn execute_parallel(
+        &self,
+        parsed: Input,
+        ctx: &ToolContext,
+    ) -> anyhow::Result<ToolResult> {
+        let agent_names = parsed
+            .agents
+            .ok_or_else(|| anyhow::anyhow!("'agents' is required for parallel delegation"))?;
+        let prompt = parsed
+            .prompt
+            .ok_or_else(|| anyhow::anyhow!("'prompt' is required for delegate action"))?;
+
+        if agent_names.is_empty() {
+            return Err(anyhow::anyhow!("'agents' must not be empty"));
+        }
+
+        // Validate all agents exist and pass delegation checks.
+        let mut configs = Vec::with_capacity(agent_names.len());
+        for name in &agent_names {
+            let config = self
+                .agents
+                .get(name)
+                .ok_or_else(|| anyhow::anyhow!("unknown agent: {name}"))?;
+            let request = DelegateRequest {
+                agent_name: name.clone(),
+                prompt: prompt.clone(),
+                current_depth: self.current_depth,
+            };
+            validate_delegation(&request, config)?;
+            configs.push((name.clone(), config.clone()));
+        }
+
+        // Fan-out: spawn each agent concurrently, respect semaphore.
+        let mut set = tokio::task::JoinSet::new();
+        for (name, config) in configs {
+            let prompt = prompt.clone();
+            let tool_builder = self.tool_builder.clone();
+            let parent_policy = self.parent_policy.clone();
+            let output_scanner = self.output_scanner.clone();
+            let semaphore = self.semaphore.clone();
+            let child_ctx = build_child_ctx(ctx, &config, &name);
+            let agent_name = name.clone();
+
+            set.spawn(async move {
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .map_err(|_| anyhow::anyhow!("delegation semaphore closed"))?;
+
+                let output = run_delegation(
+                    &config,
+                    &prompt,
+                    &child_ctx,
+                    &tool_builder,
+                    parent_policy.as_ref(),
+                )
+                .await?;
+
+                let safe_output =
+                    apply_output_scanner(output_scanner.as_ref(), &output, &agent_name)?;
+                Ok::<(String, String, u64, u64), anyhow::Error>((
+                    agent_name,
+                    safe_output,
+                    child_ctx.current_tokens(),
+                    child_ctx.current_cost(),
+                ))
+            });
+        }
+
+        // Collect results.
+        let mut results = Vec::new();
+        while let Some(join_result) = set.join_next().await {
+            match join_result {
+                Ok(Ok((name, output, tokens, cost))) => {
+                    ctx.add_tokens(tokens);
+                    ctx.add_cost(cost);
+                    results.push(serde_json::json!({
+                        "agent": name,
+                        "status": "completed",
+                        "output": output,
+                    }));
+                }
+                Ok(Err(e)) => {
+                    results.push(serde_json::json!({
+                        "agent": "unknown",
+                        "status": "failed",
+                        "error": e.to_string(),
+                    }));
+                }
+                Err(e) => {
+                    results.push(serde_json::json!({
+                        "agent": "unknown",
+                        "status": "failed",
+                        "error": format!("join error: {e}"),
+                    }));
+                }
+            }
+        }
+
+        Ok(ToolResult {
+            output: serde_json::to_string(&results).unwrap_or_default(),
+        })
+    }
+
     /// Check the status of a background task.
     async fn execute_check_result(&self, parsed: Input) -> anyhow::Result<ToolResult> {
         let tm = self
@@ -420,10 +534,19 @@ async fn run_delegation(
         config.model.clone(),
     );
 
+    // Apply instruction method to prepare the system prompt.
+    let (prepared_prompt, _extra_tool_def) = agentzero_core::delegation::prepare_instructions(
+        config.system_prompt.as_deref(),
+        &config.instruction_method,
+    );
+
     if config.agentic {
+        // Override the system_prompt in config with the prepared version.
+        let mut effective_config = config.clone();
+        effective_config.system_prompt = prepared_prompt;
         run_agentic(
             provider,
-            config,
+            &effective_config,
             prompt,
             child_ctx,
             tool_builder,
@@ -431,7 +554,7 @@ async fn run_delegation(
         )
         .await
     } else {
-        let effective_prompt = match &config.system_prompt {
+        let effective_prompt = match &prepared_prompt {
             Some(sp) => format!("<system>{sp}</system>\n{prompt}"),
             None => prompt.to_string(),
         };

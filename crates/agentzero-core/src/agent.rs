@@ -7,7 +7,8 @@ use crate::types::{
     AgentConfig, AgentError, AssistantMessage, AuditEvent, AuditSink, ConversationMessage,
     HookEvent, HookFailureMode, HookRiskTier, HookSink, LoopAction, MemoryEntry, MemoryStore,
     MetricsSink, Provider, ResearchTrigger, StopReason, StreamSink, Tool, ToolContext,
-    ToolDefinition, ToolResultMessage, ToolSelector, ToolSummary, ToolUseRequest, UserMessage,
+    ToolDefinition, ToolExecutionRecord, ToolResultMessage, ToolSelector, ToolSummary,
+    ToolUseRequest, UserMessage,
 };
 use crate::validation::validate_json;
 use serde_json::json;
@@ -178,6 +179,12 @@ fn single_required_string_field(schema: &serde_json::Value) -> Option<String> {
     }
     let field_name = required[0].as_str()?;
     let properties = schema.get("properties")?.as_object()?;
+    // Only extract the bare string when this is truly a single-property schema.
+    // Schemas with optional fields (e.g. content_search with pattern + path + glob)
+    // must be passed as full JSON so the tool can parse all fields.
+    if properties.len() != 1 {
+        return None;
+    }
     let field_schema = properties.get(field_name)?;
     if field_schema.get("type")?.as_str()? == "string" {
         Some(field_name.to_string())
@@ -451,6 +458,8 @@ impl Agent {
         if let Some(sink) = &self.audit {
             let _ = sink
                 .record(AuditEvent {
+                    seq: 0,
+                    session_id: String::new(),
                     stage: stage.to_string(),
                     detail,
                 })
@@ -600,6 +609,29 @@ impl Agent {
         }
     }
 
+    /// Push a `ToolExecutionRecord` into the shared context collector.
+    fn record_tool_execution(
+        ctx: &ToolContext,
+        tool_name: &str,
+        success: bool,
+        error: Option<String>,
+        latency_ms: u64,
+    ) {
+        let record = ToolExecutionRecord {
+            tool_name: tool_name.to_string(),
+            success,
+            error,
+            latency_ms,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+        if let Ok(mut records) = ctx.tool_executions.lock() {
+            records.push(record);
+        }
+    }
+
     #[instrument(skip(self, tool, tool_input, ctx), fields(tool = tool_name, request_id, iteration))]
     async fn execute_tool(
         &self,
@@ -666,35 +698,39 @@ impl Agent {
             {
                 Ok(Ok(result)) => result,
                 Ok(Err(source)) => {
-                    self.observe_histogram(
-                        "tool_latency_ms",
-                        tool_started.elapsed().as_secs_f64() * 1000.0,
-                    );
+                    let latency_ms = tool_started.elapsed().as_millis() as u64;
+                    self.observe_histogram("tool_latency_ms", latency_ms as f64);
                     self.increment_counter("tool_errors_total");
+                    Self::record_tool_execution(
+                        ctx,
+                        tool_name,
+                        false,
+                        Some(source.to_string()),
+                        latency_ms,
+                    );
                     return Err(AgentError::Tool {
                         tool: tool_name.to_string(),
                         source,
                     });
                 }
                 Err(_elapsed) => {
-                    self.observe_histogram(
-                        "tool_latency_ms",
-                        tool_started.elapsed().as_secs_f64() * 1000.0,
-                    );
+                    let latency_ms = tool_started.elapsed().as_millis() as u64;
+                    self.observe_histogram("tool_latency_ms", latency_ms as f64);
                     self.increment_counter("tool_errors_total");
                     self.increment_counter("tool_timeouts_total");
-                    warn!(
-                        tool = %tool_name,
-                        timeout_ms = tool_timeout_ms,
-                        "tool execution timed out"
+                    let err_msg =
+                        format!("tool '{}' timed out after {}ms", tool_name, tool_timeout_ms);
+                    warn!(tool = %tool_name, timeout_ms = tool_timeout_ms, "tool execution timed out");
+                    Self::record_tool_execution(
+                        ctx,
+                        tool_name,
+                        false,
+                        Some(err_msg.clone()),
+                        latency_ms,
                     );
                     return Err(AgentError::Tool {
                         tool: tool_name.to_string(),
-                        source: anyhow::anyhow!(
-                            "tool '{}' timed out after {}ms",
-                            tool_name,
-                            tool_timeout_ms
-                        ),
+                        source: anyhow::anyhow!("{}", err_msg),
                     });
                 }
             }
@@ -706,11 +742,16 @@ impl Agent {
             {
                 Ok(result) => result,
                 Err(source) => {
-                    self.observe_histogram(
-                        "tool_latency_ms",
-                        tool_started.elapsed().as_secs_f64() * 1000.0,
-                    );
+                    let latency_ms = tool_started.elapsed().as_millis() as u64;
+                    self.observe_histogram("tool_latency_ms", latency_ms as f64);
                     self.increment_counter("tool_errors_total");
+                    Self::record_tool_execution(
+                        ctx,
+                        tool_name,
+                        false,
+                        Some(source.to_string()),
+                        latency_ms,
+                    );
                     return Err(AgentError::Tool {
                         tool: tool_name.to_string(),
                         source,
@@ -718,10 +759,9 @@ impl Agent {
                 }
             }
         };
-        self.observe_histogram(
-            "tool_latency_ms",
-            tool_started.elapsed().as_secs_f64() * 1000.0,
-        );
+        let latency_ms = tool_started.elapsed().as_millis() as u64;
+        self.observe_histogram("tool_latency_ms", latency_ms as f64);
+        Self::record_tool_execution(ctx, tool_name, true, None, latency_ms);
         self.audit(
             "tool_execute_success",
             json!({
@@ -1190,6 +1230,7 @@ impl Agent {
 
         let mut tool_history: Vec<(String, String, String)> = Vec::new();
         let mut failure_streak: usize = 0;
+        let mut compression_state = crate::context_compression::CompressionState::default();
         let mut loop_detector = self
             .loop_detection_config
             .as_ref()
@@ -1208,6 +1249,24 @@ impl Agent {
                 return Ok(AssistantMessage {
                     text: "[Execution cancelled]".to_string(),
                 });
+            }
+
+            // 4-phase context compression (when enabled).
+            if self.config.summarization.compression_enabled {
+                let comp_config = crate::context_compression::CompressionConfig {
+                    max_tool_result_chars: self.config.summarization.max_tool_result_chars,
+                    protect_head: self.config.summarization.protect_head,
+                    protect_tail: self.config.summarization.protect_tail,
+                    max_summary_chars: self.config.summarization.max_summary_chars,
+                    enable_summarization: self.config.summarization.enabled,
+                };
+                crate::context_compression::compress(
+                    &mut messages,
+                    &comp_config,
+                    &mut compression_state,
+                    Some(self.provider.as_ref()),
+                )
+                .await;
             }
 
             // Detect when the most recent tool result will be truncated away.
@@ -1506,6 +1565,12 @@ impl Agent {
                             let input_str = match prepare_tool_input(&**tool, &tc.input) {
                                 Ok(s) => s,
                                 Err(validation_err) => {
+                                    warn!(
+                                        tool = %tc.name,
+                                        error = %validation_err,
+                                        iteration,
+                                        "tool input validation failed"
+                                    );
                                     failure_streak += 1;
                                     tool_results.push(ToolResultMessage {
                                         tool_use_id: tc.id.clone(),
@@ -1546,6 +1611,12 @@ impl Agent {
                                     }
                                 }
                                 Err(e) => {
+                                    warn!(
+                                        tool = %tc.name,
+                                        error = %e,
+                                        iteration,
+                                        "tool execution failed"
+                                    );
                                     failure_streak += 1;
                                     ToolResultMessage {
                                         tool_use_id: tc.id.clone(),
@@ -3811,6 +3882,7 @@ mod tests {
             reasoning: ReasoningConfig {
                 enabled: Some(true),
                 level: Some("high".to_string()),
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -3848,6 +3920,7 @@ mod tests {
             reasoning: ReasoningConfig {
                 enabled: Some(false),
                 level: None,
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -4689,6 +4762,21 @@ mod tests {
                 "count": { "type": "integer" }
             },
             "required": ["count"]
+        });
+        assert_eq!(single_required_string_field(&schema), None);
+    }
+
+    #[test]
+    fn single_required_string_field_none_for_optional_properties() {
+        // content_search: one required field but multiple optional properties
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "pattern": { "type": "string" },
+                "path": { "type": "string" },
+                "glob": { "type": "string" }
+            },
+            "required": ["pattern"]
         });
         assert_eq!(single_required_string_field(&schema), None);
     }

@@ -1,9 +1,13 @@
 use crate::cli::ChannelCommands;
 use crate::command_core::{AgentZeroCommand, CommandContext};
-use agentzero_channels::{channel_catalog, normalize_channel_id, ChannelRegistry};
+use agentzero_channels::{
+    build_channel_instance, channel_catalog, normalize_channel_id, ChannelInstanceConfig,
+    ChannelRegistry, SendMessage,
+};
 use agentzero_storage::EncryptedJsonStore;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::Write;
 use std::io::{self, IsTerminal};
 
@@ -71,6 +75,33 @@ impl AgentZeroCommand for ChannelCommand {
                         println!("- {channel}: disabled in this build");
                     }
                 }
+            }
+            ChannelCommands::Test { name } => {
+                let channel =
+                    resolve_channel(name.as_deref(), "channel to test", "AGENTZERO_CHANNEL")?;
+
+                if !state.enabled_channels.iter().any(|c| c == channel) {
+                    anyhow::bail!(
+                        "channel `{channel}` is not configured. Run `agentzero channel add {channel}` first."
+                    );
+                }
+
+                let configs = load_channel_configs(&ctx.config_path)?;
+                let instance_cfg = configs.get(channel).cloned().unwrap_or_default();
+                let ch = build_channel_instance(channel, &instance_cfg)
+                    .map_err(|e| anyhow::anyhow!("failed to build channel `{channel}`: {e}"))?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("channel `{channel}` is not available in this build")
+                    })?;
+
+                println!("Sending test message to {channel}...");
+                let recipient = instance_cfg.channel_id.as_deref().unwrap_or("test");
+                let msg =
+                    SendMessage::new("Hello from AgentZero! This is a test message.", recipient);
+                ch.send(&msg)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("test message failed on `{channel}`: {e}"))?;
+                println!("Test message sent successfully to {channel}.");
             }
         }
 
@@ -142,6 +173,30 @@ fn render_channel_list(writer: &mut dyn Write, state: &ChannelState) -> anyhow::
     writeln!(writer, "To check health:    agentzero channel doctor")?;
     writeln!(writer, "To configure:       agentzero onboard")?;
     Ok(())
+}
+
+/// Load `[channels.<name>]` sections from the TOML config into
+/// `ChannelInstanceConfig` values keyed by channel name.
+fn load_channel_configs(
+    config_path: &std::path::Path,
+) -> anyhow::Result<HashMap<String, ChannelInstanceConfig>> {
+    if !config_path.exists() {
+        return Ok(HashMap::new());
+    }
+    let raw = std::fs::read_to_string(config_path)?;
+    let table: toml::Value = toml::from_str(&raw)?;
+    let Some(channels) = table.get("channels").and_then(|v| v.as_table()) else {
+        return Ok(HashMap::new());
+    };
+    let mut out = HashMap::new();
+    for (name, value) in channels {
+        let cfg: ChannelInstanceConfig = value
+            .clone()
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("bad config for channel `{name}`: {e}"))?;
+        out.insert(name.clone(), cfg);
+    }
+    Ok(out)
 }
 
 fn channel_state_store(ctx: &CommandContext) -> anyhow::Result<EncryptedJsonStore> {

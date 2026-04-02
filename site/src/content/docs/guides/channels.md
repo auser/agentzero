@@ -1,6 +1,6 @@
 ---
 title: Channel Integrations
-description: Connect AgentZero to messaging platforms — Telegram, Discord, Slack, Matrix, Email, IRC, and more.
+description: Connect AgentZero to messaging platforms — Telegram, Discord, Slack, Signal, WhatsApp, Matrix, Email, and more.
 ---
 
 Channels connect the agent to messaging platforms. Each channel runs as a listener that forwards messages to the agent loop and sends responses back to the platform.
@@ -11,13 +11,34 @@ Channels connect the agent to messaging platforms. Each channel runs as a listen
 |---|---|---|---|
 | **Telegram** | `channels.telegram` | Bot API (polling) | Supports groups, inline queries |
 | **Discord** | `channels.discord` | Gateway WebSocket | Supports guilds, threads |
+| **Discord History** | `channels.discord_history` | Gateway WebSocket | Backfill guild history |
 | **Slack** | `channels.slack` | Socket Mode | Requires bot + app tokens |
 | **Mattermost** | `channels.mattermost` | WebSocket | Self-hosted or cloud |
+| **iMessage** | `channels.imessage` | AppleScript + SQLite | macOS only |
 | **Matrix** | `channels.matrix` | Client-Server API | Federated, E2EE-capable |
+| **Signal** | `channels.signal` | signal-cli REST API | Requires signal-cli daemon |
+| **WhatsApp** | `channels.whatsapp` | Cloud API | Meta Business Platform |
+| **WhatsApp Web** | `channels.whatsapp_web` | Multi-device protocol | QR code or pairing code |
+| **WhatsApp Storage** | `channels.whatsapp_storage` | In-memory ring buffer | Message persistence layer |
+| **WATI** | `channels.wati` | WATI API | WhatsApp Team Inbox |
+| **MQTT** | `channels.mqtt` | MQTT broker | Pub/sub messaging |
+| **Transcription** | `channels.transcription` | Whisper-compatible API | Audio-to-text (Groq default) |
+| **Linq** | `channels.linq` | Linq API | Linq messaging platform |
+| **NextCloud Talk** | `channels.nextcloud_talk` | Spreed OCS API | Self-hosted collaboration |
 | **Email** | `channels.email` | SMTP + IMAP | Send and receive email |
+| **Gmail Push** | `channels.gmail_push` | Google Pub/Sub | Real-time Gmail notifications |
 | **IRC** | `channels.irc` | TLS socket | Any IRC network |
+| **Lark** | `channels.lark` | Open Platform API | ByteDance Lark (international) |
+| **Feishu** | `channels.feishu` | Open Platform API | ByteDance Feishu (China) |
+| **DingTalk** | `channels.dingtalk` | Outgoing webhook | Alibaba DingTalk |
+| **QQ Official** | `channels.qq_official` | Bot Open Platform API | Tencent QQ |
 | **Nostr** | `channels.nostr` | Relay WebSocket | Decentralized |
+| **ClawdTalk** | `channels.clawdtalk` | REST API | Self-hosted chat |
+| **Voice Wake Word** | `channels.voice_wake` | Audio energy detection | Wake word + Whisper |
 | **Webhook** | `channels.webhook` | HTTP POST | Generic HTTP integration |
+| **Napcat** | `channels.napcat` | OneBot v11 HTTP | QQ via Napcat/OneBot |
+| **ACP** | `channels.acp` | Agent Client Protocol | Agent-to-agent communication |
+| **SMS** | `channels.sms` | Twilio REST API | Send and receive SMS |
 
 ## Quick Start
 
@@ -52,9 +73,11 @@ The gateway automatically starts all configured channels.
 
 ```bash
 agentzero channel list              # List all configured channels
-agentzero channel enable telegram   # Enable a channel
-agentzero channel disable telegram  # Disable a channel
-agentzero channel test telegram     # Send a test message
+agentzero channel add telegram      # Add a channel
+agentzero channel remove telegram   # Remove a channel
+agentzero channel start             # Start all configured channels
+agentzero channel test telegram     # Send a test message through a channel
+agentzero channel doctor            # Run channel diagnostics
 ```
 
 ---
@@ -82,6 +105,15 @@ privacy_boundary = ""
 
 Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications), enable the Message Content intent, and invite it to your server.
 
+### Discord History
+
+```toml
+[channels.discord_history]
+bot_token = "YOUR_DISCORD_BOT_TOKEN"
+```
+
+Uses the same bot as the Discord channel. Backfills guild message history for context.
+
 ### Slack
 
 ```toml
@@ -104,6 +136,15 @@ token = "YOUR_MATTERMOST_TOKEN"
 channel_id = "YOUR_CHANNEL_ID"
 ```
 
+### iMessage
+
+```toml
+[channels.imessage]
+allowed_users = []                          # phone numbers or iCloud emails
+```
+
+macOS only. Uses AppleScript to send messages and polls the iMessage SQLite database for incoming messages. No token needed — uses the logged-in macOS user's Messages app.
+
 ### Matrix
 
 ```toml
@@ -112,6 +153,96 @@ homeserver = "https://matrix.org"
 access_token = "YOUR_MATRIX_TOKEN"
 room_id = "!roomid:matrix.org"
 ```
+
+### Signal
+
+```toml
+[channels.signal]
+base_url = "http://localhost:8080"          # signal-cli REST API endpoint
+channel_id = "+1234567890"                  # your Signal phone number
+```
+
+Requires a running [signal-cli REST API](https://github.com/bbernhard/signal-cli-rest-api) daemon.
+
+### WhatsApp
+
+```toml
+[channels.whatsapp]
+access_token = "YOUR_WHATSAPP_ACCESS_TOKEN"
+channel_id = "YOUR_PHONE_NUMBER_ID"         # from Meta Business Platform
+```
+
+Uses the WhatsApp Cloud API via Meta Business Platform.
+
+### WhatsApp Web
+
+```toml
+[channels.whatsapp_web]
+# session_path = "./whatsapp-session"       # optional session persistence
+# pairing_mode = "qr"                       # "qr" or "code"
+```
+
+Connects via the WhatsApp Web multi-device protocol. On first run, scan the QR code or enter a pairing code.
+
+### WhatsApp Storage
+
+```toml
+[channels.whatsapp_storage]
+# session_path = "./whatsapp-storage"       # optional persistence path
+```
+
+In-memory message ring buffer for WhatsApp message persistence. Typically used alongside another WhatsApp channel.
+
+### WATI
+
+```toml
+[channels.wati]
+base_url = "https://live-server-XXXXX.wati.io"
+token = "YOUR_WATI_API_TOKEN"
+```
+
+[WATI](https://www.wati.io/) is a WhatsApp Team Inbox platform.
+
+### MQTT
+
+```toml
+[channels.mqtt]
+base_url = "mqtt://localhost:1883"          # broker URL
+channel_name = "agentzero/inbox"            # subscribe topic
+# channel_id = "agentzero/outbox"           # publish topic (optional)
+```
+
+Connects to any MQTT broker. Subscribes to the configured topic for incoming messages and publishes responses.
+
+### Transcription
+
+```toml
+[channels.transcription]
+token = "YOUR_API_KEY"                      # Groq or Whisper-compatible API key
+# base_url = "https://api.groq.com"         # API endpoint (default: Groq)
+```
+
+Transcribes audio input to text using a Whisper-compatible API.
+
+### Linq
+
+```toml
+[channels.linq]
+base_url = "https://api.linq.chat"
+token = "YOUR_LINQ_API_KEY"
+```
+
+### NextCloud Talk
+
+```toml
+[channels.nextcloud_talk]
+base_url = "https://your-nextcloud.example.com"
+username = "bot-user"
+password = "bot-password"
+room_id = "YOUR_ROOM_TOKEN"
+```
+
+Uses the NextCloud Spreed OCS API.
 
 ### Email
 
@@ -126,6 +257,16 @@ password = "app-specific-password"         # use Gmail App Passwords
 from_address = "you@gmail.com"
 ```
 
+### Gmail Push
+
+```toml
+[channels.gmail_push]
+access_token = "YOUR_GOOGLE_ACCESS_TOKEN"
+# channel_id = "projects/my-project/topics/gmail"  # Pub/Sub topic
+```
+
+Uses Google Pub/Sub for real-time Gmail push notifications.
+
 ### IRC
 
 ```toml
@@ -137,6 +278,45 @@ channel_name = "#your-channel"
 password = ""                              # NickServ password (optional)
 ```
 
+### Lark
+
+```toml
+[channels.lark]
+token = "YOUR_LARK_APP_ID"
+app_token = "YOUR_LARK_APP_SECRET"
+```
+
+Create an app in the [Lark Developer Console](https://open.larksuite.com/).
+
+### Feishu
+
+```toml
+[channels.feishu]
+token = "YOUR_FEISHU_APP_ID"
+app_token = "YOUR_FEISHU_APP_SECRET"
+```
+
+Same as Lark but for the China region (Feishu).
+
+### DingTalk
+
+```toml
+[channels.dingtalk]
+access_token = "YOUR_DINGTALK_TOKEN"
+```
+
+Uses DingTalk outgoing webhook integration.
+
+### QQ Official
+
+```toml
+[channels.qq_official]
+token = "YOUR_QQ_APP_ID"
+bot_token = "YOUR_QQ_BOT_TOKEN"
+```
+
+Uses the QQ Bot Open Platform API.
+
 ### Nostr
 
 ```toml
@@ -144,6 +324,27 @@ password = ""                              # NickServ password (optional)
 relay_url = "wss://relay.example.com"
 private_key_hex = "YOUR_NOSTR_PRIVATE_KEY_HEX"
 ```
+
+### ClawdTalk
+
+```toml
+[channels.clawdtalk]
+base_url = "https://your-clawdtalk.example.com"
+token = "YOUR_CLAWDTALK_API_KEY"
+room_id = "YOUR_ROOM_ID"
+```
+
+Self-hosted chat platform.
+
+### Voice Wake Word
+
+```toml
+[channels.voice_wake]
+# wake_words = ["hey agent"]               # custom wake words
+# channel_id = "0.6"                       # energy threshold (0.0-1.0)
+```
+
+Listens for a wake word via audio energy detection, then transcribes speech with Whisper.
 
 ### Webhook
 
@@ -153,6 +354,62 @@ base_url = "http://localhost:8080/webhook"
 ```
 
 The webhook channel sends agent responses as HTTP POST requests to the configured URL.
+
+### Napcat (QQ via OneBot)
+
+```toml
+[channels.napcat]
+base_url = "http://localhost:3000"          # Napcat OneBot v11 HTTP endpoint
+access_token = "YOUR_ACCESS_TOKEN"          # optional
+```
+
+Uses the OneBot v11 HTTP API via [Napcat](https://github.com/NapNeko/NapCatQQ).
+
+### ACP (Agent Client Protocol)
+
+```toml
+[channels.acp]
+base_url = "http://localhost:9000"
+channel_id = "my-agent"                     # agent ID
+# token = "YOUR_API_KEY"                    # optional authentication
+```
+
+Agent-to-agent communication channel using the Agent Client Protocol.
+
+### SMS
+
+```toml
+[channels.sms]
+token = "YOUR_TWILIO_AUTH_TOKEN"
+channel_id = "YOUR_TWILIO_ACCOUNT_SID"      # Account SID
+# from_number = "+15550001234"              # Twilio sending number (E.164)
+```
+
+Uses the Twilio REST API for SMS.
+
+### Voice Wake Word
+
+Real-time voice input using microphone audio capture, energy-based voice activity detection, and Whisper-compatible speech-to-text.
+
+```toml
+[channels_config.voice_wake]
+wake_words = ["hey agent", "ok computer"]
+energy_threshold = 0.05
+capture_timeout_secs = 10
+transcription_url = "https://api.groq.com/openai/v1/audio/transcriptions"
+# transcription_api_key = ""  # or set GROQ_API_KEY env var
+sample_rate = 16000
+auto_tts_response = false
+```
+
+**Pipeline**: microphone → energy-based VAD → capture audio buffer → encode as WAV → POST to Whisper API → check for wake word → emit message.
+
+Build with the `channel-voice-wake` feature flag:
+```bash
+cargo build --features channel-voice-wake
+```
+
+Requires a working audio input device. The channel reports unhealthy if no microphone is found.
 
 ---
 

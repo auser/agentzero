@@ -8,7 +8,7 @@ mod impl_ {
 
     super::super::channel_meta!(TELEGRAM_DESCRIPTOR, "telegram", "Telegram");
 
-    const API_BASE: &str = "https://api.telegram.org/bot";
+    const DEFAULT_API_BASE: &str = "https://api.telegram.org/bot";
     const POLL_TIMEOUT_SECS: u64 = 30;
     const MAX_MESSAGE_LENGTH: usize = 4096;
 
@@ -16,6 +16,7 @@ mod impl_ {
         bot_token: String,
         allowed_users: Vec<String>,
         client: reqwest::Client,
+        api_base: String,
     }
 
     impl TelegramChannel {
@@ -28,6 +29,7 @@ mod impl_ {
                 bot_token,
                 allowed_users,
                 client,
+                api_base: DEFAULT_API_BASE.to_string(),
             }
         }
 
@@ -36,8 +38,14 @@ mod impl_ {
             self
         }
 
+        /// Override the API base URL (for testing with mock servers).
+        pub fn with_base_url(mut self, base_url: String) -> Self {
+            self.api_base = base_url;
+            self
+        }
+
         fn api_url(&self, method: &str) -> String {
-            format!("{}{}/{}", API_BASE, self.bot_token, method)
+            format!("{}{}/{}", self.api_base, self.bot_token, method)
         }
     }
 
@@ -118,8 +126,48 @@ mod impl_ {
                     }
 
                     let message = &update["message"];
-                    let text = message["text"].as_str().unwrap_or("");
-                    if text.is_empty() {
+                    let text = message["text"]
+                        .as_str()
+                        .or_else(|| message["caption"].as_str())
+                        .unwrap_or("");
+
+                    // Extract native media attachments from Telegram message.
+                    let mut attachments = Vec::new();
+                    if let Some(photos) = message["photo"].as_array() {
+                        // Telegram sends multiple sizes; take the largest (last).
+                        if let Some(photo) = photos.last() {
+                            if let Some(file_id) = photo["file_id"].as_str() {
+                                attachments.push(crate::media::MediaAttachment {
+                                    mime_type: "image/jpeg".to_string(),
+                                    url: Some(format!(
+                                        "https://api.telegram.org/file/bot{}/{}",
+                                        self.bot_token, file_id
+                                    )),
+                                    transcript: None,
+                                    description: None,
+                                });
+                            }
+                        }
+                    }
+                    for key in ["document", "audio", "voice", "video", "video_note"] {
+                        if let Some(file_id) = message[key]["file_id"].as_str() {
+                            let mime = message[key]["mime_type"]
+                                .as_str()
+                                .unwrap_or("application/octet-stream");
+                            attachments.push(crate::media::MediaAttachment {
+                                mime_type: mime.to_string(),
+                                url: Some(format!(
+                                    "https://api.telegram.org/file/bot{}/{}",
+                                    self.bot_token, file_id
+                                )),
+                                transcript: None,
+                                description: None,
+                            });
+                        }
+                    }
+
+                    // Skip messages with no text AND no attachments.
+                    if text.is_empty() && attachments.is_empty() {
                         continue;
                     }
 
@@ -147,7 +195,7 @@ mod impl_ {
                         timestamp: helpers::now_epoch_secs(),
                         thread_ts: None,
                         privacy_boundary: String::new(),
-                        attachments: Vec::new(),
+                        attachments,
                     };
 
                     if tx.send(msg).await.is_err() {

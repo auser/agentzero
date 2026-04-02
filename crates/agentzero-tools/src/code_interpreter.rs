@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -27,6 +28,10 @@ impl Default for CodeInterpreterConfig {
     }
 }
 
+#[tool(
+    name = "code_interpreter",
+    description = "Execute Python or JavaScript code in a sandboxed subprocess. Returns stdout, stderr, exit code, and paths to any output files. Use for data analysis, computation, chart generation, and scripting tasks."
+)]
 #[derive(Default)]
 pub struct CodeInterpreterTool {
     config: CodeInterpreterConfig,
@@ -99,38 +104,28 @@ impl CodeInterpreterTool {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct InterpreterInput {
+    /// Programming language: "python" or "javascript"
+    #[schema(enum_values = ["python", "javascript"])]
     language: String,
+    /// The code to execute
     code: String,
 }
 
 #[async_trait]
 impl Tool for CodeInterpreterTool {
     fn name(&self) -> &'static str {
-        "code_interpreter"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Execute Python or JavaScript code in a sandboxed subprocess. Returns stdout, stderr, exit code, and paths to any output files. Use for data analysis, computation, chart generation, and scripting tasks."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "language": {
-                    "type": "string",
-                    "description": "Programming language: \"python\" or \"javascript\"",
-                    "enum": ["python", "javascript"]
-                },
-                "code": {
-                    "type": "string",
-                    "description": "The code to execute"
-                }
-            },
-            "required": ["language", "code"]
-        }))
+        Some(InterpreterInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

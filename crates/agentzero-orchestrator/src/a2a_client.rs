@@ -44,6 +44,68 @@ impl A2aAgentEndpoint {
         })
     }
 
+    /// Send a JSON-RPC request to the A2A agent and return the parsed response.
+    async fn rpc_call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let url = format!("{}/a2a", self.base_url);
+        let rpc_request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        });
+
+        let mut req = self.client.post(&url).json(&rpc_request);
+        if let Some(ref token) = self.auth_token {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+
+        let resp = req
+            .timeout(std::time::Duration::from_secs(self.timeout_secs))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("A2A {method} request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("A2A {method} returned {status}: {body}"));
+        }
+
+        let rpc_response: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to parse A2A {method} response: {e}"))?;
+
+        if let Some(error) = rpc_response.get("error") {
+            return Err(anyhow::anyhow!("A2A {method} error: {error}"));
+        }
+
+        rpc_response
+            .get("result")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("A2A {method} response missing result"))
+    }
+
+    /// Check the status of an existing A2A task.
+    pub async fn check_status(&self, task_id: &str) -> anyhow::Result<Task> {
+        let result = self.rpc_call("tasks/get", json!({ "id": task_id })).await?;
+        serde_json::from_value(result)
+            .map_err(|e| anyhow::anyhow!("failed to parse task status: {e}"))
+    }
+
+    /// Cancel an existing A2A task.
+    pub async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task> {
+        let result = self
+            .rpc_call("tasks/cancel", json!({ "id": task_id }))
+            .await?;
+        serde_json::from_value(result)
+            .map_err(|e| anyhow::anyhow!("failed to parse cancelled task: {e}"))
+    }
+
     /// Fetch the remote agent's Agent Card.
     pub async fn fetch_agent_card(&self) -> anyhow::Result<AgentCard> {
         let url = format!("{}/.well-known/agent.json", self.base_url);
@@ -71,52 +133,18 @@ impl A2aAgentEndpoint {
 #[async_trait]
 impl AgentEndpoint for A2aAgentEndpoint {
     async fn send(&self, message: &str, conversation_id: &str) -> anyhow::Result<String> {
-        let url = format!("{}/a2a", self.base_url);
-
-        let rpc_request = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tasks/send",
-            "params": {
-                "id": conversation_id,
-                "message": {
-                    "role": "user",
-                    "parts": [{"type": "text", "text": message}]
-                }
-            }
-        });
-
-        let mut req = self.client.post(&url).json(&rpc_request);
-        if let Some(ref token) = self.auth_token {
-            req = req.header("Authorization", format!("Bearer {token}"));
-        }
-
-        let resp = req
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("A2A request failed: {e}"))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("A2A request returned {status}: {body}"));
-        }
-
-        let rpc_response: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to parse A2A response: {e}"))?;
-
-        // Check for JSON-RPC error.
-        if let Some(error) = rpc_response.get("error") {
-            return Err(anyhow::anyhow!("A2A error: {error}"));
-        }
-
-        // Extract the agent's response text from the task result.
-        let result = rpc_response
-            .get("result")
-            .ok_or_else(|| anyhow::anyhow!("A2A response missing result"))?;
+        let result = self
+            .rpc_call(
+                "tasks/send",
+                json!({
+                    "id": conversation_id,
+                    "message": {
+                        "role": "user",
+                        "parts": [{"type": "text", "text": message}]
+                    }
+                }),
+            )
+            .await?;
 
         // Try to get the status message text, or fall back to last history entry.
         let text = result
@@ -206,5 +234,43 @@ mod tests {
         .expect("valid URL should succeed");
         let err = endpoint.fetch_agent_card().await.expect_err("should fail");
         assert!(err.to_string().contains("fetch agent card"));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_error_on_connection_failure() {
+        let endpoint = A2aAgentEndpoint::new(
+            "test".to_string(),
+            "http://localhost:1".to_string(),
+            None,
+            5,
+        )
+        .expect("valid URL should succeed");
+        let err = endpoint
+            .check_status("task-123")
+            .await
+            .expect_err("should fail");
+        assert!(
+            err.to_string().contains("request failed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_task_returns_error_on_connection_failure() {
+        let endpoint = A2aAgentEndpoint::new(
+            "test".to_string(),
+            "http://localhost:1".to_string(),
+            None,
+            5,
+        )
+        .expect("valid URL should succeed");
+        let err = endpoint
+            .cancel_task("task-456")
+            .await
+            .expect_err("should fail");
+        assert!(
+            err.to_string().contains("request failed"),
+            "unexpected error: {err}"
+        );
     }
 }

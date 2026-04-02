@@ -45,6 +45,66 @@ impl std::fmt::Display for RunId {
     }
 }
 
+/// Unique identifier for a session (groups related runs/events for replay).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionId(pub String);
+
+impl SessionId {
+    pub fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        Self(format!("ses-{ts}-{seq}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for SessionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Unique identifier for an agent in the swarm.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AgentId(pub String);
+
+impl AgentId {
+    pub fn new(name: &str) -> Self {
+        Self(name.to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for AgentId {
+    fn default() -> Self {
+        Self("default".to_string())
+    }
+}
+
+impl std::fmt::Display for AgentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Status of an async job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -348,6 +408,29 @@ pub enum ResearchTrigger {
 pub struct ReasoningConfig {
     pub enabled: Option<bool>,
     pub level: Option<String>,
+    /// When true, reasoning effort is adjusted dynamically based on query
+    /// complexity. Simple queries get low/no reasoning; complex queries get deep.
+    pub adaptive: bool,
+}
+
+impl ReasoningConfig {
+    /// Adjust reasoning level based on query complexity.
+    /// Returns a new config with the level set to match the complexity tier.
+    pub fn adapt_to_complexity(&self, tier: crate::complexity::ComplexityTier) -> ReasoningConfig {
+        if !self.adaptive {
+            return self.clone();
+        }
+        let (enabled, level) = match tier {
+            crate::complexity::ComplexityTier::Simple => (Some(false), None),
+            crate::complexity::ComplexityTier::Medium => (Some(true), Some("medium".to_string())),
+            crate::complexity::ComplexityTier::Complex => (Some(true), Some("high".to_string())),
+        };
+        ReasoningConfig {
+            enabled,
+            level,
+            adaptive: self.adaptive,
+        }
+    }
 }
 
 /// Configuration for intelligent context summarization.
@@ -362,6 +445,32 @@ pub struct SummarizationConfig {
     pub min_entries_for_summarization: usize,
     /// Max characters for the generated summary.
     pub max_summary_chars: usize,
+
+    // ── Advanced context compression (4-phase pipeline) ─────────────
+    /// Enable 4-phase context compression on the tool-use message list.
+    /// When enabled, tool results are pruned, boundaries are protected,
+    /// and the middle section is summarized instead of hard-truncated.
+    #[serde(default)]
+    pub compression_enabled: bool,
+    /// Maximum characters for a single tool result before truncation (Phase 1).
+    #[serde(default = "default_max_tool_result_chars")]
+    pub max_tool_result_chars: usize,
+    /// Number of messages to protect at the start of conversation (Phase 2).
+    #[serde(default = "default_protect_head")]
+    pub protect_head: usize,
+    /// Number of messages to protect at the tail of conversation (Phase 2).
+    #[serde(default = "default_protect_tail")]
+    pub protect_tail: usize,
+}
+
+fn default_max_tool_result_chars() -> usize {
+    4000
+}
+fn default_protect_head() -> usize {
+    3
+}
+fn default_protect_tail() -> usize {
+    10
 }
 
 impl Default for SummarizationConfig {
@@ -371,6 +480,10 @@ impl Default for SummarizationConfig {
             keep_recent: 10,
             min_entries_for_summarization: 20,
             max_summary_chars: 2000,
+            compression_enabled: false,
+            max_tool_result_chars: 4000,
+            protect_head: 3,
+            protect_tail: 10,
         }
     }
 }
@@ -549,6 +662,19 @@ pub struct ToolContext {
     /// Sender identity for per-sender rate limiting (e.g., Telegram user ID, Discord channel).
     #[serde(default)]
     pub sender_id: Option<String>,
+    /// Cancellation token for structured cancellation cascade.
+    /// Coexists with the legacy `cancelled: Arc<AtomicBool>` flag.
+    /// When the token is cancelled, background tasks and sub-agents should stop.
+    #[serde(skip)]
+    pub cancellation_token: Option<tokio_util::sync::CancellationToken>,
+    /// Task identifier when this context is executing as a background task.
+    /// Set by `TaskManager::spawn_background()` so tools can identify their own task.
+    #[serde(default)]
+    pub task_id: Option<String>,
+    /// Shared collector for tool execution records. Populated during agent runs
+    /// and consumed by the runtime for quality tracking and persistence.
+    #[serde(skip)]
+    pub tool_executions: Arc<std::sync::Mutex<Vec<ToolExecutionRecord>>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -589,6 +715,10 @@ impl std::fmt::Debug for ToolContext {
             .field("max_tokens", &self.max_tokens)
             .field("max_cost_microdollars", &self.max_cost_microdollars)
             .field("sender_id", &self.sender_id)
+            .field(
+                "tool_executions_count",
+                &self.tool_executions.lock().map(|v| v.len()).unwrap_or(0),
+            )
             .finish()
     }
 }
@@ -615,6 +745,9 @@ impl ToolContext {
             max_tokens: 0,
             max_cost_microdollars: 0,
             sender_id: None,
+            cancellation_token: None,
+            task_id: None,
+            tool_executions: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -715,6 +848,8 @@ pub enum ToolSelectionMode {
     Keyword,
     /// Use a lightweight LLM call to classify relevant tools.
     Ai,
+    /// Two-stage: keyword/embedding pre-filter → LLM refinement on shortlist.
+    TwoStage,
 }
 
 impl std::fmt::Display for ToolSelectionMode {
@@ -723,6 +858,7 @@ impl std::fmt::Display for ToolSelectionMode {
             Self::All => write!(f, "all"),
             Self::Keyword => write!(f, "keyword"),
             Self::Ai => write!(f, "ai"),
+            Self::TwoStage => write!(f, "two_stage"),
         }
     }
 }
@@ -734,6 +870,7 @@ impl std::str::FromStr for ToolSelectionMode {
             "all" => Ok(Self::All),
             "keyword" => Ok(Self::Keyword),
             "ai" => Ok(Self::Ai),
+            "two_stage" | "twostage" => Ok(Self::TwoStage),
             other => Err(format!("unknown tool selection mode: {other}")),
         }
     }
@@ -909,8 +1046,25 @@ pub struct MemoryEntry {
     pub embedding: Option<Vec<f32>>,
 }
 
+/// Structured record of a single tool execution for quality tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolExecutionRecord {
+    pub tool_name: String,
+    pub success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub latency_ms: u64,
+    pub timestamp: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
+    /// Monotonic sequence number within a session (0 = unsequenced).
+    #[serde(default)]
+    pub seq: u64,
+    /// Session identifier grouping related events for replay.
+    #[serde(default)]
+    pub session_id: String,
     pub stage: String,
     pub detail: Value,
 }
@@ -958,6 +1112,15 @@ pub trait Provider: Send + Sync {
     /// Defaults to `false`; override in providers that implement real streaming.
     fn supports_streaming(&self) -> bool {
         false
+    }
+
+    /// Estimate the number of tokens in a text string.
+    ///
+    /// Returns `None` if the provider doesn't have a tokenizer (most cloud
+    /// providers). Local providers with in-process tokenizers should override
+    /// this to enable context window management and overflow prevention.
+    fn estimate_tokens(&self, _text: &str) -> Option<usize> {
+        None
     }
 
     async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult>;

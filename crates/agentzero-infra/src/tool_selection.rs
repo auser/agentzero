@@ -34,8 +34,15 @@ impl ToolSelector for AllToolSelector {
 // KeywordToolSelector — TF-IDF / keyword matching
 // ---------------------------------------------------------------------------
 
+/// Core tools always included by the keyword selector so local models
+/// always have access to basic filesystem and search capabilities.
+const KEYWORD_ALWAYS_INCLUDE: &[&str] = &["read_file", "content_search", "glob_search", "shell"];
+
 /// Selects tools by keyword overlap between the task description and tool
 /// name + description. Uses normalized TF-IDF scoring. No LLM call needed.
+///
+/// Core tools (`read_file`, `content_search`, `glob_search`, `shell`) are
+/// always included regardless of score so the model can always explore files.
 pub struct KeywordToolSelector {
     /// Maximum number of tools to return (0 = return all matches above threshold).
     pub max_tools: usize,
@@ -146,10 +153,21 @@ impl ToolSelector for KeywordToolSelector {
             scored.truncate(self.max_tools);
         }
 
-        Ok(scored
+        let mut selected: Vec<String> = scored
             .iter()
             .map(|(i, _)| available_tools[*i].name.clone())
-            .collect())
+            .collect();
+
+        // Ensure core tools are always present so the model can explore files.
+        for &core in KEYWORD_ALWAYS_INCLUDE {
+            if !selected.contains(&core.to_string())
+                && available_tools.iter().any(|t| t.name == core)
+            {
+                selected.push(core.to_string());
+            }
+        }
+
+        Ok(selected)
     }
 }
 
@@ -374,6 +392,131 @@ impl ToolSelector for HintedToolSelector {
         }
 
         Ok(selected)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TwoStageToolSelector — keyword/embedding pre-filter → LLM refinement
+// ---------------------------------------------------------------------------
+
+/// Two-stage tool selection to prevent prompt bloat as dynamic tools grow.
+///
+/// **Stage 1**: `KeywordToolSelector` narrows candidates to `stage1_max`.
+/// If an `EmbeddingProvider` is available, re-ranks by cosine similarity.
+///
+/// **Stage 2**: Passes the Stage 1 shortlist to `AiToolSelector` for final
+/// LLM-based selection (max `stage2_max` tools).
+///
+/// Graceful degradation: no embedding provider → keyword only; LLM fails → Stage 1 results.
+pub struct TwoStageToolSelector {
+    keyword_selector: KeywordToolSelector,
+    embedding_provider: Option<std::sync::Arc<dyn agentzero_core::embedding::EmbeddingProvider>>,
+    ai_selector: AiToolSelector,
+    /// Maximum tools passed from Stage 1 to Stage 2.
+    pub stage1_max: usize,
+    /// Maximum tools returned from Stage 2.
+    pub stage2_max: usize,
+    /// Embedding cache for tool descriptions (keyed by tool name).
+    embedding_cache: Mutex<HashMap<String, Vec<f32>>>,
+}
+
+impl TwoStageToolSelector {
+    pub fn new(
+        keyword_selector: KeywordToolSelector,
+        ai_selector: AiToolSelector,
+        embedding_provider: Option<
+            std::sync::Arc<dyn agentzero_core::embedding::EmbeddingProvider>,
+        >,
+    ) -> Self {
+        Self {
+            keyword_selector,
+            embedding_provider,
+            ai_selector,
+            stage1_max: 30,
+            stage2_max: 15,
+            embedding_cache: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl ToolSelector for TwoStageToolSelector {
+    async fn select(
+        &self,
+        task_description: &str,
+        available_tools: &[ToolSummary],
+    ) -> anyhow::Result<Vec<String>> {
+        if available_tools.len() <= self.stage2_max {
+            // Small tool set — skip both stages, return all.
+            return Ok(available_tools.iter().map(|t| t.name.clone()).collect());
+        }
+
+        // Stage 1: keyword pre-filter.
+        let mut stage1_names = self
+            .keyword_selector
+            .select(task_description, available_tools)
+            .await?;
+        stage1_names.truncate(self.stage1_max);
+
+        // If embedding provider available, re-rank by semantic similarity.
+        if let Some(ref provider) = self.embedding_provider {
+            if let Ok(task_embedding) = provider.embed(task_description).await {
+                let mut scored: Vec<(String, f32)> = Vec::new();
+                for name in &stage1_names {
+                    let tool_emb = {
+                        let cache = self
+                            .embedding_cache
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        cache.get(name).cloned()
+                    };
+                    let emb = match tool_emb {
+                        Some(e) => e,
+                        None => {
+                            let desc = available_tools
+                                .iter()
+                                .find(|t| t.name == *name)
+                                .map(|t| format!("{} {}", t.name, t.description))
+                                .unwrap_or_default();
+                            match provider.embed(&desc).await {
+                                Ok(e) => {
+                                    if let Ok(mut cache) = self.embedding_cache.lock() {
+                                        cache.insert(name.clone(), e.clone());
+                                    }
+                                    e
+                                }
+                                Err(_) => continue,
+                            }
+                        }
+                    };
+                    let sim = agentzero_core::embedding::cosine_similarity(&task_embedding, &emb);
+                    scored.push((name.clone(), sim));
+                }
+                scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                stage1_names = scored.into_iter().map(|(name, _)| name).collect();
+                stage1_names.truncate(self.stage1_max);
+            }
+        }
+
+        // Stage 2: LLM refinement on the shortlist.
+        let shortlist: Vec<ToolSummary> = available_tools
+            .iter()
+            .filter(|t| stage1_names.contains(&t.name))
+            .cloned()
+            .collect();
+
+        match self.ai_selector.select(task_description, &shortlist).await {
+            Ok(mut final_names) => {
+                final_names.truncate(self.stage2_max);
+                Ok(final_names)
+            }
+            Err(e) => {
+                // Graceful degradation: LLM failed, return Stage 1 results.
+                tracing::warn!(error = %e, "two-stage Stage 2 LLM failed, using Stage 1 results");
+                stage1_names.truncate(self.stage2_max);
+                Ok(stage1_names)
+            }
+        }
     }
 }
 

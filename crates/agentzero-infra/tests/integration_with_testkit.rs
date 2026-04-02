@@ -24,6 +24,13 @@ async fn runtime_exec_uses_testkit_components_success_path() {
         source_channel: None,
         sender_id: None,
         dynamic_registry: None,
+        task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
+        embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("."), "hello".to_string())
@@ -52,6 +59,13 @@ async fn runtime_exec_uses_testkit_components_negative_path() {
         source_channel: None,
         sender_id: None,
         dynamic_registry: None,
+        task_manager: None,
+        tool_evolver: None,
+        recipe_store: None,
+        pattern_capture: None,
+        embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("."), "hello".to_string())

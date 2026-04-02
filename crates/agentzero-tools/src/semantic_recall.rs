@@ -5,18 +5,26 @@
 
 use agentzero_core::embedding::EmbeddingProvider;
 use agentzero_core::{MemoryStore, Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::json;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
 struct Input {
-    /// The query text to find semantically similar entries for.
     query: String,
-    /// Maximum number of results to return (default: 5).
     #[serde(default = "default_limit")]
     limit: usize,
+}
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct SemanticRecallSchema {
+    /// The text to search for semantically similar entries
+    query: String,
+    /// Maximum results to return (default: 5)
+    #[serde(default)]
+    limit: Option<i64>,
 }
 
 fn default_limit() -> usize {
@@ -28,6 +36,10 @@ fn default_limit() -> usize {
 /// Requires both a `MemoryStore` (for storage) and an `EmbeddingProvider`
 /// (for embedding the query text). Returns entries sorted by cosine
 /// similarity to the query.
+#[tool(
+    name = "semantic_recall",
+    description = "Retrieve memory entries ranked by semantic similarity to a query. Uses vector embeddings for meaning-based search rather than keyword matching."
+)]
 pub struct SemanticRecallTool {
     store: Arc<dyn MemoryStore>,
     embedder: Arc<dyn EmbeddingProvider>,
@@ -42,30 +54,15 @@ impl SemanticRecallTool {
 #[async_trait]
 impl Tool for SemanticRecallTool {
     fn name(&self) -> &'static str {
-        "semantic_recall"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Retrieve memory entries ranked by semantic similarity to a query. \
-         Uses vector embeddings for meaning-based search rather than keyword matching."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The text to search for semantically similar entries"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum results to return (default: 5)",
-                    "default": 5
-                }
-            },
-            "required": ["query"]
-        }))
+        Some(SemanticRecallSchema::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

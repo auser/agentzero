@@ -1,9 +1,9 @@
 //! Claude Code delegation tool — invokes the `claude` CLI as a subprocess.
 
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::json;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
@@ -39,8 +39,28 @@ struct Input {
     allowed_tools: Option<Vec<String>>,
 }
 
+#[tool(
+    name = "claude_code",
+    description = "Delegate a task to Claude Code (the `claude` CLI). Runs as an independent agent with access to the filesystem, shell, and other tools."
+)]
 pub struct ClaudeCodeTool {
     config: ClaudeCodeConfig,
+}
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct ClaudeCodeSchema {
+    /// The task or prompt to delegate to Claude Code
+    task: String,
+    /// Optional model override
+    #[serde(default)]
+    model: Option<String>,
+    /// Maximum number of agentic turns
+    #[serde(default)]
+    max_turns: Option<i64>,
+    /// Tools to allow
+    #[serde(default)]
+    allowed_tools: Option<Vec<String>>,
 }
 
 impl ClaudeCodeTool {
@@ -58,25 +78,15 @@ impl Default for ClaudeCodeTool {
 #[async_trait]
 impl Tool for ClaudeCodeTool {
     fn name(&self) -> &'static str {
-        "claude_code"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Delegate a task to Claude Code (the `claude` CLI). Runs as an independent \
-         agent with access to the filesystem, shell, and other tools."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "required": ["task"],
-            "properties": {
-                "task": { "type": "string", "description": "The task or prompt to delegate to Claude Code" },
-                "model": { "type": "string", "description": "Optional model override" },
-                "max_turns": { "type": "integer", "description": "Maximum number of agentic turns" },
-                "allowed_tools": { "type": "array", "items": { "type": "string" }, "description": "Tools to allow" }
-            }
-        }))
+        Some(ClaudeCodeSchema::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

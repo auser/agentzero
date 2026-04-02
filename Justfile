@@ -30,11 +30,11 @@ docs-lint:
 
 # Run tests (compile with progress, then run)
 test:
-    cargo nextest run --workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk
+    cargo nextest run --workspace --exclude agentzero-plugin-sdk
 
 # Run tests with verbose output
 test-verbose:
-    cargo nextest run --workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk --no-capture
+    cargo nextest run --workspace --exclude agentzero-plugin-sdk --no-capture
 
 # Run benchmarks
 bench:
@@ -56,40 +56,13 @@ fmt-check:
 ci: fmt-check lint test
 
 
-# ── FFI ──────────────────────────────────────────
-
-# Generate all FFI bindings (Swift, Kotlin, Python)
-ffi: ffi-swift ffi-kotlin ffi-python
-    @echo "All FFI bindings generated in crates/agentzero-ffi/bindings/"
-
-# Generate Swift bindings
-ffi-swift:
-    cargo build -p agentzero-ffi --release
-    cargo run -p agentzero-ffi --features uniffi-cli --bin uniffi-bindgen generate \
-        --library target/release/libagentzero_ffi.dylib \
-        --language swift \
-        --out-dir crates/agentzero-ffi/bindings/swift
-
-# Generate Kotlin bindings
-ffi-kotlin:
-    cargo build -p agentzero-ffi --release
-    cargo run -p agentzero-ffi --features uniffi-cli --bin uniffi-bindgen generate \
-        --library target/release/libagentzero_ffi.dylib \
-        --language kotlin \
-        --out-dir crates/agentzero-ffi/bindings/kotlin
-
-# Generate Python bindings
-ffi-python:
-    cargo build -p agentzero-ffi --release
-    cargo run -p agentzero-ffi --features uniffi-cli --bin uniffi-bindgen generate \
-        --library target/release/libagentzero_ffi.dylib \
-        --language python \
-        --out-dir crates/agentzero-ffi/bindings/python
-
-# Build Node.js native addon (TypeScript)
-ffi-node:
-    cd crates/agentzero-ffi && cargo build --release --no-default-features --features node
-
+# Build release binary and symlink to ~/.local/bin/agentzero
+install: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$(pwd)/target/release/agentzero" "$HOME/.local/bin/agentzero"
+    echo "Linked target/release/agentzero → ~/.local/bin/agentzero"
 
 # ── Build Variants ────────────────────────────
 
@@ -257,7 +230,7 @@ release-auto:
     cargo fmt --all
     cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo nextest run --workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk
+    cargo nextest run --workspace --exclude agentzero-plugin-sdk
     # 2. Determine next version from conventional commits
     NEXT_VERSION=$(git-cliff --bumped-version | sed 's/^v//')
     echo "==> Auto-detected next version: $NEXT_VERSION"
@@ -295,7 +268,7 @@ release VERSION:
     cargo fmt --all
     cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo nextest run --workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk
+    cargo nextest run --workspace --exclude agentzero-plugin-sdk
     # 3. Commit the version bump + any fmt/clippy fixes + updated Cargo.lock
     if ! git diff --quiet; then
         git add -u

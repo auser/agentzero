@@ -13,7 +13,7 @@ mod impl_ {
     super::super::channel_meta!(DISCORD_DESCRIPTOR, "discord", "Discord");
 
     const GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
-    const API_BASE: &str = "https://discord.com/api/v10";
+    const DEFAULT_API_BASE: &str = "https://discord.com/api/v10";
     const MAX_MESSAGE_LENGTH: usize = 2000;
     // Intents: GUILD_MESSAGES (1<<9) | DIRECT_MESSAGES (1<<12) | MESSAGE_CONTENT (1<<15)
     const INTENTS: u64 = (1 << 9) | (1 << 12) | (1 << 15);
@@ -22,6 +22,7 @@ mod impl_ {
         bot_token: String,
         allowed_users: Vec<String>,
         client: reqwest::Client,
+        api_base: String,
     }
 
     impl DiscordChannel {
@@ -34,11 +35,18 @@ mod impl_ {
                 bot_token,
                 allowed_users,
                 client,
+                api_base: DEFAULT_API_BASE.to_string(),
             }
         }
 
         pub fn with_client(mut self, client: reqwest::Client) -> Self {
             self.client = client;
+            self
+        }
+
+        /// Override the API base URL (for testing with mock servers).
+        pub fn with_base_url(mut self, base_url: String) -> Self {
+            self.api_base = base_url;
             self
         }
     }
@@ -55,7 +63,7 @@ mod impl_ {
                 let body = serde_json::json!({ "content": chunk });
                 let resp = self
                     .client
-                    .post(format!("{API_BASE}/channels/{}/messages", message.recipient))
+                    .post(format!("{}/channels/{}/messages", self.api_base, message.recipient))
                     .header("Authorization", format!("Bot {}", self.bot_token))
                     .json(&body)
                     .send()
@@ -137,7 +145,7 @@ mod impl_ {
             // Get our own user ID to ignore self-messages
             let me_resp = self
                 .client
-                .get(format!("{API_BASE}/users/@me"))
+                .get(format!("{}/users/@me", self.api_base))
                 .header("Authorization", format!("Bot {}", self.bot_token))
                 .send()
                 .await?;
@@ -189,7 +197,27 @@ mod impl_ {
                         }
 
                         let content = d["content"].as_str().unwrap_or("").to_string();
-                        if content.is_empty() {
+
+                        // Extract native Discord attachments.
+                        let mut attachments = Vec::new();
+                        if let Some(att_arr) = d["attachments"].as_array() {
+                            for att in att_arr {
+                                if let Some(url) = att["url"].as_str() {
+                                    let mime = att["content_type"]
+                                        .as_str()
+                                        .unwrap_or("application/octet-stream");
+                                    attachments.push(crate::media::MediaAttachment {
+                                        mime_type: mime.to_string(),
+                                        url: Some(url.to_string()),
+                                        transcript: None,
+                                        description: None,
+                                    });
+                                }
+                            }
+                        }
+
+                        // Skip messages with no text AND no attachments.
+                        if content.is_empty() && attachments.is_empty() {
                             continue;
                         }
 
@@ -204,7 +232,7 @@ mod impl_ {
                             timestamp: helpers::now_epoch_secs(),
                             thread_ts: None,
                             privacy_boundary: String::new(),
-                            attachments: Vec::new(),
+                            attachments,
                         };
 
                         if tx.send(msg).await.is_err() {
@@ -232,7 +260,7 @@ mod impl_ {
         async fn start_typing(&self, recipient: &str) -> anyhow::Result<()> {
             let _ = self
                 .client
-                .post(format!("{API_BASE}/channels/{recipient}/typing"))
+                .post(format!("{}/channels/{recipient}/typing", self.api_base))
                 .header("Authorization", format!("Bot {}", self.bot_token))
                 .send()
                 .await;
@@ -241,7 +269,7 @@ mod impl_ {
 
         async fn health_check(&self) -> bool {
             self.client
-                .get(format!("{API_BASE}/users/@me"))
+                .get(format!("{}/users/@me", self.api_base))
                 .header("Authorization", format!("Bot {}", self.bot_token))
                 .send()
                 .await

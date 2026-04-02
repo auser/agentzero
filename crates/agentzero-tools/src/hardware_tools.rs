@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -6,8 +7,10 @@ use serde_json::json;
 
 // --- hardware_board_info ---
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct BoardInfoInput {
+    /// Optional board ID to get detailed info for. Omit to list all boards.
     #[serde(default)]
     board: Option<String>,
 }
@@ -17,27 +20,25 @@ struct BoardInfoInput {
 /// Operations:
 /// - With no `board`: list all discovered boards
 /// - With `board`: get detailed info for a specific board ID
+#[tool(
+    name = "hardware_board_info",
+    description = "List discovered hardware boards or get detailed info for a specific board."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HardwareBoardInfoTool;
 
 #[async_trait]
 impl Tool for HardwareBoardInfoTool {
     fn name(&self) -> &'static str {
-        "hardware_board_info"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "List discovered hardware boards or get detailed info for a specific board."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "board": { "type": "string", "description": "Optional board ID to get detailed info for. Omit to list all boards." }
-            },
-            "additionalProperties": false
-        }))
+        Some(BoardInfoInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -83,36 +84,35 @@ impl Tool for HardwareBoardInfoTool {
 
 // --- hardware_memory_map ---
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct MemoryMapInput {
+    /// The board ID to get the memory map for
     board: String,
 }
 
 /// Read hardware memory map layout for a board.
 ///
 /// Returns flash and RAM address ranges based on known datasheets.
+#[tool(
+    name = "hardware_memory_map",
+    description = "Get the flash and RAM memory map layout for a hardware board."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HardwareMemoryMapTool;
 
 #[async_trait]
 impl Tool for HardwareMemoryMapTool {
     fn name(&self) -> &'static str {
-        "hardware_memory_map"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Get the flash and RAM memory map layout for a hardware board."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "board": { "type": "string", "description": "The board ID to get the memory map for" }
-            },
-            "required": ["board"],
-            "additionalProperties": false
-        }))
+        Some(MemoryMapInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -161,10 +161,14 @@ fn memory_map_for(board_id: &str) -> serde_json::Value {
 
 // --- hardware_memory_read ---
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct MemoryReadInput {
+    /// The board ID to read memory from
     board: String,
+    /// Hex address to read (e.g. 0x20000000)
     address: String,
+    /// Number of bytes to read (1-256, default 64)
     #[serde(default = "default_read_length")]
     length: usize,
 }
@@ -177,30 +181,25 @@ fn default_read_length() -> usize {
 ///
 /// In simulation mode, returns representative data for the requested region.
 /// With real hardware (future), reads via debug probe.
+#[tool(
+    name = "hardware_memory_read",
+    description = "Read memory from a hardware board at a given address."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HardwareMemoryReadTool;
 
 #[async_trait]
 impl Tool for HardwareMemoryReadTool {
     fn name(&self) -> &'static str {
-        "hardware_memory_read"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Read memory from a hardware board at a given address."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "board": { "type": "string", "description": "The board ID to read memory from" },
-                "address": { "type": "string", "description": "Hex address to read (e.g. 0x20000000)" },
-                "length": { "type": "integer", "description": "Number of bytes to read (1-256, default 64)" }
-            },
-            "required": ["board", "address"],
-            "additionalProperties": false
-        }))
+        Some(MemoryReadInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

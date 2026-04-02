@@ -146,7 +146,13 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         },
         prometheus_handle,
     )
-    .with_gateway_config(require_pairing, allow_public_bind);
+    .with_gateway_config(require_pairing, allow_public_bind)
+    .with_ws_config(
+        full_config
+            .as_ref()
+            .map(|c| c.gateway.websocket.clone())
+            .unwrap_or_default(),
+    );
     if options.no_auth {
         state.bearer_token = None;
     }
@@ -469,6 +475,27 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
                 let channels = Arc::get_mut(&mut state.channels)
                     .expect("channels registry should be uniquely owned at this point");
                 channels.register(gw_channel.clone());
+
+                // Register configured channels (Signal, Telegram, etc.) so the
+                // coordinator spawns listen() loops for inbound messages.
+                if let Some(ref cp) = state.config_path {
+                    tracing::info!(path = %cp.display(), "loading channel instance configs");
+                    let instance_configs = load_channel_instance_configs(cp);
+                    let errors = agentzero_channels::register_configured_channels(
+                        channels,
+                        &instance_configs,
+                    );
+                    for (name, err) in &errors {
+                        tracing::warn!(channel = %name, error = %err, "failed to register channel");
+                    }
+                    let registered: Vec<_> = instance_configs
+                        .keys()
+                        .filter(|k| !errors.iter().any(|(n, _)| n == k.as_str()))
+                        .collect();
+                    if !registered.is_empty() {
+                        tracing::info!(?registered, "registered configured channels");
+                    }
+                }
             }
             state = state.with_gateway_channel(gw_channel);
 
@@ -527,7 +554,7 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
     };
 
     // ── AGENTZERO_ENV production validation ────────────────────────────
-    validate_production_env(full_config.as_ref());
+    validate_production_env(full_config.as_ref())?;
 
     // Resolve TLS config from the loaded TOML configuration.
     let tls_config = full_config.as_ref().and_then(|c| c.gateway.tls.clone());
@@ -633,7 +660,7 @@ async fn serve_plain(
     Ok(())
 }
 
-/// Serve over TLS using rustls.
+/// Serve over TLS using rustls, with optional mTLS (client certificate verification).
 #[cfg(feature = "tls")]
 async fn serve_tls(
     addr: SocketAddr,
@@ -644,14 +671,18 @@ async fn serve_tls(
 ) -> anyhow::Result<()> {
     use axum_server::tls_rustls::RustlsConfig;
 
-    let rustls_config = RustlsConfig::from_pem_file(&tls.cert_path, &tls.key_path)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to load TLS certificate from cert={} key={}",
-                tls.cert_path, tls.key_path
-            )
-        })?;
+    let rustls_config = if tls.client_ca_path.is_some() {
+        build_mtls_config(&tls).await?
+    } else {
+        RustlsConfig::from_pem_file(&tls.cert_path, &tls.key_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to load TLS certificate from cert={} key={}",
+                    tls.cert_path, tls.key_path
+                )
+            })?
+    };
 
     let base = format!("https://{addr}");
     print_gateway_banner(&base, pairing_code);
@@ -682,6 +713,77 @@ async fn serve_tls(
     Ok(())
 }
 
+/// Build a rustls config with mutual TLS (client certificate verification).
+///
+/// Loads the server cert/key and a CA certificate for verifying client certs.
+/// Clients must present a certificate signed by the specified CA.
+#[cfg(feature = "tls")]
+async fn build_mtls_config(
+    tls: &agentzero_config::TlsConfig,
+) -> anyhow::Result<axum_server::tls_rustls::RustlsConfig> {
+    use rustls::pki_types::CertificateDer;
+    use rustls::server::WebPkiClientVerifier;
+    use rustls::RootCertStore;
+
+    let client_ca_path = tls
+        .client_ca_path
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("client_ca_path required for mTLS"))?;
+
+    // Load client CA certificates.
+    let ca_pem = tokio::fs::read(client_ca_path)
+        .await
+        .with_context(|| format!("failed to read client CA file: {client_ca_path}"))?;
+    let ca_certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut ca_pem.as_slice())
+        .filter_map(|r| r.ok())
+        .collect();
+    anyhow::ensure!(
+        !ca_certs.is_empty(),
+        "no certificates found in {client_ca_path}"
+    );
+
+    let mut root_store = RootCertStore::empty();
+    for cert in ca_certs {
+        root_store
+            .add(cert)
+            .context("failed to add client CA cert to root store")?;
+    }
+
+    let client_verifier = WebPkiClientVerifier::builder(root_store.into())
+        .build()
+        .context("failed to build mTLS client verifier")?;
+
+    // Load server cert chain and key.
+    let cert_pem = tokio::fs::read(&tls.cert_path)
+        .await
+        .with_context(|| format!("failed to read cert: {}", tls.cert_path))?;
+    let key_pem = tokio::fs::read(&tls.key_path)
+        .await
+        .with_context(|| format!("failed to read key: {}", tls.key_path))?;
+
+    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_pem.as_slice())
+        .filter_map(|r| r.ok())
+        .collect();
+    let key = rustls_pemfile::private_key(&mut key_pem.as_slice())
+        .context("failed to parse private key")?
+        .ok_or_else(|| anyhow::anyhow!("no private key found in {}", tls.key_path))?;
+
+    let server_config = rustls::ServerConfig::builder()
+        .with_client_cert_verifier(client_verifier)
+        .with_single_cert(certs, key.into())
+        .context("failed to build mTLS server config")?;
+
+    let config =
+        axum_server::tls_rustls::RustlsConfig::from_config(std::sync::Arc::new(server_config));
+
+    tracing::info!(
+        client_ca = %client_ca_path,
+        "mTLS enabled — clients must present a valid certificate"
+    );
+
+    Ok(config)
+}
+
 /// Wait for a second Ctrl+C / SIGTERM after the first one has already been handled.
 async fn force_shutdown_signal() {
     // The first signal was already consumed by `middleware::shutdown_signal()`.
@@ -706,6 +808,47 @@ async fn force_shutdown_signal() {
         () = ctrl_c => {},
         () = terminate => {},
     }
+}
+
+/// Load `[channels.<name>]` sections from the TOML config file into
+/// `ChannelInstanceConfig` values so the gateway can register configured
+/// channels (Signal, Telegram, etc.) into the coordinator.
+fn load_channel_instance_configs(
+    config_path: &Arc<std::path::PathBuf>,
+) -> std::collections::HashMap<String, agentzero_channels::ChannelInstanceConfig> {
+    let path = config_path.as_ref();
+    if !path.exists() {
+        return std::collections::HashMap::new();
+    }
+    let raw = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to read config for channel registration");
+            return std::collections::HashMap::new();
+        }
+    };
+    let table: toml::Value = match toml::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to parse config for channel registration");
+            return std::collections::HashMap::new();
+        }
+    };
+    let Some(channels) = table.get("channels").and_then(|v| v.as_table()) else {
+        return std::collections::HashMap::new();
+    };
+    let mut out = std::collections::HashMap::new();
+    for (name, value) in channels {
+        match value.clone().try_into() {
+            Ok(cfg) => {
+                out.insert(name.clone(), cfg);
+            }
+            Err(e) => {
+                tracing::warn!(channel = %name, error = %e, "bad channel config, skipping");
+            }
+        }
+    }
+    out
 }
 
 /// Build a memory store from gateway config for transcript retrieval.
@@ -762,87 +905,91 @@ fn resolve_sqlite_path(config_path: &std::path::Path, sqlite_path: &str) -> std:
 /// - TLS is configured (cert_path + key_path present in gateway config)
 /// - API key auth or pairing is enabled (not running wide-open)
 ///
-/// Emits warnings for any missing requirements but never fails, so existing
-/// deployments are not broken by the addition of these checks.
-fn validate_production_env(config: Option<&agentzero_config::AgentZeroConfig>) {
+/// Missing TLS in production is a hard failure unless `gateway.allow_insecure = true`.
+/// Missing pairing is a warning (non-fatal).
+fn validate_production_env(
+    config: Option<&agentzero_config::AgentZeroConfig>,
+) -> anyhow::Result<()> {
     let env_val = std::env::var("AGENTZERO_ENV").unwrap_or_default();
     if env_val != "production" {
-        return;
+        return Ok(());
     }
 
     tracing::info!("AGENTZERO_ENV=production — running production validation checks");
 
-    let mut warnings: Vec<String> = Vec::new();
-
     match config {
         Some(cfg) => {
-            // Check TLS configuration
+            // Check TLS configuration — hard failure if missing and not explicitly allowed.
             match &cfg.gateway.tls {
                 Some(tls) => {
-                    if tls.cert_path.is_empty() {
-                        warnings
-                            .push("gateway.tls.cert_path is empty — TLS will not work".to_string());
-                    }
-                    if tls.key_path.is_empty() {
-                        warnings
-                            .push("gateway.tls.key_path is empty — TLS will not work".to_string());
+                    if tls.cert_path.is_empty() || tls.key_path.is_empty() {
+                        if !cfg.gateway.allow_insecure {
+                            anyhow::bail!(
+                                "AGENTZERO_ENV=production but TLS cert/key paths are empty. \
+                                 Configure gateway.tls or set gateway.allow_insecure = true."
+                            );
+                        }
+                        tracing::warn!(
+                            env = "production",
+                            "TLS cert/key paths are empty — running without TLS (allow_insecure = true)"
+                        );
                     }
                 }
                 None => {
                     if !cfg.gateway.allow_insecure {
-                        warnings.push(
-                            "TLS is not configured (gateway.tls section missing). \
-                             Set gateway.allow_insecure = true to suppress this warning."
-                                .to_string(),
+                        anyhow::bail!(
+                            "AGENTZERO_ENV=production but TLS is not configured. \
+                             Add [gateway.tls] section or set gateway.allow_insecure = true."
                         );
                     }
+                    tracing::warn!(
+                        env = "production",
+                        "TLS not configured — running without TLS (allow_insecure = true)"
+                    );
                 }
             }
 
-            // Check that authentication is enabled
+            // Check that authentication is enabled (warning, not fatal).
             if !cfg.gateway.require_pairing {
-                warnings.push(
+                tracing::warn!(
+                    env = "production",
                     "gateway.require_pairing is false — the gateway accepts \
                      unauthenticated requests in production"
-                        .to_string(),
                 );
             }
         }
         None => {
-            warnings.push(
-                "no config file loaded — TLS and auth settings cannot be validated".to_string(),
+            tracing::warn!(
+                env = "production",
+                "no config file loaded — TLS and auth settings cannot be validated"
             );
         }
     }
 
-    for warning in &warnings {
-        tracing::warn!(env = "production", "{}", warning);
-    }
-
-    if warnings.is_empty() {
-        tracing::info!("production validation passed — all checks OK");
-    }
+    tracing::info!("production validation passed");
+    Ok(())
 }
 
-/// Production validation results for testing.
+/// Simulate production validation for testing (mirrors `validate_production_env` logic).
 #[cfg(test)]
-fn collect_production_warnings(config: Option<&agentzero_config::AgentZeroConfig>) -> Vec<String> {
+fn check_production_tls(
+    config: Option<&agentzero_config::AgentZeroConfig>,
+) -> anyhow::Result<Vec<String>> {
     let mut warnings: Vec<String> = Vec::new();
 
     match config {
         Some(cfg) => {
             match &cfg.gateway.tls {
                 Some(tls) => {
-                    if tls.cert_path.is_empty() {
-                        warnings.push("gateway.tls.cert_path is empty".to_string());
-                    }
-                    if tls.key_path.is_empty() {
-                        warnings.push("gateway.tls.key_path is empty".to_string());
+                    if (tls.cert_path.is_empty() || tls.key_path.is_empty())
+                        && !cfg.gateway.allow_insecure
+                    {
+                        anyhow::bail!("TLS cert/key paths are empty");
                     }
                 }
                 None => {
                     if !cfg.gateway.allow_insecure {
-                        warnings.push("TLS is not configured".to_string());
+                        anyhow::bail!("TLS is not configured");
                     }
                 }
             }
@@ -855,7 +1002,7 @@ fn collect_production_warnings(config: Option<&agentzero_config::AgentZeroConfig
         }
     }
 
-    warnings
+    Ok(warnings)
 }
 
 #[cfg(test)]
@@ -863,21 +1010,16 @@ mod production_env_tests {
     use super::*;
 
     #[test]
-    fn production_warns_when_no_tls_configured() {
+    fn production_fails_when_no_tls_configured() {
         let mut config = agentzero_config::AgentZeroConfig::default();
-        // Default config has no TLS and require_pairing = true, allow_insecure = false
         config.gateway.require_pairing = true;
         config.gateway.allow_insecure = false;
 
-        let warnings = collect_production_warnings(Some(&config));
-
+        let result = check_production_tls(Some(&config));
+        assert!(result.is_err(), "should fail without TLS in production");
         assert!(
-            warnings.iter().any(|w| w.contains("TLS")),
-            "should warn about missing TLS: {warnings:?}"
-        );
-        assert!(
-            !warnings.iter().any(|w| w.contains("require_pairing")),
-            "should not warn about pairing when it is enabled: {warnings:?}"
+            result.unwrap_err().to_string().contains("TLS"),
+            "error should mention TLS"
         );
     }
 
@@ -888,17 +1030,13 @@ mod production_env_tests {
         config.gateway.tls = Some(agentzero_config::TlsConfig {
             cert_path: "/etc/ssl/cert.pem".to_string(),
             key_path: "/etc/ssl/key.pem".to_string(),
+            client_ca_path: None,
         });
 
-        let warnings = collect_production_warnings(Some(&config));
-
+        let warnings = check_production_tls(Some(&config)).expect("should not fail");
         assert!(
             warnings.iter().any(|w| w.contains("require_pairing")),
             "should warn about disabled pairing: {warnings:?}"
-        );
-        assert!(
-            !warnings.iter().any(|w| w.contains("TLS")),
-            "should not warn about TLS when it is configured: {warnings:?}"
         );
     }
 
@@ -909,9 +1047,10 @@ mod production_env_tests {
         config.gateway.tls = Some(agentzero_config::TlsConfig {
             cert_path: "/etc/ssl/cert.pem".to_string(),
             key_path: "/etc/ssl/key.pem".to_string(),
+            client_ca_path: None,
         });
 
-        let warnings = collect_production_warnings(Some(&config));
+        let warnings = check_production_tls(Some(&config)).expect("should not fail");
         assert!(
             warnings.is_empty(),
             "should have no warnings when fully configured: {warnings:?}"
@@ -920,7 +1059,7 @@ mod production_env_tests {
 
     #[test]
     fn production_warns_when_no_config() {
-        let warnings = collect_production_warnings(None);
+        let warnings = check_production_tls(None).expect("should not fail without config");
         assert!(
             warnings.iter().any(|w| w.contains("no config")),
             "should warn about missing config: {warnings:?}"
@@ -928,16 +1067,13 @@ mod production_env_tests {
     }
 
     #[test]
-    fn production_allows_insecure_suppresses_tls_warning() {
+    fn production_allows_insecure_suppresses_tls_failure() {
         let mut config = agentzero_config::AgentZeroConfig::default();
         config.gateway.require_pairing = true;
         config.gateway.allow_insecure = true;
         // No TLS configured, but allow_insecure = true
 
-        let warnings = collect_production_warnings(Some(&config));
-        assert!(
-            !warnings.iter().any(|w| w.contains("TLS")),
-            "allow_insecure should suppress TLS warning: {warnings:?}"
-        );
+        let result = check_production_tls(Some(&config));
+        assert!(result.is_ok(), "allow_insecure should prevent TLS failure");
     }
 }

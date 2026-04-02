@@ -753,6 +753,66 @@ enable_dynamic_tools = true
 - LLM-strategy tools use the same provider and billing as the parent agent
 - All definitions are encrypted at rest via `EncryptedJsonStore`
 
+### Codegen Strategy
+
+The agent can write Rust source code, compile it to WASM, and load it as a sandboxed tool — all at runtime. This produces tools as capable as hand-written ones, isolated inside the WASM sandbox.
+
+```json
+{
+  "name": "markdown_to_html",
+  "strategy": {
+    "type": "codegen",
+    "source": "use agentzero_plugin_sdk::prelude::*;\ndeclare_tool!(\"markdown_to_html\", handler);\nfn handler(input: ToolInput) -> ToolOutput { ... }",
+    "wasm_path": ".agentzero/codegen/markdown_to_html/target/wasm32-wasip1/release/markdown_to_html.wasm",
+    "wasm_sha256": "a1b2c3..."
+  }
+}
+```
+
+The compilation pipeline retries up to 3 times — if `cargo build` fails, errors are fed back to the LLM for correction. A curated allowlist of dependencies (`serde_json`, `regex`, `chrono`, `url`, `base64`, `sha2`, `hex`, `rand`, `csv`) keeps compile times predictable and prevents supply-chain risk.
+
+### Auto-Evolution
+
+Dynamic tools improve themselves over time:
+
+- **Auto-Fix**: Tools with >60% failure rate and 5+ invocations are automatically repaired via LLM-based strategy correction. The evolver provides rich error context including quality stats, generation history, and multi-strategy pivot suggestions (e.g., "this Shell tool keeps failing — try HTTP instead").
+- **Auto-Improve**: Tools with >80% success rate and 10+ invocations get optimized variants (`tool_v2`, `tool_v3`). The original is preserved; the variant competes on quality.
+- **Anti-loop protections**: One evolution per tool per session, max 5 evolutions per session, generation caps prevent infinite repair loops.
+
+### Tool Gap Detection
+
+The `RecipeStore` monitors failure patterns across sessions. When the same goal pattern fails 3+ times with no matching successful recipe, the system detects a **tool gap** — a recurring need with no tool to fulfill it. This feeds into proactive tool creation: "I noticed we keep failing at PDF conversion, so I'll create a tool for that."
+
+### Insights Report
+
+The `insights_report` tool lets the agent query its own performance history:
+
+```
+You: "How are my tools performing?"
+Agent calls insights_report: {"focus": "tools"}
+
+→ ## Tool Usage Heatmap
+  - **shell**: 142 uses (94% success, 9 failures)
+  - **web_fetch**: 87 uses (98% success, 2 failures)
+  - **write_file**: 63 uses (100% success, 0 failures)
+```
+
+Available focus modes: `summary`, `models`, `tools`, `failures`, `cost`.
+
+### Checkpoint Recovery
+
+File-mutating tools (`write_file`, `apply_patch`, `file_edit`) automatically snapshot the target file before modification. Checkpoints are stored as plain file copies in `.agentzero/checkpoints/<session>/<timestamp>/`. Pre-rollback snapshots enable "undo the undo" — restoring a file also snapshots its current state first.
+
+### Tool Middleware
+
+Tools can be wrapped with composable pre/post interceptors — the same pattern as the provider `LlmLayer` pipeline. Built-in middleware includes:
+
+- **TimingMiddleware**: Logs execution duration and success/failure for every tool call
+- **RateLimitMiddleware**: Blocks tool execution when invoked too frequently within a configurable window
+- **CheckpointMiddleware**: Snapshots files before write operations (see above)
+
+Custom middleware implements the `ToolMiddleware` trait with `before()` and `after()` hooks.
+
 ### Persistence
 
 Dynamic tools survive restarts, updates, and reboots. The encrypted store at `.agentzero/dynamic-tools.json` is the system's growing tool library — portable and backupable.

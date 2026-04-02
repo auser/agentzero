@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -7,11 +8,17 @@ use std::path::{Component, Path, PathBuf};
 
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 
-#[derive(Debug, Deserialize)]
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct DocxReadInput {
+    /// Path to the DOCX file
     path: String,
 }
 
+#[tool(
+    name = "docx_read",
+    description = "Extract text content from a DOCX (Word) file."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DocxReadTool;
 
@@ -102,21 +109,15 @@ impl DocxReadTool {
 #[async_trait]
 impl Tool for DocxReadTool {
     fn name(&self) -> &'static str {
-        "docx_read"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Extract text content from a DOCX (Word) file."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": { "type": "string", "description": "Path to the DOCX file" }
-            },
-            "required": ["path"]
-        }))
+        Some(DocxReadInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

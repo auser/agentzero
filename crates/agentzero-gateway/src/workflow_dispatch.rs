@@ -158,6 +158,7 @@ impl StepDispatcher for GatewayStepDispatcher {
             agent_store: self.agent_store.clone(),
             // Workflow agents are ephemeral — no persistent memory needed.
             memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
+            memory_window_override: None,
         };
 
         let output = run_agent_once(req).await?;
@@ -217,6 +218,18 @@ impl StepDispatcher for GatewayStepDispatcher {
             node_id = %node_id,
             node_name = %node_name,
             "gate suspended — waiting for human decision via POST /v1/workflows/runs/:run_id/resume"
+        );
+
+        // Emit a structured approval event for monitoring/notification systems.
+        // External integrations (Slack bots, email hooks) can subscribe to the
+        // EventBus "approval.requested" topic or watch structured logs.
+        tracing::info!(
+            target: "approval",
+            run_id = %self.run_id,
+            node_id = %node_id,
+            node_name = %node_name,
+            resume_url = %format!("/v1/workflows/runs/{}/resume", self.run_id),
+            "approval requested — gate awaiting human decision"
         );
 
         // Block until the resume endpoint sends a decision, or timeout.
@@ -294,6 +307,7 @@ impl AgentEndpoint for WorkflowAgentEndpoint {
             conversation_id: None,
             agent_store: self.agent_store.clone(),
             memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
+            memory_window_override: None,
         };
 
         let output = run_agent_once(req).await?;

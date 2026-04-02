@@ -13,6 +13,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
@@ -26,7 +27,9 @@ pub struct Event {
     /// Who published this event (agent_id, channel name, or "system").
     pub source: String,
     /// Event payload — typically JSON, but can be any string.
-    pub payload: String,
+    /// Wrapped in `Arc<str>` to avoid full-string clones when broadcast
+    /// fans out the event to multiple subscribers.
+    pub payload: Arc<str>,
     /// Privacy boundary inherited from the source (e.g. "local_only", "any").
     pub privacy_boundary: String,
     /// Unix timestamp in milliseconds.
@@ -47,7 +50,7 @@ impl Event {
             id: new_event_id(),
             topic: topic.into(),
             source: source.into(),
-            payload: payload.into(),
+            payload: Arc::from(payload.into()),
             privacy_boundary: String::new(),
             timestamp_ms: now_ms(),
             correlation_id: None,
@@ -67,11 +70,18 @@ impl Event {
     }
 }
 
+/// Result of publishing an event to the bus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublishResult {
+    /// Number of in-process subscribers that received the event.
+    pub delivered: usize,
+}
+
 /// Trait for the event bus — abstracts over in-memory vs distributed transports.
 #[async_trait]
 pub trait EventBus: Send + Sync {
-    /// Publish an event to all subscribers.
-    async fn publish(&self, event: Event) -> anyhow::Result<()>;
+    /// Publish an event to all subscribers. Returns delivery metrics.
+    async fn publish(&self, event: Event) -> anyhow::Result<PublishResult>;
 
     /// Create a new subscriber that receives all future events.
     fn subscribe(&self) -> Box<dyn EventSubscriber>;
@@ -97,18 +107,72 @@ pub trait EventBus: Send + Sync {
     }
 }
 
+/// Multi-axis filter for event subscriptions.
+///
+/// Filters on two independent dimensions: `source` (who published) and
+/// `topic_prefix` (event category). Both are optional — `None` means
+/// "match any". Inspired by the omnibus crate's two-dimensional filtering.
+#[derive(Debug, Clone, Default)]
+pub struct EventFilter {
+    /// Match events from this source only. `None` = any source.
+    pub source: Option<String>,
+    /// Match events whose topic starts with this prefix. `None` = any topic.
+    pub topic_prefix: Option<String>,
+}
+
+impl EventFilter {
+    /// Filter by topic prefix only (equivalent to the old `recv_filtered`).
+    pub fn topic(prefix: impl Into<String>) -> Self {
+        Self {
+            source: None,
+            topic_prefix: Some(prefix.into()),
+        }
+    }
+
+    /// Filter by source only.
+    pub fn source(source: impl Into<String>) -> Self {
+        Self {
+            source: Some(source.into()),
+            topic_prefix: None,
+        }
+    }
+
+    /// Filter by both source and topic prefix.
+    pub fn source_and_topic(source: impl Into<String>, topic_prefix: impl Into<String>) -> Self {
+        Self {
+            source: Some(source.into()),
+            topic_prefix: Some(topic_prefix.into()),
+        }
+    }
+
+    /// Check whether an event matches this filter.
+    pub fn matches(&self, event: &Event) -> bool {
+        if let Some(ref src) = self.source {
+            if event.source != *src {
+                return false;
+            }
+        }
+        if let Some(ref prefix) = self.topic_prefix {
+            if !event.topic.starts_with(prefix.as_str()) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 /// Subscriber that can filter and receive events.
 #[async_trait]
 pub trait EventSubscriber: Send {
     /// Receive the next event.
     async fn recv(&mut self) -> anyhow::Result<Event>;
 
-    /// Receive the next event whose topic starts with the given prefix.
-    /// Events that don't match are silently skipped.
-    async fn recv_filtered(&mut self, topic_prefix: &str) -> anyhow::Result<Event> {
+    /// Receive the next event matching the given filter.
+    /// Non-matching events are silently skipped.
+    async fn recv_with_filter(&mut self, filter: &EventFilter) -> anyhow::Result<Event> {
         loop {
             let event = self.recv().await?;
-            if event.topic.starts_with(topic_prefix) {
+            if filter.matches(&event) {
                 return Ok(event);
             }
         }
@@ -136,11 +200,9 @@ impl InMemoryBus {
 
 #[async_trait]
 impl EventBus for InMemoryBus {
-    async fn publish(&self, event: Event) -> anyhow::Result<()> {
-        // send returns Err if there are no receivers — that's fine,
-        // the event is simply dropped.
-        let _ = self.tx.send(event);
-        Ok(())
+    async fn publish(&self, event: Event) -> anyhow::Result<PublishResult> {
+        let delivered = self.tx.send(event).unwrap_or(0);
+        Ok(PublishResult { delivered })
     }
 
     fn subscribe(&self) -> Box<dyn EventSubscriber> {
@@ -250,7 +312,7 @@ impl FileBackedBus {
 
 #[async_trait]
 impl EventBus for FileBackedBus {
-    async fn publish(&self, event: Event) -> anyhow::Result<()> {
+    async fn publish(&self, event: Event) -> anyhow::Result<PublishResult> {
         use tokio::io::AsyncWriteExt;
 
         // Persist first, then broadcast.
@@ -347,6 +409,110 @@ pub fn is_boundary_compatible(source_boundary: &str, consumer_boundary: &str) ->
     level(consumer_boundary) >= level(source_boundary)
 }
 
+// ---------------------------------------------------------------------------
+// TypedTopic — compile-time type-safe pub/sub wrapper
+// ---------------------------------------------------------------------------
+
+/// A compile-time type-safe topic that handles serialization/deserialization
+/// of messages automatically.
+///
+/// ```ignore
+/// let topic = TypedTopic::<AnnounceMessage>::new("agent.announce");
+///
+/// // Publish — M is serialized to JSON automatically
+/// topic.publish(&bus, "agent-1", &msg).await?;
+///
+/// // Subscribe — returns typed messages
+/// let mut sub = topic.subscribe(&bus);
+/// let msg: AnnounceMessage = sub.recv().await?;
+/// ```
+///
+/// This wraps the existing string-based EventBus without replacing it.
+/// String-based topics continue to work for backward compatibility.
+pub struct TypedTopic<M> {
+    name: String,
+    _phantom: std::marker::PhantomData<M>,
+}
+
+impl<M: Serialize + for<'de> Deserialize<'de> + Send> TypedTopic<M> {
+    /// Create a typed topic with the given name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// The topic name string.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Publish a typed message to the bus.
+    pub async fn publish(
+        &self,
+        bus: &dyn EventBus,
+        source: &str,
+        msg: &M,
+    ) -> anyhow::Result<PublishResult> {
+        let payload = serde_json::to_string(msg)
+            .map_err(|e| anyhow::anyhow!("failed to serialize typed topic message: {e}"))?;
+        bus.publish(Event::new(&self.name, source, payload)).await
+    }
+
+    /// Publish a typed message with a privacy boundary.
+    pub async fn publish_with_boundary(
+        &self,
+        bus: &dyn EventBus,
+        source: &str,
+        msg: &M,
+        boundary: &str,
+    ) -> anyhow::Result<PublishResult> {
+        let payload = serde_json::to_string(msg)
+            .map_err(|e| anyhow::anyhow!("failed to serialize typed topic message: {e}"))?;
+        let event = Event::new(&self.name, source, payload).with_boundary(boundary);
+        bus.publish(event).await
+    }
+
+    /// Create a typed subscriber that deserializes messages from this topic.
+    pub fn subscribe(&self, bus: &dyn EventBus) -> TypedSubscriber<M> {
+        TypedSubscriber {
+            inner: bus.subscribe(),
+            topic_name: self.name.clone(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+/// A subscriber that automatically deserializes messages into the expected type.
+pub struct TypedSubscriber<M> {
+    inner: Box<dyn EventSubscriber>,
+    topic_name: String,
+    _phantom: std::marker::PhantomData<M>,
+}
+
+impl<M: for<'de> Deserialize<'de> + Send> TypedSubscriber<M> {
+    /// Receive the next typed message on this topic.
+    ///
+    /// Filters events to this topic and deserializes the payload.
+    /// Non-matching topics are silently skipped.
+    /// Deserialization errors are returned as `Err`.
+    pub async fn recv(&mut self) -> anyhow::Result<M> {
+        loop {
+            let event = self.inner.recv().await?;
+            if event.topic == self.topic_name {
+                let msg: M = serde_json::from_str(&event.payload).map_err(|e| {
+                    anyhow::anyhow!(
+                        "typed topic '{}' deserialization error: {e}",
+                        self.topic_name
+                    )
+                })?;
+                return Ok(msg);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,7 +583,7 @@ mod tests {
 
         let event = sub.recv().await.unwrap();
         assert_eq!(event.topic, "test.topic");
-        assert_eq!(event.payload, "hello");
+        assert_eq!(&*event.payload, "hello");
     }
 
     #[tokio::test]
@@ -432,8 +598,8 @@ mod tests {
 
         let e1 = sub1.recv().await.unwrap();
         let e2 = sub2.recv().await.unwrap();
-        assert_eq!(e1.payload, "data");
-        assert_eq!(e2.payload, "data");
+        assert_eq!(&*e1.payload, "data");
+        assert_eq!(&*e2.payload, "data");
     }
 
     #[tokio::test]
@@ -448,8 +614,9 @@ mod tests {
             .await
             .unwrap();
 
-        let event = sub.recv_filtered("task.image.").await.unwrap();
-        assert_eq!(event.payload, "image");
+        let filter = EventFilter::topic("task.image.");
+        let event = sub.recv_with_filter(&filter).await.unwrap();
+        assert_eq!(&*event.payload, "image");
     }
 
     #[tokio::test]
@@ -506,8 +673,8 @@ mod tests {
 
         let research = bus.replay(Some("task.research.")).await.unwrap();
         assert_eq!(research.len(), 2);
-        assert_eq!(research[0].payload, "step-1");
-        assert_eq!(research[1].payload, "step-2");
+        assert_eq!(&*research[0].payload, "step-1");
+        assert_eq!(&*research[1].payload, "step-2");
 
         tokio::fs::remove_file(path).await.ok();
     }
@@ -521,7 +688,7 @@ mod tests {
         bus.publish(Event::new("t", "s", "hello")).await.unwrap();
 
         let event = sub.recv().await.unwrap();
-        assert_eq!(event.payload, "hello");
+        assert_eq!(&*event.payload, "hello");
 
         tokio::fs::remove_file(path).await.ok();
     }
@@ -544,8 +711,8 @@ mod tests {
             let bus = FileBackedBus::open(&path, 16).await.expect("reopen");
             let events = bus.replay(Some("pipeline.")).await.unwrap();
             assert_eq!(events.len(), 2);
-            assert_eq!(events[0].payload, "first");
-            assert_eq!(events[1].payload, "second");
+            assert_eq!(&*events[0].payload, "first");
+            assert_eq!(&*events[1].payload, "second");
 
             // New events append.
             bus.publish(Event::new("pipeline.a", "agent", "third"))
@@ -570,5 +737,245 @@ mod tests {
         assert_eq!(bus.subscriber_count(), 2);
 
         tokio::fs::remove_file(path).await.ok();
+    }
+
+    // --- TypedTopic tests ---
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    struct TestMessage {
+        text: String,
+        count: u32,
+    }
+
+    #[tokio::test]
+    async fn typed_topic_publish_subscribe_roundtrip() {
+        let bus = InMemoryBus::new(16);
+        let topic = TypedTopic::<TestMessage>::new("test.typed");
+
+        let mut sub = topic.subscribe(&bus);
+
+        let msg = TestMessage {
+            text: "hello".into(),
+            count: 42,
+        };
+        topic
+            .publish(&bus, "test-source", &msg)
+            .await
+            .expect("publish should succeed");
+
+        let received = sub.recv().await.expect("recv should succeed");
+        assert_eq!(received, msg);
+    }
+
+    #[tokio::test]
+    async fn typed_topic_filters_other_topics() {
+        let bus = InMemoryBus::new(16);
+        let topic = TypedTopic::<TestMessage>::new("my.topic");
+
+        let mut sub = topic.subscribe(&bus);
+
+        // Publish to a different topic — should be filtered out
+        bus.publish(Event::new(
+            "other.topic",
+            "src",
+            r#"{"text":"nope","count":0}"#,
+        ))
+        .await
+        .unwrap();
+
+        // Publish to our topic
+        let msg = TestMessage {
+            text: "yes".into(),
+            count: 1,
+        };
+        topic.publish(&bus, "src", &msg).await.unwrap();
+
+        let received = sub.recv().await.unwrap();
+        assert_eq!(received.text, "yes");
+    }
+
+    #[tokio::test]
+    async fn typed_topic_deserialization_error() {
+        let bus = InMemoryBus::new(16);
+        let topic_name = "bad.payload";
+        let topic = TypedTopic::<TestMessage>::new(topic_name);
+
+        let mut sub = topic.subscribe(&bus);
+
+        // Publish invalid JSON for this type
+        bus.publish(Event::new(topic_name, "src", "not valid json"))
+            .await
+            .unwrap();
+
+        let result = sub.recv().await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("deserialization error"));
+    }
+
+    #[tokio::test]
+    async fn typed_topic_with_boundary() {
+        let bus = InMemoryBus::new(16);
+        let topic = TypedTopic::<TestMessage>::new("secure.topic");
+
+        let msg = TestMessage {
+            text: "secret".into(),
+            count: 0,
+        };
+        topic
+            .publish_with_boundary(&bus, "agent", &msg, "local_only")
+            .await
+            .expect("publish should succeed");
+
+        // Verify the event was published with the boundary
+        let mut raw_sub = bus.subscribe();
+        topic
+            .publish_with_boundary(&bus, "agent", &msg, "encrypted_only")
+            .await
+            .unwrap();
+        let event = raw_sub.recv().await.unwrap();
+        assert_eq!(event.privacy_boundary, "encrypted_only");
+    }
+
+    // --- EventFilter tests ---
+
+    #[test]
+    fn event_filter_matches_source_only() {
+        let filter = EventFilter::source("agent-1");
+        let event_match = Event::new("any.topic", "agent-1", "data");
+        let event_miss = Event::new("any.topic", "agent-2", "data");
+        assert!(filter.matches(&event_match));
+        assert!(!filter.matches(&event_miss));
+    }
+
+    #[test]
+    fn event_filter_matches_topic_only() {
+        let filter = EventFilter::topic("tool.");
+        let event_match = Event::new("tool.file_written", "any", "data");
+        let event_miss = Event::new("channel.slack", "any", "data");
+        assert!(filter.matches(&event_match));
+        assert!(!filter.matches(&event_miss));
+    }
+
+    #[test]
+    fn event_filter_matches_both_axes() {
+        let filter = EventFilter::source_and_topic("agent-1", "tool.");
+        let match_both = Event::new("tool.exec", "agent-1", "yes");
+        let wrong_source = Event::new("tool.exec", "agent-2", "no");
+        let wrong_topic = Event::new("channel.msg", "agent-1", "no");
+        assert!(filter.matches(&match_both));
+        assert!(!filter.matches(&wrong_source));
+        assert!(!filter.matches(&wrong_topic));
+    }
+
+    #[test]
+    fn event_filter_default_matches_everything() {
+        let filter = EventFilter::default();
+        let event = Event::new("any", "any", "any");
+        assert!(filter.matches(&event));
+    }
+
+    #[tokio::test]
+    async fn recv_with_filter_source() {
+        let bus = InMemoryBus::new(16);
+        let mut sub = bus.subscribe();
+
+        bus.publish(Event::new("t", "agent-1", "first"))
+            .await
+            .unwrap();
+        bus.publish(Event::new("t", "agent-2", "second"))
+            .await
+            .unwrap();
+        bus.publish(Event::new("t", "agent-1", "third"))
+            .await
+            .unwrap();
+
+        let filter = EventFilter::source("agent-2");
+        let event = sub.recv_with_filter(&filter).await.unwrap();
+        assert_eq!(&*event.payload, "second");
+    }
+
+    #[tokio::test]
+    async fn recv_with_filter_source_and_topic() {
+        let bus = InMemoryBus::new(16);
+        let mut sub = bus.subscribe();
+
+        bus.publish(Event::new("tool.exec", "agent-1", "a"))
+            .await
+            .unwrap();
+        bus.publish(Event::new("channel.msg", "agent-2", "b"))
+            .await
+            .unwrap();
+        bus.publish(Event::new("tool.write", "agent-2", "c"))
+            .await
+            .unwrap();
+
+        let filter = EventFilter::source_and_topic("agent-2", "tool.");
+        let event = sub.recv_with_filter(&filter).await.unwrap();
+        assert_eq!(&*event.payload, "c");
+        assert_eq!(event.source, "agent-2");
+        assert!(event.topic.starts_with("tool."));
+    }
+
+    // --- PublishResult tests ---
+
+    #[tokio::test]
+    async fn publish_result_no_subscribers() {
+        let bus = InMemoryBus::new(16);
+        let result = bus.publish(Event::new("t", "s", "data")).await.unwrap();
+        assert_eq!(result.delivered, 0);
+    }
+
+    #[tokio::test]
+    async fn publish_result_with_subscribers() {
+        let bus = InMemoryBus::new(16);
+        let _sub1 = bus.subscribe();
+        let _sub2 = bus.subscribe();
+        let _sub3 = bus.subscribe();
+
+        let result = bus.publish(Event::new("t", "s", "data")).await.unwrap();
+        assert_eq!(result.delivered, 3);
+    }
+
+    #[tokio::test]
+    async fn file_backed_publish_result_matches_inner() {
+        let path = temp_event_log("publish-result");
+        let bus = FileBackedBus::open(&path, 16).await.expect("open");
+
+        let result_no_sub = bus.publish(Event::new("t", "s", "x")).await.unwrap();
+        assert_eq!(result_no_sub.delivered, 0);
+
+        let _sub = bus.subscribe();
+        let result_one_sub = bus.publish(Event::new("t", "s", "y")).await.unwrap();
+        assert_eq!(result_one_sub.delivered, 1);
+
+        tokio::fs::remove_file(path).await.ok();
+    }
+
+    // --- Arc<str> payload tests ---
+
+    #[test]
+    fn arc_payload_serde_roundtrip() {
+        let event = Event::new("t", "s", "test payload");
+        let json = serde_json::to_string(&event).expect("serialize");
+        let deserialized: Event = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(&*deserialized.payload, "test payload");
+    }
+
+    #[test]
+    fn arc_payload_cheap_clone() {
+        let event = Event::new("t", "s", "shared data");
+        let cloned = event.clone();
+        // Both point to the same allocation (Arc semantics).
+        assert!(std::sync::Arc::ptr_eq(&event.payload, &cloned.payload));
+    }
+
+    #[test]
+    fn arc_payload_deref_to_str() {
+        let event = Event::new("t", "s", "hello");
+        let s: &str = &event.payload;
+        assert_eq!(s, "hello");
     }
 }

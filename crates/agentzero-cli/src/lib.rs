@@ -37,10 +37,80 @@ pub mod peripherals;
 use agentzero_core::common::init_tracing;
 use clap::Parser;
 use cli::Cli;
-use gag::BufferRedirect;
 use serde_json::{json, Value};
 use std::ffi::OsString;
 use std::io::Read;
+
+/// Captures stdout by redirecting fd 1 to a pipe.
+/// Drop restores the original fd.
+struct StdoutCapture {
+    original_fd: i32,
+    reader: std::fs::File,
+}
+
+impl StdoutCapture {
+    fn start() -> anyhow::Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::FromRawFd;
+            let original_fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+            if original_fd < 0 {
+                anyhow::bail!("failed to dup stdout: {}", std::io::Error::last_os_error());
+            }
+            let mut pipe_fds = [0i32; 2];
+            if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+                unsafe { libc::close(original_fd) };
+                anyhow::bail!("failed to create pipe: {}", std::io::Error::last_os_error());
+            }
+            if unsafe { libc::dup2(pipe_fds[1], libc::STDOUT_FILENO) } < 0 {
+                unsafe {
+                    libc::close(original_fd);
+                    libc::close(pipe_fds[0]);
+                    libc::close(pipe_fds[1]);
+                }
+                anyhow::bail!(
+                    "failed to redirect stdout: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+            unsafe { libc::close(pipe_fds[1]) };
+            let reader = unsafe { std::fs::File::from_raw_fd(pipe_fds[0]) };
+            Ok(Self {
+                original_fd,
+                reader,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            anyhow::bail!("stdout capture is only supported on unix");
+        }
+    }
+
+    fn read_captured(mut self) -> anyhow::Result<String> {
+        // Restore stdout first so further writes go to the real stdout
+        #[cfg(unix)]
+        {
+            unsafe { libc::dup2(self.original_fd, libc::STDOUT_FILENO) };
+            unsafe { libc::close(self.original_fd) };
+            self.original_fd = -1;
+        }
+        let mut buf = String::new();
+        self.reader.read_to_string(&mut buf)?;
+        Ok(buf)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for StdoutCapture {
+    fn drop(&mut self) {
+        if self.original_fd >= 0 {
+            unsafe {
+                libc::dup2(self.original_fd, libc::STDOUT_FILENO);
+                libc::close(self.original_fd);
+            }
+        }
+    }
+}
 
 pub fn parse_cli_from<I, T>(args: I) -> Result<Cli, clap::Error>
 where
@@ -72,12 +142,9 @@ pub async fn cli() -> anyhow::Result<()> {
 
 async fn run_with_global_json(cli: Cli) -> anyhow::Result<()> {
     let command = command_label(&cli.command);
-    let mut redirect = BufferRedirect::stdout()?;
+    let capture = StdoutCapture::start()?;
     let result = app::run(cli).await;
-
-    let mut captured = String::new();
-    redirect.read_to_string(&mut captured)?;
-    drop(redirect);
+    let captured = capture.read_captured()?;
 
     let payload = match result.as_ref() {
         Ok(()) => json!({
@@ -145,6 +212,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Service { .. } => "service",
         #[cfg(feature = "tui")]
         Commands::Dashboard { .. } => "dashboard",
+        Commands::Tier { .. } => "tier",
         Commands::Migrate { .. } => "migrate",
         Commands::Update { .. } => "update",
         Commands::Completions { .. } => "completions",

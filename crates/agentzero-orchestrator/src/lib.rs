@@ -8,7 +8,6 @@ pub mod agent_router;
 pub mod agent_store;
 pub mod block_stream;
 pub mod coordinator;
-pub mod event_bus;
 pub mod fanout;
 pub mod goal_planner;
 pub mod gossip;
@@ -30,9 +29,6 @@ pub use agent_router::{AgentDescriptor, AgentRouter};
 pub use agent_store::{AgentChannelConfig, AgentRecord, AgentStatus, AgentStore, AgentUpdate};
 pub use block_stream::{Block, BlockAccumulator};
 pub use coordinator::{Coordinator, ErrorStrategy, TaskMessage, TaskResult};
-pub use event_bus::{
-    BusEvent, EventBus, EventReceiver, FileBackedEventBus, InMemoryEventBus, PersistedEvent,
-};
 pub use fanout::{execute_fanout, FanOutResult, FanOutStep};
 pub use goal_planner::{
     parse_planner_response, GoalPlanner, PlannedNode, PlannedWorkflow, GOAL_PLANNER_PROMPT,
@@ -49,7 +45,10 @@ pub use sandbox::{
 };
 pub use swarm::{build_event_bus, build_swarm, build_swarm_with_presence};
 pub use swarm_context::{AgentAssignment, AgentAssignmentStatus, SiblingContext, SwarmContext};
-pub use swarm_supervisor::{SwarmConfig, SwarmResult, SwarmSupervisor};
+pub use swarm_supervisor::{
+    CompletedNodeSummary, ExecutionSnapshot, ReplanPolicy, ReplanRecord, SwarmConfig, SwarmResult,
+    SwarmSupervisor,
+};
 pub use template_store::{TemplateRecord, TemplateStore, TemplateUpdate};
 pub use workflow_executor::{
     compile as compile_workflow, execute_with_updates as execute_workflow_streaming, ExecutionPlan,

@@ -46,6 +46,10 @@ pub struct AgentZeroConfig {
     pub a2a: A2aConfig,
     #[serde(default)]
     pub sop: SopConfig,
+    #[serde(default)]
+    pub guardrails: GuardrailsConfig,
+    #[serde(default)]
+    pub local: LocalModelConfig,
 }
 
 impl AgentZeroConfig {
@@ -53,39 +57,39 @@ impl AgentZeroConfig {
         if self.provider.kind.trim().is_empty() {
             return Err(anyhow!("provider.kind must not be empty"));
         }
-        // The builtin provider runs in-process — no base_url needed.
-        if self.provider.kind == "builtin" {
-            return Ok(());
-        }
-        if self.provider.base_url.trim().is_empty() {
-            return Err(anyhow!("provider.base_url must not be empty"));
-        }
-        let provider_url = Url::parse(&self.provider.base_url)
-            .map_err(|_| anyhow!("provider.base_url must be a valid URL"))?;
-        if !matches!(provider_url.scheme(), "http" | "https") {
-            return Err(anyhow!("provider.base_url scheme must be http or https"));
-        }
-        if is_local_provider(&self.provider.kind) {
-            let is_localhost = matches!(
-                provider_url.host_str(),
-                Some("localhost") | Some("127.0.0.1") | Some("0.0.0.0") | Some("::1")
-            );
-            if !is_localhost {
-                if self.privacy.mode == "local_only" || self.privacy.enforce_local_provider {
-                    return Err(anyhow!(
-                        "privacy mode '{}' requires localhost base_url for local provider '{}', \
-                         but got '{}'. Use http://localhost:<port> or change your provider.",
-                        self.privacy.mode,
+        // In-process providers (builtin, candle) run locally — skip URL validation.
+        let in_process = self.provider.kind == "builtin" || self.provider.kind == "candle";
+        if !in_process {
+            if self.provider.base_url.trim().is_empty() {
+                return Err(anyhow!("provider.base_url must not be empty"));
+            }
+            let provider_url = Url::parse(&self.provider.base_url)
+                .map_err(|_| anyhow!("provider.base_url must be a valid URL"))?;
+            if !matches!(provider_url.scheme(), "http" | "https") {
+                return Err(anyhow!("provider.base_url scheme must be http or https"));
+            }
+            if is_local_provider(&self.provider.kind) {
+                let is_localhost = matches!(
+                    provider_url.host_str(),
+                    Some("localhost") | Some("127.0.0.1") | Some("0.0.0.0") | Some("::1")
+                );
+                if !is_localhost {
+                    if self.privacy.mode == "local_only" || self.privacy.enforce_local_provider {
+                        return Err(anyhow!(
+                            "privacy mode '{}' requires localhost base_url for local provider '{}', \
+                             but got '{}'. Use http://localhost:<port> or change your provider.",
+                            self.privacy.mode,
+                            self.provider.kind,
+                            self.provider.base_url,
+                        ));
+                    }
+                    tracing::warn!(
+                        "provider '{}' is a local provider but base_url '{}' is not localhost \
+                         — did you mean to use a different provider?",
                         self.provider.kind,
                         self.provider.base_url,
-                    ));
+                    );
                 }
-                tracing::warn!(
-                    "provider '{}' is a local provider but base_url '{}' is not localhost \
-                     — did you mean to use a different provider?",
-                    self.provider.kind,
-                    self.provider.base_url,
-                );
             }
         }
         if self.provider.model.trim().is_empty() {
@@ -496,14 +500,61 @@ impl Default for TransportSettings {
 impl Default for ProviderConfig {
     fn default() -> Self {
         Self {
-            kind: "openrouter".to_string(),
-            base_url: "https://openrouter.ai/api".to_string(),
-            model: "anthropic/claude-sonnet-4-6".to_string(),
+            kind: "candle".to_string(),
+            base_url: String::new(),
+            model: "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF".to_string(),
             default_temperature: 0.7,
             provider_api: None,
             model_support_vision: None,
             transport: TransportSettings::default(),
             fallback_providers: vec![],
+        }
+    }
+}
+
+/// Configuration for local (in-process) LLM inference.
+///
+/// Shared by both the `builtin` (llama.cpp) and `candle` providers.
+/// Configured under `[local]` in TOML.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct LocalModelConfig {
+    /// HuggingFace repo or path to a GGUF file.
+    pub model: String,
+    /// Specific GGUF filename within the HuggingFace repo.
+    pub filename: String,
+    /// Context window size in tokens.
+    pub n_ctx: u32,
+    /// Temperature for sampling (0.0 = greedy, higher = more random).
+    pub temperature: f64,
+    /// Top-p (nucleus) sampling threshold.
+    pub top_p: f64,
+    /// Maximum number of tokens to generate per response.
+    pub max_output_tokens: u32,
+    /// Random seed for reproducible generation.
+    pub seed: u64,
+    /// Repetition penalty factor (1.0 = no penalty).
+    pub repeat_penalty: f32,
+    /// Device to use: "auto", "metal", "cuda", "cpu".
+    pub device: String,
+    /// Override auto-detected chat template (e.g. "chatml", "llama3", "mistral", "gemma").
+    /// When `None`, the template is detected from the tokenizer's special tokens.
+    pub chat_template: Option<String>,
+}
+
+impl Default for LocalModelConfig {
+    fn default() -> Self {
+        Self {
+            model: "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF".to_string(),
+            filename: "qwen2.5-coder-3b-instruct-q4_k_m.gguf".to_string(),
+            n_ctx: 8192,
+            temperature: 0.7,
+            top_p: 0.9,
+            max_output_tokens: 2048,
+            seed: 42,
+            repeat_penalty: 1.1,
+            device: "auto".to_string(),
+            chat_template: None,
         }
     }
 }
@@ -813,6 +864,10 @@ pub struct McpServerEntry {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Optional SHA-256 hash of the server binary for attestation.
+    /// When set, the binary is verified before spawning.
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 /// Top-level structure of an `mcp.json` file.
@@ -1006,6 +1061,8 @@ impl Default for ResearchConfig {
 pub struct RuntimeConfig {
     pub kind: String,
     pub reasoning_enabled: Option<bool>,
+    /// Dynamically adjust reasoning effort based on query complexity.
+    pub adaptive_reasoning: Option<bool>,
     pub wasm: WasmRuntimeConfig,
 }
 
@@ -1014,6 +1071,7 @@ impl Default for RuntimeConfig {
         Self {
             kind: "native".to_string(),
             reasoning_enabled: None,
+            adaptive_reasoning: None,
             wasm: WasmRuntimeConfig::default(),
         }
     }
@@ -1094,7 +1152,7 @@ pub struct BrowserConfig {
 impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             allowed_domains: Vec::new(),
             browser_open: "default".to_string(),
             session_name: None,
@@ -1151,7 +1209,7 @@ pub struct HttpRequestConfig {
 impl Default for HttpRequestConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             allowed_domains: Vec::new(),
             max_response_size: 1_000_000,
             timeout_secs: 30,
@@ -1187,7 +1245,7 @@ pub struct WebFetchConfig {
 impl Default for WebFetchConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             provider: "fast_html2md".to_string(),
             api_key: None,
             api_url: None,
@@ -1226,11 +1284,11 @@ pub struct WebSearchConfig {
 impl Default for WebSearchConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             provider: "duckduckgo".to_string(),
             fallback_providers: Vec::new(),
-            retries_per_provider: 0,
-            retry_backoff_ms: 250,
+            retries_per_provider: 2,
+            retry_backoff_ms: 500,
             api_key: None,
             api_url: None,
             brave_api_key: None,
@@ -1239,7 +1297,7 @@ impl Default for WebSearchConfig {
             jina_api_key: None,
             max_results: 5,
             timeout_secs: 15,
-            user_agent: "AgentZero/1.0".to_string(),
+            user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".to_string(),
             domain_filter: Vec::new(),
             language_filter: Vec::new(),
             country: None,
@@ -1400,6 +1458,34 @@ pub struct GatewayConfig {
     /// Example: "https://api.example.com"
     #[serde(default)]
     pub public_url: Option<String>,
+    /// WebSocket configuration.
+    #[serde(default)]
+    pub websocket: WebSocketConfig,
+}
+
+/// Tunable WebSocket timeout and size parameters.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct WebSocketConfig {
+    /// Ping interval in seconds (default 30).
+    pub heartbeat_interval_secs: u64,
+    /// Close if no pong received within this many seconds (default 60).
+    pub pong_timeout_secs: u64,
+    /// Close if no client message within this many seconds (default 300).
+    pub idle_timeout_secs: u64,
+    /// Maximum message size in bytes (default 2 MB).
+    pub max_message_bytes: usize,
+}
+
+impl Default for WebSocketConfig {
+    fn default() -> Self {
+        Self {
+            heartbeat_interval_secs: 30,
+            pong_timeout_secs: 60,
+            idle_timeout_secs: 300,
+            max_message_bytes: 2 * 1024 * 1024,
+        }
+    }
 }
 
 /// TLS certificate configuration for the gateway.
@@ -1409,6 +1495,10 @@ pub struct TlsConfig {
     pub cert_path: String,
     /// Path to the PEM-encoded private key file.
     pub key_path: String,
+    /// Path to a PEM-encoded CA certificate for client certificate verification (mTLS).
+    /// When set, clients must present a certificate signed by this CA.
+    #[serde(default)]
+    pub client_ca_path: Option<String>,
 }
 
 impl Default for GatewayConfig {
@@ -1424,6 +1514,7 @@ impl Default for GatewayConfig {
             tls: None,
             allow_insecure: false,
             public_url: None,
+            websocket: WebSocketConfig::default(),
         }
     }
 }
@@ -1448,6 +1539,42 @@ pub struct ChannelsGlobalConfig {
     /// Default privacy boundary applied to all channels unless overridden.
     /// Empty string means inherit the global `privacy.mode`.
     pub default_privacy_boundary: String,
+    /// Voice wake word detection configuration.
+    pub voice_wake: VoiceWakeConfig,
+}
+
+/// Configuration for the voice wake word detection channel.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct VoiceWakeConfig {
+    /// Wake words to listen for (case-insensitive substring match).
+    pub wake_words: Vec<String>,
+    /// RMS energy threshold for voice activity detection (0.0-1.0).
+    pub energy_threshold: f32,
+    /// Maximum capture duration in seconds.
+    pub capture_timeout_secs: u64,
+    /// Whisper-compatible transcription endpoint URL.
+    pub transcription_url: String,
+    /// API key for the transcription service.
+    pub transcription_api_key: Option<String>,
+    /// Audio sample rate in Hz.
+    pub sample_rate: u32,
+    /// Automatically respond with TTS when source channel is voice.
+    pub auto_tts_response: bool,
+}
+
+impl Default for VoiceWakeConfig {
+    fn default() -> Self {
+        Self {
+            wake_words: vec![],
+            energy_threshold: 0.05,
+            capture_timeout_secs: 10,
+            transcription_url: "https://api.groq.com/openai/v1/audio/transcriptions".to_string(),
+            transcription_api_key: None,
+            sample_rate: 16000,
+            auto_tts_response: false,
+        }
+    }
 }
 
 impl Default for ChannelsGlobalConfig {
@@ -1460,6 +1587,7 @@ impl Default for ChannelsGlobalConfig {
             draft_update_interval_ms: 500,
             interrupt_on_new_message: false,
             default_privacy_boundary: String::new(),
+            voice_wake: VoiceWakeConfig::default(),
         }
     }
 }
@@ -1605,6 +1733,10 @@ pub struct DelegateAgentConfig {
     /// Per-run token limit for this sub-agent.
     #[serde(default)]
     pub max_tokens: Option<u64>,
+    /// How instructions are delivered to this sub-agent.
+    /// Defaults to `SystemPrompt` (inject as LLM system prompt).
+    #[serde(default)]
+    pub instruction_method: agentzero_core::delegation::InstructionMethod,
 }
 
 impl Default for DelegateAgentConfig {
@@ -1624,6 +1756,7 @@ impl Default for DelegateAgentConfig {
             blocked_providers: Vec::new(),
             max_cost_usd: None,
             max_tokens: None,
+            instruction_method: agentzero_core::delegation::InstructionMethod::default(),
         }
     }
 }
@@ -1716,6 +1849,19 @@ pub struct OutboundLeakGuardConfig {
     pub enabled: bool,
     pub action: String,
     pub sensitivity: f64,
+    /// Additional regex patterns to detect as credential leaks.
+    /// Each entry is a `{name: "pattern_name", regex: "regex_pattern"}` pair.
+    #[serde(default)]
+    pub extra_patterns: Vec<LeakPatternEntry>,
+}
+
+/// A user-defined leak detection pattern.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LeakPatternEntry {
+    /// Human-readable name for the pattern (used in redaction markers).
+    pub name: String,
+    /// Regex pattern to match against outbound text.
+    pub regex: String,
 }
 
 impl Default for OutboundLeakGuardConfig {
@@ -1724,6 +1870,7 @@ impl Default for OutboundLeakGuardConfig {
             enabled: true,
             action: "redact".to_string(),
             sensitivity: 0.7,
+            extra_patterns: Vec::new(),
         }
     }
 }
@@ -2322,6 +2469,14 @@ pub struct SummarizationSettings {
     pub keep_recent: usize,
     pub min_entries_for_summarization: usize,
     pub max_summary_chars: usize,
+    /// Enable 4-phase context compression (tool pruning + boundary protection + summarization).
+    pub compression_enabled: bool,
+    /// Maximum characters for a single tool result before truncation.
+    pub max_tool_result_chars: usize,
+    /// Number of messages to protect at the start of conversation.
+    pub protect_head: usize,
+    /// Number of messages to protect at the tail of conversation.
+    pub protect_tail: usize,
 }
 
 impl Default for SummarizationSettings {
@@ -2331,6 +2486,10 @@ impl Default for SummarizationSettings {
             keep_recent: 10,
             min_entries_for_summarization: 20,
             max_summary_chars: 2000,
+            compression_enabled: false,
+            max_tool_result_chars: 4000,
+            protect_head: 3,
+            protect_tail: 10,
         }
     }
 }
@@ -2568,6 +2727,31 @@ impl Default for A2aAgentConfig {
     }
 }
 
+// --- Guardrails configuration ---
+
+/// Configuration for LLM input/output guardrails.
+///
+/// Guards are enabled in `audit` mode by default so that violations are logged
+/// even when the user hasn't explicitly configured guardrails.  Set `mode` to
+/// `"off"` to disable, `"sanitize"` to redact, or `"block"` to reject.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct GuardrailsConfig {
+    /// Enforcement mode for PII redaction: "off", "audit", "sanitize", "block".
+    pub pii_mode: String,
+    /// Enforcement mode for prompt injection detection: "off", "audit", "sanitize", "block".
+    pub injection_mode: String,
+}
+
+impl Default for GuardrailsConfig {
+    fn default() -> Self {
+        Self {
+            pii_mode: "audit".to_string(),
+            injection_mode: "audit".to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2705,6 +2889,7 @@ mod tests {
             config.gateway.tls = Some(TlsConfig {
                 cert_path: "/etc/ssl/cert.pem".to_string(),
                 key_path: "/etc/ssl/key.pem".to_string(),
+                client_ca_path: None,
             });
             let result = config.validate_production_mode();
             assert!(

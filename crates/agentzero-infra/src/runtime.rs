@@ -1,5 +1,5 @@
 use crate::audio::process_audio_markers;
-use crate::audit::FileAuditSink;
+use crate::audit::{FileAuditSink, SequencedAuditSink};
 use crate::tools::default_tools_with_store;
 use agentzero_auth::AuthManager;
 use agentzero_config::{
@@ -48,12 +48,16 @@ pub struct RunAgentRequest {
     /// SQLite/Turso memory store and uses this instead. Useful for ephemeral
     /// workflow agents that don't need persistent conversation memory.
     pub memory_override: Option<Box<dyn MemoryStore>>,
+    /// Override memory_window_size from config. When `Some(0)`, no prior
+    /// conversation history is loaded (useful for stateless one-shot commands).
+    pub memory_window_override: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RunAgentOutput {
     pub response_text: String,
     pub metrics_snapshot: serde_json::Value,
+    pub tool_executions: Vec<agentzero_core::ToolExecutionRecord>,
 }
 
 pub struct RuntimeExecution {
@@ -82,6 +86,22 @@ pub struct RuntimeExecution {
     pub sender_id: Option<String>,
     /// Optional dynamic tool registry for mid-session tool creation.
     pub dynamic_registry: Option<std::sync::Arc<crate::tools::dynamic_tool::DynamicToolRegistry>>,
+    /// Optional task manager for background delegation. When present, `cancel_all()`
+    /// is called on session teardown to cascade-cancel orphaned background tasks.
+    pub task_manager: Option<std::sync::Arc<agentzero_tools::TaskManager>>,
+    /// Optional tool evolver for auto-fixing/improving dynamic tools.
+    pub tool_evolver: Option<std::sync::Arc<crate::tool_evolver::ToolEvolver>>,
+    /// Optional recipe store for recording tool usage patterns.
+    pub recipe_store: Option<std::sync::Arc<std::sync::Mutex<crate::tool_recipes::RecipeStore>>>,
+    /// Optional pattern capture for AUTO-LEARN (novel tool combo detection).
+    pub pattern_capture: Option<std::sync::Arc<crate::pattern_capture::PatternCapture>>,
+    /// Optional trajectory recorder for session-level learning.
+    pub trajectory_recorder: Option<std::sync::Arc<crate::trajectory::TrajectoryRecorder>>,
+    /// Model name used for this run (for trajectory tagging).
+    pub model_name: String,
+    /// Optional local embedding provider for cosine-similarity re-ranking.
+    pub embedding_provider:
+        Option<std::sync::Arc<dyn agentzero_core::embedding::EmbeddingProvider>>,
 }
 
 struct AuditHookSink {
@@ -93,9 +113,58 @@ impl HookSink for AuditHookSink {
     async fn record(&self, event: HookEvent) -> anyhow::Result<()> {
         self.sink
             .record(AuditEvent {
+                seq: 0,
+                session_id: String::new(),
                 stage: format!("hook.{}", event.stage),
                 detail: json!({ "hook": event.detail }),
             })
+            .await
+    }
+}
+
+/// Adapter to use `Arc<dyn Provider>` where `Box<dyn Provider>` is expected.
+/// Used when wrapping providers through the composable pipeline.
+struct PipelineProviderAdapter(std::sync::Arc<dyn Provider>);
+
+#[async_trait]
+impl Provider for PipelineProviderAdapter {
+    fn supports_streaming(&self) -> bool {
+        self.0.supports_streaming()
+    }
+    async fn complete(&self, prompt: &str) -> anyhow::Result<agentzero_core::ChatResult> {
+        self.0.complete(prompt).await
+    }
+    async fn complete_with_reasoning(
+        &self,
+        prompt: &str,
+        reasoning: &agentzero_core::ReasoningConfig,
+    ) -> anyhow::Result<agentzero_core::ChatResult> {
+        self.0.complete_with_reasoning(prompt, reasoning).await
+    }
+    async fn complete_streaming(
+        &self,
+        prompt: &str,
+        sender: tokio::sync::mpsc::UnboundedSender<agentzero_core::StreamChunk>,
+    ) -> anyhow::Result<agentzero_core::ChatResult> {
+        self.0.complete_streaming(prompt, sender).await
+    }
+    async fn complete_with_tools(
+        &self,
+        messages: &[agentzero_core::ConversationMessage],
+        tools: &[agentzero_core::ToolDefinition],
+        reasoning: &agentzero_core::ReasoningConfig,
+    ) -> anyhow::Result<agentzero_core::ChatResult> {
+        self.0.complete_with_tools(messages, tools, reasoning).await
+    }
+    async fn complete_streaming_with_tools(
+        &self,
+        messages: &[agentzero_core::ConversationMessage],
+        tools: &[agentzero_core::ToolDefinition],
+        reasoning: &agentzero_core::ReasoningConfig,
+        sender: tokio::sync::mpsc::UnboundedSender<agentzero_core::StreamChunk>,
+    ) -> anyhow::Result<agentzero_core::ChatResult> {
+        self.0
+            .complete_streaming_with_tools(messages, tools, reasoning, sender)
             .await
     }
 }
@@ -164,25 +233,26 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
     // Clone the key before it's moved into the primary provider.
     let key_for_dynamic_tools = key.clone();
 
-    let primary_provider: Box<dyn agentzero_core::Provider> =
-        if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
-            agentzero_providers::build_provider_with_privacy(
-                &config.provider.kind,
-                config.provider.base_url.clone(),
-                key,
-                config.provider.model.clone(),
-                transport_config.clone(),
-                &config.privacy.mode,
-            )?
-        } else {
-            agentzero_providers::build_provider_with_transport(
-                &config.provider.kind,
-                config.provider.base_url.clone(),
-                key,
-                config.provider.model.clone(),
-                transport_config.clone(),
-            )
-        };
+    let primary_provider: Box<dyn agentzero_core::Provider> = if config.provider.kind == "candle" {
+        build_candle_from_config(&config)?
+    } else if config.privacy.block_cloud_providers || config.privacy.mode == "local_only" {
+        agentzero_providers::build_provider_with_privacy(
+            &config.provider.kind,
+            config.provider.base_url.clone(),
+            key,
+            config.provider.model.clone(),
+            transport_config.clone(),
+            &config.privacy.mode,
+        )?
+    } else {
+        agentzero_providers::build_provider_with_transport(
+            &config.provider.kind,
+            config.provider.base_url.clone(),
+            key,
+            config.provider.model.clone(),
+            transport_config.clone(),
+        )
+    };
 
     // Wrap with fallback chain if configured.
     let provider: Box<dyn agentzero_core::Provider> =
@@ -237,6 +307,39 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             );
             Box::new(agentzero_providers::FallbackProvider::new(chain))
         };
+
+    // Wrap provider with composable pipeline layers (metrics, cost cap).
+    let provider: Box<dyn agentzero_core::Provider> = {
+        let provider_arc: std::sync::Arc<dyn agentzero_core::Provider> = provider.into();
+        let mut pipeline = agentzero_providers::PipelineBuilder::new().layer(
+            agentzero_providers::MetricsLayer::new(&config.provider.kind, &config.provider.model),
+        );
+
+        // Add cost cap layer if a per-run budget is configured.
+        let cost_budget = config
+            .agent
+            .max_cost_usd
+            .map(|usd| (usd * 1_000_000.0) as u64)
+            .unwrap_or(0);
+        if cost_budget > 0 {
+            pipeline = pipeline.layer(agentzero_providers::CostCapLayer::new(
+                cost_budget,
+                &config.provider.kind,
+                &config.provider.model,
+            ));
+        }
+
+        // Add guardrails layer (default: audit mode for both PII and injection).
+        let guard_entries = build_guard_entries(&config.guardrails);
+        if !guard_entries.is_empty() {
+            pipeline = pipeline.layer(agentzero_providers::GuardrailsLayer::new(guard_entries));
+        }
+
+        let wrapped = pipeline.build(provider_arc);
+        // Convert Arc<dyn Provider> back to Box<dyn Provider> for RuntimeExecution.
+        Box::new(PipelineProviderAdapter(wrapped))
+    };
+
     let memory = match req.memory_override {
         Some(m) => m,
         None => build_memory_store(&req.config_path).await?,
@@ -285,6 +388,36 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         None
     };
 
+    // Build tool evolver for auto-fix/improve of dynamic tools.
+    let tool_evolver = if let Some(ref registry) = dynamic_registry {
+        let provider_for_evolver: std::sync::Arc<dyn agentzero_core::Provider> =
+            std::sync::Arc::from(agentzero_providers::build_provider_with_transport(
+                &config.provider.kind,
+                config.provider.base_url.clone(),
+                key_for_dynamic_tools.clone(),
+                config.provider.model.clone(),
+                transport_config.clone(),
+            ));
+        Some(std::sync::Arc::new(crate::tool_evolver::ToolEvolver::new(
+            provider_for_evolver,
+            std::sync::Arc::clone(registry),
+        )))
+    } else {
+        None
+    };
+
+    // Build recipe store for tool catalog learning.
+    let recipe_store = {
+        let data_dir = req.workspace_root.join(".agentzero");
+        match crate::tool_recipes::RecipeStore::open(&data_dir) {
+            Ok(store) => Some(std::sync::Arc::new(std::sync::Mutex::new(store))),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to open recipe store");
+                None
+            }
+        }
+    };
+
     let audit_policy = load_audit_policy(&req.workspace_root, &req.config_path)?;
     let audit_path = audit_policy.path.clone();
 
@@ -292,7 +425,9 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         config: AgentConfig {
             max_tool_iterations: config.agent.max_tool_iterations,
             request_timeout_ms: config.agent.request_timeout_ms,
-            memory_window_size: config.agent.memory_window_size,
+            memory_window_size: req
+                .memory_window_override
+                .unwrap_or(config.agent.memory_window_size),
             max_prompt_chars: config.agent.max_prompt_chars,
             parallel_tools: config.agent.parallel_tools,
             gated_tools: config.autonomy.always_ask.iter().cloned().collect(),
@@ -316,6 +451,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             reasoning: agentzero_core::ReasoningConfig {
                 enabled: config.runtime.reasoning_enabled,
                 level: config.provider_options.reasoning_level.clone(),
+                adaptive: config.runtime.adaptive_reasoning.unwrap_or(false),
             },
             hooks: agentzero_core::HookPolicy {
                 enabled: config.agent.hooks.enabled,
@@ -349,18 +485,38 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             },
             model_supports_tool_use: caps.map_or(true, |c| c.tool_use),
             model_supports_vision: caps.is_some_and(|c| c.vision),
-            system_prompt: config.agent.system_prompt.clone(),
+            system_prompt: config.agent.system_prompt.clone().or_else(|| {
+                if is_local_provider(&config.provider.kind) {
+                    Some(
+                        "You are a helpful assistant running inside a workspace directory. \
+                         You have full access to the project files through your tools. \
+                         ALWAYS use your tools to answer questions — never say you cannot \
+                         access files or ask the user to provide information you can look up. \
+                         For any task involving the project, start by using glob_search to \
+                         discover files, content_search to find patterns, and read_file to \
+                         read contents. Act autonomously."
+                            .to_string(),
+                    )
+                } else {
+                    None
+                }
+            }),
             privacy_boundary: config.privacy.mode.clone(),
             tool_boundaries: config.security.tool_boundaries.clone(),
             cost_calculator,
             tool_timeout_ms: config.agent.tool_timeout_ms,
-            tool_selection: config
-                .agent
-                .tool_selection
-                .clone()
-                .unwrap_or_default()
-                .parse()
-                .unwrap_or(agentzero_core::ToolSelectionMode::All),
+            tool_selection: {
+                let explicit = config.agent.tool_selection.clone().unwrap_or_default();
+                if explicit.is_empty() && is_local_provider(&config.provider.kind) {
+                    // Local models struggle with large tool sets — auto-enable
+                    // keyword-based tool selection to keep the prompt manageable.
+                    agentzero_core::ToolSelectionMode::Keyword
+                } else {
+                    explicit
+                        .parse()
+                        .unwrap_or(agentzero_core::ToolSelectionMode::All)
+                }
+            },
             tool_selection_model: config.agent.tool_selection_model.clone(),
             summarization: agentzero_core::SummarizationConfig {
                 enabled: config.agent.summarization.enabled,
@@ -370,13 +526,29 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
                     .summarization
                     .min_entries_for_summarization,
                 max_summary_chars: config.agent.summarization.max_summary_chars,
+                compression_enabled: config.agent.summarization.compression_enabled,
+                max_tool_result_chars: config.agent.summarization.max_tool_result_chars,
+                protect_head: config.agent.summarization.protect_head,
+                protect_tail: config.agent.summarization.protect_tail,
             },
         },
         provider,
         memory,
         tools,
         audit_sink: if audit_policy.enabled {
-            Some(Box::new(FileAuditSink::new(audit_path.clone())) as Box<dyn AuditSink>)
+            let session_id = format!(
+                "ses-{}-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis(),
+                std::process::id()
+            );
+            let sequenced = SequencedAuditSink::new(
+                Box::new(FileAuditSink::new(audit_path.clone())),
+                session_id,
+            );
+            Some(Box::new(sequenced) as Box<dyn AuditSink>)
         } else {
             None
         },
@@ -405,17 +577,89 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf(),
-        tool_selector: match config.agent.tool_selection.as_deref().unwrap_or("all") {
-            "keyword" => Some(Box::new(
-                crate::tool_selection::KeywordToolSelector::default(),
-            )),
-            // "ai" selector requires a provider — wired at a higher level.
-            _ => None,
+        tool_selector: {
+            let mode = config.agent.tool_selection.as_deref().unwrap_or("");
+            if mode == "keyword" || (mode.is_empty() && is_local_provider(&config.provider.kind)) {
+                Some(Box::new(
+                    crate::tool_selection::KeywordToolSelector::default(),
+                ))
+            } else {
+                // "ai" selector requires a provider — wired at a higher level.
+                None
+            }
         },
         source_channel: None,
         sender_id: None,
-        dynamic_registry,
+        dynamic_registry: dynamic_registry.clone(),
+        task_manager: None,
+        tool_evolver,
+        recipe_store: recipe_store.clone(),
+        pattern_capture: match (&dynamic_registry, &recipe_store) {
+            (Some(reg), Some(store)) => Some(std::sync::Arc::new(
+                crate::pattern_capture::PatternCapture::new(
+                    std::sync::Arc::clone(reg),
+                    std::sync::Arc::clone(store),
+                ),
+            )),
+            _ => None,
+        },
+        embedding_provider: build_embedding_provider(),
+        trajectory_recorder: {
+            let data_dir = req.config_path.parent().unwrap_or_else(|| Path::new("."));
+            match crate::trajectory::TrajectoryRecorder::new(data_dir) {
+                Ok(rec) => Some(std::sync::Arc::new(rec)),
+                Err(e) => {
+                    warn!(error = %e, "failed to create trajectory recorder");
+                    None
+                }
+            }
+        },
+        model_name: config.provider.model.clone(),
     })
+}
+
+/// Build a local embedding provider when the `candle` feature is active.
+fn build_embedding_provider(
+) -> Option<std::sync::Arc<dyn agentzero_core::embedding::EmbeddingProvider>> {
+    #[cfg(feature = "candle")]
+    {
+        Some(std::sync::Arc::new(
+            agentzero_providers::candle_embedding::CandleEmbeddingProvider::new(),
+        ))
+    }
+    #[cfg(not(feature = "candle"))]
+    {
+        None
+    }
+}
+
+/// Convert a guardrails config mode string to [`GuardEntry`] entries.
+fn build_guard_entries(
+    gc: &agentzero_config::GuardrailsConfig,
+) -> Vec<agentzero_providers::GuardEntry> {
+    fn to_enforcement(mode: &str) -> Option<agentzero_providers::Enforcement> {
+        match mode {
+            "block" => Some(agentzero_providers::Enforcement::Block),
+            "sanitize" => Some(agentzero_providers::Enforcement::Sanitize),
+            "audit" => Some(agentzero_providers::Enforcement::Audit),
+            _ => None, // "off" or unrecognised
+        }
+    }
+
+    let mut entries = Vec::new();
+    if let Some(e) = to_enforcement(&gc.pii_mode) {
+        entries.push(agentzero_providers::GuardEntry::new(
+            agentzero_providers::PiiRedactionGuard::default(),
+            e,
+        ));
+    }
+    if let Some(e) = to_enforcement(&gc.injection_mode) {
+        entries.push(agentzero_providers::GuardEntry::new(
+            agentzero_providers::PromptInjectionGuard::default(),
+            e,
+        ));
+    }
+    entries
 }
 
 /// Build just a [`Provider`] from config, without tools/memory/audit.
@@ -575,9 +819,16 @@ pub fn run_agent_streaming(
             }
         }
 
+        let tool_executions = ctx
+            .tool_executions
+            .lock()
+            .map(|v| v.clone())
+            .unwrap_or_default();
+        persist_execution_history(&data_dir, &tool_executions);
         Ok(RunAgentOutput {
             response_text: response.text,
             metrics_snapshot,
+            tool_executions,
         })
     });
     (rx, handle)
@@ -603,6 +854,14 @@ pub async fn run_agent_with_runtime(
     let privacy_boundary = execution.config.privacy_boundary.clone();
     let cost_config = execution.cost_config.clone();
     let data_dir = execution.data_dir.clone();
+    let task_manager = execution.task_manager.clone();
+    let dynamic_registry = execution.dynamic_registry.clone();
+    let tool_evolver = execution.tool_evolver.clone();
+    let recipe_store = execution.recipe_store.clone();
+    let pattern_capture = execution.pattern_capture.clone();
+    let trajectory_recorder = execution.trajectory_recorder.clone();
+    let model_name = execution.model_name.clone();
+    let run_started = std::time::Instant::now();
     let mut agent = Agent::new(
         execution.config,
         execution.provider,
@@ -621,6 +880,9 @@ pub async fn run_agent_with_runtime(
     if let Some(selector) = execution.tool_selector {
         agent = agent.with_tool_selector(selector);
     }
+    if let Some(ref registry) = dynamic_registry {
+        agent = agent.with_tool_source(registry.clone());
+    }
 
     let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
     ctx.privacy_boundary = privacy_boundary;
@@ -630,6 +892,7 @@ pub async fn run_agent_with_runtime(
     ctx.sender_id = execution.sender_id.clone();
 
     // Transcribe [AUDIO:path] markers before the message reaches the LLM.
+    let goal_summary = message.clone();
     let message = process_audio_markers(&message, execution.audio_config.as_ref()).await?;
 
     let response = agent.respond(UserMessage { text: message }, &ctx).await?;
@@ -646,9 +909,143 @@ pub async fn run_agent_with_runtime(
         }
     }
 
+    // Session teardown: cancel all background delegation tasks to prevent orphans.
+    if let Some(ref tm) = task_manager {
+        tm.cancel_all().await;
+    }
+
+    // Extract tool execution records from the shared context.
+    let tool_executions = ctx
+        .tool_executions
+        .lock()
+        .map(|v| v.clone())
+        .unwrap_or_default();
+
+    // Persist execution records for quality tracking.
+    persist_execution_history(&data_dir, &tool_executions);
+
+    // Update quality counters on dynamic tools.
+    if let Some(ref registry) = dynamic_registry {
+        for record in &tool_executions {
+            if registry.is_dynamic(&record.tool_name).await {
+                if let Err(e) = registry
+                    .record_outcome(&record.tool_name, record.success, record.error.as_deref())
+                    .await
+                {
+                    warn!(error = %e, tool = %record.tool_name, "failed to update tool quality counters");
+                }
+            }
+        }
+    }
+
+    // Auto-fix failing / auto-improve successful dynamic tools.
+    if let Some(ref evolver) = tool_evolver {
+        let failed: std::collections::HashSet<String> = tool_executions
+            .iter()
+            .filter(|r| !r.success)
+            .map(|r| r.tool_name.clone())
+            .collect();
+        for tool_name in &failed {
+            match evolver.maybe_fix(tool_name).await {
+                Ok(true) => info!(tool = %tool_name, "auto-fixed failing dynamic tool"),
+                Ok(false) => {}
+                Err(e) => warn!(tool = %tool_name, error = %e, "auto-fix check failed"),
+            }
+        }
+        if let Err(e) = evolver.evolve_candidates().await {
+            warn!(error = %e, "auto-improve pass failed");
+        }
+    }
+
+    // Record tool usage as a recipe for catalog learning.
+    if let Some(ref store) = recipe_store {
+        let tools_used: Vec<String> = tool_executions
+            .iter()
+            .filter(|r| r.success)
+            .map(|r| r.tool_name.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let any_failures = tool_executions.iter().any(|r| !r.success);
+        let success = !tools_used.is_empty() && !any_failures;
+        if let Ok(mut store) = store.lock() {
+            if let Err(e) = store.record(&goal_summary, &tools_used, success) {
+                warn!(error = %e, "failed to record tool recipe");
+            }
+        }
+    }
+
+    // AUTO-LEARN: capture novel multi-tool patterns as composite tools.
+    if let Some(ref capture) = pattern_capture {
+        if let Err(e) = capture
+            .capture_if_novel(&goal_summary, &tool_executions)
+            .await
+        {
+            warn!(error = %e, "pattern capture failed");
+        }
+    }
+
+    // Record session trajectory for self-improving learning.
+    if let Some(ref recorder) = trajectory_recorder {
+        let any_failures = tool_executions.iter().any(|r| !r.success);
+        let has_output = !response.text.is_empty();
+        let outcome = if !any_failures && has_output {
+            crate::trajectory::Outcome::Success
+        } else if has_output {
+            crate::trajectory::Outcome::Partial {
+                reason: "some tool executions failed".to_string(),
+            }
+        } else {
+            crate::trajectory::Outcome::Failure {
+                reason: "empty response".to_string(),
+            }
+        };
+        let session_id = format!("ses-{}", std::process::id());
+        let run_id = format!(
+            "run-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        );
+        let record = crate::trajectory::build_record(crate::trajectory::TrajectoryInput {
+            session_id: &session_id,
+            run_id: &run_id,
+            outcome,
+            goal_summary: &goal_summary,
+            response_text: &response.text,
+            tool_executions: &tool_executions,
+            input_tokens: ctx.current_tokens(),
+            output_tokens: 0, // output tokens tracked at provider level, not separately in ctx
+            cost_microdollars: ctx.current_cost(),
+            model: &model_name,
+            latency_ms: run_started.elapsed().as_millis() as u64,
+        });
+        if let Err(e) = recorder.record(record).await {
+            warn!(error = %e, "failed to record trajectory");
+        }
+    }
+
+    // Periodic recipe evolution: promote winners, retire losers.
+    if let Some(ref store) = recipe_store {
+        if let Ok(mut store) = store.lock() {
+            store.increment_run_counter();
+            if store.should_evolve() {
+                match store.evolve_recipes() {
+                    Ok(changes) if changes > 0 => {
+                        info!(changes, "recipe evolution applied");
+                    }
+                    Ok(_) => {}
+                    Err(e) => warn!(error = %e, "recipe evolution failed"),
+                }
+            }
+        }
+    }
+
     Ok(RunAgentOutput {
         response_text: response.text,
         metrics_snapshot,
+        tool_executions,
     })
 }
 
@@ -754,6 +1151,43 @@ async fn resolve_api_key(
     )
 }
 
+/// Append tool execution records to `<data_dir>/execution-history.jsonl`.
+/// Best-effort: failures are logged but do not propagate. Caps file at 10,000 lines.
+fn persist_execution_history(
+    data_dir: &std::path::Path,
+    records: &[agentzero_core::ToolExecutionRecord],
+) {
+    if records.is_empty() {
+        return;
+    }
+    let path = data_dir.join("execution-history.jsonl");
+    let mut lines: Vec<String> = if path.exists() {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => content.lines().map(String::from).collect(),
+            Err(e) => {
+                warn!(error = %e, "failed to read execution history");
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    for record in records {
+        match serde_json::to_string(record) {
+            Ok(json) => lines.push(json),
+            Err(e) => warn!(error = %e, "failed to serialize execution record"),
+        }
+    }
+    const MAX_LINES: usize = 10_000;
+    if lines.len() > MAX_LINES {
+        lines = lines.split_off(lines.len() - MAX_LINES);
+    }
+    let content = lines.join("\n") + "\n";
+    if let Err(e) = std::fs::write(&path, content) {
+        warn!(error = %e, "failed to persist execution history");
+    }
+}
+
 /// Core key resolution by provider kind (env var -> auth profile -> error).
 /// Used by unit tests; the main path uses `resolve_api_key` which also falls
 /// back to any active profile.
@@ -782,6 +1216,40 @@ fn resolve_api_key_for_provider(config_path: &Path, provider_kind: &str) -> anyh
         "missing API key for provider '{provider_kind}': \
          set OPENAI_API_KEY (env var or .env) or run `agentzero auth login`"
     )
+}
+
+/// Build a Candle provider from the `[local]` TOML section.
+///
+/// When compiled without the `candle` feature, prints an error and exits.
+fn build_candle_from_config(
+    config: &agentzero_config::AgentZeroConfig,
+) -> anyhow::Result<Box<dyn agentzero_core::Provider>> {
+    #[cfg(feature = "candle")]
+    {
+        let local = &config.local;
+        Ok(agentzero_providers::build_candle_provider(
+            agentzero_providers::candle_provider::CandleConfig {
+                model: local.model.clone(),
+                filename: local.filename.clone(),
+                n_ctx: local.n_ctx,
+                temperature: local.temperature,
+                top_p: local.top_p,
+                max_output_tokens: local.max_output_tokens,
+                seed: local.seed,
+                repeat_penalty: local.repeat_penalty,
+                device: local.device.clone(),
+                chat_template: local.chat_template.clone(),
+            },
+        ))
+    }
+    #[cfg(not(feature = "candle"))]
+    {
+        let _ = config;
+        anyhow::bail!(
+            "provider 'candle' requires the 'candle' feature. \
+             Rebuild with: cargo build --features candle"
+        );
+    }
 }
 
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api";
@@ -966,6 +1434,7 @@ fn build_delegate_agents(
                         .map(|usd| (usd * 1_000_000.0) as u64)
                         .unwrap_or(0),
                     system_prompt_hash: None,
+                    instruction_method: agent.instruction_method.clone(),
                 },
             )
         })
@@ -1334,6 +1803,13 @@ mod tests {
             source_channel: None,
             sender_id: None,
             dynamic_registry: None,
+            task_manager: None,
+            tool_evolver: None,
+            recipe_store: None,
+            pattern_capture: None,
+            embedding_provider: None,
+            trajectory_recorder: None,
+            model_name: String::new(),
         }
     }
 

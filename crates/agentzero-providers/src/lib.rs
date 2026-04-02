@@ -7,13 +7,23 @@
 mod anthropic;
 #[cfg(feature = "local-model")]
 pub mod builtin;
+#[cfg(feature = "candle")]
+pub mod candle_embedding;
+#[cfg(feature = "candle")]
+pub mod candle_provider;
 mod catalog;
+#[cfg(feature = "candle")]
+pub mod constrained;
+pub mod credential_pool;
 pub mod embedding;
 mod fallback;
-#[cfg(feature = "local-model")]
+pub mod guardrails;
+pub mod local_tools;
+#[cfg(any(feature = "local-model", feature = "candle"))]
 pub mod model_manager;
 mod models;
 mod openai;
+pub mod pipeline;
 mod pricing;
 pub mod provider_metrics;
 pub(crate) mod transport;
@@ -24,11 +34,18 @@ mod noise_transport;
 pub use anthropic::AnthropicProvider;
 pub use catalog::{find_provider, supported_providers, ProviderDescriptor};
 pub use fallback::{FallbackInfo, FallbackProvider, FALLBACK_INFO};
+pub use guardrails::{
+    Enforcement, Guard, GuardEntry, GuardVerdict, GuardrailsLayer, PiiRedactionGuard,
+    PromptInjectionGuard,
+};
 pub use models::{
     find_models_for_provider, model_capabilities, provider_config_fingerprint,
     provider_supports_model, ModelCapabilities, ModelDescriptor,
 };
 pub use openai::OpenAiCompatibleProvider;
+pub use pipeline::{
+    CostCapLayer, CostEstimateLayer, LlmLayer, MetricsLayer, PipelineBuilder, PromptCacheLayer,
+};
 pub use pricing::{compute_cost_microdollars, model_pricing, ModelPricing};
 pub use transport::{
     health_probe, CircuitBreaker, CircuitBreakerStatus, CooldownState, HealthProbeResult,
@@ -88,6 +105,16 @@ pub fn build_builtin_provider(model: String) -> Box<dyn agentzero_core::Provider
     Box::new(builtin::BuiltinProvider::new(model))
 }
 
+/// Build a Candle (in-process, pure Rust) local LLM provider.
+///
+/// Available only when compiled with the `candle` feature.
+#[cfg(feature = "candle")]
+pub fn build_candle_provider(
+    config: candle_provider::CandleConfig,
+) -> Box<dyn agentzero_core::Provider> {
+    Box::new(candle_provider::CandleProvider::new(config))
+}
+
 /// Build a provider with privacy enforcement.
 ///
 /// - `"local_only"` — rejects cloud providers entirely.
@@ -129,11 +156,15 @@ pub fn build_provider_with_transport(
         "builtin" => build_builtin_provider(model),
         #[cfg(not(feature = "local-model"))]
         "builtin" => {
-            eprintln!(
-                "\x1b[1;31merror:\x1b[0m provider 'builtin' requires the 'local-model' feature."
-            );
-            eprintln!("       Rebuild with: cargo run --features local-model");
-            std::process::exit(1);
+            tracing::error!("provider 'builtin' requires the 'local-model' feature — falling back to OpenAI-compatible stub");
+            Box::new(OpenAiCompatibleProvider::new(base_url, api_key, model))
+        }
+        #[cfg(feature = "candle")]
+        "candle" => build_candle_provider(candle_provider::CandleConfig::default()),
+        #[cfg(not(feature = "candle"))]
+        "candle" => {
+            tracing::error!("provider 'candle' requires the 'candle' feature — falling back to OpenAI-compatible stub");
+            Box::new(OpenAiCompatibleProvider::new(base_url, api_key, model))
         }
         "anthropic" => Box::new(AnthropicProvider::with_config(
             base_url, api_key, model, transport,

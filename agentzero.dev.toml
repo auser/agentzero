@@ -1,0 +1,81 @@
+# AgentZero — Developer Configuration
+# For working on the AgentZero repo itself.
+# Copy to `agentzero.toml` in the repo root to use:
+#   cp agentzero.dev.toml agentzero.toml
+
+# ---------------------------------------------------------------------------
+# Provider — defaults to candle (pure Rust in-process inference, no external server)
+# Requires: cargo build --features candle
+# Auto-downloads Qwen2.5-Coder-3B (~2GB GGUF) on first run to ~/.agentzero/models/
+# ---------------------------------------------------------------------------
+[provider]
+kind = "candle"
+model = "qwen2.5-coder-3b"               # default; or pass a HF repo: "org/repo/file.gguf"
+
+# Optional: tune local model settings
+# [local]
+# n_ctx = 8192                            # context window (tokens)
+# temperature = 0.7
+# max_output_tokens = 2048
+# device = "auto"                         # "auto" | "cpu" (Metal/CUDA coming soon)
+
+# --- Legacy llama.cpp alternative (requires --features local-model + C++ compiler) ---
+# [provider]
+# kind = "builtin"
+# model = "qwen2.5-coder-3b"
+
+# --- Cloud alternatives (uncomment one block, comment out builtin above) ---
+
+# [provider]
+# kind = "anthropic"
+# model = "claude-sonnet-4-6"
+# # set ANTHROPIC_API_KEY in env or .env
+
+# [provider]
+# kind = "openrouter"
+# base_url = "https://openrouter.ai/api/v1"
+# model = "anthropic/claude-sonnet-4-6"
+# # set OPENAI_API_KEY in env or .env
+
+# ---------------------------------------------------------------------------
+# Memory
+# ---------------------------------------------------------------------------
+[memory]
+backend = "sqlite"
+sqlite_path = "./agentzero-dev.db"
+
+# ---------------------------------------------------------------------------
+# Agent loop
+# ---------------------------------------------------------------------------
+[agent]
+mode = "development"
+max_tool_iterations = 25
+request_timeout_ms = 60000
+
+# ---------------------------------------------------------------------------
+# Security — scoped to this repo with dev-friendly commands
+# ---------------------------------------------------------------------------
+[security]
+allowed_root = "."
+allowed_commands = [
+  "ls", "pwd", "cat", "echo", "grep", "find", "head", "tail", "wc",
+  "sort", "uniq", "diff", "file", "which", "basename", "dirname", "realpath",
+  "git", "cargo", "rustfmt", "clippy-driver", "rustc", "rustup",
+  "rg", "fd", "make", "just", "tokei", "jq",
+]
+
+[security.write_file]
+enabled = true
+
+# ---------------------------------------------------------------------------
+# Web search (optional — uncomment to enable)
+# ---------------------------------------------------------------------------
+# [web_search]
+# enabled = true
+# provider = "duckduckgo"
+
+# ---------------------------------------------------------------------------
+# Gateway
+# ---------------------------------------------------------------------------
+[gateway]
+port = 42617

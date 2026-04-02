@@ -4,26 +4,39 @@
 //! `agentzero-plugin-sdk` crate and the `declare_tool!` macro.
 
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{bail, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct Input {
+    /// The plugin operation to perform
+    #[schema(enum_values = ["scaffold", "list", "build", "deploy", "status"])]
     action: String,
+    /// Plugin/tool name (used as crate name and tool identifier)
     #[serde(default)]
     name: Option<String>,
+    /// For scaffold: what the tool does
     #[serde(default)]
     description: Option<String>,
+    /// For scaffold: the Rust code body for the tool's execute function. Receives `input: &str` and returns `Result<String, String>`.
     #[serde(default)]
     tool_logic: Option<String>,
+    /// For scaffold: plugin capabilities (e.g. ['network', 'fs_read'])
     #[serde(default)]
     capabilities: Option<Vec<String>>,
+    /// For scaffold: semver version (default: 0.1.0)
     #[serde(default)]
     version: Option<String>,
 }
 
+#[tool(
+    name = "plugin_scaffold",
+    description = "Scaffold, build, and deploy WASM plugin tools. Actions: scaffold (generate a Rust plugin project), list (show scaffolded plugins), build (compile to wasm32-wasip1), deploy (copy wasm + generate manifest), status (check plugin state)."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PluginScaffoldTool;
 
@@ -38,48 +51,15 @@ impl PluginScaffoldTool {
 #[async_trait]
 impl Tool for PluginScaffoldTool {
     fn name(&self) -> &'static str {
-        "plugin_scaffold"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Scaffold, build, and deploy WASM plugin tools. Actions: scaffold (generate a Rust \
-         plugin project), list (show scaffolded plugins), build (compile to wasm32-wasip1), \
-         deploy (copy wasm + generate manifest), status (check plugin state)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["scaffold", "list", "build", "deploy", "status"],
-                    "description": "The plugin operation to perform"
-                },
-                "name": {
-                    "type": "string",
-                    "description": "Plugin/tool name (used as crate name and tool identifier)"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "For scaffold: what the tool does"
-                },
-                "tool_logic": {
-                    "type": "string",
-                    "description": "For scaffold: the Rust code body for the tool's execute function. Receives `input: &str` and returns `Result<String, String>`."
-                },
-                "capabilities": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "For scaffold: plugin capabilities (e.g. ['network', 'fs_read'])"
-                },
-                "version": {
-                    "type": "string",
-                    "description": "For scaffold: semver version (default: 0.1.0)"
-                }
-            },
-            "required": ["action"]
-        }))
+        Some(Input::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

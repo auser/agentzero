@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -9,15 +10,23 @@ use tokio::process::Command;
 
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 
-#[derive(Debug, Deserialize)]
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct PdfReadInput {
+    /// Path to the PDF file
     path: String,
+    /// Starting page number (optional)
     #[serde(default)]
     page_start: Option<usize>,
+    /// Ending page number (optional)
     #[serde(default)]
     page_end: Option<usize>,
 }
 
+#[tool(
+    name = "pdf_read",
+    description = "Extract text content from a PDF file."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PdfReadTool;
 
@@ -53,21 +62,15 @@ impl PdfReadTool {
 #[async_trait]
 impl Tool for PdfReadTool {
     fn name(&self) -> &'static str {
-        "pdf_read"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Extract text content from a PDF file."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": { "type": "string", "description": "Path to the PDF file" }
-            },
-            "required": ["path"]
-        }))
+        Some(PdfReadInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

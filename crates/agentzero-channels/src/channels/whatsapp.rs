@@ -11,6 +11,8 @@ mod impl_ {
     const MAX_MESSAGE_LENGTH: usize = 4096;
     const POLL_INTERVAL_SECS: u64 = 5;
 
+    const DEFAULT_API_BASE: &str = "https://graph.facebook.com/v18.0";
+
     /// WhatsApp Cloud API channel.
     pub struct WhatsappChannel {
         access_token: String,
@@ -18,12 +20,13 @@ mod impl_ {
         verify_token: String,
         allowed_users: Vec<String>,
         client: reqwest::Client,
+        api_base: String,
     }
 
     impl WhatsappChannel {
         pub fn new(access_token: String, phone_number_id: String, verify_token: String, allowed_users: Vec<String>) -> Self {
             let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().expect("reqwest client should build");
-            Self { access_token, phone_number_id, verify_token, allowed_users, client }
+            Self { access_token, phone_number_id, verify_token, allowed_users, client, api_base: DEFAULT_API_BASE.to_string() }
         }
 
         pub fn with_client(mut self, client: reqwest::Client) -> Self {
@@ -31,8 +34,14 @@ mod impl_ {
             self
         }
 
+        /// Override the API base URL (for testing with mock servers).
+        pub fn with_base_url(mut self, base_url: String) -> Self {
+            self.api_base = base_url;
+            self
+        }
+
         fn api_url(&self, path: &str) -> String {
-            format!("https://graph.facebook.com/v18.0/{}{}", self.phone_number_id, path)
+            format!("{}/{}{}", self.api_base, self.phone_number_id, path)
         }
     }
 
@@ -81,8 +90,26 @@ mod impl_ {
         let message = value["messages"].as_array()?.first()?;
         let from = message["from"].as_str()?;
         if !helpers::is_user_allowed(from, allowed_users) { return None; }
-        let text = message["text"]["body"].as_str()?;
-        if text.is_empty() { return None; }
+        let text = message["text"]["body"].as_str().unwrap_or("");
+
+        // Extract WhatsApp media attachments (image, audio, document, video).
+        let mut attachments = Vec::new();
+        for media_type in ["image", "audio", "document", "video", "sticker"] {
+            if let Some(media) = message.get(media_type) {
+                let mime = media["mime_type"].as_str().unwrap_or("application/octet-stream");
+                let media_id = media["id"].as_str().unwrap_or("");
+                if !media_id.is_empty() {
+                    attachments.push(crate::media::MediaAttachment {
+                        mime_type: mime.to_string(),
+                        url: Some(format!("whatsapp://media/{media_id}")),
+                        transcript: None,
+                        description: media["caption"].as_str().map(String::from),
+                    });
+                }
+            }
+        }
+
+        if text.is_empty() && attachments.is_empty() { return None; }
         Some(ChannelMessage {
             id: helpers::new_message_id(),
             sender: from.to_string(),
@@ -92,7 +119,7 @@ mod impl_ {
             timestamp: helpers::now_epoch_secs(),
             thread_ts: None,
             privacy_boundary: String::new(),
-            attachments: Vec::new(),
+            attachments,
         })
     }
 

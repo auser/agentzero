@@ -94,9 +94,9 @@ fn build_env_filter(base_level: &str, modules: &HashMap<String, String>) -> EnvF
 
 fn verbosity_to_level(verbosity: u8) -> &'static str {
     match verbosity {
-        0 | 1 => "error",
-        2 => "info",
-        3 => "debug",
+        0 => "error",
+        1 => "info",
+        2 => "debug",
         _ => "trace",
     }
 }
@@ -106,18 +106,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn verbosity_level_one_maps_to_error() {
-        assert_eq!(verbosity_to_level(1), "error");
+    fn verbosity_level_one_maps_to_info() {
+        assert_eq!(verbosity_to_level(1), "info");
     }
 
     #[test]
-    fn verbosity_level_two_maps_to_info() {
-        assert_eq!(verbosity_to_level(2), "info");
+    fn verbosity_level_two_maps_to_debug() {
+        assert_eq!(verbosity_to_level(2), "debug");
     }
 
     #[test]
-    fn verbosity_level_three_maps_to_debug() {
-        assert_eq!(verbosity_to_level(3), "debug");
+    fn verbosity_level_three_maps_to_trace() {
+        assert_eq!(verbosity_to_level(3), "trace");
     }
 
     #[test]

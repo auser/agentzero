@@ -1,6 +1,7 @@
 use agentzero_core::common::url_policy::UrlAccessPolicy;
 use agentzero_core::common::util::parse_http_url_with_policy;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -83,10 +84,49 @@ impl Default for BrowserConfig {
     }
 }
 
+#[tool(
+    name = "browser",
+    description = "Control a headless browser: navigate to URLs, execute JavaScript, take screenshots, and extract page content."
+)]
 pub struct BrowserTool {
     config: BrowserConfig,
     url_policy: UrlAccessPolicy,
     deps_checked: AtomicBool,
+}
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct BrowserSchema {
+    /// Browser action to perform
+    #[schema(enum_values = ["navigate", "snapshot", "click", "fill", "type", "get_text", "get_title", "get_url", "screenshot", "wait", "press", "hover", "scroll", "execute_js", "content", "close"])]
+    action: String,
+    /// URL to navigate to (navigate action)
+    #[serde(default)]
+    url: Option<String>,
+    /// CSS selector (click, fill, type, get_text, hover, wait)
+    #[serde(default)]
+    selector: Option<String>,
+    /// Value to fill (fill action)
+    #[serde(default)]
+    value: Option<String>,
+    /// Text to type (type action)
+    #[serde(default)]
+    text: Option<String>,
+    /// Key to press (press action)
+    #[serde(default)]
+    key: Option<String>,
+    /// Scroll direction: up or down (scroll action)
+    #[serde(default)]
+    direction: Option<String>,
+    /// JavaScript to execute (execute_js action)
+    #[serde(default)]
+    script: Option<String>,
+    /// File path for screenshot (screenshot action)
+    #[serde(default)]
+    path: Option<String>,
+    /// Milliseconds to wait (wait action)
+    #[serde(default)]
+    ms: Option<i64>,
 }
 
 impl Default for BrowserTool {
@@ -240,39 +280,15 @@ async fn read_limited<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> anyhow:
 #[async_trait]
 impl Tool for BrowserTool {
     fn name(&self) -> &'static str {
-        "browser"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Control a headless browser: navigate to URLs, execute JavaScript, take screenshots, and extract page content."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "description": "Browser action to perform",
-                    "enum": [
-                        "navigate", "snapshot", "click", "fill", "type",
-                        "get_text", "get_title", "get_url", "screenshot",
-                        "wait", "press", "hover", "scroll",
-                        "execute_js", "content", "close"
-                    ]
-                },
-                "url": { "type": "string", "description": "URL to navigate to (navigate action)" },
-                "selector": { "type": "string", "description": "CSS selector (click, fill, type, get_text, hover, wait)" },
-                "value": { "type": "string", "description": "Value to fill (fill action)" },
-                "text": { "type": "string", "description": "Text to type (type action)" },
-                "key": { "type": "string", "description": "Key to press (press action)" },
-                "direction": { "type": "string", "description": "Scroll direction: up or down (scroll action)" },
-                "script": { "type": "string", "description": "JavaScript to execute (execute_js action)" },
-                "path": { "type": "string", "description": "File path for screenshot (screenshot action)" },
-                "ms": { "type": "integer", "description": "Milliseconds to wait (wait action)" }
-            },
-            "required": ["action"]
-        }))
+        Some(BrowserSchema::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

@@ -4,7 +4,7 @@
 //! feeds them into a [`FileModificationTracker`], and publishes
 //! `regression.file_conflict` events when conflicts are detected.
 
-use crate::event_bus::{Event, EventBus};
+use crate::event_bus::{Event, EventBus, EventFilter};
 use crate::regression::FileModificationTracker;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -31,8 +31,9 @@ pub fn spawn_regression_monitor(
     let bus_for_task = Arc::clone(&bus);
     tokio::spawn(async move {
         let mut sub = bus_for_task.subscribe();
+        let filter = EventFilter::topic("tool.file_written");
         loop {
-            let event = match sub.recv_filtered("tool.file_written").await {
+            let event = match sub.recv_with_filter(&filter).await {
                 Ok(e) => e,
                 Err(e) => {
                     tracing::warn!(error = %e, "regression monitor: event bus recv failed");
@@ -44,7 +45,7 @@ pub fn spawn_regression_monitor(
 
             let Some(payload) = parsed else {
                 tracing::debug!(
-                    payload = event.payload,
+                    payload = &*event.payload,
                     "regression monitor: ignoring malformed tool.file_written payload"
                 );
                 continue;
@@ -128,7 +129,7 @@ mod tests {
         // Wait for conflict event
         let conflict = tokio::time::timeout(
             Duration::from_secs(2),
-            sub.recv_filtered("regression.file_conflict"),
+            sub.recv_with_filter(&EventFilter::topic("regression.file_conflict")),
         )
         .await
         .expect("should receive conflict within timeout")
@@ -168,7 +169,7 @@ mod tests {
         // Wait briefly — should NOT get a conflict event
         let result = tokio::time::timeout(
             Duration::from_millis(200),
-            sub.recv_filtered("regression.file_conflict"),
+            sub.recv_with_filter(&EventFilter::topic("regression.file_conflict")),
         )
         .await;
 

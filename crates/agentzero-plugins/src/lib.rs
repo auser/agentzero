@@ -4,6 +4,7 @@
 //! Includes module compilation, ABI v2 dispatch, capability-based isolation,
 //! and plugin packaging/discovery utilities.
 
+pub mod overlay;
 pub mod package;
 mod package_ref;
 #[cfg(feature = "signing")]

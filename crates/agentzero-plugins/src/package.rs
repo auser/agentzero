@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context};
 use fd_lock::RwLock;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -714,27 +715,26 @@ pub fn filter_by_state(
 
 /// Download a plugin package from a URL, verify its SHA256 if provided,
 /// and install it.
-pub fn install_from_url(
+pub async fn install_from_url(
     url: &str,
     install_root: &Path,
     expected_sha256: Option<&str>,
 ) -> anyhow::Result<InstalledPlugin> {
-    // Use a blocking HTTP GET — the plugin CLI commands are already async
-    // but the core package functions are sync. This uses std::net via ureq
-    // would be ideal, but we'll use a minimal approach with the existing
-    // reqwest/hyper stack or fall back to curl. For now, check if the URL
-    // is a file:// URL first.
     let bytes = if let Some(file_path) = url.strip_prefix("file://") {
         fs::read(file_path).with_context(|| format!("failed to read local package: {file_path}"))?
     } else if url.starts_with("https://") || url.starts_with("http://") {
-        let mut buf = Vec::new();
-        ureq::get(url)
-            .call()
+        let client = Client::new();
+        let resp = client
+            .get(url)
+            .send()
+            .await
             .with_context(|| format!("failed to download plugin from {url}"))?
-            .into_reader()
-            .read_to_end(&mut buf)
-            .with_context(|| "failed to read plugin download response")?;
-        buf
+            .error_for_status()
+            .with_context(|| format!("HTTP error downloading plugin from {url}"))?;
+        resp.bytes()
+            .await
+            .with_context(|| "failed to read plugin download response")?
+            .to_vec()
     } else {
         return Err(anyhow!(
             "unsupported URL scheme for '{url}'. Use 'https://', 'http://', or 'file://'"
@@ -776,39 +776,25 @@ pub fn install_from_url(
 ///
 /// Prints progress to stdout for each dependency installed.
 /// Returns the main plugin plus all newly installed dependencies.
-pub fn install_with_dependencies(
+pub async fn install_with_dependencies(
     url: &str,
     install_root: &Path,
     expected_sha256: Option<&str>,
     registry: &RegistryIndex,
 ) -> anyhow::Result<Vec<InstalledPlugin>> {
-    let main = install_from_url(url, install_root, expected_sha256)?;
+    let main = install_from_url(url, install_root, expected_sha256).await?;
     let mut installed = vec![main];
     let mut seen: HashSet<String> = installed.iter().map(|p| p.manifest.id.clone()).collect();
-    install_deps_recursive(
-        &installed[0].manifest.dependencies.clone(),
-        install_root,
-        registry,
-        &mut seen,
-        &mut installed,
-    )?;
-    Ok(installed)
-}
 
-fn install_deps_recursive(
-    deps: &[PluginDependency],
-    install_root: &Path,
-    registry: &RegistryIndex,
-    seen: &mut HashSet<String>,
-    installed: &mut Vec<InstalledPlugin>,
-) -> anyhow::Result<()> {
-    let already_installed = list_installed_plugins(install_root).unwrap_or_default();
-
-    for dep in deps {
+    // Iterative dependency resolution (breadth-first) to avoid recursive async
+    let mut queue: Vec<PluginDependency> = installed[0].manifest.dependencies.clone();
+    while let Some(dep) = queue.pop() {
         if seen.contains(&dep.id) {
             continue;
         }
         seen.insert(dep.id.clone());
+
+        let already_installed = list_installed_plugins(install_root).unwrap_or_default();
 
         // Skip if already installed at a satisfying version
         let req = dep
@@ -856,13 +842,13 @@ fn install_deps_recursive(
             &version_entry.download_url,
             install_root,
             Some(&version_entry.sha256),
-        )?;
-        // Recurse into this dependency's own deps
-        let sub_deps = dep_plugin.manifest.dependencies.clone();
+        )
+        .await?;
+        // Enqueue this dependency's own deps
+        queue.extend(dep_plugin.manifest.dependencies.clone());
         installed.push(dep_plugin);
-        install_deps_recursive(&sub_deps, install_root, registry, seen, installed)?;
     }
-    Ok(())
+    Ok(installed)
 }
 
 // ── Plugin Registry ───────────────────────────────────────────────────────
@@ -974,7 +960,7 @@ impl RegistryEntry {
 ///
 /// Tries the cache first. If expired or missing, reads from a local file
 /// path (for development) or returns an error suggesting manual refresh.
-pub fn load_registry_index(
+pub async fn load_registry_index(
     data_dir: &Path,
     registry_url: Option<&str>,
 ) -> anyhow::Result<RegistryIndex> {
@@ -985,7 +971,7 @@ pub fn load_registry_index(
 
     // Try fetching from URL
     if let Some(url) = registry_url {
-        let index = fetch_registry_from_url(url)?;
+        let index = fetch_registry_from_url(url).await?;
         index.save_cache(data_dir)?;
         return Ok(index);
     }
@@ -999,30 +985,37 @@ pub fn load_registry_index(
 /// Force-refresh the registry index, bypassing the cache.
 ///
 /// Reads from the given URL (file:// only for now) and saves to cache.
-pub fn refresh_registry_index(
+pub async fn refresh_registry_index(
     data_dir: &Path,
     registry_url: Option<&str>,
 ) -> anyhow::Result<RegistryIndex> {
     let url = registry_url.ok_or_else(|| {
         anyhow!("No registry URL provided. Pass --registry-url or set 'plugins.registry_url' in config.")
     })?;
-    let index = fetch_registry_from_url(url)?;
+    let index = fetch_registry_from_url(url).await?;
     index.save_cache(data_dir)?;
     Ok(index)
 }
 
 /// Fetch a registry index from a URL (file://, https://, or http://).
-fn fetch_registry_from_url(url: &str) -> anyhow::Result<RegistryIndex> {
+async fn fetch_registry_from_url(url: &str) -> anyhow::Result<RegistryIndex> {
     if let Some(file_path) = url.strip_prefix("file://") {
         let data = fs::read_to_string(file_path)
             .with_context(|| format!("failed to read registry index: {file_path}"))?;
         return serde_json::from_str(&data).with_context(|| "failed to parse registry index");
     }
     if url.starts_with("https://") || url.starts_with("http://") {
-        return ureq::get(url)
-            .call()
+        let client = Client::new();
+        let resp = client
+            .get(url)
+            .send()
+            .await
             .with_context(|| format!("failed to fetch registry index from {url}"))?
-            .into_json::<RegistryIndex>()
+            .error_for_status()
+            .with_context(|| format!("HTTP error fetching registry index from {url}"))?;
+        return resp
+            .json::<RegistryIndex>()
+            .await
             .with_context(|| "failed to parse registry index response");
     }
     Err(anyhow!(
@@ -1657,8 +1650,8 @@ mod tests {
         assert!(RegistryIndex::load_cached(&dir).is_none());
     }
 
-    #[test]
-    fn load_registry_from_file_url() {
+    #[tokio::test]
+    async fn load_registry_from_file_url() {
         let dir =
             std::env::temp_dir().join(format!("az-registry-file-test-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
@@ -1668,7 +1661,9 @@ mod tests {
         fs::write(&index_path, serde_json::to_string_pretty(&index).unwrap()).unwrap();
 
         let url = format!("file://{}", index_path.display());
-        let loaded = load_registry_index(&dir, Some(&url)).expect("should load from file");
+        let loaded = load_registry_index(&dir, Some(&url))
+            .await
+            .expect("should load from file");
         assert_eq!(loaded.plugins.len(), 2);
 
         // Should now be cached
@@ -1678,10 +1673,12 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
-    #[test]
-    fn load_registry_no_cache_no_url_fails() {
+    #[tokio::test]
+    async fn load_registry_no_cache_no_url_fails() {
         let dir = std::env::temp_dir().join(format!("az-registry-no-cache-{}", std::process::id()));
-        let err = load_registry_index(&dir, None).expect_err("should fail");
+        let err = load_registry_index(&dir, None)
+            .await
+            .expect_err("should fail");
         assert!(err.to_string().contains("No registry cache"));
     }
 
@@ -1953,10 +1950,11 @@ mod tests {
 
     // ── install_from_url / fetch_registry tests ───────────────────────
 
-    #[test]
-    fn install_from_url_unsupported_scheme_fails() {
+    #[tokio::test]
+    async fn install_from_url_unsupported_scheme_fails() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let err = super::install_from_url("ftp://example.com/plugin.tar", tmp.path(), None)
+            .await
             .expect_err("unsupported scheme should fail");
         assert!(
             err.to_string().contains("unsupported URL scheme"),
@@ -1964,8 +1962,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn install_from_file_url_success_path() {
+    #[tokio::test]
+    async fn install_from_file_url_success_path() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let wasm_bytes =
             wat::parse_str(r#"(module (func (export "run") (result i32) i32.const 1))"#)
@@ -1978,21 +1976,25 @@ mod tests {
         let install_root = tmp.path().join("installed");
         let url = format!("file://{}", pkg_path.display());
         let installed = super::install_from_url(&url, &install_root, None)
+            .await
             .expect("file:// install should succeed");
         assert_eq!(installed.manifest.id, "sample-plugin");
     }
 
-    #[test]
-    fn refresh_registry_no_url_fails() {
+    #[tokio::test]
+    async fn refresh_registry_no_url_fails() {
         let tmp = tempfile::tempdir().expect("temp dir");
-        let err = super::refresh_registry_index(tmp.path(), None).expect_err("should fail");
+        let err = super::refresh_registry_index(tmp.path(), None)
+            .await
+            .expect_err("should fail");
         assert!(err.to_string().contains("No registry URL"));
     }
 
-    #[test]
-    fn refresh_registry_unsupported_scheme_fails() {
+    #[tokio::test]
+    async fn refresh_registry_unsupported_scheme_fails() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let err = super::refresh_registry_index(tmp.path(), Some("ftp://example.com/index.json"))
+            .await
             .expect_err("unsupported scheme should fail");
         assert!(
             err.to_string().contains("unsupported URL scheme"),
@@ -2037,21 +2039,22 @@ mod tests {
         pkg_path
     }
 
-    #[test]
-    fn dependency_resolution_no_deps_installs_main_only() {
+    #[tokio::test]
+    async fn dependency_resolution_no_deps_installs_main_only() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let pkg = make_plugin_package(tmp.path(), "main-plugin", "1.0.0", vec![]);
         let install_root = tmp.path().join("installed");
         let registry = RegistryIndex { plugins: vec![] };
         let url = format!("file://{}", pkg.display());
         let installed = install_with_dependencies(&url, &install_root, None, &registry)
+            .await
             .expect("install should succeed");
         assert_eq!(installed.len(), 1);
         assert_eq!(installed[0].manifest.id, "main-plugin");
     }
 
-    #[test]
-    fn dependency_resolution_installs_missing_dep_from_registry() {
+    #[tokio::test]
+    async fn dependency_resolution_installs_missing_dep_from_registry() {
         let tmp = tempfile::tempdir().expect("temp dir");
         // Build the dependency package
         let dep_pkg = make_plugin_package(tmp.path(), "dep-plugin", "1.0.0", vec![]);
@@ -2087,14 +2090,15 @@ mod tests {
         let install_root = tmp.path().join("installed");
         let url = format!("file://{}", main_pkg.display());
         let installed = install_with_dependencies(&url, &install_root, None, &registry)
+            .await
             .expect("install should succeed");
         assert_eq!(installed.len(), 2);
         assert!(installed.iter().any(|p| p.manifest.id == "main-plugin"));
         assert!(installed.iter().any(|p| p.manifest.id == "dep-plugin"));
     }
 
-    #[test]
-    fn dependency_resolution_missing_dep_not_in_registry_fails() {
+    #[tokio::test]
+    async fn dependency_resolution_missing_dep_not_in_registry_fails() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let main_pkg = make_plugin_package(
             tmp.path(),
@@ -2109,6 +2113,7 @@ mod tests {
         let install_root = tmp.path().join("installed");
         let url = format!("file://{}", main_pkg.display());
         let err = install_with_dependencies(&url, &install_root, None, &registry)
+            .await
             .expect_err("missing dep should fail");
         assert!(
             err.to_string().contains("missing-dep"),
@@ -2116,8 +2121,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn dependency_resolution_already_installed_dep_is_skipped() {
+    #[tokio::test]
+    async fn dependency_resolution_already_installed_dep_is_skipped() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let dep_pkg = make_plugin_package(tmp.path(), "dep-plugin", "1.0.0", vec![]);
         let install_root = tmp.path().join("installed");
@@ -2153,14 +2158,15 @@ mod tests {
         };
         let url = format!("file://{}", main_pkg.display());
         let installed = install_with_dependencies(&url, &install_root, None, &registry)
+            .await
             .expect("install should succeed");
         // Only main plugin should be in the returned list; dep was already installed
         assert_eq!(installed.len(), 1);
         assert_eq!(installed[0].manifest.id, "main-plugin");
     }
 
-    #[test]
-    fn dependency_resolution_circular_deps_do_not_loop() {
+    #[tokio::test]
+    async fn dependency_resolution_circular_deps_do_not_loop() {
         let tmp = tempfile::tempdir().expect("temp dir");
         // A depends on B, B depends on A — circular
         let b_pkg = make_plugin_package(
@@ -2221,8 +2227,9 @@ mod tests {
         };
         let install_root = tmp.path().join("installed");
         let url = format!("file://{}", a_pkg.display());
-        // Should complete without infinite recursion
+        // Should complete without infinite loop
         let installed = install_with_dependencies(&url, &install_root, None, &registry)
+            .await
             .expect("circular deps should resolve without loop");
         // plugin-a is installed; plugin-b is also installed as dep; plugin-a is skipped (seen)
         assert!(!installed.is_empty());

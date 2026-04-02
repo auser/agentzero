@@ -13,11 +13,13 @@ tools-core = []
 tools-extended = ["tools-core"]
 tools-full = ["tools-extended"]
 document-tools = ["dep:scraper", "dep:zip"]
+rag = ["dep:text-splitter"]
 
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 agentzero-core = { workspace = true }
+agentzero-macros = { workspace = true }
 agentzero-providers = { workspace = true }
 agentzero-storage = { workspace = true }
 glob.workspace = true
@@ -31,7 +33,9 @@ tracing.workspace = true
 base64 = "0.22"
 reqwest.workspace = true
 scraper = { version = "0.22", optional = true }
+text-splitter = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 
 [dev-dependencies]
 temp-env = "0.3"
+tempfile = "3"

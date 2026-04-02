@@ -22,6 +22,7 @@ export function LabeledEdge({
 
   const portType = (data?.port_type as string) ?? ''
   const condition = (data?.condition as string) ?? ''
+  const outputPreview = (data?.output_preview as string) ?? ''
   const color = portType ? portTypeColor(portType) : (style?.stroke as string) ?? '#6b7280'
 
   const handleLabelClick = useCallback(() => {
@@ -99,6 +100,22 @@ export function LabeledEdge({
             >
               {portType || '\u00b7'}
               {condition && <span style={{ color: '#eab308', marginLeft: 4 }}>&#x2B26; {condition}</span>}
+              {outputPreview && (
+                <div
+                  style={{
+                    color: '#22c55e',
+                    fontSize: 8,
+                    marginTop: 1,
+                    maxWidth: 140,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={outputPreview}
+                >
+                  {outputPreview.length > 40 ? outputPreview.slice(0, 40) + '...' : outputPreview}
+                </div>
+              )}
             </div>
           )}
         </div>

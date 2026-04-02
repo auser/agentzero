@@ -12,7 +12,7 @@ categories = ["command-line-utilities", "development-tools"]
 autobins = false
 
 [features]
-default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "tls-rustls", "document-tools", "tools-full"]
+default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "tls-rustls", "document-tools", "tools-full", "candle", "channels-standard"]
 tools-core = ["agentzero-cli/tools-core"]
 tools-extended = ["tools-core", "agentzero-cli/tools-extended"]
 tools-full = ["tools-extended", "agentzero-cli/tools-full"]
@@ -38,6 +38,9 @@ privacy = ["agentzero-cli/privacy"]
 telemetry = ["agentzero-cli/telemetry"]
 document-tools = ["agentzero-cli/document-tools"]
 local-model = ["agentzero-cli/local-model"]
+candle = ["agentzero-cli/candle"]
+candle-metal = ["agentzero-cli/candle-metal"]
+candle-cuda = ["agentzero-cli/candle-cuda"]
 config-ui = ["agentzero-cli/config-ui"]
 
 [lib]

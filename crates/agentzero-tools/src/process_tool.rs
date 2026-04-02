@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -32,8 +33,26 @@ struct ProcessOutput {
     stderr: String,
 }
 
+#[tool(
+    name = "process",
+    description = "Manage long-running background processes: start, stop, list, or read output."
+)]
 pub struct ProcessTool {
     entries: Mutex<Vec<ProcessEntry>>,
+}
+
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct ProcessInput {
+    /// The process action to perform
+    #[schema(enum_values = ["spawn", "list", "output", "kill"])]
+    action: String,
+    /// Shell command to run (for spawn)
+    #[serde(default)]
+    command: Option<String>,
+    /// Process ID (for output/kill)
+    #[serde(default)]
+    id: Option<i64>,
 }
 
 impl Default for ProcessTool {
@@ -110,24 +129,15 @@ impl ProcessTool {
 #[async_trait]
 impl Tool for ProcessTool {
     fn name(&self) -> &'static str {
-        "process"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Manage long-running background processes: start, stop, list, or read output."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": { "type": "string", "enum": ["spawn", "list", "output", "kill"], "description": "The process action to perform" },
-                "command": { "type": "string", "description": "Shell command to run (for spawn)" },
-                "id": { "type": "integer", "description": "Process ID (for output/kill)" }
-            },
-            "required": ["action"],
-            "additionalProperties": false
-        }))
+        Some(ProcessInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

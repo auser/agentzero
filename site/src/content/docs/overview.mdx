@@ -13,33 +13,33 @@ AgentZero is under active development. The architecture is stable but individual
 
 ## Why AgentZero
 
-- **Self-growing.** Every tool created, agent defined, and recipe learned persists encrypted across sessions. The system compounds — tools from week 1 accelerate goals in week 4.
-- **Natural language tools.** Describe a missing tool in conversation. The system creates it (shell, HTTP, LLM, or composite strategy), registers it immediately, and persists it forever. Export and share tools between instances.
+- **Self-improving.** Every session is recorded as a trajectory. The system tracks what works, auto-fixes failing tools, auto-improves successful ones, detects tool gaps, and learns from its own performance history. Month 2 is measurably smarter than month 1.
+- **Natural language tools.** Describe a missing tool in conversation. The system creates it (shell, HTTP, LLM, composite, or compiled WASM strategy), registers it immediately, and persists it forever. Tools evolve automatically based on quality metrics.
 - **NL agent definitions.** Say "an agent that reviews my PRs daily" and the system derives name, system prompt, keywords, allowed tools, and schedule automatically. Agents are stored encrypted and auto-routed to by keywords.
-- **Autonomous swarms.** Give a goal, get a parallel agent DAG. Each node gets only the tools it needs via per-node tool hints. Sandboxed execution with conflict detection and dead agent recovery.
-- **Deploy anywhere.** A single native binary runs on Linux, macOS, and Windows — 8 platform targets, Docker multi-arch. 4.5 MB embedded binary.
-- **Secure by default.** Encrypted storage, allowlists, policy gates, audit logging, secret redaction, and emergency stop. Fail-closed from day one.
+- **Autonomous swarms.** Give a goal, get a parallel agent DAG. Each node gets only the tools it needs via per-node tool hints. Sandboxed execution with conflict detection and dead agent recovery. Durable inter-agent messaging with delivery guarantees.
+- **Deploy anywhere.** A single native binary runs on Linux, macOS, and Windows — 8 platform targets, Docker multi-arch. 4.5 MB embedded binary. Cost-aware model routing sends simple queries to cheap models automatically.
+- **Secure by default.** Encrypted storage, allowlists, policy gates, audit logging, secret redaction, Unicode injection defense, context file scanning, and emergency stop. Fail-closed from day one.
 
 ## Features
 
 <CardGrid>
-  <Card title="Self-Growing" icon="star">
-    Tools, agents, and recipes persist encrypted. The system learns what works and reuses it. Month 2 is smarter than month 1.
+  <Card title="Self-Improving" icon="star">
+    Session trajectories, auto-evolution, insights engine, tool gap detection. The system learns from every run and gets measurably better over time.
   </Card>
   <Card title="NL Tools & Agents" icon="rocket">
-    Describe tools and agents in plain English. Created mid-session, persisted forever, searchable and shareable.
+    Describe tools and agents in plain English. Five execution strategies including compiled WASM. Auto-fix and auto-improve with quality tracking.
   </Card>
   <Card title="Autonomous Swarms" icon="puzzle">
-    Give a goal. The system decomposes it into a parallel agent DAG with per-node tool filtering and sandboxed execution.
+    Goal decomposition into parallel agent DAGs. Durable message queues, A2A streaming, multi-turn tasks, and agent discovery.
   </Card>
   <Card title="Catalog Learning" icon="random">
-    Successful tool combos are recorded as recipes. Future goals matching similar patterns get the right tools instantly.
+    Successful tool combos recorded as recipes. Failure patterns detected and fed back. Cost-aware routing sends simple queries to cheap models.
   </Card>
   <Card title="Small & Fast" icon="approve-check">
-    4.5 MB embedded binary. Millisecond cold starts. Async Tokio runtime with streaming SSE and WebSocket output.
+    4.5 MB embedded binary. 4-phase context compression cuts token costs. Credential pooling avoids rate limits. Prompt caching for Anthropic.
   </Card>
   <Card title="Secure by Default" icon="setting">
-    Encrypted storage, deny-by-default tools, filesystem scoping, shell allowlists, secret redaction, audit trails.
+    Encrypted storage, deny-by-default tools, Unicode injection defense, context file scanning, checkpoint recovery, audit trails.
   </Card>
 </CardGrid>
 
@@ -53,14 +53,16 @@ AgentZero is under active development. The architecture is stable but individual
 | **Platform Targets** | 8 (Linux x86/ARM/musl, macOS Intel/ARM, Windows) |
 | **Client SDKs** | Python, TypeScript, Swift, Kotlin |
 | **CLI Commands** | 38+ subcommands |
-| **Providers** | 37+ (OpenAI, Anthropic, Google, Ollama, local llama.cpp, and more) |
+| **Providers** | 37+ (OpenAI, Anthropic, Google, Ollama, Candle local inference, and more) |
 | **Memory** | SQLite (default, encrypted), Turso/libsql (optional) |
 | **Tools** | 58+ built-in (file I/O, shell, networking, browser, delegation, memory, git, cron, hardware, autopilot, and more) |
 | **MCP** | First-class Model Context Protocol — each MCP tool registered individually with real schema |
 | **Channels** | 25+ (Telegram, Discord, Slack, Matrix, Email, WhatsApp, SMS, and more) |
 | **Plugins** | WASM sandbox with integrity verification |
-| **Security** | Encrypted storage, allowlists, OTP gates, audit trail, secret redaction, estop |
-| **Multi-Agent** | Delegation, swarm coordination, pipelines, event bus, persistent named agents |
+| **Security** | Encrypted storage, allowlists, OTP gates, Unicode injection defense, context file scanning, audit trail, secret redaction, estop |
+| **Multi-Agent** | Delegation, swarm coordination, pipelines, durable message queues, A2A streaming, persistent named agents |
+| **Self-Improving** | Trajectory recording, insights engine, auto-evolution, tool gap detection, session summarization |
+| **Cost Optimization** | Complexity-based model routing, 4-phase context compression, credential pooling, prompt caching, pre-execution cost estimation |
 | **Autopilot** | Autonomous agent loop — proposals, cap gates, missions, triggers, reaction matrices |
 | **API Docs** | Interactive Scalar docs at /docs on every gateway deployment |
 | **License** | MIT / Apache-2.0 |

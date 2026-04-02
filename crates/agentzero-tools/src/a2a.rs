@@ -2,6 +2,7 @@
 //! discover and communicate with external A2A agents via HTTP.
 
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
@@ -9,17 +10,19 @@ use std::time::Duration;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct Input {
-    /// Action to perform: "discover", "send", "status", or "cancel".
+    /// Action to perform: discover, send, status, or cancel
+    #[schema(enum_values = ["discover", "send", "status", "cancel"])]
     action: String,
-    /// Base URL of the A2A agent. Required for discover and send.
+    /// Base URL of the A2A agent (required for discover and send)
     #[serde(default)]
     url: Option<String>,
-    /// Message text to send. Required for send.
+    /// Message text to send (required for send)
     #[serde(default)]
     message: Option<String>,
-    /// Task ID for status/cancel operations.
+    /// Task ID (required for status and cancel)
     #[serde(default)]
     task_id: Option<String>,
 }
@@ -31,6 +34,10 @@ struct Input {
 /// - `send`: Send a message to an A2A agent, creating a new task
 /// - `status`: Query the status of an existing task
 /// - `cancel`: Cancel an existing task
+#[tool(
+    name = "a2a",
+    description = "Interact with external A2A (Agent-to-Agent) protocol agents. Discover agent capabilities, send messages, check task status, or cancel tasks on remote A2A-compatible agents."
+)]
 pub struct A2aTool;
 
 impl Default for A2aTool {
@@ -63,39 +70,15 @@ fn generate_task_id() -> String {
 #[async_trait]
 impl Tool for A2aTool {
     fn name(&self) -> &'static str {
-        "a2a"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Interact with external A2A (Agent-to-Agent) protocol agents. \
-         Discover agent capabilities, send messages, check task status, \
-         or cancel tasks on remote A2A-compatible agents."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "required": ["action"],
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["discover", "send", "status", "cancel"],
-                    "description": "Action to perform: discover, send, status, or cancel"
-                },
-                "url": {
-                    "type": "string",
-                    "description": "Base URL of the A2A agent (required for discover and send)"
-                },
-                "message": {
-                    "type": "string",
-                    "description": "Message text to send (required for send)"
-                },
-                "task_id": {
-                    "type": "string",
-                    "description": "Task ID (required for status and cancel)"
-                }
-            }
-        }))
+        Some(Input::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

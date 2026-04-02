@@ -1601,6 +1601,76 @@ async fn v1_runs_events_for_completed_job() {
 }
 
 #[tokio::test]
+async fn v1_runs_events_since_seq_filters_earlier_events() {
+    let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
+    let run_id = store
+        .submit("seq-agent".to_string(), agentzero_core::Lane::Main, None)
+        .await;
+    store
+        .update_status(&run_id, agentzero_core::JobStatus::Running)
+        .await;
+    store
+        .update_status(
+            &run_id,
+            agentzero_core::JobStatus::Completed {
+                result: "done".to_string(),
+            },
+        )
+        .await;
+
+    let state = GatewayState::test_with_bearer(None).with_job_store(store);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    // Without since_seq — all 3 events returned.
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/events", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let all_events = json["events"].as_array().unwrap();
+    assert_eq!(all_events.len(), 3);
+    // Verify seq numbering is 1-based and monotonic.
+    assert_eq!(all_events[0]["seq"], 1);
+    assert_eq!(all_events[1]["seq"], 2);
+    assert_eq!(all_events[2]["seq"], 3);
+
+    // With since_seq=1 — skip first event, return 2.
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/events?since_seq=1", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let filtered_events = json["events"].as_array().unwrap();
+    assert_eq!(filtered_events.len(), 2);
+    assert_eq!(filtered_events[0]["seq"], 2);
+    assert_eq!(filtered_events[0]["type"], "running");
+    assert_eq!(filtered_events[1]["seq"], 3);
+    assert_eq!(filtered_events[1]["type"], "completed");
+
+    // With since_seq=3 — all events already seen, return empty.
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/runs/{}/events?since_seq=3", run_id.as_str()))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["events"].as_array().unwrap().len(), 0);
+    assert_eq!(json["total"], 0);
+}
+
+#[tokio::test]
 async fn v1_runs_events_unknown_returns_404() {
     let store = std::sync::Arc::new(agentzero_orchestrator::JobStore::new());
     let state = GatewayState::test_with_bearer(None).with_job_store(store);

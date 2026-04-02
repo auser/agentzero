@@ -524,6 +524,7 @@ fn apply_agent_node(config: &mut AgentZeroConfig, data: &Value) {
         api_key: None,
         allowed_providers: Vec::new(),
         blocked_providers: Vec::new(),
+        instruction_method: agentzero_core::delegation::InstructionMethod::default(),
     };
 
     config.agents.insert(name, agent);

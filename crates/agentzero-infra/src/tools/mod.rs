@@ -1,13 +1,17 @@
 #[cfg(feature = "tools-full")]
-mod agent_manage;
+pub mod agent_manage;
+pub mod codegen;
 #[cfg(feature = "tools-full")]
 mod config_manage;
 pub mod dynamic_tool;
+pub mod insights_report;
 mod mcp;
 #[cfg(feature = "tools-full")]
 mod plugin_scaffold;
+pub mod shim_server;
 #[cfg(feature = "tools-full")]
 mod skill_manage;
+pub mod tier_stub;
 pub mod tool_create;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
@@ -46,7 +50,7 @@ pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
 
 // ── Full tier re-exports ─────────────────────────────────────────────
 #[cfg(feature = "tools-full")]
-pub use agent_manage::AgentManageTool;
+pub use agent_manage::{create_agent_from_nl, AgentManageTool};
 #[cfg(feature = "tools-full")]
 pub use agentzero_tools::{
     BrowserOpenTool, BrowserTool, CodexCliTool, ComposioTool, DomainCreateTool, DomainInfoTool,
@@ -140,7 +144,7 @@ fn default_tools_inner(
     #[cfg(feature = "tools-extended")]
     {
         tools.push(Box::new(CliDiscoveryTool));
-        tools.push(Box::new(DiscordSearchTool));
+        tools.push(Box::new(DiscordSearchTool::new()));
         tools.push(Box::new(ProxyConfigTool));
         tools.push(Box::new(SopListTool));
         tools.push(Box::new(SopStatusTool));
@@ -222,6 +226,16 @@ fn default_tools_inner(
         tools.extend(mcp_tools);
     }
 
+    // ── RAG tools (rag feature) ─────────────────────────────────────
+    #[cfg(feature = "rag")]
+    {
+        tools.push(Box::new(
+            agentzero_tools::chunk_document::ChunkDocumentTool::new(
+                policy.write_file.allowed_root.clone(),
+            ),
+        ));
+    }
+
     // ── Full tier tools (tools-full feature) ─────────────────────────
     #[cfg(feature = "tools-full")]
     {
@@ -289,6 +303,7 @@ fn default_tools_inner(
             tools.push(Box::new(ConfigManageTool));
             tools.push(Box::new(SkillManageTool));
             tools.push(Box::new(PluginScaffoldTool));
+            tools.push(Box::new(insights_report::InsightsReportTool));
         }
 
         if policy.enable_claude_code {
@@ -342,6 +357,10 @@ fn default_tools_inner(
             }
         }
     }
+
+    // Register stub tools for tiers above the compiled tier so the agent
+    // gets a helpful upgrade message instead of "tool not found".
+    tools.extend(tier_stub::stub_tools_for_unavailable_tiers());
 
     // Suppress unused-variable warnings when tier features are disabled.
     #[cfg(not(feature = "tools-extended"))]

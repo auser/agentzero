@@ -11,7 +11,7 @@ use crate::agent_router::{AgentDescriptor, AgentRouter};
 use crate::coordinator::{Coordinator, TaskMessage};
 use crate::presence::PresenceStore;
 use agentzero_channels::ChannelRegistry;
-use agentzero_config::AgentZeroConfig;
+use agentzero_config::{AgentZeroConfig, SwarmAgentConfig};
 use agentzero_core::event_bus::{Event, EventBus, FileBackedBus, InMemoryBus};
 use agentzero_core::{Agent, AgentEndpoint};
 use agentzero_infra::runtime::{build_memory_store, build_runtime_execution, RunAgentRequest};
@@ -104,7 +104,8 @@ pub async fn build_event_bus(
         if swarm_config.event_log_path.is_some() {
             "file"
         } else {
-            "memory"
+            // Default to sqlite so events survive restarts.
+            "sqlite"
         }
     });
 
@@ -229,10 +230,37 @@ pub async fn build_swarm_with_presence(
         return Ok(None);
     }
 
-    if swarm_config.agents.is_empty() {
-        tracing::warn!("swarm enabled but no agents configured");
-        return Ok(None);
-    }
+    // When the swarm is enabled but no agents are configured, inject a
+    // default agent that inherits the top-level provider so channels have
+    // something to route messages to.
+    let mut owned_swarm;
+    let swarm_config = if swarm_config.agents.is_empty() {
+        tracing::info!(
+            "no swarm agents configured — creating default agent from top-level provider"
+        );
+        owned_swarm = config.swarm.clone();
+        owned_swarm.agents.insert(
+            "default".to_string(),
+            SwarmAgentConfig::new("Default", "General-purpose assistant")
+                .with_provider(&config.provider.kind, &config.provider.model)
+                .with_system_prompt(
+                    "You are AgentZero, a capable AI assistant responding via a messaging channel. \
+                     Be concise — your responses go to a chat app, not a terminal.\n\n\
+                     You have tools. Use them:\n\
+                     - **web_search**: Use for anything current — news, sports, weather, prices, events, people.\n\
+                     - **schedule / cron**: Set timers, reminders, recurring tasks.\n\
+                     - **content_search / file_read / file_write**: Search and manage files.\n\
+                     - **shell_command**: Run commands on the system.\n\
+                     - **delegate**: Hand off sub-tasks to specialized agents.\n\n\
+                     When in doubt, use a tool rather than saying you can't. \
+                     If the user asks for something you don't have a tool for, say so clearly. \
+                     Never apologize for using tools — that's what you're for.",
+                ),
+        );
+        &owned_swarm
+    } else {
+        swarm_config
+    };
 
     tracing::info!(
         agents = swarm_config.agents.len(),
@@ -258,6 +286,7 @@ pub async fn build_swarm_with_presence(
             conversation_id: None,
             agent_store: None,
             memory_override: None,
+            memory_window_override: None,
         };
         match build_runtime_execution(router_req).await {
             Ok(exec) => AgentRouter::new(
@@ -286,6 +315,11 @@ pub async fn build_swarm_with_presence(
     if let Some(ps) = presence {
         coord = coord.with_presence(ps);
     }
+
+    // Track config-originated agent IDs so store sync won't remove them.
+    let config_agent_ids: std::collections::HashSet<String> =
+        swarm_config.agents.keys().cloned().collect();
+    coord = coord.with_config_agent_ids(config_agent_ids);
 
     // Wire agent store sync for hot-loading persistent agents.
     if let Ok(store) =
@@ -358,6 +392,7 @@ pub async fn build_swarm_with_presence(
             conversation_id: None,
             agent_store: None,
             memory_override: Some(Box::new(shared_memory.clone())),
+            memory_window_override: None,
         };
 
         match build_runtime_execution(req).await {

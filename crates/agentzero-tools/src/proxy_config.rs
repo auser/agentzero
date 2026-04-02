@@ -1,4 +1,5 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -83,13 +84,18 @@ impl ProxySettings {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct Input {
+    /// Operation: get, set, clear, add_bypass, remove_bypass
     op: String,
+    /// Protocol: http, https, or socks
     #[serde(default)]
     protocol: Option<String>,
+    /// Proxy URL (for set op)
     #[serde(default)]
     url: Option<String>,
+    /// Bypass host (for add_bypass/remove_bypass ops)
     #[serde(default)]
     host: Option<String>,
 }
@@ -102,30 +108,25 @@ struct Input {
 /// - `clear`: Clear a proxy setting for a protocol
 /// - `add_bypass`: Add a host to the no_proxy bypass list
 /// - `remove_bypass`: Remove a host from the no_proxy bypass list
+#[tool(
+    name = "proxy_config",
+    description = "Manage HTTP/HTTPS proxy settings: get, set, clear, add/remove bypass hosts."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ProxyConfigTool;
 
 #[async_trait]
 impl Tool for ProxyConfigTool {
     fn name(&self) -> &'static str {
-        "proxy_config"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Manage HTTP/HTTPS proxy settings: get, set, clear, add/remove bypass hosts."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "required": ["op"],
-            "properties": {
-                "op": {"type": "string", "description": "Operation: get, set, clear, add_bypass, remove_bypass"},
-                "protocol": {"type": "string", "description": "Protocol: http, https, or socks"},
-                "url": {"type": "string", "description": "Proxy URL (for set op)"},
-                "host": {"type": "string", "description": "Bypass host (for add_bypass/remove_bypass ops)"}
-            }
-        }))
+        Some(Input::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

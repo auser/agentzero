@@ -15,9 +15,9 @@ mod impl_ {
     pub struct QqOfficialChannel {
         app_id: String,
         bot_token: String,
-        sandbox: bool,
         allowed_users: Vec<String>,
         client: reqwest::Client,
+        api_base_url: String,
     }
 
     impl QqOfficialChannel {
@@ -31,12 +31,17 @@ mod impl_ {
                 .timeout(Duration::from_secs(30))
                 .build()
                 .expect("reqwest client should build");
+            let api_base_url = if sandbox {
+                "https://sandbox.api.sgroup.qq.com".to_string()
+            } else {
+                "https://api.sgroup.qq.com".to_string()
+            };
             Self {
                 app_id,
                 bot_token,
-                sandbox,
                 allowed_users,
                 client,
+                api_base_url,
             }
         }
 
@@ -45,16 +50,14 @@ mod impl_ {
             self
         }
 
-        fn api_base(&self) -> &str {
-            if self.sandbox {
-                "https://sandbox.api.sgroup.qq.com"
-            } else {
-                "https://api.sgroup.qq.com"
-            }
+        /// Override the API base URL (for testing with mock servers).
+        pub fn with_base_url(mut self, base_url: String) -> Self {
+            self.api_base_url = base_url;
+            self
         }
 
         fn api_url(&self, path: &str) -> String {
-            format!("{}{}", self.api_base(), path)
+            format!("{}{}", self.api_base_url, path)
         }
 
         fn auth_header(&self) -> String {
@@ -127,6 +130,7 @@ mod impl_ {
                 ch.api_url("/gateway"),
                 "https://sandbox.api.sgroup.qq.com/gateway"
             );
+            assert_eq!(ch.api_base_url, "https://sandbox.api.sgroup.qq.com");
         }
 
         #[test]
@@ -136,6 +140,7 @@ mod impl_ {
                 ch.api_url("/gateway"),
                 "https://api.sgroup.qq.com/gateway"
             );
+            assert_eq!(ch.api_base_url, "https://api.sgroup.qq.com");
         }
 
         #[test]

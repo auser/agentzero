@@ -1,13 +1,18 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct ComposioInput {
+    /// The Composio action to execute (e.g. github.star_repo)
     action: String,
+    /// Optional parameters for the action
     #[serde(default)]
     params: Option<serde_json::Value>,
+    /// Optional Composio API key (falls back to COMPOSIO_API_KEY env var)
     #[serde(default)]
     api_key: Option<String>,
 }
@@ -19,30 +24,25 @@ struct ComposioInput {
 /// to the Composio API.
 ///
 /// Requires `COMPOSIO_API_KEY` environment variable or `api_key` in input.
+#[tool(
+    name = "composio",
+    description = "Execute actions via the Composio third-party integration API."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ComposioTool;
 
 #[async_trait]
 impl Tool for ComposioTool {
     fn name(&self) -> &'static str {
-        "composio"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Execute actions via the Composio third-party integration API."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": { "type": "string", "description": "The Composio action to execute (e.g. github.star_repo)" },
-                "params": { "type": "object", "description": "Optional parameters for the action" },
-                "api_key": { "type": "string", "description": "Optional Composio API key (falls back to COMPOSIO_API_KEY env var)" }
-            },
-            "required": ["action"],
-            "additionalProperties": false
-        }))
+        Some(ComposioInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {

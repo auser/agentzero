@@ -58,6 +58,11 @@ pub struct ApiKeyRecord {
     pub scopes: HashSet<Scope>,
     pub created_at: u64,
     pub expires_at: Option<u64>,
+    /// HMAC-SHA256 secret for request signing (hex-encoded, 32 bytes).
+    /// When present, requests using this key must include `X-AZ-Signature`
+    /// and `X-AZ-Timestamp` headers for replay protection.
+    #[serde(default)]
+    pub hmac_secret: Option<String>,
 }
 
 /// Info extracted after validating an API key.
@@ -67,6 +72,8 @@ pub struct ApiKeyInfo {
     pub org_id: String,
     pub user_id: String,
     pub scopes: HashSet<Scope>,
+    /// HMAC secret (hex), if the key requires request signing.
+    pub hmac_secret: Option<String>,
 }
 
 impl ApiKeyInfo {
@@ -115,6 +122,10 @@ impl ApiKeyStore {
     }
 
     /// Create a new API key. Returns the raw key string (only available at creation time).
+    ///
+    /// If `enable_hmac` is true, an HMAC secret is generated alongside the key.
+    /// The HMAC secret is returned in the record and must be shared with the client
+    /// for request signing.
     pub fn create(
         &self,
         org_id: &str,
@@ -122,9 +133,27 @@ impl ApiKeyStore {
         scopes: HashSet<Scope>,
         expires_at: Option<u64>,
     ) -> anyhow::Result<(String, ApiKeyRecord)> {
+        self.create_with_hmac(org_id, user_id, scopes, expires_at, false)
+    }
+
+    /// Create a new API key, optionally with HMAC request signing enabled.
+    pub fn create_with_hmac(
+        &self,
+        org_id: &str,
+        user_id: &str,
+        scopes: HashSet<Scope>,
+        expires_at: Option<u64>,
+        enable_hmac: bool,
+    ) -> anyhow::Result<(String, ApiKeyRecord)> {
         let raw_key = generate_api_key();
         let key_hash = hash_key(&raw_key);
         let key_id = format!("azk_{}", &key_hash[..12]);
+
+        let hmac_secret = if enable_hmac {
+            Some(generate_hmac_secret())
+        } else {
+            None
+        };
 
         let record = ApiKeyRecord {
             key_id: key_id.clone(),
@@ -134,6 +163,7 @@ impl ApiKeyStore {
             scopes,
             created_at: now_epoch(),
             expires_at,
+            hmac_secret,
         };
 
         {
@@ -172,6 +202,7 @@ impl ApiKeyStore {
                 org_id: record.org_id.clone(),
                 user_id: record.user_id.clone(),
                 scopes: record.scopes.clone(),
+                hmac_secret: record.hmac_secret.clone(),
             })
         })
     }
@@ -238,6 +269,68 @@ fn now_epoch() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_secs()
+}
+
+fn generate_hmac_secret() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Maximum allowed clock drift for HMAC timestamp validation (5 minutes).
+#[allow(dead_code)]
+const HMAC_MAX_DRIFT_SECS: u64 = 300;
+
+/// Verify an HMAC-SHA256 request signature.
+///
+/// The signature covers: `{timestamp}.{method}.{path}.{body}`.
+/// Returns `Ok(())` if the signature is valid and the timestamp is within the
+/// allowed drift window. Returns `Err` with a reason otherwise.
+#[allow(dead_code)]
+pub(crate) fn verify_hmac_signature(
+    hmac_secret_hex: &str,
+    method: &str,
+    path: &str,
+    body: &[u8],
+    signature_header: &str,
+    timestamp_header: &str,
+) -> Result<(), &'static str> {
+    use hmac::{Hmac, Mac};
+
+    // Parse timestamp.
+    let timestamp: u64 = timestamp_header
+        .parse()
+        .map_err(|_| "invalid X-AZ-Timestamp")?;
+    let now = now_epoch();
+    let drift = now.abs_diff(timestamp);
+    if drift > HMAC_MAX_DRIFT_SECS {
+        return Err("X-AZ-Timestamp too far from server time (replay protection)");
+    }
+
+    // Parse expected signature (format: "hmac-sha256=<hex>").
+    let expected_hex = signature_header
+        .strip_prefix("hmac-sha256=")
+        .ok_or("X-AZ-Signature must start with hmac-sha256=")?;
+
+    // Decode HMAC secret from hex.
+    let secret_bytes = hex::decode(hmac_secret_hex).map_err(|_| "invalid HMAC secret")?;
+
+    // Compute HMAC-SHA256 over "{timestamp}.{METHOD}.{path}.{body}".
+    type HmacSha256 = Hmac<sha2::Sha256>;
+    let mut mac =
+        HmacSha256::new_from_slice(&secret_bytes).map_err(|_| "invalid HMAC key length")?;
+    mac.update(format!("{timestamp}.{method}.{path}.").as_bytes());
+    mac.update(body);
+
+    // Decode the provided signature from hex.
+    let provided = hex::decode(expected_hex).map_err(|_| "invalid signature hex")?;
+
+    // Verify in constant time.
+    mac.verify_slice(&provided)
+        .map_err(|_| "HMAC signature mismatch")?;
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -11,12 +11,13 @@ repository.workspace = true
 default = ["memory-sqlite", "plugins", "gateway", "tui", "interactive", "document-tools", "tools-full", "yaml-policy", "plugin-signing"]
 tools-core = ["agentzero-infra/tools-core", "agentzero-tools/tools-core"]
 tools-extended = ["tools-core", "agentzero-infra/tools-extended", "agentzero-tools/tools-extended"]
-tools-full = ["tools-extended", "agentzero-infra/tools-full", "agentzero-tools/tools-full"]
+tools-full = ["tools-extended", "nl-evolving", "agentzero-infra/tools-full", "agentzero-tools/tools-full"]
+nl-evolving = ["agentzero-infra/nl-evolving"]
 memory-sqlite = ["agentzero-infra/memory-sqlite", "agentzero-storage/storage-encrypted"]
 memory-sqlite-plain = ["agentzero-infra/memory-sqlite", "agentzero-storage/storage-plain"]
 document-tools = ["agentzero-infra/document-tools"]
 memory-turso = ["agentzero-storage/memory-turso", "agentzero-infra/memory-turso"]
-rag = []
+rag = ["agentzero-infra/rag"]
 hardware = []
 channels-standard = ["agentzero-channels/channels-standard"]
 embedded-minimal = ["memory-sqlite", "tools-full"]
@@ -33,7 +34,10 @@ tui = ["dep:ratatui", "dep:crossterm"]
 interactive = ["dep:inquire", "dep:console"]
 privacy = ["agentzero-core/privacy", "agentzero-gateway?/privacy"]
 telemetry = ["agentzero-infra/telemetry", "agentzero-gateway?/telemetry"]
-local-model = ["agentzero-infra/local-model"]
+local-model = ["agentzero-infra/local-model", "agentzero-gateway?/local-model"]
+candle = ["agentzero-infra/candle"]
+candle-metal = ["agentzero-infra/candle-metal"]
+candle-cuda = ["agentzero-infra/candle-cuda"]
 config-ui = ["dep:agentzero-config-ui"]
 
 [dependencies]
@@ -57,7 +61,7 @@ base64 = "0.22"
 console = { version = "0.15", optional = true }
 crossterm = { version = "0.28", optional = true }
 futures-util.workspace = true
-inquire = { version = "0.7", optional = true }
+inquire = { version = "0.8", optional = true }
 rand = "0.8"
 ratatui = { version = "0.29", optional = true }
 reqwest = { workspace = true, features = ["stream"] }
@@ -65,7 +69,6 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"
 sha2 = "0.10"
-gag = "1.0"
 rusqlite.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

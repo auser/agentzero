@@ -28,7 +28,8 @@ tar = "0.4"
 thiserror.workspace = true
 notify = { version = "7", optional = true }
 tracing = { version = "0.1", optional = true }
-ureq = { version = "2", features = ["json"] }
+reqwest.workspace = true
+tokio = { version = "1", features = ["rt"] }
 wasmi = { workspace = true, optional = true }
 wasmi_wasi = { workspace = true, optional = true }
 wasmtime = { version = "42", optional = true }
@@ -36,4 +37,5 @@ wasmtime-wasi = { version = "42", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wat = "1"

@@ -103,29 +103,51 @@ model = "anthropic/claude-sonnet-4-6"
 
 ---
 
-## Built-in Local Model (recommended for local)
+## Candle Local Model (recommended for local)
 
-AgentZero includes a built-in local LLM provider powered by llama.cpp. No external server or API key needed — the model runs entirely in-process.
+AgentZero includes a local LLM provider powered by [Candle](https://github.com/huggingface/candle), Hugging Face's pure Rust ML framework. No external server, API key, or C++ compiler needed — the model runs entirely in-process.
 
 **Default model:** Qwen2.5-Coder-3B-Instruct (Q4_K_M quantization, ~2 GB download on first run)
 
 ### Setup
 
-1. Build with the `local-model` feature:
+1. Build with the `candle` feature (CPU), or `candle-metal` for Apple Silicon GPU acceleration:
 
 ```bash
-cargo build --release --features local-model
+# CPU only
+cargo build --release --features candle
+
+# Apple Silicon GPU (Metal) — recommended on Mac
+cargo build --release --features candle-metal
+
+# NVIDIA GPU (CUDA)
+cargo build --release --features candle-cuda
 ```
 
-1. Configure:
+2. Configure:
 
 ```toml
 [provider]
-kind = "builtin"
+kind = "candle"
 model = "qwen2.5-coder-3b"
 ```
 
-That's it. On first run, AgentZero automatically downloads the model from HuggingFace Hub to `~/.agentzero/models/` and shows a progress bar.
+That's it. On first run, AgentZero automatically downloads the model and tokenizer from HuggingFace Hub to `~/.agentzero/models/` and shows a progress bar.
+
+### Local model settings
+
+Tune inference parameters via the `[local]` config section:
+
+```toml
+[local]
+model = "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF"   # HF repo
+filename = "qwen2.5-coder-3b-instruct-q4_k_m.gguf"
+n_ctx = 8192              # context window (tokens)
+temperature = 0.7         # 0.0 = greedy, higher = more random
+top_p = 0.9               # nucleus sampling
+max_output_tokens = 2048  # max tokens per response
+device = "auto"           # "auto" | "cpu" | "metal" | "cuda"
+```
 
 ### Custom GGUF models
 
@@ -141,17 +163,39 @@ model = "TheBloke/Mistral-7B-Instruct-v0.2-GGUF/mistral-7b-instruct-v0.2.Q4_K_M.
 
 ### Tool use
 
-The builtin provider supports tool calling via Qwen's `<tool_call>` prompt format. Tool definitions are automatically injected into the system prompt and model outputs are parsed for tool invocations. All built-in tools and plugin tools work with the builtin provider.
+The Candle provider supports tool calling via Qwen's `<tool_call>` prompt format. Tool definitions are automatically injected into the system prompt and model outputs are parsed for tool invocations. Includes fuzzy JSON repair for common small-model mistakes (trailing commas, unquoted keys, key aliases). All built-in tools and plugin tools work with the Candle provider.
+
+### Streaming
+
+The Candle provider streams tokens as they are generated — you see output incrementally, not all at once.
+
+### Token counting
+
+The Candle provider includes an in-process tokenizer, enabling accurate token estimation for context window management. The `estimate_tokens()` method is available on the `Provider` trait for context overflow prevention.
 
 ### GPU acceleration
 
-On macOS (Apple Silicon), the model automatically offloads to the GPU via Metal. On Linux with CUDA, GPU offloading is used when available.
+Build with `candle-metal` (Apple Silicon) or `candle-cuda` (NVIDIA) for GPU-accelerated inference. Set `device = "auto"` (default) to auto-detect, or `"metal"` / `"cuda"` to force a specific backend. Falls back to CPU if the GPU feature is not enabled or unavailable.
 
 ### Limitations
 
 - The default 3B model is best for simple tasks — coding assistance, file operations, basic research
 - For complex multi-step pipelines, consider using a larger model or a cloud provider
 - Vision/image inputs are not supported
+
+## Built-in Local Model (legacy)
+
+The `builtin` provider uses llama.cpp via C++ bindings. It works but requires a C++ compiler and does not support real streaming (output appears all at once). Prefer the `candle` provider above.
+
+```bash
+cargo build --release --features local-model
+```
+
+```toml
+[provider]
+kind = "builtin"
+model = "qwen2.5-coder-3b"
+```
 
 :::note
 The `local-model` feature requires a C++ compiler for llama.cpp bindings. On macOS this is included with Xcode Command Line Tools. On Linux, install `build-essential` or equivalent.
@@ -332,6 +376,87 @@ Fallback events emit the `provider_fallback_total{from, to}` Prometheus metric s
 :::note
 Streaming requests fall back to non-streaming on secondary providers to avoid duplicate partial chunks. The response is still returned correctly — just not streamed incrementally from the fallback provider.
 :::
+
+---
+
+## Credential Pooling
+
+Distribute requests across multiple API keys to avoid rate limits. Each key gets independent cooldown tracking — 1 hour on 429 (rate limit), 24 hours on persistent errors.
+
+```toml
+[provider.credential_pool]
+strategy = "round-robin"   # fill-first | round-robin | random
+keys = ["OPENAI_KEY_1", "OPENAI_KEY_2", "OPENAI_KEY_3"]
+```
+
+| Strategy | Behavior |
+|----------|----------|
+| `fill-first` | Use the first key until exhausted, then move to next |
+| `round-robin` | Cycle through keys sequentially (default) |
+| `random` | Pick randomly from available keys |
+
+When all keys are in cooldown, requests fail with a clear error message. Use `agentzero providers quota` to see per-key status.
+
+---
+
+## Cost-Aware Model Routing
+
+Route queries to cheaper models when the task is simple, preserving premium models for complex work. The complexity scorer evaluates character count, word count, code presence, and keyword signals to classify each query as Simple, Medium, or Complex.
+
+```toml
+# Define model routes by complexity tier
+[[model_routes]]
+hint = "simple"
+provider = "anthropic"
+model = "claude-haiku-4-5-20251001"
+
+[[model_routes]]
+hint = "medium"
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+
+[[model_routes]]
+hint = "complex"
+provider = "anthropic"
+model = "claude-opus-4-6"
+```
+
+Classification examples:
+- "hello" → **Simple** → Haiku
+- "explain how authentication works and compare with OAuth" → **Medium** → Sonnet
+- "implement a REST API with JWT tokens, refresh flow, and rate limiting" → **Complex** → Opus
+
+The scorer is conservative: uncertain queries (composite score 0.15–0.35) default to Medium, not Simple.
+
+---
+
+## Pre-Execution Cost Estimation
+
+The `CostEstimateLayer` estimates input token costs before each LLM call and logs a warning when the estimated cost exceeds a configurable threshold. This provides early visibility into expensive operations without blocking them — use `CostCapLayer` for hard limits.
+
+---
+
+## Prompt Caching
+
+The `PromptCacheLayer` annotates the system prompt and the last N messages with Anthropic's `cache_control` markers, enabling up to 90% input token cost reduction for repeated prefixes. This is Anthropic-specific — other providers ignore the annotation and pass through unchanged.
+
+---
+
+## Adaptive Thinking Effort
+
+When `adaptive_reasoning` is enabled, the reasoning budget adjusts dynamically based on query complexity:
+
+| Complexity | Reasoning |
+|------------|-----------|
+| Simple | Disabled |
+| Medium | Medium effort |
+| Complex | High effort |
+
+```toml
+[runtime]
+reasoning_enabled = true
+adaptive_reasoning = true
+```
 
 ---
 

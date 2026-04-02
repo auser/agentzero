@@ -42,7 +42,27 @@ agentzero agent --stream -m "Write a haiku about Rust"
 
 ## Use a local model (no API key needed)
 
+**Option A: Candle (pure Rust, in-process — recommended)**
+
+Build with the `candle` feature and set the provider:
+
 ```bash
+cargo build -p agentzero --release --features candle
+```
+
+```toml
+# agentzero.toml
+[provider]
+kind = "candle"
+model = "qwen2.5-coder-3b"
+```
+
+On first run it auto-downloads the model (~2 GB) and tokenizer. No external server, no C++ compiler, no API key.
+
+**Option B: Ollama (external server)**
+
+```bash
+ollama pull llama3.1:8b
 agentzero onboard --provider ollama --model llama3.1:8b --yes
 agentzero agent -m "Hello"
 ```

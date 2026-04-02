@@ -7,11 +7,11 @@ use crate::models::{
     CompletionChoiceMessage, ConfigResponse, ConfigSection, ConfigUpdateRequest,
     ConfigUpdateResponse, CreateAgentRequest, CreateAgentResponse, CreateCronRequest,
     CronJobResponse, CronListResponse, EstopResponse, EventItem, EventListResponse,
-    EventStreamQuery, GatewayError, HealthResponse, JobListItem, JobListQuery, JobListResponse,
-    JobStatusResponse, LivenessResponse, MemoryForgetRequest, MemoryForgetResponse, MemoryListItem,
-    MemoryListQuery, MemoryListResponse, MemoryRecallRequest, ModelItem, ModelsResponse,
-    PairRequest, PairResponse, PingRequest, PingResponse, ReadyResponse, ToolSummary,
-    ToolsResponse, TopologyEdge, TopologyNode, TopologyResponse, TranscriptResponse,
+    EventStreamQuery, EventsQuery, GatewayError, HealthResponse, JobListItem, JobListQuery,
+    JobListResponse, JobStatusResponse, LivenessResponse, MemoryForgetRequest,
+    MemoryForgetResponse, MemoryListItem, MemoryListQuery, MemoryListResponse, MemoryRecallRequest,
+    ModelItem, ModelsResponse, PairRequest, PairResponse, PingRequest, PingResponse, ReadyResponse,
+    ToolSummary, ToolsResponse, TopologyEdge, TopologyNode, TopologyResponse, TranscriptResponse,
     UpdateAgentRequest, UpdateCronRequest, WebhookPayload, WebhookQuery, WebhookResponse,
     WsRunQuery,
 };
@@ -25,7 +25,7 @@ use axum::{
     body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, State,
+        Path, Query, State,
     },
     http::HeaderMap,
     response::{Html, IntoResponse, Response},
@@ -312,6 +312,7 @@ fn build_agent_request(
         conversation_id: None,
         agent_store: None,
         memory_override: None,
+        memory_window_override: None,
     })
 }
 
@@ -568,13 +569,8 @@ pub(crate) async fn api_fallback(
     Ok(Json(ApiFallbackResponse { ok: true, path }))
 }
 
-/// WebSocket heartbeat interval (ping every 30s).
-const WS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
-/// Close WebSocket if no pong received within this duration.
-const WS_PONG_TIMEOUT: Duration = Duration::from_secs(60);
-/// Close WebSocket if no client message received within this duration.
-const WS_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
-/// Maximum WebSocket message size (2 MB).
+/// Default maximum WebSocket message size (2 MB).
+/// Used as fallback for endpoints that don't have access to `GatewayState`.
 pub(crate) const WS_MAX_MESSAGE_SIZE: usize = 2 * 1024 * 1024;
 
 pub(crate) async fn ws_chat(
@@ -601,10 +597,17 @@ pub(crate) async fn ws_chat(
         .workspace_root
         .clone()
         .ok_or(GatewayError::AgentUnavailable)?;
+    let agent_store = state
+        .agent_store
+        .as_ref()
+        .map(|s| Arc::clone(s) as Arc<dyn agentzero_core::agent_store::AgentStoreApi>);
+    let ws_cfg = state.ws_config.clone();
     crate::gateway_metrics::record_ws_connection();
     Ok(ws
-        .max_message_size(WS_MAX_MESSAGE_SIZE)
-        .on_upgrade(move |socket| handle_socket(socket, config_path, workspace_root))
+        .max_message_size(ws_cfg.max_message_bytes)
+        .on_upgrade(move |socket| {
+            handle_socket(socket, config_path, workspace_root, agent_store, ws_cfg)
+        })
         .into_response())
 }
 
@@ -612,8 +615,10 @@ async fn handle_socket(
     mut socket: WebSocket,
     config_path: Arc<PathBuf>,
     workspace_root: Arc<PathBuf>,
+    agent_store: Option<Arc<dyn agentzero_core::agent_store::AgentStoreApi>>,
+    ws_cfg: agentzero_config::WebSocketConfig,
 ) {
-    let mut heartbeat = interval(WS_HEARTBEAT_INTERVAL);
+    let mut heartbeat = interval(Duration::from_secs(ws_cfg.heartbeat_interval_secs));
     heartbeat.tick().await; // consume the immediate first tick
     let mut last_pong = Instant::now();
     let mut last_activity = Instant::now();
@@ -629,6 +634,7 @@ async fn handle_socket(
                             &mut socket,
                             &config_path,
                             &workspace_root,
+                            &agent_store,
                             text.to_string(),
                         )
                         .await;
@@ -655,13 +661,13 @@ async fn handle_socket(
             }
             _ = heartbeat.tick() => {
                 // Check pong timeout.
-                if last_pong.elapsed() > WS_PONG_TIMEOUT {
+                if last_pong.elapsed() > Duration::from_secs(ws_cfg.pong_timeout_secs) {
                     tracing::warn!("WebSocket pong timeout, closing connection");
                     let _ = socket.send(Message::Close(None)).await;
                     break;
                 }
                 // Check idle timeout.
-                if last_activity.elapsed() > WS_IDLE_TIMEOUT {
+                if last_activity.elapsed() > Duration::from_secs(ws_cfg.idle_timeout_secs) {
                     tracing::info!("WebSocket idle timeout, closing connection");
                     let _ = socket.send(Message::Close(None)).await;
                     break;
@@ -676,23 +682,43 @@ async fn handle_socket(
 }
 
 /// Process a single text message from the WebSocket client.
+///
+/// Accepts either plain text (backward compat) or JSON:
+/// ```json
+/// { "message": "hello", "provider": "builtin", "model": "qwen2.5-coder-3b", "agent_id": "..." }
+/// ```
+/// When `provider` is set, it overrides the config file's provider (e.g., "builtin" for local model).
 async fn handle_text_message(
     socket: &mut WebSocket,
     config_path: &Arc<PathBuf>,
     workspace_root: &Arc<PathBuf>,
+    agent_store: &Option<Arc<dyn agentzero_core::agent_store::AgentStoreApi>>,
     text: String,
 ) {
+    // Try to parse as JSON for provider/model override support.
+    // Falls back to treating the entire string as the message.
+    let (message, provider_override, model_override) =
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+            let msg = parsed["message"].as_str().unwrap_or(&text).to_string();
+            let provider = parsed["provider"].as_str().map(String::from);
+            let model = parsed["model"].as_str().map(String::from);
+            (msg, provider, model)
+        } else {
+            (text.clone(), None, None)
+        };
+
     let req = RunAgentRequest {
         workspace_root: workspace_root.as_ref().clone(),
         config_path: config_path.as_ref().clone(),
-        message: text.clone(),
-        provider_override: None,
-        model_override: None,
+        message: message.clone(),
+        provider_override,
+        model_override,
         profile_override: None,
         extra_tools: vec![],
         conversation_id: None,
-        agent_store: None,
+        agent_store: agent_store.clone(),
         memory_override: None,
+        memory_window_override: None,
     };
     let execution = match build_runtime_execution(req).await {
         Ok(exec) => exec,
@@ -705,7 +731,32 @@ async fn handle_text_message(
             return;
         }
     };
-    let (mut rx, handle) = run_agent_streaming(execution, workspace_root.as_ref().clone(), text);
+
+    // Inject subsystem awareness: append a hint to the system prompt so the
+    // chat agent knows it can manage agents, schedules, config, memory, etc.
+    let mut execution = execution;
+    let subsystem_hint = concat!(
+        "\n\nYou have access to AgentZero platform management tools. ",
+        "You can create/list/update/delete persistent agents (agent_manage), ",
+        "manage cron schedules (cron_add/list/remove), ",
+        "store and recall memories (memory_store/recall/forget), ",
+        "read and update system configuration (config_manage), ",
+        "and create custom tools at runtime (tool_create). ",
+        "When the user asks you to set up agents, schedules, or configure the system, ",
+        "use these tools directly.",
+    );
+    match execution.config.system_prompt {
+        Some(ref mut prompt) if !prompt.contains("agent_manage") => {
+            prompt.push_str(subsystem_hint);
+        }
+        None => {
+            execution.config.system_prompt =
+                Some(format!("You are a helpful AI assistant.{subsystem_hint}"));
+        }
+        _ => {}
+    }
+
+    let (mut rx, handle) = run_agent_streaming(execution, workspace_root.as_ref().clone(), message);
     while let Some(chunk) = rx.recv().await {
         if !chunk.delta.is_empty() {
             let frame = json!({
@@ -1180,6 +1231,7 @@ pub(crate) async fn job_events(
     State(state): State<GatewayState>,
     headers: HeaderMap,
     Path(run_id_str): Path<String>,
+    Query(query): Query<EventsQuery>,
 ) -> Result<Json<EventListResponse>, GatewayError> {
     authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
 
@@ -1197,12 +1249,16 @@ pub(crate) async fn job_events(
 
     // Use the persistent event log instead of reconstructing from state.
     let log_events = job_store.get_events(&run_id).await;
+    let since_seq = query.since_seq.unwrap_or(0);
     let events: Vec<EventItem> = log_events
         .iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(i, e)| {
+            let seq = i + 1; // 1-based sequence numbers
             use agentzero_orchestrator::EventKind;
             match &e.kind {
                 EventKind::Created => EventItem {
+                    seq,
                     event_type: "created",
                     run_id: run_id_str.clone(),
                     tool: None,
@@ -1210,6 +1266,7 @@ pub(crate) async fn job_events(
                     error: None,
                 },
                 EventKind::Running => EventItem {
+                    seq,
                     event_type: "running",
                     run_id: run_id_str.clone(),
                     tool: None,
@@ -1217,6 +1274,7 @@ pub(crate) async fn job_events(
                     error: None,
                 },
                 EventKind::ToolCall { name } => EventItem {
+                    seq,
                     event_type: "tool_call",
                     run_id: run_id_str.clone(),
                     tool: Some(name.clone()),
@@ -1224,6 +1282,7 @@ pub(crate) async fn job_events(
                     error: None,
                 },
                 EventKind::ToolResult { name } => EventItem {
+                    seq,
                     event_type: "tool_result",
                     run_id: run_id_str.clone(),
                     tool: Some(name.clone()),
@@ -1231,6 +1290,7 @@ pub(crate) async fn job_events(
                     error: None,
                 },
                 EventKind::Completed { summary } => EventItem {
+                    seq,
                     event_type: "completed",
                     run_id: run_id_str.clone(),
                     tool: None,
@@ -1238,6 +1298,7 @@ pub(crate) async fn job_events(
                     error: None,
                 },
                 EventKind::Failed { error } => EventItem {
+                    seq,
                     event_type: "failed",
                     run_id: run_id_str.clone(),
                     tool: None,
@@ -1245,6 +1306,7 @@ pub(crate) async fn job_events(
                     error: Some(error.clone()),
                 },
                 EventKind::Cancelled => EventItem {
+                    seq,
                     event_type: "cancelled",
                     run_id: run_id_str.clone(),
                     tool: None,
@@ -1253,6 +1315,7 @@ pub(crate) async fn job_events(
                 },
             }
         })
+        .filter(|e| e.seq > since_seq)
         .collect();
 
     let total = events.len();
@@ -2372,6 +2435,117 @@ fn infer_tool_category(name: &str) -> String {
         "other"
     };
     cat.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic tool sharing endpoints
+// ---------------------------------------------------------------------------
+
+/// GET /v1/dynamic-tools — list dynamic tools with quality metadata.
+pub(crate) async fn list_dynamic_tools(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let registry = state
+        .dynamic_tool_registry
+        .as_ref()
+        .ok_or(GatewayError::BadRequest {
+            message: "dynamic tools not enabled".to_string(),
+        })?;
+
+    let defs = registry.list().await;
+    let tools: Vec<serde_json::Value> = defs
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "name": d.name,
+                "description": d.description,
+                "strategy_type": match &d.strategy {
+                    agentzero_infra::tools::dynamic_tool::DynamicToolStrategy::Shell { .. } => "shell",
+                    agentzero_infra::tools::dynamic_tool::DynamicToolStrategy::Http { .. } => "http",
+                    agentzero_infra::tools::dynamic_tool::DynamicToolStrategy::Llm { .. } => "llm",
+                    agentzero_infra::tools::dynamic_tool::DynamicToolStrategy::Composite { .. } => "composite",
+                    agentzero_infra::tools::dynamic_tool::DynamicToolStrategy::Codegen { .. } => "codegen",
+                },
+                "created_at": d.created_at,
+                "total_invocations": d.total_invocations,
+                "total_successes": d.total_successes,
+                "total_failures": d.total_failures,
+                "success_rate": d.success_rate(),
+                "generation": d.generation,
+                "parent_name": d.parent_name,
+                "user_rated": d.user_rated,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "object": "list",
+        "tools": tools,
+        "total": tools.len(),
+    })))
+}
+
+/// GET /v1/dynamic-tools/:name/bundle — export a tool as a shareable bundle.
+pub(crate) async fn export_dynamic_tool_bundle(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsRead)?;
+
+    let registry = state
+        .dynamic_tool_registry
+        .as_ref()
+        .ok_or(GatewayError::BadRequest {
+            message: "dynamic tools not enabled".to_string(),
+        })?;
+
+    // Export without recipe store reference to avoid MutexGuard across await.
+    let bundle = registry
+        .export_bundle(&name, None)
+        .await
+        .map_err(|e| GatewayError::AgentExecutionFailed {
+            message: format!("failed to export bundle: {e}"),
+        })?
+        .ok_or(GatewayError::NotFound {
+            resource: format!("dynamic tool '{name}'"),
+        })?;
+
+    let json = serde_json::to_value(&bundle).map_err(|e| GatewayError::AgentExecutionFailed {
+        message: format!("failed to serialize bundle: {e}"),
+    })?;
+
+    Ok(Json(json))
+}
+
+/// POST /v1/dynamic-tools/import — import a tool bundle.
+pub(crate) async fn import_dynamic_tool_bundle(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(bundle): Json<agentzero_infra::tools::dynamic_tool::ToolBundle>,
+) -> Result<Json<serde_json::Value>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
+
+    let registry = state
+        .dynamic_tool_registry
+        .as_ref()
+        .ok_or(GatewayError::BadRequest {
+            message: "dynamic tools not enabled".to_string(),
+        })?;
+
+    let name = registry.import_bundle(bundle, None).await.map_err(|e| {
+        GatewayError::AgentExecutionFailed {
+            message: format!("failed to import bundle: {e}"),
+        }
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "imported": name,
+        "message": format!("Tool '{}' imported successfully (quality counters reset).", name),
+    })))
 }
 
 // ---------------------------------------------------------------------------

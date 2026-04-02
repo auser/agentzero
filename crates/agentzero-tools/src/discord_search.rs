@@ -1,11 +1,16 @@
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
 
-#[derive(Debug, Deserialize)]
-struct Input {
+#[derive(ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct DiscordSearchInput {
+    /// Search query keywords
     query: String,
+    /// Maximum results (default: 20)
     #[serde(default = "default_limit")]
     limit: usize,
 }
@@ -15,32 +20,44 @@ fn default_limit() -> usize {
 }
 
 /// Search tool for Discord message history.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct DiscordSearchTool;
+///
+/// When constructed with a `DiscordHistoryStore`, queries the SQLite database
+/// for matching messages. Without a store, returns a helpful message.
+#[tool(
+    name = "discord_search",
+    description = "Search Discord message history for keywords. Returns matching messages with sender names and timestamps."
+)]
+#[derive(Default)]
+pub struct DiscordSearchTool {
+    store: Option<Arc<agentzero_storage::discord::DiscordHistoryStore>>,
+}
+
+impl DiscordSearchTool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_store(store: Arc<agentzero_storage::discord::DiscordHistoryStore>) -> Self {
+        Self { store: Some(store) }
+    }
+}
 
 #[async_trait]
 impl Tool for DiscordSearchTool {
     fn name(&self) -> &'static str {
-        "discord_search"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Search Discord message history for keywords. Returns matching messages with sender names and timestamps."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "query": { "type": "string", "description": "Search query keywords" },
-                "limit": { "type": "integer", "description": "Maximum results (default: 20)", "default": 20 }
-            },
-            "required": ["query"]
-        }))
+        Some(DiscordSearchInput::schema())
     }
 
     async fn execute(&self, input: &str, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
-        let parsed: Input = serde_json::from_str(input).map_err(|e| {
+        let parsed: DiscordSearchInput = serde_json::from_str(input).map_err(|e| {
             anyhow::anyhow!("discord_search expects JSON: {{\"query\": \"...\"}}: {e}")
         })?;
 
@@ -48,13 +65,46 @@ impl Tool for DiscordSearchTool {
             return Err(anyhow::anyhow!("query must not be empty"));
         }
 
-        // TODO: Query SQLite discord_messages table
-        // For now, return placeholder indicating the infrastructure is in place
+        let store = match &self.store {
+            Some(s) => s,
+            None => {
+                return Ok(ToolResult {
+                    output: format!(
+                        "Discord search for '{}' (limit: {}) — history database not connected. \
+                         Enable the discord-history channel to start recording messages.",
+                        parsed.query, parsed.limit
+                    ),
+                });
+            }
+        };
+
+        let results = store.search(&parsed.query, parsed.limit)?;
+
+        if results.is_empty() {
+            return Ok(ToolResult {
+                output: format!("No Discord messages found matching '{}'.", parsed.query),
+            });
+        }
+
+        let entries: Vec<serde_json::Value> = results
+            .iter()
+            .map(|msg| {
+                json!({
+                    "author": msg.author_name,
+                    "content": msg.content,
+                    "channel_id": msg.channel_id,
+                    "timestamp": msg.created_at,
+                })
+            })
+            .collect();
+
         Ok(ToolResult {
-            output: format!(
-                "Discord search for '{}' (limit: {}) — history database not yet connected",
-                parsed.query, parsed.limit
-            ),
+            output: serde_json::to_string_pretty(&json!({
+                "query": parsed.query,
+                "count": entries.len(),
+                "messages": entries,
+            }))
+            .unwrap_or_default(),
         })
     }
 }
@@ -65,63 +115,94 @@ mod tests {
 
     #[test]
     fn discord_search_has_schema() {
-        let tool = DiscordSearchTool;
+        let tool = DiscordSearchTool::new();
         let schema = tool.input_schema();
-        assert!(
-            schema.is_some(),
-            "discord_search should have an input schema"
-        );
-        let schema = schema.expect("schema should be present");
+        assert!(schema.is_some());
+        let schema = schema.expect("schema");
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["query"].is_object());
-        assert!(schema["properties"]["limit"].is_object());
-        let required = schema["required"]
-            .as_array()
-            .expect("required should be an array");
-        assert!(required.contains(&json!("query")));
     }
 
     #[tokio::test]
     async fn discord_search_empty_query_error() {
-        let tool = DiscordSearchTool;
+        let tool = DiscordSearchTool::new();
         let ctx = ToolContext::new(".".to_string());
         let result = tool.execute(r#"{"query": "  "}"#, &ctx).await;
-        assert!(result.is_err(), "empty query should produce an error");
-        let err_msg = result.expect_err("should be error").to_string();
-        assert!(
-            err_msg.contains("query must not be empty"),
-            "error should mention empty query: {err_msg}"
-        );
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("error")
+            .to_string()
+            .contains("query must not be empty"));
     }
 
     #[tokio::test]
     async fn discord_search_invalid_json_error() {
-        let tool = DiscordSearchTool;
+        let tool = DiscordSearchTool::new();
         let ctx = ToolContext::new(".".to_string());
         let result = tool.execute("not json", &ctx).await;
-        assert!(result.is_err(), "invalid JSON should produce an error");
+        assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn discord_search_valid_query() {
-        let tool = DiscordSearchTool;
+    async fn discord_search_without_store_returns_message() {
+        let tool = DiscordSearchTool::new();
         let ctx = ToolContext::new(".".to_string());
         let result = tool
-            .execute(r#"{"query": "hello world", "limit": 5}"#, &ctx)
-            .await;
-        assert!(result.is_ok(), "valid query should succeed");
-        let output = result.expect("should succeed").output;
-        assert!(output.contains("hello world"));
-        assert!(output.contains("limit: 5"));
+            .execute(r#"{"query": "hello"}"#, &ctx)
+            .await
+            .expect("should succeed");
+        assert!(result.output.contains("not connected"));
     }
 
     #[tokio::test]
-    async fn discord_search_default_limit() {
-        let tool = DiscordSearchTool;
+    async fn discord_search_with_store_returns_results() {
+        use agentzero_storage::discord::{DiscordHistoryStore, DiscordMessage};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let dir = std::env::temp_dir().join(format!("agentzero-ds-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let store = Arc::new(DiscordHistoryStore::open(&dir.join("discord.db")).expect("open"));
+        store
+            .insert(&DiscordMessage {
+                channel_id: "ch1".to_string(),
+                author_id: "u1".to_string(),
+                author_name: "Bob".to_string(),
+                content: "hello world from discord".to_string(),
+                created_at: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("time")
+                    .as_secs(),
+            })
+            .expect("insert");
+
+        let tool = DiscordSearchTool::with_store(store);
         let ctx = ToolContext::new(".".to_string());
-        let result = tool.execute(r#"{"query": "test"}"#, &ctx).await;
-        assert!(result.is_ok());
-        let output = result.expect("should succeed").output;
-        assert!(output.contains("limit: 20"), "default limit should be 20");
+        let result = tool
+            .execute(r#"{"query": "hello"}"#, &ctx)
+            .await
+            .expect("search");
+        assert!(result.output.contains("Bob"));
+        assert!(result.output.contains("hello world"));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn discord_search_no_matches_returns_empty() {
+        use agentzero_storage::discord::DiscordHistoryStore;
+
+        let dir = std::env::temp_dir().join(format!("agentzero-ds-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let store = Arc::new(DiscordHistoryStore::open(&dir.join("discord.db")).expect("open"));
+
+        let tool = DiscordSearchTool::with_store(store);
+        let ctx = ToolContext::new(".".to_string());
+        let result = tool
+            .execute(r#"{"query": "nonexistent"}"#, &ctx)
+            .await
+            .expect("search");
+        assert!(result.output.contains("No Discord messages found"));
+
+        std::fs::remove_dir_all(dir).ok();
     }
 }

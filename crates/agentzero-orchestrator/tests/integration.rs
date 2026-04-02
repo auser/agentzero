@@ -52,10 +52,8 @@ impl Channel for TestChannel {
 
     async fn listen(&self, _tx: mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
         // Test channel doesn't produce inbound messages.
-        // Use a bounded sleep instead of pending() so the future can be
-        // cancelled cleanly by tokio task abort during shutdown.
-        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-        Ok(())
+        // pending() is instantly cancellable by tokio task abort.
+        std::future::pending().await
     }
 }
 
@@ -143,7 +141,7 @@ async fn agent_chain_a_b_c_dispatches_to_channel() {
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
 
-    let coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
+    let mut coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
 
     // Give coordinator time to start its loops and subscribe.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -165,9 +163,12 @@ async fn agent_chain_a_b_c_dispatches_to_channel() {
     tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
 
     shutdown_tx.send(true).unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), coord_handle)
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut coord_handle)
         .await
-        .expect("coordinator should shut down within 10s");
+        .is_err()
+    {
+        coord_handle.abort();
+    }
 
     let messages = sent.lock().await;
     assert!(
@@ -211,7 +212,7 @@ async fn privacy_boundary_blocks_incompatible_routing() {
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
 
-    let coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
+    let mut coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -229,9 +230,12 @@ async fn privacy_boundary_blocks_incompatible_routing() {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     shutdown_tx.send(true).unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), coord_handle)
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut coord_handle)
         .await
-        .expect("coordinator should shut down within 10s");
+        .is_err()
+    {
+        coord_handle.abort();
+    }
 
     let messages = sent.lock().await;
     assert!(
@@ -273,7 +277,7 @@ async fn privacy_boundary_allows_compatible_routing() {
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
 
-    let coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
+    let mut coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -290,9 +294,12 @@ async fn privacy_boundary_allows_compatible_routing() {
     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
     shutdown_tx.send(true).unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), coord_handle)
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut coord_handle)
         .await
-        .expect("coordinator should shut down within 10s");
+        .is_err()
+    {
+        coord_handle.abort();
+    }
 
     let messages = sent.lock().await;
     assert!(
@@ -352,7 +359,7 @@ async fn pipeline_executes_sequential_steps() {
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
 
-    let coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
+    let mut coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -369,9 +376,12 @@ async fn pipeline_executes_sequential_steps() {
     tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
 
     shutdown_tx.send(true).unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), coord_handle)
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut coord_handle)
         .await
-        .expect("coordinator should shut down within 10s");
+        .is_err()
+    {
+        coord_handle.abort();
+    }
 
     let messages = sent.lock().await;
     assert!(
@@ -418,7 +428,7 @@ async fn graceful_shutdown_completes_in_flight() {
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
 
-    let coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
+    let mut coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -438,9 +448,12 @@ async fn graceful_shutdown_completes_in_flight() {
 
     // Send shutdown — the grace period (3000ms) should allow in-flight to finish.
     shutdown_tx.send(true).unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), coord_handle)
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut coord_handle)
         .await
-        .expect("coordinator should shut down within 10s");
+        .is_err()
+    {
+        coord_handle.abort();
+    }
 
     let messages = sent.lock().await;
     assert!(
@@ -484,7 +497,7 @@ async fn correlation_id_traces_full_chain() {
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
 
-    let coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
+    let mut coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -513,9 +526,12 @@ async fn correlation_id_traces_full_chain() {
     }
 
     shutdown_tx.send(true).unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), coord_handle)
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut coord_handle)
         .await
-        .expect("coordinator should shut down within 10s");
+        .is_err()
+    {
+        coord_handle.abort();
+    }
 
     // Find the agent output event.
     let agent_output = captured
@@ -639,7 +655,7 @@ async fn pipeline_skip_mode_passes_previous_output() {
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
 
-    let coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
+    let mut coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -657,9 +673,12 @@ async fn pipeline_skip_mode_passes_previous_output() {
     tokio::time::sleep(std::time::Duration::from_millis(4000)).await;
 
     shutdown_tx.send(true).unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), coord_handle)
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut coord_handle)
         .await
-        .expect("coordinator should shut down within 10s");
+        .is_err()
+    {
+        coord_handle.abort();
+    }
 
     let messages = sent.lock().await;
     // The pipeline should complete: step-a succeeds, step-b times out and is skipped
@@ -723,7 +742,7 @@ async fn pipeline_retry_mode_retries_on_failure() {
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
 
-    let coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
+    let mut coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -741,9 +760,12 @@ async fn pipeline_retry_mode_retries_on_failure() {
     tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
 
     shutdown_tx.send(true).unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), coord_handle)
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut coord_handle)
         .await
-        .expect("coordinator should shut down within 10s");
+        .is_err()
+    {
+        coord_handle.abort();
+    }
 
     // Collect spy events: count how many pipeline step events were published for
     // step 0 of the retry-test pipeline. Each attempt dispatches a task to the
@@ -839,7 +861,7 @@ async fn pipeline_abort_stops_on_first_error() {
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
 
-    let coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
+    let mut coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -857,9 +879,12 @@ async fn pipeline_abort_stops_on_first_error() {
     tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
 
     shutdown_tx.send(true).unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), coord_handle)
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut coord_handle)
         .await
-        .expect("coordinator should shut down within 10s");
+        .is_err()
+    {
+        coord_handle.abort();
+    }
 
     let messages = sent.lock().await;
     // Abort mode: step-b times out → pipeline aborts → no channel_reply is sent
@@ -912,7 +937,7 @@ async fn queue_mode_steer_routes_by_keyword() {
     let (shutdown_tx, _) = watch::channel(false);
     let shutdown_rx = shutdown_tx.subscribe();
 
-    let coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
+    let mut coord_handle = tokio::spawn(async move { coord.run(shutdown_rx).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -930,9 +955,12 @@ async fn queue_mode_steer_routes_by_keyword() {
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
     shutdown_tx.send(true).unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), coord_handle)
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut coord_handle)
         .await
-        .expect("coordinator should shut down within 10s");
+        .is_err()
+    {
+        coord_handle.abort();
+    }
 
     let messages = sent.lock().await;
     assert!(

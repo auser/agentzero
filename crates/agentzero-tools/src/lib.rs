@@ -113,7 +113,8 @@ pub fn tool_tier(name: &str) -> ToolTier {
         | "docx_read"
         | "html_extract"
         | "a2a"
-        | "canvas" => ToolTier::Extended,
+        | "canvas"
+        | "chunk_document" => ToolTier::Extended,
 
         // --- Full tier: everything else ---
         _ => ToolTier::Full,
@@ -123,6 +124,7 @@ pub fn tool_tier(name: &str) -> ToolTier {
 // ── Core tier modules (always compiled) ──────────────────────────────
 pub mod apply_patch;
 pub mod autonomy;
+pub mod checkpoint;
 pub mod content_search;
 pub mod conversation_timerange;
 pub mod converse;
@@ -216,6 +218,10 @@ pub mod opencode_cli;
 pub mod pushover;
 #[cfg(feature = "tools-full")]
 pub mod wasm_tools;
+
+// ── RAG modules (rag feature) ────────────────────────────────────────
+#[cfg(feature = "rag")]
+pub mod chunk_document;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -342,6 +348,8 @@ pub struct McpServerDef {
     pub command: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    /// Optional SHA-256 hash of the server binary for attestation.
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -470,6 +478,117 @@ impl ToolSecurityPolicy {
             enable_dynamic_tools: false,
         }
     }
+}
+
+/// All known core-tier tool names.
+pub const CORE_TOOL_NAMES: &[&str] = &[
+    "read_file",
+    "write_file",
+    "file_edit",
+    "apply_patch",
+    "glob_search",
+    "content_search",
+    "shell",
+    "memory_store",
+    "memory_recall",
+    "memory_forget",
+    "delegate",
+    "sub_agent_spawn",
+    "sub_agent_list",
+    "sub_agent_manage",
+    "delegate_coordination_status",
+    "task_plan",
+    "process",
+    "image_info",
+    "pdf_read",
+    "screenshot",
+    "conversation_timerange",
+    "semantic_recall",
+];
+
+/// All known extended-tier tool names (not including core).
+pub const EXTENDED_TOOL_NAMES: &[&str] = &[
+    "web_search",
+    "http_request",
+    "web_fetch",
+    "url_validation",
+    "git_operations",
+    "cron_add",
+    "cron_list",
+    "cron_remove",
+    "cron_update",
+    "cron_pause",
+    "cron_resume",
+    "schedule",
+    "agents_ipc",
+    "code_interpreter",
+    "sop_list",
+    "sop_status",
+    "sop_advance",
+    "sop_approve",
+    "sop_execute",
+    "cli_discovery",
+    "discord_search",
+    "proxy_config",
+    "model_routing_config",
+    "docx_read",
+    "html_extract",
+    "a2a",
+    "canvas",
+];
+
+/// All known full-tier tool names (not including core or extended).
+pub const FULL_TOOL_NAMES: &[&str] = &[
+    "browser",
+    "browser_open",
+    "tts",
+    "image_gen",
+    "video_gen",
+    "composio",
+    "pushover",
+    "hardware_board_info",
+    "hardware_memory_map",
+    "hardware_memory_read",
+    "domain_create",
+    "domain_info",
+    "domain_learn",
+    "domain_lessons",
+    "domain_list",
+    "domain_search",
+    "domain_update",
+    "domain_verify",
+    "domain_workflow",
+    "wasm_module",
+    "wasm_tool_exec",
+    "claude_code",
+    "codex_cli",
+    "gemini_cli",
+    "opencode_cli",
+    "agent_manage",
+    "config_manage",
+    "skill_manage",
+    "plugin_scaffold",
+];
+
+/// Returns the list of tool names for a specific tier (not cumulative).
+pub fn tools_in_tier(tier: ToolTier) -> &'static [&'static str] {
+    match tier {
+        ToolTier::Core => CORE_TOOL_NAMES,
+        ToolTier::Extended => EXTENDED_TOOL_NAMES,
+        ToolTier::Full => FULL_TOOL_NAMES,
+    }
+}
+
+/// Returns the total count of tools available at the given tier (cumulative).
+pub fn tool_count_at_tier(tier: ToolTier) -> usize {
+    let mut count = CORE_TOOL_NAMES.len();
+    if tier >= ToolTier::Extended {
+        count += EXTENDED_TOOL_NAMES.len();
+    }
+    if tier >= ToolTier::Full {
+        count += FULL_TOOL_NAMES.len();
+    }
+    count
 }
 
 /// Filter a list of tool names by tier, keeping only those at or below `max_tier`.
@@ -665,10 +784,40 @@ mod tests {
 
     #[test]
     fn max_compiled_tier_reflects_features() {
-        // In the default test environment, all features should be on
         let tier = max_compiled_tier();
-        // We can't assert a specific value since it depends on how tests are run,
-        // but we can verify it's a valid tier
         assert!(tier.is_within(ToolTier::Full));
+    }
+
+    #[test]
+    fn tool_count_increases_with_tier() {
+        let core = tool_count_at_tier(ToolTier::Core);
+        let extended = tool_count_at_tier(ToolTier::Extended);
+        let full = tool_count_at_tier(ToolTier::Full);
+        assert!(core < extended);
+        assert!(extended < full);
+    }
+
+    #[test]
+    fn tools_in_tier_returns_correct_lists() {
+        assert_eq!(tools_in_tier(ToolTier::Core), CORE_TOOL_NAMES);
+        assert_eq!(tools_in_tier(ToolTier::Extended), EXTENDED_TOOL_NAMES);
+        assert_eq!(tools_in_tier(ToolTier::Full), FULL_TOOL_NAMES);
+    }
+
+    #[test]
+    fn tier_name_constants_are_consistent_with_tool_tier() {
+        for name in CORE_TOOL_NAMES {
+            assert_eq!(tool_tier(name), ToolTier::Core, "{name} should be Core");
+        }
+        for name in EXTENDED_TOOL_NAMES {
+            assert_eq!(
+                tool_tier(name),
+                ToolTier::Extended,
+                "{name} should be Extended"
+            );
+        }
+        for name in FULL_TOOL_NAMES {
+            assert_eq!(tool_tier(name), ToolTier::Full, "{name} should be Full");
+        }
     }
 }

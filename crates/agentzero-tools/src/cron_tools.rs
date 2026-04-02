@@ -1,5 +1,6 @@
 use crate::cron_store::CronStore;
 use agentzero_core::{Tool, ToolContext, ToolResult};
+use agentzero_macros::{tool, ToolSchema};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -11,37 +12,36 @@ fn cron_data_dir(workspace_root: &str) -> PathBuf {
 
 // ── cron_add ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct CronAddInput {
+    /// Unique task ID
     id: String,
+    /// Cron expression (e.g. '0 * * * *')
     schedule: String,
+    /// Command to execute
     command: String,
 }
 
+#[tool(
+    name = "cron_add",
+    description = "Add a new cron task with a schedule and command."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CronAddTool;
 
 #[async_trait]
 impl Tool for CronAddTool {
     fn name(&self) -> &'static str {
-        "cron_add"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Add a new cron task with a schedule and command."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "description": "Unique task ID" },
-                "schedule": { "type": "string", "description": "Cron expression (e.g. '0 * * * *')" },
-                "command": { "type": "string", "description": "Command to execute" }
-            },
-            "required": ["id", "schedule", "command"],
-            "additionalProperties": false
-        }))
+        Some(CronAddInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -60,25 +60,26 @@ impl Tool for CronAddTool {
 
 // ── cron_list ──
 
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
+struct CronListInput {}
+
+#[tool(name = "cron_list", description = "List all registered cron tasks.")]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CronListTool;
 
 #[async_trait]
 impl Tool for CronListTool {
     fn name(&self) -> &'static str {
-        "cron_list"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "List all registered cron tasks."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }))
+        Some(CronListInput::schema())
     }
 
     async fn execute(&self, _input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -106,33 +107,29 @@ impl Tool for CronListTool {
 
 // ── cron_remove ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct CronRemoveInput {
+    /// ID of the cron task to remove
     id: String,
 }
 
+#[tool(name = "cron_remove", description = "Remove a cron task by ID.")]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CronRemoveTool;
 
 #[async_trait]
 impl Tool for CronRemoveTool {
     fn name(&self) -> &'static str {
-        "cron_remove"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Remove a cron task by ID."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "description": "ID of the cron task to remove" }
-            },
-            "required": ["id"],
-            "additionalProperties": false
-        }))
+        Some(CronRemoveInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -148,39 +145,38 @@ impl Tool for CronRemoveTool {
 
 // ── cron_update ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct CronUpdateInput {
+    /// ID of the cron task to update
     id: String,
+    /// New cron schedule expression
     #[serde(default)]
     schedule: Option<String>,
+    /// New command to execute
     #[serde(default)]
     command: Option<String>,
 }
 
+#[tool(
+    name = "cron_update",
+    description = "Update an existing cron task's schedule or command."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CronUpdateTool;
 
 #[async_trait]
 impl Tool for CronUpdateTool {
     fn name(&self) -> &'static str {
-        "cron_update"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Update an existing cron task's schedule or command."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "description": "ID of the cron task to update" },
-                "schedule": { "type": "string", "description": "New cron schedule expression" },
-                "command": { "type": "string", "description": "New command to execute" }
-            },
-            "required": ["id"],
-            "additionalProperties": false
-        }))
+        Some(CronUpdateInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -204,33 +200,32 @@ impl Tool for CronUpdateTool {
 
 // ── cron_pause ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct CronPauseInput {
+    /// ID of the cron task to pause
     id: String,
 }
 
+#[tool(
+    name = "cron_pause",
+    description = "Pause a cron task (disable without removing)."
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CronPauseTool;
 
 #[async_trait]
 impl Tool for CronPauseTool {
     fn name(&self) -> &'static str {
-        "cron_pause"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Pause a cron task (disable without removing)."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "description": "ID of the cron task to pause" }
-            },
-            "required": ["id"],
-            "additionalProperties": false
-        }))
+        Some(CronPauseInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
@@ -246,33 +241,29 @@ impl Tool for CronPauseTool {
 
 // ── cron_resume ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, ToolSchema, Deserialize)]
+#[allow(dead_code)]
 struct CronResumeInput {
+    /// ID of the cron task to resume
     id: String,
 }
 
+#[tool(name = "cron_resume", description = "Resume a paused cron task.")]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CronResumeTool;
 
 #[async_trait]
 impl Tool for CronResumeTool {
     fn name(&self) -> &'static str {
-        "cron_resume"
+        Self::tool_name()
     }
 
     fn description(&self) -> &'static str {
-        "Resume a paused cron task."
+        Self::tool_description()
     }
 
     fn input_schema(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "description": "ID of the cron task to resume" }
-            },
-            "required": ["id"],
-            "additionalProperties": false
-        }))
+        Some(CronResumeInput::schema())
     }
 
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {

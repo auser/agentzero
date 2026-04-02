@@ -103,6 +103,9 @@ pub struct Coordinator {
     /// When set, agents receive a clone of this `Arc` instead of each opening
     /// their own SQLite connection — eliminating file-level lock contention.
     shared_memory: Option<Arc<dyn agentzero_core::MemoryStore>>,
+    /// Agent IDs that were registered from the swarm config (not the store).
+    /// Store sync must not deregister these.
+    config_agent_ids: std::collections::HashSet<String>,
 }
 
 /// Configuration for periodic agent store synchronization.
@@ -133,6 +136,7 @@ impl Coordinator {
             presence: None,
             store_sync: None,
             shared_memory: None,
+            config_agent_ids: std::collections::HashSet::new(),
         }
     }
 
@@ -156,6 +160,12 @@ impl Coordinator {
     /// When set, agents receive a clone of this `Arc` via `memory_override`
     /// instead of each opening their own SQLite connection. This eliminates
     /// file-level lock contention when running multiple persistent agents.
+    /// Mark agent IDs as config-originated so store sync won't remove them.
+    pub fn with_config_agent_ids(mut self, ids: std::collections::HashSet<String>) -> Self {
+        self.config_agent_ids = ids;
+        self
+    }
+
     pub fn with_shared_memory(mut self, store: Arc<dyn agentzero_core::MemoryStore>) -> Self {
         self.shared_memory = Some(store);
         self
@@ -341,6 +351,7 @@ impl Coordinator {
                 .shared_memory
                 .as_ref()
                 .map(|m| Box::new(Arc::clone(m)) as Box<dyn agentzero_core::MemoryStore>),
+            memory_window_override: None,
         };
 
         let exec = build_runtime_execution(req).await?;
@@ -424,10 +435,11 @@ impl Coordinator {
         }
 
         // Deregister agents that are no longer active or were deleted.
+        // Skip config-originated agents — they weren't loaded from the store.
         let registered_ids: Vec<String> = self.agents.read().await.keys().cloned().collect();
 
         for id in registered_ids {
-            if !desired_ids.contains(&id) {
+            if !desired_ids.contains(&id) && !self.config_agent_ids.contains(&id) {
                 self.deregister_agent(&id).await;
             }
         }
@@ -471,6 +483,12 @@ impl Coordinator {
             None
         };
 
+        // Keep abort handles so we can cancel all loops on shutdown.
+        let abort_ingestion = ingestion.abort_handle();
+        let abort_router = router_loop.abort_handle();
+        let abort_response = response_loop.abort_handle();
+        let abort_sync = sync_loop.as_ref().map(|h| h.abort_handle());
+
         // Wait for shutdown signal or any loop to exit.
         tokio::select! {
             _ = shutdown.changed() => {
@@ -496,6 +514,20 @@ impl Coordinator {
             "coordinator shutting down, waiting for in-flight tasks"
         );
         tokio::time::sleep(Duration::from_millis(coord.shutdown_grace_ms)).await;
+
+        // Abort all internal loops that may still be running.
+        abort_ingestion.abort();
+        abort_router.abort();
+        abort_response.abort();
+        if let Some(h) = abort_sync {
+            h.abort();
+        }
+
+        // Abort all agent worker tasks.
+        let agents = coord.agents.read().await;
+        for worker in agents.values() {
+            worker.join_handle.abort();
+        }
 
         Ok(())
     }
@@ -556,17 +588,40 @@ impl Coordinator {
                 }
             });
 
-            // Spawn a relay that publishes received messages to the bus
+            // Spawn a relay that publishes received messages to the bus.
+            // Auto-enriches channel messages with web search results so the
+            // agent has real-time context without needing to call tools itself.
             let relay_handle = tokio::spawn(async move {
+                // Shared HTTP client for auto-search.
+                let search_client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(10))
+                    .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                    .build()
+                    .ok();
+
                 while let Some(msg) = rx.recv().await {
                     let correlation_id = uuid_v4();
+
+                    // Auto-search: enrich the message with web results.
+                    let enriched_content = if let Some(ref client) = search_client {
+                        match auto_search(client, &msg.content).await {
+                            Some(results) => format!(
+                                "{}\n\n---\n[Web search results for context — use these to answer accurately]\n{}",
+                                msg.content, results
+                            ),
+                            None => msg.content.clone(),
+                        }
+                    } else {
+                        msg.content.clone()
+                    };
+
                     let event = Event::new(
                         format!("channel.{}.message", name),
                         format!("channel.{}", name),
                         serde_json::to_string(&serde_json::json!({
                             "sender": msg.sender,
                             "reply_target": msg.reply_target,
-                            "content": msg.content,
+                            "content": enriched_content,
                             "channel": msg.channel,
                             "thread_ts": msg.thread_ts,
                         }))
@@ -575,6 +630,11 @@ impl Coordinator {
                     .with_correlation(correlation_id)
                     .with_boundary(&msg.privacy_boundary);
 
+                    tracing::info!(
+                        topic = %event.topic,
+                        subscribers = bus.subscriber_count(),
+                        "publishing channel message to bus"
+                    );
                     if let Err(e) = bus.publish(event).await {
                         tracing::error!(error = %e, "failed to publish channel message to bus");
                     }
@@ -601,10 +661,11 @@ impl Coordinator {
         shutdown: &mut tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
         let mut sub = self.bus.subscribe();
+        let channel_filter = agentzero_core::event_bus::EventFilter::topic("channel.");
 
         loop {
             let event = tokio::select! {
-                e = sub.recv_filtered("channel.") => match e {
+                e = sub.recv_with_filter(&channel_filter) => match e {
                     Ok(event) => event,
                     Err(e) => {
                         tracing::error!(error = %e, "router bus subscription failed");
@@ -623,12 +684,26 @@ impl Coordinator {
 
             // Extract origin info for later channel reply.
             if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) {
+                let channel = payload["channel"].as_str().unwrap_or_default().to_string();
+                let reply_target = payload["reply_target"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+
+                // Send an acknowledgment back to the originating channel.
+                // Skip ack for internal/local channels (cli, gateway, webhook, test).
+                let is_external = !channel.is_empty()
+                    && !matches!(channel.as_str(), "cli" | "gateway" | "webhook" | "test");
+                if is_external {
+                    if let Some(ch) = self.channels.get(&channel) {
+                        let ack = pick_ack_message();
+                        let _ = ch.send(&SendMessage::new(ack, &*reply_target)).await;
+                    }
+                }
+
                 let origin = CorrelationOrigin {
-                    channel: payload["channel"].as_str().unwrap_or_default().to_string(),
-                    reply_target: payload["reply_target"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
+                    channel,
+                    reply_target,
                 };
                 self.correlation_store
                     .lock()
@@ -637,6 +712,12 @@ impl Coordinator {
             }
 
             let content = extract_content(&event.payload);
+            tracing::info!(
+                topic = %event.topic,
+                correlation_id = %correlation_id,
+                content_len = content.len(),
+                "routing channel message"
+            );
 
             // Check pipelines first
             if let Some(pipeline) = self.match_pipeline(&content) {
@@ -677,13 +758,15 @@ impl Coordinator {
                     if ps.is_alive(&d.id).await {
                         alive_descriptors.push(d);
                     } else {
-                        tracing::debug!(agent = %d.id, "skipping dead agent in routing");
+                        tracing::warn!(agent = %d.id, "skipping dead agent in routing");
                     }
                 }
                 descriptors = alive_descriptors;
             }
+            tracing::info!(candidates = descriptors.len(), "routing to agents");
             match self.router.route(&content, &descriptors).await {
                 Ok(Some(agent_id)) => {
+                    tracing::info!(agent = %agent_id, "routed message to agent");
                     let agents = self.agents.read().await;
                     if let Some(worker) = agents.get(&agent_id) {
                         // Privacy check
@@ -712,7 +795,7 @@ impl Coordinator {
                     }
                 }
                 Ok(None) => {
-                    tracing::debug!(content = %content, "no agent matched for message");
+                    tracing::warn!(content = %content, "no agent matched for message");
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "routing failed");
@@ -865,7 +948,7 @@ impl Coordinator {
                             let _ = ch
                                 .send(&SendMessage {
                                     recipient: reply_target,
-                                    content: event.payload.clone(),
+                                    content: event.payload.to_string(),
                                     subject: None,
                                     thread_ts: None,
                                 })
@@ -933,8 +1016,10 @@ async fn agent_worker(
     tracing::info!(agent = %descriptor.id, "agent worker started");
 
     // Register with presence store if available.
+    // Use a long TTL — the worker heartbeats on every task start/end,
+    // so it only goes stale if the process truly dies.
     if let Some(ref ps) = presence {
-        ps.register(&descriptor.id, Duration::from_secs(30)).await;
+        ps.register(&descriptor.id, Duration::from_secs(3600)).await;
     }
 
     while let Some(task) = task_rx.recv().await {
@@ -1099,6 +1184,116 @@ async fn agent_worker(
 
     status.store(STATUS_STOPPED, Ordering::Relaxed);
     tracing::info!(agent = %descriptor.id, "agent worker stopped");
+}
+
+/// Auto-search: run a DuckDuckGo search for channel messages and return
+/// formatted results. Returns `None` if the message doesn't look like it
+/// needs web context or if the search fails.
+async fn auto_search(client: &reqwest::Client, content: &str) -> Option<String> {
+    let trimmed = content.trim();
+
+    // Skip very short messages or obvious commands.
+    if trimmed.len() < 8 || trimmed.starts_with('/') {
+        return None;
+    }
+
+    tracing::info!(query = %trimmed, "auto-searching for channel message");
+
+    let url = format!(
+        "https://html.duckduckgo.com/html/?q={}",
+        simple_url_encode(trimmed)
+    );
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "auto-search request failed");
+            return None;
+        }
+    };
+
+    let body = match resp.text().await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "auto-search body read failed");
+            return None;
+        }
+    };
+
+    // Parse DuckDuckGo HTML results.
+    let mut results = Vec::new();
+    for (i, chunk) in body.split("class=\"result__a\"").skip(1).enumerate() {
+        if i >= 5 {
+            break;
+        }
+        let title = extract_between_simple(chunk, ">", "</a>").unwrap_or_default();
+        let snippet = if let Some(snip) = chunk.split("class=\"result__snippet\"").nth(1) {
+            extract_between_simple(snip, ">", "</")
+                .unwrap_or_default()
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+        } else {
+            String::new()
+        };
+        if !title.is_empty() {
+            results.push(format!("{}. {} — {}", i + 1, title.trim(), snippet.trim()));
+        }
+    }
+
+    if results.is_empty() {
+        tracing::info!("auto-search returned no results");
+        return None;
+    }
+
+    tracing::info!(count = results.len(), "auto-search found results");
+    Some(results.join("\n"))
+}
+
+/// Percent-encode a string for use in a URL query parameter.
+fn simple_url_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 2);
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => out.push('+'),
+            _ => {
+                out.push('%');
+                out.push(char::from(b"0123456789ABCDEF"[(b >> 4) as usize]));
+                out.push(char::from(b"0123456789ABCDEF"[(b & 0x0F) as usize]));
+            }
+        }
+    }
+    out
+}
+
+/// Simple helper to extract text between two delimiters.
+fn extract_between_simple(text: &str, start: &str, end: &str) -> Option<String> {
+    let start_idx = text.find(start)? + start.len();
+    let remaining = &text[start_idx..];
+    let end_idx = remaining.find(end)?;
+    Some(remaining[..end_idx].to_string())
+}
+
+/// Pick a random acknowledgment message for channel replies.
+fn pick_ack_message() -> &'static str {
+    const ACKS: &[&str] = &[
+        "Received! Working on it...",
+        "Got it! One moment...",
+        "On it!",
+        "At your command! Thinking...",
+        "Copy that! Let me work on this...",
+        "Roger! Processing...",
+        "Understood! Give me a sec...",
+    ];
+    let idx = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as usize
+        % ACKS.len();
+    ACKS[idx]
 }
 
 // ─── Pipeline Executor ──────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ AgentZero uses a single `agentzero.toml` file located in the data directory (def
 ```toml
 # ─── Provider ────────────────────────────────────────────
 [provider]
-kind = "openrouter"                              # openai, openrouter, anthropic, ollama, builtin, custom
+kind = "openrouter"                              # openai, openrouter, anthropic, ollama, candle, builtin, custom
 base_url = "https://openrouter.ai/api/v1"        # provider API endpoint (not needed for builtin)
 model = "anthropic/claude-sonnet-4-6"         # model identifier
 default_temperature = 0.7                        # 0.0 – 2.0
@@ -22,9 +22,22 @@ default_temperature = 0.7                        # 0.0 – 2.0
 # base_url = "https://api.openai.com/v1"
 # model = "gpt-4o"
 # api_key_env = "OPENAI_API_KEY"                 # env var holding the API key
-# For local inference with no external server (requires --features local-model):
-# kind = "builtin"
+# For local inference with no external server (requires --features candle):
+# kind = "candle"
 # model = "qwen2.5-coder-3b"
+
+# Credential pooling — distribute across multiple API keys
+# [provider.credential_pool]
+# strategy = "round-robin"                        # fill-first, round-robin, random
+# keys = ["OPENAI_KEY_1", "OPENAI_KEY_2"]        # env var names
+
+# Local model tuning (shared by candle and builtin providers)
+# [local]
+# n_ctx = 8192                                   # context window (tokens)
+# temperature = 0.7                              # sampling temperature
+# top_p = 0.9                                    # nucleus sampling
+# max_output_tokens = 2048                       # max tokens per response
+# device = "auto"                                # "auto" | "cpu" | "metal" | "cuda"
 
 # ─── Memory ──────────────────────────────────────────────
 [memory]
@@ -54,6 +67,16 @@ enable_agent_manage = false
 # When enabled, agents can create new tools mid-session that persist across restarts.
 # Created tools are stored encrypted in .agentzero/dynamic-tools.json.
 enable_dynamic_tools = false
+
+[agent.summarization]
+enabled = false                                  # enable context summarization
+keep_recent = 10                                 # messages to keep verbatim
+min_entries_for_summarization = 20               # minimum entries before triggering
+max_summary_chars = 2000                         # max summary length
+compression_enabled = false                      # enable 4-phase context compression
+max_tool_result_chars = 4000                     # truncate tool results beyond this
+protect_head = 3                                 # messages to protect at start
+protect_tail = 10                                # messages to protect at end
 
 [agent.hooks]
 enabled = false
@@ -184,7 +207,8 @@ format = "markdown"                              # markdown or aieos
 # ─── Runtime ─────────────────────────────────────────────
 [runtime]
 kind = "native"                                  # native or docker
-# reasoning_enabled = true
+# reasoning_enabled = true                       # enable extended thinking
+# adaptive_reasoning = true                      # auto-adjust effort by query complexity
 
 [runtime.wasm]
 tools_dir = "tools/wasm"
@@ -194,6 +218,11 @@ max_module_size_mb = 50
 allow_workspace_read = false
 allow_workspace_write = false
 allowed_hosts = []
+
+# Host tools exposed to WASM plugins via CLI shim bridge (HTTP+shell shims)
+# allowed_host_tools = ["read_file", "shell"]   # empty = none exposed
+# Filesystem overlay mode for sandboxed writes
+# overlay_mode = "disabled"                      # disabled, auto_commit, explicit_commit, dry_run
 
 [runtime.wasm.security]
 require_workspace_relative_tools_dir = true
@@ -291,6 +320,14 @@ max_iterations = 5
 # privacy_boundary = "encrypted_only"            # inherit, local_only, encrypted_only, any
 # allowed_providers = ["anthropic"]               # restrict to specific provider kinds
 # blocked_providers = []                          # block specific provider kinds
+# [agents.researcher.instruction_method]
+# type = "system_prompt"                          # system_prompt (default), tool_definition, custom
+# # For tool_definition: instructions injected as a tool description
+# # type = "tool_definition"
+# # tool_name = "instructions_reader"
+# # For custom: template with {instructions} placeholder
+# # type = "custom"
+# # template = "SYSTEM: {instructions}"
 
 # ─── Privacy ────────────────────────────────────────────
 [privacy]
@@ -326,6 +363,15 @@ key_store_path = ""                               # key persistence directory (e
 
 # [channels_config]
 # default_privacy_boundary = "encrypted_only"     # global default for all channels
+
+# [channels_config.voice_wake]
+# wake_words = ["hey agent", "ok computer"]       # wake words to listen for
+# energy_threshold = 0.05                         # RMS energy threshold for VAD
+# capture_timeout_secs = 10                       # max capture duration
+# transcription_url = "https://api.groq.com/openai/v1/audio/transcriptions"
+# transcription_api_key = ""                      # or GROQ_API_KEY env var
+# sample_rate = 16000                             # audio sample rate (Hz)
+# auto_tts_response = false                       # auto-speak agent responses
 ```
 
 ## [audio]

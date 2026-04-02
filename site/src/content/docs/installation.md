@@ -195,13 +195,22 @@ Some functionality requires compile-time feature flags (only applies to source b
 
 | Feature | Description |
 |---|---|
-| `local-model` | Built-in local LLM via llama.cpp (no external server needed) |
+| `candle` | Local LLM inference via Candle — pure Rust, CPU only |
+| `candle-metal` | Local LLM inference with Apple Silicon GPU acceleration (Metal) |
+| `candle-cuda` | Local LLM inference with NVIDIA GPU acceleration (CUDA) |
+| `local-model` | Legacy local LLM via llama.cpp (requires C++ compiler) |
 | `hardware` | Hardware discovery and peripheral commands |
 | `whatsapp-web` | WhatsApp Web channel support |
 
 ```bash
-# Build with built-in local model support
-cargo build -p agentzero --release --features local-model
+# Build with local model support — Metal GPU on Mac (recommended)
+cargo build -p agentzero --release --features candle-metal
+
+# CPU only (works everywhere)
+cargo build -p agentzero --release --features candle
+
+# NVIDIA GPU
+cargo build -p agentzero --release --features candle-cuda
 
 # Build with hardware discovery
 cargo build -p agentzero --release --features hardware
