@@ -378,6 +378,7 @@ fn expand_inner(args: ToolFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
 
         #constructor
 
+        #[allow(unused_variables)]
         #asyncness fn #inner_fn(#(#inner_fn_params),*) #ret_ty
             #body
 
