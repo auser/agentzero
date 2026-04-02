@@ -2536,6 +2536,53 @@ Support Llama 3, Mistral, Gemma, and other chat formats beyond hardcoded ChatML.
 
 ---
 
+## Sprint 80: `#[tool_fn]` Macro + WASM Codegen Strategy
+
+**Goal:** Two-phase enhancement to tool authoring and self-improvement. Phase 1 adds a `#[tool_fn]` function-level proc macro that collapses tool boilerplate from ~60-80 lines to ~10 lines. Phase 2 adds a `Codegen` strategy to `DynamicToolStrategy` enabling the agent to write Rust tools, compile them to WASM, and hot-load them via the existing plugin system — no restart required.
+
+**Baseline:** Sprint 79 complete. 843 tests, 0 clippy warnings. Existing macros: `#[tool(name, description)]` attribute + `#[derive(ToolSchema)]`. Dynamic tools: Shell/HTTP/LLM/Composite strategies. WASM plugin system: ABI v2, wasmi/wasmtime, `declare_tool!` SDK macro, plugin discovery, hot-reload watcher.
+
+**Plan:** `specs/plans/38-tool-fn-macro-codegen.md`
+
+---
+
+### Phase A: `#[tool_fn]` Function-Level Proc Macro (HIGH)
+
+Transform a plain async function into a full `Tool` trait implementation. Generates input struct, tool struct, JSON schema, and trait impl from function signature + doc comments.
+
+**Tasks:**
+
+- [ ] **Macro entry point** — Add `#[proc_macro_attribute] pub fn tool_fn(...)` to `crates/agentzero-macros/src/lib.rs`
+- [ ] **Macro implementation** — New `crates/agentzero-macros/src/tool_fn.rs`: parse `ItemFn`, separate `#[ctx]`/`#[state]` params, extract doc comments, generate input struct + tool struct + `Tool` impl
+- [ ] **Shared schema helpers** — Extract `rust_type_to_json_type()`, `is_option()`, `inner_type()` from `tool_schema.rs` for reuse by both `#[derive(ToolSchema)]` and `#[tool_fn]`
+- [ ] **Tests** — New `crates/agentzero-macros/tests/tool_fn_tests.rs`: basic function, optional params, `#[state]`, no input, doc comments, serde passthrough, error cases
+- [ ] **Proof-of-concept** — Convert `PdfReadTool` + one more stateless tool to `#[tool_fn]`
+
+### Phase B: WASM Codegen Strategy (HIGH)
+
+Add a 5th `Codegen` variant to `DynamicToolStrategy` that compiles LLM-generated Rust source to WASM and loads it via the plugin runtime. Hot-loaded without restart via `ToolSource` trait.
+
+**Tasks:**
+
+- [ ] **`Codegen` variant** — Add to `DynamicToolStrategy` in `dynamic_tool.rs` with `source`, `wasm_path`, `wasm_sha256`, `compile_error` fields
+- [ ] **Compilation pipeline** — New `crates/agentzero-infra/src/tools/codegen.rs`: `CodegenCompiler` with `check_toolchain()`, `scaffold_project()`, `compile()`, `compute_hash()`, `load_module()`. Shared `CARGO_TARGET_DIR` for fast incremental builds
+- [ ] **LLM source generation** — Add `"codegen"` strategy to `tool_create.rs` with system prompt targeting `declare_tool!` macro. Compile-error feedback loop (max 3 retries)
+- [ ] **Codegen execution** — `DynamicTool::execute()` `Codegen` arm: lazy-load pre-compiled WASM module, execute via `WasmPluginRuntime`, cache in `Arc<RwLock<HashMap<String, WasmModule>>>`
+- [ ] **Dependency allowlist** — Curated crate allowlist (`serde_json`, `regex`, `chrono`, `url`, `base64`, `sha2`, `hex`, `rand`, `csv`, `serde`) with pinned versions
+- [ ] **Garbage collection** — `codegen_gc()` removes `.agentzero/codegen/` directories not referenced by registered tools
+- [ ] **Tests** — Compile minimal `declare_tool!` plugin from source, verify execution through `Codegen` strategy, test compile-error retry, test quality tracking
+
+### Acceptance Criteria
+
+- [ ] `cargo clippy --all-targets` — 0 warnings
+- [ ] All workspace tests pass
+- [ ] `#[tool_fn]`-converted tools produce identical JSON schemas to hand-written originals
+- [ ] `tool_create(strategy_hint: "codegen", description: "reverse a string")` compiles, loads, and executes correctly
+- [ ] New codegen tools available mid-session without daemon restart
+- [ ] Compile errors fed back to LLM for retry (verified in tests)
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)
