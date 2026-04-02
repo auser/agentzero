@@ -5,7 +5,7 @@
 //! acknowledgement, and leak-guard middleware for sensitive data filtering.
 
 pub mod ack_reactions;
-mod channels;
+pub mod channels;
 pub mod commands;
 pub mod drafts;
 pub mod group_reply;
@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// Re-export channel implementations that need public access
-pub use channels::{CliChannel, WebhookChannel};
+// Re-export all channel struct types for external use (testing, integration).
+pub use channels::*;
 
 // ---------------------------------------------------------------------------
 // Message types

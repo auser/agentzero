@@ -11,12 +11,15 @@ mod impl_ {
     const MAX_MESSAGE_LENGTH: usize = 20000;
     const POLL_INTERVAL_SECS: u64 = 5;
 
+    const DEFAULT_API_BASE: &str = "https://oapi.dingtalk.com";
+
     /// DingTalk Robot channel via outgoing webhook.
     pub struct DingtalkChannel {
         access_token: String,
         secret: Option<String>,
         allowed_users: Vec<String>,
         client: reqwest::Client,
+        api_base: String,
     }
 
     impl DingtalkChannel {
@@ -34,6 +37,7 @@ mod impl_ {
                 secret,
                 allowed_users,
                 client,
+                api_base: DEFAULT_API_BASE.to_string(),
             }
         }
 
@@ -42,10 +46,16 @@ mod impl_ {
             self
         }
 
+        /// Override the API base URL (for testing with mock servers).
+        pub fn with_base_url(mut self, base_url: String) -> Self {
+            self.api_base = base_url;
+            self
+        }
+
         fn webhook_url(&self) -> String {
             format!(
-                "https://oapi.dingtalk.com/robot/send?access_token={}",
-                self.access_token
+                "{}/robot/send?access_token={}",
+                self.api_base, self.access_token
             )
         }
     }
@@ -115,6 +125,13 @@ mod impl_ {
             assert_eq!(
                 ch.webhook_url(),
                 "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+            );
+
+            let ch_custom = DingtalkChannel::new("abc123".into(), None, vec![])
+                .with_base_url("http://localhost:9999".into());
+            assert_eq!(
+                ch_custom.webhook_url(),
+                "http://localhost:9999/robot/send?access_token=abc123"
             );
         }
     }

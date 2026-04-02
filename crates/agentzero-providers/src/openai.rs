@@ -1432,6 +1432,7 @@ mod tests {
         let reasoning = ReasoningConfig {
             enabled: Some(true),
             level: Some("high".to_string()),
+            ..Default::default()
         };
         let result = provider
             .complete_with_reasoning("test", &reasoning)
@@ -1457,6 +1458,7 @@ mod tests {
         let reasoning = ReasoningConfig {
             enabled: Some(false),
             level: Some("high".to_string()),
+            ..Default::default()
         };
         provider
             .complete_with_reasoning("test", &reasoning)

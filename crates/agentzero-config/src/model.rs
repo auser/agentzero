@@ -1061,6 +1061,8 @@ impl Default for ResearchConfig {
 pub struct RuntimeConfig {
     pub kind: String,
     pub reasoning_enabled: Option<bool>,
+    /// Dynamically adjust reasoning effort based on query complexity.
+    pub adaptive_reasoning: Option<bool>,
     pub wasm: WasmRuntimeConfig,
 }
 
@@ -1069,6 +1071,7 @@ impl Default for RuntimeConfig {
         Self {
             kind: "native".to_string(),
             reasoning_enabled: None,
+            adaptive_reasoning: None,
             wasm: WasmRuntimeConfig::default(),
         }
     }
@@ -1536,6 +1539,42 @@ pub struct ChannelsGlobalConfig {
     /// Default privacy boundary applied to all channels unless overridden.
     /// Empty string means inherit the global `privacy.mode`.
     pub default_privacy_boundary: String,
+    /// Voice wake word detection configuration.
+    pub voice_wake: VoiceWakeConfig,
+}
+
+/// Configuration for the voice wake word detection channel.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct VoiceWakeConfig {
+    /// Wake words to listen for (case-insensitive substring match).
+    pub wake_words: Vec<String>,
+    /// RMS energy threshold for voice activity detection (0.0-1.0).
+    pub energy_threshold: f32,
+    /// Maximum capture duration in seconds.
+    pub capture_timeout_secs: u64,
+    /// Whisper-compatible transcription endpoint URL.
+    pub transcription_url: String,
+    /// API key for the transcription service.
+    pub transcription_api_key: Option<String>,
+    /// Audio sample rate in Hz.
+    pub sample_rate: u32,
+    /// Automatically respond with TTS when source channel is voice.
+    pub auto_tts_response: bool,
+}
+
+impl Default for VoiceWakeConfig {
+    fn default() -> Self {
+        Self {
+            wake_words: vec![],
+            energy_threshold: 0.05,
+            capture_timeout_secs: 10,
+            transcription_url: "https://api.groq.com/openai/v1/audio/transcriptions".to_string(),
+            transcription_api_key: None,
+            sample_rate: 16000,
+            auto_tts_response: false,
+        }
+    }
 }
 
 impl Default for ChannelsGlobalConfig {
@@ -1548,6 +1587,7 @@ impl Default for ChannelsGlobalConfig {
             draft_update_interval_ms: 500,
             interrupt_on_new_message: false,
             default_privacy_boundary: String::new(),
+            voice_wake: VoiceWakeConfig::default(),
         }
     }
 }
@@ -2429,6 +2469,14 @@ pub struct SummarizationSettings {
     pub keep_recent: usize,
     pub min_entries_for_summarization: usize,
     pub max_summary_chars: usize,
+    /// Enable 4-phase context compression (tool pruning + boundary protection + summarization).
+    pub compression_enabled: bool,
+    /// Maximum characters for a single tool result before truncation.
+    pub max_tool_result_chars: usize,
+    /// Number of messages to protect at the start of conversation.
+    pub protect_head: usize,
+    /// Number of messages to protect at the tail of conversation.
+    pub protect_tail: usize,
 }
 
 impl Default for SummarizationSettings {
@@ -2438,6 +2486,10 @@ impl Default for SummarizationSettings {
             keep_recent: 10,
             min_entries_for_summarization: 20,
             max_summary_chars: 2000,
+            compression_enabled: false,
+            max_tool_result_chars: 4000,
+            protect_head: 3,
+            protect_tail: 10,
         }
     }
 }

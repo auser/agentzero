@@ -641,10 +641,11 @@ impl Coordinator {
         shutdown: &mut tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
         let mut sub = self.bus.subscribe();
+        let channel_filter = agentzero_core::event_bus::EventFilter::topic("channel.");
 
         loop {
             let event = tokio::select! {
-                e = sub.recv_filtered("channel.") => match e {
+                e = sub.recv_with_filter(&channel_filter) => match e {
                     Ok(event) => event,
                     Err(e) => {
                         tracing::error!(error = %e, "router bus subscription failed");
@@ -927,7 +928,7 @@ impl Coordinator {
                             let _ = ch
                                 .send(&SendMessage {
                                     recipient: reply_target,
-                                    content: event.payload.clone(),
+                                    content: event.payload.to_string(),
                                     subject: None,
                                     thread_ts: None,
                                 })

@@ -8,7 +8,7 @@ mod impl_ {
 
     super::super::channel_meta!(TELEGRAM_DESCRIPTOR, "telegram", "Telegram");
 
-    const API_BASE: &str = "https://api.telegram.org/bot";
+    const DEFAULT_API_BASE: &str = "https://api.telegram.org/bot";
     const POLL_TIMEOUT_SECS: u64 = 30;
     const MAX_MESSAGE_LENGTH: usize = 4096;
 
@@ -16,6 +16,7 @@ mod impl_ {
         bot_token: String,
         allowed_users: Vec<String>,
         client: reqwest::Client,
+        api_base: String,
     }
 
     impl TelegramChannel {
@@ -28,6 +29,7 @@ mod impl_ {
                 bot_token,
                 allowed_users,
                 client,
+                api_base: DEFAULT_API_BASE.to_string(),
             }
         }
 
@@ -36,8 +38,14 @@ mod impl_ {
             self
         }
 
+        /// Override the API base URL (for testing with mock servers).
+        pub fn with_base_url(mut self, base_url: String) -> Self {
+            self.api_base = base_url;
+            self
+        }
+
         fn api_url(&self, method: &str) -> String {
-            format!("{}{}/{}", API_BASE, self.bot_token, method)
+            format!("{}{}/{}", self.api_base, self.bot_token, method)
         }
     }
 

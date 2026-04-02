@@ -17,12 +17,15 @@ mod impl_ {
     /// Sends messages via the Twilio Messaging REST API using HTTP Basic auth.
     /// Inbound messages are webhook-based: configure a Twilio webhook to `POST`
     /// to the gateway `/v1/webhook` endpoint and forward via the `sms` channel.
+    const DEFAULT_API_BASE: &str = "https://api.twilio.com/2010-04-01";
+
     pub struct SmsChannel {
         account_sid: String,
         auth_token: String,
         from_number: String,
         allowed_numbers: Vec<String>,
         client: reqwest::Client,
+        api_base: String,
     }
 
     impl SmsChannel {
@@ -42,6 +45,7 @@ mod impl_ {
                 from_number,
                 allowed_numbers,
                 client,
+                api_base: DEFAULT_API_BASE.to_string(),
             }
         }
 
@@ -50,17 +54,23 @@ mod impl_ {
             self
         }
 
+        /// Override the API base URL (for testing with mock servers).
+        pub fn with_base_url(mut self, base_url: String) -> Self {
+            self.api_base = base_url;
+            self
+        }
+
         fn messages_url(&self) -> String {
             format!(
-                "https://api.twilio.com/2010-04-01/Accounts/{}/Messages.json",
-                self.account_sid
+                "{}/Accounts/{}/Messages.json",
+                self.api_base, self.account_sid
             )
         }
 
         fn account_url(&self) -> String {
             format!(
-                "https://api.twilio.com/2010-04-01/Accounts/{}.json",
-                self.account_sid
+                "{}/Accounts/{}.json",
+                self.api_base, self.account_sid
             )
         }
     }

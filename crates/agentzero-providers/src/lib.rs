@@ -14,6 +14,7 @@ pub mod candle_provider;
 mod catalog;
 #[cfg(feature = "candle")]
 pub mod constrained;
+pub mod credential_pool;
 pub mod embedding;
 mod fallback;
 pub mod guardrails;
@@ -42,7 +43,9 @@ pub use models::{
     provider_supports_model, ModelCapabilities, ModelDescriptor,
 };
 pub use openai::OpenAiCompatibleProvider;
-pub use pipeline::{CostCapLayer, LlmLayer, MetricsLayer, PipelineBuilder};
+pub use pipeline::{
+    CostCapLayer, CostEstimateLayer, LlmLayer, MetricsLayer, PipelineBuilder, PromptCacheLayer,
+};
 pub use pricing::{compute_cost_microdollars, model_pricing, ModelPricing};
 pub use transport::{
     health_probe, CircuitBreaker, CircuitBreakerStatus, CooldownState, HealthProbeResult,

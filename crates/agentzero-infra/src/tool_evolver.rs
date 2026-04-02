@@ -67,8 +67,8 @@ impl ToolEvolver {
         evolved.insert(tool_name.to_string());
         drop(evolved);
 
-        let errors = def.last_error.as_deref().unwrap_or("(no error details)");
-        match self.fix(&def, errors).await {
+        let error_context = self.build_error_context(&def).await;
+        match self.fix(&def, &error_context).await {
             Ok(new_def) => {
                 self.registry.register(new_def).await?;
                 Ok(true)
@@ -125,6 +125,51 @@ impl ToolEvolver {
         }
 
         Ok(improved)
+    }
+
+    /// Build enriched error context from the tool's history for better LLM repair.
+    async fn build_error_context(&self, def: &DynamicToolDef) -> String {
+        let mut ctx = String::new();
+
+        // Last error (always available).
+        ctx.push_str(&format!(
+            "Last error: {}\n",
+            def.last_error.as_deref().unwrap_or("(no error details)")
+        ));
+
+        // Quality summary.
+        ctx.push_str(&format!(
+            "Quality: {}/{} invocations succeeded ({:.0}% failure rate)\n",
+            def.total_successes,
+            def.total_invocations,
+            (1.0 - def.success_rate()) * 100.0
+        ));
+
+        // Generation history.
+        if def.generation > 0 {
+            ctx.push_str(&format!(
+                "This tool has already been repaired {} time(s) — previous fixes did not resolve the issue.\n",
+                def.generation
+            ));
+        }
+
+        // Strategy type hint for multi-strategy pivoting.
+        let strategy_type = match &def.strategy {
+            DynamicToolStrategy::Shell { .. } => "shell",
+            DynamicToolStrategy::Http { .. } => "http",
+            DynamicToolStrategy::Llm { .. } => "llm",
+            DynamicToolStrategy::Composite { .. } => "composite",
+            DynamicToolStrategy::Codegen { .. } => "codegen",
+        };
+        if def.generation >= 2 {
+            ctx.push_str(&format!(
+                "IMPORTANT: The current strategy type is '{strategy_type}' and has failed {0} times across {1} generations. \
+                 Consider switching to a different strategy type entirely (e.g. shell→http, http→composite).\n",
+                def.total_failures, def.generation + 1
+            ));
+        }
+
+        ctx
     }
 
     async fn fix(&self, def: &DynamicToolDef, errors: &str) -> anyhow::Result<DynamicToolDef> {
@@ -195,19 +240,20 @@ impl ToolEvolver {
     }
 }
 
-const TOOL_FIX_PROMPT: &str = r#"You are a tool repair assistant. A dynamic tool has been failing repeatedly. Given the tool definition and recent error messages, produce a corrected strategy JSON.
+const TOOL_FIX_PROMPT: &str = r#"You are a tool repair assistant. A dynamic tool has been failing repeatedly. Given the tool definition, error context, and strategy, produce a corrected strategy JSON.
 
 Current tool:
 - Name: {{name}}
 - Description: {{description}}
 - Strategy: {{strategy_json}}
 
-Recent errors:
+Error context:
 {{errors}}
 
-Output a corrected strategy JSON object (same format as above). Fix the issue based on the errors.
+Output a corrected strategy JSON object. Fix the issue based on the errors.
 Rules:
-- Keep the same strategy type unless errors clearly indicate a different type
+- If the error context suggests switching strategy types, you MAY change the type (e.g. from "shell" to "http" or "composite")
+- Available strategy types: shell (command_template), http (url, method, headers), llm (system_prompt), composite (steps)
 - Output ONLY the JSON strategy object, no markdown fences or explanation"#;
 
 const TOOL_IMPROVE_PROMPT: &str = r#"You are a tool optimization assistant. A dynamic tool has been performing well. Analyze it and produce an improved strategy.

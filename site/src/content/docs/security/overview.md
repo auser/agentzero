@@ -214,6 +214,26 @@ Detects 9+ common injection patterns:
 - "forget all rules/instructions"
 - "pretend you have no restrictions"
 
+### Unicode Injection Guard
+
+Detects invisible Unicode characters commonly used for steganographic prompt injection:
+- **Zero-width characters**: ZWSP, ZWNJ, ZWJ, BOM, word joiner
+- **Bidirectional overrides**: LTR/RTL marks, embedding, isolation (can reorder visible text)
+- **Tag characters**: U+E0001..U+E007F (Unicode steganography)
+- **Invisible separators**: soft hyphen, combining grapheme joiner, Mongolian vowel separator, function application, invisible times/separator/plus
+- **Annotation anchors**: interlinear annotation markers
+
+In sanitize mode, all suspicious characters are stripped. This guard is applied to both user input and context file content before inclusion in system prompts.
+
+### Context File Scanning
+
+Before any file is included in the system prompt (`.agentzero.md`, project context files, loaded references), its content is scanned through both the prompt injection guard and the Unicode injection guard. This catches:
+- Prompt injection hidden inside project documentation
+- Invisible Unicode steganography in source files
+- Bidirectional text overrides that reorder visible content
+
+Use `scan_for_injection(content)` programmatically, or rely on the automatic scanning in the guardrails pipeline.
+
 ### Enforcement Modes
 
 Configure via `[guardrails]` in `agentzero.toml`:
@@ -222,6 +242,7 @@ Configure via `[guardrails]` in `agentzero.toml`:
 [guardrails]
 pii_mode = "audit"       # "off", "audit", "sanitize", "block"
 injection_mode = "audit"  # "off", "audit", "sanitize", "block"
+unicode_mode = "sanitize" # "off", "audit", "sanitize", "block"
 ```
 
 | Mode | Behavior |

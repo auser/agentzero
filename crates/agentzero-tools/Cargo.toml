@@ -38,3 +38,4 @@ zip = { workspace = true, optional = true }
 
 [dev-dependencies]
 temp-env = "0.3"
+tempfile = "3"

@@ -19,6 +19,8 @@ mod impl_ {
     ///
     /// Subscription renewal: Google Pub/Sub subscriptions expire after 7 days.
     /// The channel re-calls `users.watch()` every 6 days to maintain delivery.
+    const DEFAULT_GMAIL_API_BASE: &str = "https://gmail.googleapis.com";
+
     pub struct GmailPushChannel {
         /// OAuth access token for Gmail API calls.
         access_token: std::sync::Mutex<String>,
@@ -38,6 +40,8 @@ mod impl_ {
         client: reqwest::Client,
         /// Last processed historyId for incremental fetch.
         last_history_id: std::sync::Mutex<Option<String>>,
+        /// Gmail API base URL (overridable for testing).
+        api_base: String,
     }
 
     impl GmailPushChannel {
@@ -52,7 +56,14 @@ mod impl_ {
                 allowed_senders: Vec::new(),
                 client: reqwest::Client::new(),
                 last_history_id: std::sync::Mutex::new(None),
+                api_base: DEFAULT_GMAIL_API_BASE.to_string(),
             }
+        }
+
+        /// Override the API base URL (for testing with mock servers).
+        pub fn with_base_url(mut self, base_url: String) -> Self {
+            self.api_base = base_url;
+            self
         }
 
         /// Configure OAuth refresh credentials for automatic token renewal.
@@ -127,7 +138,7 @@ mod impl_ {
         /// Register a Gmail push subscription via users.watch().
         /// Must be called on startup and re-called every 6 days.
         async fn register_watch(&self) -> anyhow::Result<String> {
-            let url = "https://gmail.googleapis.com/gmail/v1/users/me/watch";
+            let url = format!("{}/gmail/v1/users/me/watch", self.api_base);
             let body = serde_json::json!({
                 "topicName": self.topic_name,
                 "labelIds": ["INBOX"],
@@ -197,7 +208,7 @@ mod impl_ {
             let raw = format!("To: {to}\r\nSubject: Re: AgentZero\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}");
             let encoded = base64_encode(&raw);
 
-            let url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+            let url = format!("{}/gmail/v1/users/me/messages/send", self.api_base);
             let resp = self
                 .client
                 .post(url)
@@ -269,7 +280,7 @@ mod impl_ {
             // Verify we have a valid access token by calling the Gmail profile endpoint
             let resp = self
                 .client
-                .get("https://gmail.googleapis.com/gmail/v1/users/me/profile")
+                .get(format!("{}/gmail/v1/users/me/profile", self.api_base))
                 .header("Authorization", format!("Bearer {}", self.access_token()))
                 .timeout(Duration::from_secs(10))
                 .send()

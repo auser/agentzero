@@ -95,6 +95,10 @@ pub struct RuntimeExecution {
     pub recipe_store: Option<std::sync::Arc<std::sync::Mutex<crate::tool_recipes::RecipeStore>>>,
     /// Optional pattern capture for AUTO-LEARN (novel tool combo detection).
     pub pattern_capture: Option<std::sync::Arc<crate::pattern_capture::PatternCapture>>,
+    /// Optional trajectory recorder for session-level learning.
+    pub trajectory_recorder: Option<std::sync::Arc<crate::trajectory::TrajectoryRecorder>>,
+    /// Model name used for this run (for trajectory tagging).
+    pub model_name: String,
     /// Optional local embedding provider for cosine-similarity re-ranking.
     pub embedding_provider:
         Option<std::sync::Arc<dyn agentzero_core::embedding::EmbeddingProvider>>,
@@ -447,6 +451,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             reasoning: agentzero_core::ReasoningConfig {
                 enabled: config.runtime.reasoning_enabled,
                 level: config.provider_options.reasoning_level.clone(),
+                adaptive: config.runtime.adaptive_reasoning.unwrap_or(false),
             },
             hooks: agentzero_core::HookPolicy {
                 enabled: config.agent.hooks.enabled,
@@ -521,6 +526,10 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
                     .summarization
                     .min_entries_for_summarization,
                 max_summary_chars: config.agent.summarization.max_summary_chars,
+                compression_enabled: config.agent.summarization.compression_enabled,
+                max_tool_result_chars: config.agent.summarization.max_tool_result_chars,
+                protect_head: config.agent.summarization.protect_head,
+                protect_tail: config.agent.summarization.protect_tail,
             },
         },
         provider,
@@ -595,6 +604,17 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             _ => None,
         },
         embedding_provider: build_embedding_provider(),
+        trajectory_recorder: {
+            let data_dir = req.config_path.parent().unwrap_or_else(|| Path::new("."));
+            match crate::trajectory::TrajectoryRecorder::new(data_dir) {
+                Ok(rec) => Some(std::sync::Arc::new(rec)),
+                Err(e) => {
+                    warn!(error = %e, "failed to create trajectory recorder");
+                    None
+                }
+            }
+        },
+        model_name: config.provider.model.clone(),
     })
 }
 
@@ -839,6 +859,9 @@ pub async fn run_agent_with_runtime(
     let tool_evolver = execution.tool_evolver.clone();
     let recipe_store = execution.recipe_store.clone();
     let pattern_capture = execution.pattern_capture.clone();
+    let trajectory_recorder = execution.trajectory_recorder.clone();
+    let model_name = execution.model_name.clone();
+    let run_started = std::time::Instant::now();
     let mut agent = Agent::new(
         execution.config,
         execution.provider,
@@ -959,6 +982,47 @@ pub async fn run_agent_with_runtime(
             .await
         {
             warn!(error = %e, "pattern capture failed");
+        }
+    }
+
+    // Record session trajectory for self-improving learning.
+    if let Some(ref recorder) = trajectory_recorder {
+        let any_failures = tool_executions.iter().any(|r| !r.success);
+        let has_output = !response.text.is_empty();
+        let outcome = if !any_failures && has_output {
+            crate::trajectory::Outcome::Success
+        } else if has_output {
+            crate::trajectory::Outcome::Partial {
+                reason: "some tool executions failed".to_string(),
+            }
+        } else {
+            crate::trajectory::Outcome::Failure {
+                reason: "empty response".to_string(),
+            }
+        };
+        let session_id = format!("ses-{}", std::process::id());
+        let run_id = format!(
+            "run-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        );
+        let record = crate::trajectory::build_record(crate::trajectory::TrajectoryInput {
+            session_id: &session_id,
+            run_id: &run_id,
+            outcome,
+            goal_summary: &goal_summary,
+            response_text: &response.text,
+            tool_executions: &tool_executions,
+            input_tokens: ctx.current_tokens(),
+            output_tokens: 0, // output tokens tracked at provider level, not separately in ctx
+            cost_microdollars: ctx.current_cost(),
+            model: &model_name,
+            latency_ms: run_started.elapsed().as_millis() as u64,
+        });
+        if let Err(e) = recorder.record(record).await {
+            warn!(error = %e, "failed to record trajectory");
         }
     }
 
@@ -1744,6 +1808,8 @@ mod tests {
             recipe_store: None,
             pattern_capture: None,
             embedding_provider: None,
+            trajectory_recorder: None,
+            model_name: String::new(),
         }
     }
 

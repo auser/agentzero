@@ -408,6 +408,29 @@ pub enum ResearchTrigger {
 pub struct ReasoningConfig {
     pub enabled: Option<bool>,
     pub level: Option<String>,
+    /// When true, reasoning effort is adjusted dynamically based on query
+    /// complexity. Simple queries get low/no reasoning; complex queries get deep.
+    pub adaptive: bool,
+}
+
+impl ReasoningConfig {
+    /// Adjust reasoning level based on query complexity.
+    /// Returns a new config with the level set to match the complexity tier.
+    pub fn adapt_to_complexity(&self, tier: crate::complexity::ComplexityTier) -> ReasoningConfig {
+        if !self.adaptive {
+            return self.clone();
+        }
+        let (enabled, level) = match tier {
+            crate::complexity::ComplexityTier::Simple => (Some(false), None),
+            crate::complexity::ComplexityTier::Medium => (Some(true), Some("medium".to_string())),
+            crate::complexity::ComplexityTier::Complex => (Some(true), Some("high".to_string())),
+        };
+        ReasoningConfig {
+            enabled,
+            level,
+            adaptive: self.adaptive,
+        }
+    }
 }
 
 /// Configuration for intelligent context summarization.
@@ -422,6 +445,32 @@ pub struct SummarizationConfig {
     pub min_entries_for_summarization: usize,
     /// Max characters for the generated summary.
     pub max_summary_chars: usize,
+
+    // ── Advanced context compression (4-phase pipeline) ─────────────
+    /// Enable 4-phase context compression on the tool-use message list.
+    /// When enabled, tool results are pruned, boundaries are protected,
+    /// and the middle section is summarized instead of hard-truncated.
+    #[serde(default)]
+    pub compression_enabled: bool,
+    /// Maximum characters for a single tool result before truncation (Phase 1).
+    #[serde(default = "default_max_tool_result_chars")]
+    pub max_tool_result_chars: usize,
+    /// Number of messages to protect at the start of conversation (Phase 2).
+    #[serde(default = "default_protect_head")]
+    pub protect_head: usize,
+    /// Number of messages to protect at the tail of conversation (Phase 2).
+    #[serde(default = "default_protect_tail")]
+    pub protect_tail: usize,
+}
+
+fn default_max_tool_result_chars() -> usize {
+    4000
+}
+fn default_protect_head() -> usize {
+    3
+}
+fn default_protect_tail() -> usize {
+    10
 }
 
 impl Default for SummarizationConfig {
@@ -431,6 +480,10 @@ impl Default for SummarizationConfig {
             keep_recent: 10,
             min_entries_for_summarization: 20,
             max_summary_chars: 2000,
+            compression_enabled: false,
+            max_tool_result_chars: 4000,
+            protect_head: 3,
+            protect_tail: 10,
         }
     }
 }

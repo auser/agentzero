@@ -114,10 +114,10 @@ async fn execute_bus(req: IpcRequest, ctx: &ToolContext) -> anyhow::Result<ToolR
                 return Err(anyhow!("`to` must not be empty"));
             }
             let mut sub = bus.subscribe();
-            let topic_prefix = format!("ipc.message.{to}");
+            let filter = agentzero_core::event_bus::EventFilter::topic(format!("ipc.message.{to}"));
             match tokio::time::timeout(
                 Duration::from_secs(BUS_RECV_TIMEOUT_SECS),
-                sub.recv_filtered(&topic_prefix),
+                sub.recv_with_filter(&filter),
             )
             .await
             {
@@ -408,7 +408,7 @@ mod tests {
         let event = sub.recv().await.expect("should receive event");
         assert_eq!(event.topic, "ipc.message.worker");
         assert_eq!(event.source, "planner");
-        assert_eq!(event.payload, "do task");
+        assert_eq!(&*event.payload, "do task");
 
         fs::remove_dir_all(dir).ok();
     }

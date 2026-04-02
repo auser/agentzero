@@ -9,6 +9,8 @@ pub mod agent;
 pub mod agent_store;
 pub mod canvas;
 pub mod common;
+pub mod complexity;
+pub mod context_compression;
 pub mod delegation;
 pub mod embedding;
 pub mod event_bus;
@@ -20,6 +22,7 @@ pub mod regression;
 pub mod regression_bus;
 pub mod routing;
 pub mod security;
+pub mod tool_middleware;
 pub mod types;
 pub mod validation;
 
@@ -30,7 +33,8 @@ pub use tracing;
 pub use agent::{Agent, ToolSource};
 pub use canvas::{Canvas, CanvasFrame, CanvasStore, CanvasSummary};
 pub use event_bus::{
-    Event, EventBus, EventSubscriber, FileBackedBus, InMemoryBus, TypedSubscriber, TypedTopic,
+    Event, EventBus, EventFilter, EventSubscriber, FileBackedBus, InMemoryBus, PublishResult,
+    TypedSubscriber, TypedTopic,
 };
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};

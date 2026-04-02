@@ -387,6 +387,30 @@ channel_id = "YOUR_TWILIO_ACCOUNT_SID"      # Account SID
 
 Uses the Twilio REST API for SMS.
 
+### Voice Wake Word
+
+Real-time voice input using microphone audio capture, energy-based voice activity detection, and Whisper-compatible speech-to-text.
+
+```toml
+[channels_config.voice_wake]
+wake_words = ["hey agent", "ok computer"]
+energy_threshold = 0.05
+capture_timeout_secs = 10
+transcription_url = "https://api.groq.com/openai/v1/audio/transcriptions"
+# transcription_api_key = ""  # or set GROQ_API_KEY env var
+sample_rate = 16000
+auto_tts_response = false
+```
+
+**Pipeline**: microphone → energy-based VAD → capture audio buffer → encode as WAV → POST to Whisper API → check for wake word → emit message.
+
+Build with the `channel-voice-wake` feature flag:
+```bash
+cargo build --features channel-voice-wake
+```
+
+Requires a working audio input device. The channel reports unhealthy if no microphone is found.
+
 ---
 
 ## Global Channel Settings

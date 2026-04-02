@@ -161,6 +161,8 @@ async fn e2e_basic_completion() {
         recipe_store: None,
         pattern_capture: None,
         embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let output = run_agent_with_runtime(execution, workspace_root(), "Say hello.".to_string())
@@ -199,6 +201,8 @@ async fn e2e_agent_with_echo_tool() {
         recipe_store: None,
         pattern_capture: None,
         embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let output = run_agent_with_runtime(
@@ -249,6 +253,8 @@ async fn e2e_multi_turn_memory() {
         recipe_store: None,
         pattern_capture: None,
         embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let output1 = run_agent_with_runtime(
@@ -297,6 +303,8 @@ async fn e2e_multi_turn_memory() {
         recipe_store: None,
         pattern_capture: None,
         embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let output2 =

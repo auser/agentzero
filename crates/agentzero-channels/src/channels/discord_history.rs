@@ -259,10 +259,14 @@ mod impl_ {
                                             let display_name = self.resolve_name(author_id, author_name).await;
 
                                             let msg = ChannelMessage {
+                                                id: crate::channels::helpers::new_message_id(),
                                                 channel: "discord-history".to_string(),
                                                 sender: display_name,
+                                                reply_target: channel_id.to_string(),
                                                 content: content.to_string(),
-                                                conversation_id: Some(channel_id.to_string()),
+                                                timestamp: crate::channels::helpers::now_epoch_secs(),
+                                                thread_ts: None,
+                                                privacy_boundary: String::new(),
                                                 attachments: vec![],
                                             };
 

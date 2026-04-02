@@ -583,6 +583,105 @@ The `.agentzero/` directory is the system's growing brain — portable, encrypte
 
 ---
 
+## Durable Message Queue
+
+For reliable inter-agent communication, the durable message queue provides per-agent queues with delivery guarantees — complementing the broadcast event bus (which is best for audit/logging).
+
+### Key Properties
+
+| Feature | Event Bus (broadcast) | Message Queue (durable) |
+|---------|----------------------|------------------------|
+| Delivery | Fire-and-forget | At-least-once |
+| Offline subscribers | Messages lost | Messages persist until ACK'd |
+| Pattern | Pub/sub (all subscribers) | Point-to-point (per queue) |
+| Use case | Audit, metrics, live dashboards | Inter-agent messaging, task delegation |
+
+### Queue Semantics
+
+```
+Agent A sends to queue "agent-b":
+  → Message persisted in SQLite
+  → Agent B receives on next poll
+  → Agent B calls ack(message_id)
+  → Message removed from queue
+
+If Agent B crashes before ACK:
+  → Message redelivered on next receive()
+  → After max_retries exceeded: moved to dead-letter queue
+```
+
+### Request/Reply
+
+Built-in correlation for synchronous-style communication:
+
+```
+Agent A calls send_and_wait("server-queue", "client", "ping", "reply-queue", 5s)
+  → Sends "ping" with auto-generated correlation_id
+  → Polls reply-queue for matching correlation_id
+  → Agent B receives, processes, sends reply with same correlation_id
+  → Agent A receives "pong" within timeout
+```
+
+---
+
+## Session Trajectory Learning
+
+Every agent run is recorded as a **trajectory** — the full session including goal, outcome, tool executions, token usage, cost, and latency. Trajectories are stored as append-only JSONL, split by outcome:
+- `trajectories/successful.jsonl` — runs that completed normally
+- `trajectories/failed.jsonl` — runs that timed out, hit loop detection, or errored
+
+### What Gets Recorded
+
+```json
+{
+  "session_id": "ses-12345",
+  "run_id": "run-1711234567",
+  "outcome": {"type": "Success"},
+  "goal_summary": "deploy the app",
+  "tool_executions": [...],
+  "input_tokens": 4500,
+  "cost_microdollars": 42,
+  "model": "claude-sonnet-4-6",
+  "latency_ms": 3500,
+  "tags": ["shell", "write_file", "model:claude-sonnet-4-6", "outcome:success"]
+}
+```
+
+### Insights Engine
+
+The `insights_report` tool analyzes trajectory history to produce actionable statistics:
+- **Token efficiency** per goal type
+- **Tool usage heatmap** — which tools appear in successful vs. failed runs
+- **Cost trends** — rolling cost with per-model breakdown
+- **Failure clustering** — 3-tool sequences that commonly precede failures
+- **Model effectiveness** — success rate and cost per model
+
+### Session Summarization
+
+At session end, the conversation is fed to a cheap model to extract non-obvious learnings: what worked, what failed and why, user preferences, and mistakes to avoid. This is appended to persistent memory for future sessions.
+
+---
+
+## Context Compression
+
+Long conversations are automatically compressed using a 4-phase pipeline to reduce token costs:
+
+1. **Tool result pruning** — truncates long tool outputs (e.g., 50KB file reads) to a configurable limit
+2. **Boundary protection** — preserves the system prompt, first user message, and last N messages; never splits tool_use/tool_result pairs
+3. **Middle turn summarization** — LLM-summarizes expendable middle turns with Goal/Progress/Decisions/NextSteps structure
+4. **Iterative updates** — subsequent compressions merge into the existing summary instead of regenerating
+
+Enable in config:
+```toml
+[agent.summarization]
+compression_enabled = true
+max_tool_result_chars = 4000
+protect_head = 3
+protect_tail = 10
+```
+
+---
+
 ## Observability
 
 When running multiple agents, visibility into what each agent is doing becomes critical. AgentZero provides built-in observability through the web dashboard and API.

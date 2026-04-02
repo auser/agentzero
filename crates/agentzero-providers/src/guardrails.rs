@@ -232,6 +232,109 @@ impl Guard for PromptInjectionGuard {
 }
 
 // ---------------------------------------------------------------------------
+// UnicodeInjectionGuard
+// ---------------------------------------------------------------------------
+
+/// Detects invisible Unicode characters commonly used to smuggle prompt
+/// injections past text-based guards: zero-width spaces, RTL/LTR overrides,
+/// homoglyph lookalikes, tag characters, and invisible separators.
+///
+/// This guard strips the offending characters in sanitize mode.
+pub struct UnicodeInjectionGuard;
+
+impl UnicodeInjectionGuard {
+    /// Returns true if the character is a suspicious invisible or control character.
+    fn is_suspicious(c: char) -> bool {
+        matches!(c,
+            // Zero-width characters
+            '\u{200B}' // ZERO WIDTH SPACE
+            | '\u{200C}' // ZERO WIDTH NON-JOINER
+            | '\u{200D}' // ZERO WIDTH JOINER
+            | '\u{FEFF}' // ZERO WIDTH NO-BREAK SPACE (BOM)
+            | '\u{2060}' // WORD JOINER
+            // Bidirectional overrides (can reorder visible text)
+            | '\u{200E}' // LEFT-TO-RIGHT MARK
+            | '\u{200F}' // RIGHT-TO-LEFT MARK
+            | '\u{202A}' // LEFT-TO-RIGHT EMBEDDING
+            | '\u{202B}' // RIGHT-TO-LEFT EMBEDDING
+            | '\u{202C}' // POP DIRECTIONAL FORMATTING
+            | '\u{202D}' // LEFT-TO-RIGHT OVERRIDE
+            | '\u{202E}' // RIGHT-TO-LEFT OVERRIDE
+            | '\u{2066}' // LEFT-TO-RIGHT ISOLATE
+            | '\u{2067}' // RIGHT-TO-LEFT ISOLATE
+            | '\u{2068}' // FIRST STRONG ISOLATE
+            | '\u{2069}' // POP DIRECTIONAL ISOLATE
+            // Invisible separators/formatters
+            | '\u{00AD}' // SOFT HYPHEN
+            | '\u{034F}' // COMBINING GRAPHEME JOINER
+            | '\u{180E}' // MONGOLIAN VOWEL SEPARATOR
+            | '\u{2061}' // FUNCTION APPLICATION
+            | '\u{2062}' // INVISIBLE TIMES
+            | '\u{2063}' // INVISIBLE SEPARATOR
+            | '\u{2064}' // INVISIBLE PLUS
+        ) ||
+        // Tag characters (U+E0000..U+E007F) — used for invisible Unicode steganography
+        ('\u{E0001}'..='\u{E007F}').contains(&c) ||
+        // Interlinear annotation anchors
+        matches!(c, '\u{FFF9}' | '\u{FFFA}' | '\u{FFFB}')
+    }
+}
+
+impl Guard for UnicodeInjectionGuard {
+    fn name(&self) -> &str {
+        "unicode_injection"
+    }
+
+    fn check_input(&self, text: &str) -> GuardVerdict {
+        let suspicious: Vec<(usize, char)> = text
+            .char_indices()
+            .filter(|(_, c)| Self::is_suspicious(*c))
+            .collect();
+
+        if suspicious.is_empty() {
+            return GuardVerdict::Pass;
+        }
+
+        let count = suspicious.len();
+        let sanitized: String = text.chars().filter(|c| !Self::is_suspicious(*c)).collect();
+
+        GuardVerdict::Violation {
+            reason: format!(
+                "invisible/control Unicode characters detected ({count} found): possible steganographic injection"
+            ),
+            sanitized: Some(sanitized),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Context file scanning utility
+// ---------------------------------------------------------------------------
+
+/// Scan a context file's content through all input guards.
+/// Returns a list of (guard_name, reason) tuples for any violations found.
+///
+/// Use this before including `.agentzero.md`, project files, or any external
+/// content in the system prompt. Catches both text-based injection patterns
+/// and invisible Unicode steganography.
+pub fn scan_context_file(content: &str, guards: &[&dyn Guard]) -> Vec<(String, String)> {
+    let mut violations = Vec::new();
+    for guard in guards {
+        if let GuardVerdict::Violation { reason, .. } = guard.check_input(content) {
+            violations.push((guard.name().to_string(), reason));
+        }
+    }
+    violations
+}
+
+/// Convenience: scan content with default injection + unicode guards.
+pub fn scan_for_injection(content: &str) -> Vec<(String, String)> {
+    let injection = PromptInjectionGuard::default();
+    let unicode = UnicodeInjectionGuard;
+    scan_context_file(content, &[&injection, &unicode])
+}
+
+// ---------------------------------------------------------------------------
 // GuardrailsLayer — composes guards into an LlmLayer
 // ---------------------------------------------------------------------------
 
@@ -668,6 +771,69 @@ mod tests {
 
         let result = pipeline.complete("help").await.expect("should succeed");
         assert_eq!(result.output_text, "Contact support at [EMAIL_REDACTED]");
+    }
+
+    // --- Unicode Injection Guard tests ---
+
+    #[test]
+    fn unicode_guard_detects_zero_width_space() {
+        let guard = UnicodeInjectionGuard;
+        let text = "hello\u{200B}world"; // zero-width space between hello and world
+        match guard.check_input(text) {
+            GuardVerdict::Violation { reason, sanitized } => {
+                assert!(reason.contains("invisible"));
+                assert_eq!(sanitized.as_deref(), Some("helloworld"));
+            }
+            GuardVerdict::Pass => panic!("should detect zero-width space"),
+        }
+    }
+
+    #[test]
+    fn unicode_guard_detects_rtl_override() {
+        let guard = UnicodeInjectionGuard;
+        let text = "normal text\u{202E}reversed";
+        match guard.check_input(text) {
+            GuardVerdict::Violation { reason, .. } => {
+                assert!(reason.contains("invisible"));
+            }
+            GuardVerdict::Pass => panic!("should detect RTL override"),
+        }
+    }
+
+    #[test]
+    fn unicode_guard_detects_tag_characters() {
+        let guard = UnicodeInjectionGuard;
+        // Tag characters U+E0001..U+E007F (used for Unicode steganography)
+        let text = "clean text\u{E0001}\u{E0041}\u{E004E}".to_string();
+        match guard.check_input(&text) {
+            GuardVerdict::Violation { reason, sanitized } => {
+                assert!(reason.contains("steganographic"));
+                assert_eq!(sanitized.as_deref(), Some("clean text"));
+            }
+            GuardVerdict::Pass => panic!("should detect tag characters"),
+        }
+    }
+
+    #[test]
+    fn unicode_guard_passes_normal_text() {
+        let guard = UnicodeInjectionGuard;
+        assert!(matches!(
+            guard.check_input("Hello, world! This is normal text with unicode: café résumé 日本語"),
+            GuardVerdict::Pass
+        ));
+    }
+
+    #[test]
+    fn unicode_guard_detects_multiple() {
+        let guard = UnicodeInjectionGuard;
+        let text = "\u{200B}\u{200D}\u{FEFF}hidden";
+        match guard.check_input(text) {
+            GuardVerdict::Violation { reason, sanitized } => {
+                assert!(reason.contains("3 found"));
+                assert_eq!(sanitized.as_deref(), Some("hidden"));
+            }
+            GuardVerdict::Pass => panic!("should detect multiple"),
+        }
     }
 
     #[tokio::test]

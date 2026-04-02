@@ -409,6 +409,270 @@ impl Provider for CostCapProvider {
 // A FallbackLayer is not needed since FallbackProvider takes ownership of providers at construction.
 
 // ---------------------------------------------------------------------------
+// CostEstimateLayer — warns before expensive calls
+// ---------------------------------------------------------------------------
+
+/// Layer that estimates the cost of a request before execution.
+/// Logs a warning when the estimated cost exceeds the configured threshold.
+/// Does NOT block — only warns. Use `CostCapLayer` for hard limits.
+pub struct CostEstimateLayer {
+    /// Warn when estimated cost exceeds this threshold (microdollars).
+    warn_threshold_microdollars: u64,
+    provider: String,
+    model: String,
+}
+
+impl CostEstimateLayer {
+    pub fn new(
+        warn_threshold_microdollars: u64,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            warn_threshold_microdollars,
+            provider: provider.into(),
+            model: model.into(),
+        }
+    }
+}
+
+impl LlmLayer for CostEstimateLayer {
+    fn wrap(&self, inner: Arc<dyn Provider>) -> Arc<dyn Provider> {
+        Arc::new(CostEstimateProvider {
+            inner,
+            warn_threshold: self.warn_threshold_microdollars,
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+        })
+    }
+}
+
+struct CostEstimateProvider {
+    inner: Arc<dyn Provider>,
+    warn_threshold: u64,
+    provider: String,
+    model: String,
+}
+
+impl CostEstimateProvider {
+    /// Estimate cost from character count (rough: ~4 chars per token).
+    fn estimate_and_warn(&self, char_count: usize) {
+        let estimated_tokens = (char_count / 4) as u64;
+        if let Some(pricing) = crate::model_pricing(&self.provider, &self.model) {
+            let estimated_cost = crate::compute_cost_microdollars(&pricing, estimated_tokens, 0);
+            if estimated_cost > self.warn_threshold {
+                tracing::warn!(
+                    estimated_input_tokens = estimated_tokens,
+                    estimated_cost_microdollars = estimated_cost,
+                    threshold_microdollars = self.warn_threshold,
+                    "pre-execution cost estimate exceeds warning threshold (${:.4} estimated)",
+                    estimated_cost as f64 / 1_000_000.0
+                );
+            }
+        }
+    }
+
+    fn estimate_messages_and_warn(&self, messages: &[ConversationMessage]) {
+        let total_chars: usize = messages.iter().map(|m| m.char_count()).sum();
+        self.estimate_and_warn(total_chars);
+    }
+}
+
+#[async_trait]
+impl Provider for CostEstimateProvider {
+    fn supports_streaming(&self) -> bool {
+        self.inner.supports_streaming()
+    }
+
+    async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult> {
+        self.estimate_and_warn(prompt.len());
+        self.inner.complete(prompt).await
+    }
+
+    async fn complete_with_reasoning(
+        &self,
+        prompt: &str,
+        reasoning: &ReasoningConfig,
+    ) -> anyhow::Result<ChatResult> {
+        self.estimate_and_warn(prompt.len());
+        self.inner.complete_with_reasoning(prompt, reasoning).await
+    }
+
+    async fn complete_streaming(
+        &self,
+        prompt: &str,
+        sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+    ) -> anyhow::Result<ChatResult> {
+        self.estimate_and_warn(prompt.len());
+        self.inner.complete_streaming(prompt, sender).await
+    }
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolDefinition],
+        reasoning: &ReasoningConfig,
+    ) -> anyhow::Result<ChatResult> {
+        self.estimate_messages_and_warn(messages);
+        self.inner
+            .complete_with_tools(messages, tools, reasoning)
+            .await
+    }
+
+    async fn complete_streaming_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolDefinition],
+        reasoning: &ReasoningConfig,
+        sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+    ) -> anyhow::Result<ChatResult> {
+        self.estimate_messages_and_warn(messages);
+        self.inner
+            .complete_streaming_with_tools(messages, tools, reasoning, sender)
+            .await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PromptCacheLayer — Anthropic cache_control annotations
+// ---------------------------------------------------------------------------
+
+/// Layer that annotates messages with Anthropic's `cache_control` to enable
+/// prompt caching. Caches the system prompt + last N messages, reducing
+/// input token costs by up to 90% for repeated prefixes.
+///
+/// Only effective with Anthropic providers — other providers ignore the
+/// annotation and pass through unchanged.
+pub struct PromptCacheLayer {
+    /// Number of recent messages to mark for caching (in addition to system prompt).
+    cache_recent: usize,
+}
+
+impl PromptCacheLayer {
+    /// Create a prompt cache layer. `cache_recent` is the number of recent
+    /// messages to cache (default recommendation: 3).
+    pub fn new(cache_recent: usize) -> Self {
+        Self { cache_recent }
+    }
+}
+
+impl LlmLayer for PromptCacheLayer {
+    fn wrap(&self, inner: Arc<dyn Provider>) -> Arc<dyn Provider> {
+        Arc::new(PromptCacheProvider {
+            inner,
+            cache_recent: self.cache_recent,
+        })
+    }
+}
+
+struct PromptCacheProvider {
+    inner: Arc<dyn Provider>,
+    cache_recent: usize,
+}
+
+impl PromptCacheProvider {
+    /// Clone messages and add cache markers to system prompt + last N messages.
+    fn annotate_messages(&self, messages: &[ConversationMessage]) -> Vec<ConversationMessage> {
+        if messages.is_empty() {
+            return vec![];
+        }
+
+        let mut annotated = messages.to_vec();
+        let len = annotated.len();
+
+        // Mark system prompt for caching (always first if present).
+        if matches!(&annotated[0], ConversationMessage::System { .. }) {
+            // System prompts are cached by the provider automatically when
+            // cache_control is set. We mark with a sentinel in the content
+            // that the Anthropic adapter recognizes.
+            if let ConversationMessage::System { ref mut content } = annotated[0] {
+                if !content.ends_with("\n[cache:ephemeral]") {
+                    content.push_str("\n[cache:ephemeral]");
+                }
+            }
+        }
+
+        // Mark the last N messages for caching.
+        let cache_start = len.saturating_sub(self.cache_recent);
+        for msg in annotated[cache_start..].iter_mut() {
+            match msg {
+                ConversationMessage::User {
+                    ref mut content, ..
+                } => {
+                    if !content.ends_with("\n[cache:ephemeral]") {
+                        content.push_str("\n[cache:ephemeral]");
+                    }
+                }
+                ConversationMessage::Assistant {
+                    content: Some(ref mut c),
+                    ..
+                } => {
+                    if !c.ends_with("\n[cache:ephemeral]") {
+                        c.push_str("\n[cache:ephemeral]");
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        annotated
+    }
+}
+
+#[async_trait]
+impl Provider for PromptCacheProvider {
+    fn supports_streaming(&self) -> bool {
+        self.inner.supports_streaming()
+    }
+
+    async fn complete(&self, prompt: &str) -> anyhow::Result<ChatResult> {
+        // Simple complete doesn't use messages, pass through.
+        self.inner.complete(prompt).await
+    }
+
+    async fn complete_with_reasoning(
+        &self,
+        prompt: &str,
+        reasoning: &ReasoningConfig,
+    ) -> anyhow::Result<ChatResult> {
+        self.inner.complete_with_reasoning(prompt, reasoning).await
+    }
+
+    async fn complete_streaming(
+        &self,
+        prompt: &str,
+        sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+    ) -> anyhow::Result<ChatResult> {
+        self.inner.complete_streaming(prompt, sender).await
+    }
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolDefinition],
+        reasoning: &ReasoningConfig,
+    ) -> anyhow::Result<ChatResult> {
+        let annotated = self.annotate_messages(messages);
+        self.inner
+            .complete_with_tools(&annotated, tools, reasoning)
+            .await
+    }
+
+    async fn complete_streaming_with_tools(
+        &self,
+        messages: &[ConversationMessage],
+        tools: &[ToolDefinition],
+        reasoning: &ReasoningConfig,
+        sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+    ) -> anyhow::Result<ChatResult> {
+        let annotated = self.annotate_messages(messages);
+        self.inner
+            .complete_streaming_with_tools(&annotated, tools, reasoning, sender)
+            .await
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -531,5 +795,76 @@ mod tests {
         let result = pipeline.complete("test").await;
         assert!(result.is_err());
         // Metrics recorded (no-op without recorder, but no panic)
+    }
+
+    #[tokio::test]
+    async fn cost_estimate_layer_passes_through() {
+        let (provider, count) = MockProvider::new("hello");
+        let pipeline = PipelineBuilder::new()
+            .layer(CostEstimateLayer::new(1, "anthropic", "claude-sonnet-4-6"))
+            .build(provider);
+        // CostEstimateLayer only warns, never blocks.
+        let result = pipeline.complete("test").await.expect("should succeed");
+        assert_eq!(result.output_text, "hello");
+        assert_eq!(count.load(AtomicOrdering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn prompt_cache_layer_annotates_messages() {
+        let cache_provider = PromptCacheProvider {
+            inner: MockProvider::new("ok").0 as Arc<dyn Provider>,
+            cache_recent: 2,
+        };
+        let messages = vec![
+            ConversationMessage::System {
+                content: "You are a bot.".to_string(),
+            },
+            ConversationMessage::user("first question".to_string()),
+            ConversationMessage::Assistant {
+                content: Some("answer 1".to_string()),
+                tool_calls: vec![],
+            },
+            ConversationMessage::user("second question".to_string()),
+        ];
+        let annotated = cache_provider.annotate_messages(&messages);
+        // System prompt should have cache marker.
+        if let ConversationMessage::System { content } = &annotated[0] {
+            assert!(content.ends_with("[cache:ephemeral]"));
+        } else {
+            panic!("expected system message");
+        }
+        // Last 2 messages should have cache markers.
+        if let ConversationMessage::Assistant { content, .. } = &annotated[2] {
+            assert!(content
+                .as_ref()
+                .expect("content")
+                .ends_with("[cache:ephemeral]"));
+        }
+        if let ConversationMessage::User { content, .. } = &annotated[3] {
+            assert!(content.ends_with("[cache:ephemeral]"));
+        }
+        // First user message (not in last 2) should NOT have cache marker.
+        if let ConversationMessage::User { content, .. } = &annotated[1] {
+            assert!(!content.contains("[cache:ephemeral]"));
+        }
+    }
+
+    #[tokio::test]
+    async fn prompt_cache_layer_idempotent() {
+        let cache_provider = PromptCacheProvider {
+            inner: MockProvider::new("ok").0 as Arc<dyn Provider>,
+            cache_recent: 1,
+        };
+        let messages = vec![ConversationMessage::user("hi".to_string())];
+        let annotated1 = cache_provider.annotate_messages(&messages);
+        let annotated2 = cache_provider.annotate_messages(&annotated1);
+        // Should not double-annotate.
+        if let ConversationMessage::User { content, .. } = &annotated2[0] {
+            assert_eq!(
+                content.matches("[cache:ephemeral]").count(),
+                1,
+                "should not double-annotate"
+            );
+        }
     }
 }

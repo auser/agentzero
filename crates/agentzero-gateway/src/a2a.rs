@@ -8,6 +8,7 @@ use crate::state::GatewayState;
 use agentzero_core::a2a_types::*;
 use axum::extract::State;
 use axum::http::HeaderMap;
+use axum::response::sse;
 use axum::Json;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -120,7 +121,7 @@ pub(crate) async fn agent_card(State(state): State<GatewayState>) -> Json<AgentC
         url: public_url,
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
         capabilities: AgentCapabilities {
-            streaming: false,
+            streaming: true,
             push_notifications: false,
             state_transition_history: true,
         },
@@ -170,6 +171,11 @@ pub(crate) async fn a2a_rpc(
         "tasks/send" | "message/send" => handle_tasks_send(&state, &params).await,
         "tasks/get" => handle_tasks_get(&state, &params).await,
         "tasks/cancel" => handle_tasks_cancel(&state, &params).await,
+        "tasks/sendSubscribe" => {
+            // Streaming is handled by the SSE endpoint; JSON-RPC callers
+            // should use the SSE endpoint directly. Fall back to sync.
+            handle_tasks_send(&state, &params).await
+        }
         _ => Err(json!({
             "code": -32601,
             "message": format!("method not found: {method}"),
@@ -190,6 +196,29 @@ pub(crate) async fn a2a_rpc(
     }
 }
 
+/// Extract user-facing text from all part types in a message.
+fn extract_text_from_parts(parts: &[Part]) -> String {
+    parts
+        .iter()
+        .filter_map(|p| match p {
+            Part::Text { text } => Some(text.as_str()),
+            Part::Data { data, mime_type } => {
+                // Include data with mime context for non-text data.
+                if mime_type.as_deref().unwrap_or("").starts_with("text/") {
+                    Some(data.as_str())
+                } else {
+                    None
+                }
+            }
+            Part::File { name, .. } => {
+                // Files are referenced but not inlined as text.
+                name.as_deref()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 async fn handle_tasks_send(state: &GatewayState, params: &Value) -> Result<Value, Value> {
     let send_params: TaskSendParams = serde_json::from_value(params.clone()).map_err(|e| {
         json!({
@@ -198,17 +227,7 @@ async fn handle_tasks_send(state: &GatewayState, params: &Value) -> Result<Value
         })
     })?;
 
-    // Extract text from the message parts.
-    let text: String = send_params
-        .message
-        .parts
-        .iter()
-        .filter_map(|p| match p {
-            Part::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = extract_text_from_parts(&send_params.message.parts);
 
     if text.is_empty() {
         return Err(json!({
@@ -216,6 +235,33 @@ async fn handle_tasks_send(state: &GatewayState, params: &Value) -> Result<Value
             "message": "message must contain at least one text part",
         }));
     }
+
+    // Multi-turn: if this task already exists and was in InputRequired,
+    // resume it with the new message appended to history.
+    let existing = state.a2a_tasks.get(&send_params.id).await;
+    let is_resume = existing
+        .as_ref()
+        .is_some_and(|t| t.status.state == TaskState::InputRequired);
+
+    let mut history = if is_resume {
+        let mut h = existing.as_ref().expect("checked above").history.clone();
+        h.push(send_params.message.clone());
+        h
+    } else {
+        vec![send_params.message.clone()]
+    };
+
+    // Set task to Working while executing.
+    let working_task = Task {
+        id: send_params.id.clone(),
+        status: TaskStatus {
+            state: TaskState::Working,
+            message: None,
+        },
+        history: history.clone(),
+        artifacts: vec![],
+    };
+    state.a2a_tasks.upsert(working_task).await;
 
     // Execute via gateway channel if available (full agent loop),
     // otherwise acknowledge receipt.
@@ -236,27 +282,24 @@ async fn handle_tasks_send(state: &GatewayState, params: &Value) -> Result<Value
         "task received (no tools loaded)".to_string()
     };
 
+    // Append agent response to history.
+    let agent_message = Message {
+        role: MessageRole::Agent,
+        parts: vec![Part::text(&response_text)],
+    };
+    history.push(agent_message.clone());
+
     // Build the completed task.
     let task = Task {
         id: send_params.id,
         status: TaskStatus {
             state: TaskState::Completed,
-            message: Some(Message {
-                role: MessageRole::Agent,
-                parts: vec![Part::text(&response_text)],
-            }),
+            message: Some(agent_message),
         },
-        history: vec![
-            send_params.message,
-            Message {
-                role: MessageRole::Agent,
-                parts: vec![Part::text(&response_text)],
-            },
-        ],
+        history,
         artifacts: vec![],
     };
 
-    // Store the task.
     state.a2a_tasks.upsert(task.clone()).await;
 
     Ok(serde_json::to_value(task).unwrap_or(json!({})))
@@ -317,6 +360,183 @@ async fn handle_tasks_cancel(state: &GatewayState, params: &Value) -> Result<Val
     }
 
     result
+}
+
+// ---------------------------------------------------------------------------
+// SSE Streaming endpoint: POST /a2a/stream
+// ---------------------------------------------------------------------------
+
+/// `POST /a2a/stream` — Streaming task execution via Server-Sent Events.
+///
+/// Accepts the same `TaskSendParams` as `tasks/send` but returns an SSE
+/// stream with `TaskStatusUpdateEvent`s as the task progresses.
+pub(crate) async fn a2a_stream(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(params): Json<TaskSendParams>,
+) -> axum::response::Result<
+    axum::response::Sse<
+        impl futures_util::Stream<Item = Result<sse::Event, std::convert::Infallible>>,
+    >,
+> {
+    // Enforce bearer token if configured.
+    if let Some(ref rx) = state.live_config {
+        if let Some(ref expected_token) = rx.borrow().a2a.bearer_token {
+            let provided = headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            match provided {
+                Some(token) if token == expected_token.as_str() => {}
+                _ => {
+                    return Err(axum::http::StatusCode::UNAUTHORIZED.into());
+                }
+            }
+        }
+    }
+
+    let text = extract_text_from_parts(&params.message.parts);
+    let task_id = params.id.clone();
+
+    let stream = async_stream::stream! {
+        // Emit Working status.
+        let working = TaskStatusUpdateEvent {
+            id: task_id.clone(),
+            status: TaskStatus {
+                state: TaskState::Working,
+                message: None,
+            },
+            is_final: false,
+        };
+        if let Ok(data) = serde_json::to_string(&working) {
+            yield Ok(sse::Event::default().event("status").data(data));
+        }
+
+        // Execute the task.
+        let response_text = if let Some(gw_channel) = &state.gateway_channel {
+            let timeout = std::time::Duration::from_secs(120);
+            match gw_channel.submit(text.clone(), timeout).await {
+                Ok(resp) => resp,
+                Err(e) => format!("agent error: {e}"),
+            }
+        } else {
+            "task received (no agent loop configured)".to_string()
+        };
+
+        // Emit artifact with the result.
+        let artifact_event = TaskArtifactUpdateEvent {
+            id: task_id.clone(),
+            artifact: Artifact {
+                name: Some("response".to_string()),
+                parts: vec![Part::text(&response_text)],
+                index: Some(0),
+            },
+        };
+        if let Ok(data) = serde_json::to_string(&artifact_event) {
+            yield Ok(sse::Event::default().event("artifact").data(data));
+        }
+
+        // Emit Completed status (final).
+        let completed = TaskStatusUpdateEvent {
+            id: task_id.clone(),
+            status: TaskStatus {
+                state: TaskState::Completed,
+                message: Some(Message {
+                    role: MessageRole::Agent,
+                    parts: vec![Part::text(&response_text)],
+                }),
+            },
+            is_final: true,
+        };
+        if let Ok(data) = serde_json::to_string(&completed) {
+            yield Ok(sse::Event::default().event("status").data(data));
+        }
+
+        // Store the completed task.
+        let task = Task {
+            id: task_id,
+            status: TaskStatus {
+                state: TaskState::Completed,
+                message: Some(Message {
+                    role: MessageRole::Agent,
+                    parts: vec![Part::text(&response_text)],
+                }),
+            },
+            history: vec![
+                params.message.clone(),
+                Message {
+                    role: MessageRole::Agent,
+                    parts: vec![Part::text(&response_text)],
+                },
+            ],
+            artifacts: vec![Artifact {
+                name: Some("response".to_string()),
+                parts: vec![Part::text(&response_text)],
+                index: Some(0),
+            }],
+        };
+        state.a2a_tasks.upsert(task).await;
+    };
+
+    Ok(axum::response::Sse::new(stream).keep_alive(sse::KeepAlive::default()))
+}
+
+// ---------------------------------------------------------------------------
+// Agent Discovery: GET /a2a/agents
+// ---------------------------------------------------------------------------
+
+/// `GET /a2a/agents` — List all locally known agents.
+///
+/// Returns agent cards for this agent and any agents in the presence store.
+pub(crate) async fn a2a_agents(State(state): State<GatewayState>) -> Json<Value> {
+    let mut agents = Vec::new();
+
+    // This agent's own card.
+    let public_url = crate::handlers::resolve_public_url(&state)
+        .unwrap_or_else(|| "http://localhost".to_string());
+    agents.push(json!({
+        "name": state.service_name.as_ref(),
+        "url": public_url,
+        "status": "online",
+    }));
+
+    // Agents from the presence store (if available).
+    if let Some(ref presence) = state.presence_store {
+        for record in presence.list_all().await {
+            agents.push(json!({
+                "agent_id": record.agent_id,
+                "status": format!("{:?}", record.status),
+            }));
+        }
+    }
+
+    Json(json!({ "agents": agents }))
+}
+
+// ---------------------------------------------------------------------------
+// InputRequired: set a task to input-required state
+// ---------------------------------------------------------------------------
+
+/// Mark a task as requiring input from the caller.
+/// Used by agent internals when the LLM needs clarification.
+#[allow(dead_code)]
+pub(crate) async fn set_task_input_required(store: &A2aTaskStore, task_id: &str, question: &str) {
+    let mut tasks = store.tasks.lock().await;
+    if let Some(task) = tasks.get_mut(task_id) {
+        task.status = TaskStatus {
+            state: TaskState::InputRequired,
+            message: Some(Message {
+                role: MessageRole::Agent,
+                parts: vec![Part::text(question)],
+            }),
+        };
+        task.history.push(Message {
+            role: MessageRole::Agent,
+            parts: vec![Part::text(question)],
+        });
+    }
+    drop(tasks);
+    store.persist().await;
 }
 
 #[cfg(test)]
@@ -417,5 +637,93 @@ mod tests {
             remaining <= 3,
             "expected at most 3 tasks after eviction, got {remaining}"
         );
+    }
+
+    #[test]
+    fn extract_text_handles_all_part_types() {
+        let parts = vec![
+            Part::Text {
+                text: "hello".to_string(),
+            },
+            Part::Data {
+                data: "text content".to_string(),
+                mime_type: Some("text/plain".to_string()),
+            },
+            Part::Data {
+                data: "binary".to_string(),
+                mime_type: Some("application/octet-stream".to_string()),
+            },
+            Part::File {
+                name: Some("report.pdf".to_string()),
+                mime_type: Some("application/pdf".to_string()),
+                data: "base64==".to_string(),
+            },
+        ];
+        let text = extract_text_from_parts(&parts);
+        assert!(text.contains("hello"));
+        assert!(text.contains("text content"));
+        assert!(!text.contains("binary"), "non-text data should be excluded");
+        assert!(text.contains("report.pdf"));
+    }
+
+    #[tokio::test]
+    async fn set_task_input_required_updates_state() {
+        let store = A2aTaskStore::new();
+        let task = Task {
+            id: "ir-1".to_string(),
+            status: TaskStatus {
+                state: TaskState::Working,
+                message: None,
+            },
+            history: vec![Message {
+                role: MessageRole::User,
+                parts: vec![Part::text("do something")],
+            }],
+            artifacts: vec![],
+        };
+        store.upsert(task).await;
+
+        set_task_input_required(&store, "ir-1", "What format do you want?").await;
+
+        let updated = store.get("ir-1").await.expect("should find task");
+        assert_eq!(updated.status.state, TaskState::InputRequired);
+        assert_eq!(
+            updated.history.len(),
+            2,
+            "should have appended the question to history"
+        );
+    }
+
+    #[tokio::test]
+    async fn multi_turn_resume_appends_history() {
+        let store = A2aTaskStore::new();
+        // Create a task in InputRequired state.
+        let task = Task {
+            id: "mt-1".to_string(),
+            status: TaskStatus {
+                state: TaskState::InputRequired,
+                message: Some(Message {
+                    role: MessageRole::Agent,
+                    parts: vec![Part::text("What format?")],
+                }),
+            },
+            history: vec![
+                Message {
+                    role: MessageRole::User,
+                    parts: vec![Part::text("convert file")],
+                },
+                Message {
+                    role: MessageRole::Agent,
+                    parts: vec![Part::text("What format?")],
+                },
+            ],
+            artifacts: vec![],
+        };
+        store.upsert(task).await;
+
+        // Verify the task is in InputRequired state.
+        let t = store.get("mt-1").await.expect("should find");
+        assert_eq!(t.status.state, TaskState::InputRequired);
+        assert_eq!(t.history.len(), 2);
     }
 }

@@ -11,12 +11,15 @@ mod impl_ {
     const MAX_MESSAGE_LENGTH: usize = 30000;
     const POLL_INTERVAL_SECS: u64 = 3;
 
+    const DEFAULT_API_BASE: &str = "https://open.larksuite.com";
+
     /// Lark (Larksuite) Open Platform channel.
     pub struct LarkChannel {
         app_id: String,
         app_secret: String,
         allowed_users: Vec<String>,
         client: reqwest::Client,
+        api_base: String,
     }
 
     impl LarkChannel {
@@ -34,11 +37,18 @@ mod impl_ {
                 app_secret,
                 allowed_users,
                 client,
+                api_base: DEFAULT_API_BASE.to_string(),
             }
         }
 
         pub fn with_client(mut self, client: reqwest::Client) -> Self {
             self.client = client;
+            self
+        }
+
+        /// Override the API base URL (for testing with mock servers).
+        pub fn with_base_url(mut self, base_url: String) -> Self {
+            self.api_base = base_url;
             self
         }
 
@@ -49,7 +59,7 @@ mod impl_ {
             });
             let resp: serde_json::Value = self
                 .client
-                .post("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal")
+                .post(format!("{}/open-apis/auth/v3/tenant_access_token/internal", self.api_base))
                 .json(&body)
                 .send()
                 .await?
@@ -79,7 +89,7 @@ mod impl_ {
                 });
                 let resp = self
                     .client
-                    .post("https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id")
+                    .post(format!("{}/open-apis/im/v1/messages?receive_id_type=chat_id", self.api_base))
                     .bearer_auth(&token)
                     .json(&body)
                     .send()

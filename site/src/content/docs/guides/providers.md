@@ -379,6 +379,87 @@ Streaming requests fall back to non-streaming on secondary providers to avoid du
 
 ---
 
+## Credential Pooling
+
+Distribute requests across multiple API keys to avoid rate limits. Each key gets independent cooldown tracking — 1 hour on 429 (rate limit), 24 hours on persistent errors.
+
+```toml
+[provider.credential_pool]
+strategy = "round-robin"   # fill-first | round-robin | random
+keys = ["OPENAI_KEY_1", "OPENAI_KEY_2", "OPENAI_KEY_3"]
+```
+
+| Strategy | Behavior |
+|----------|----------|
+| `fill-first` | Use the first key until exhausted, then move to next |
+| `round-robin` | Cycle through keys sequentially (default) |
+| `random` | Pick randomly from available keys |
+
+When all keys are in cooldown, requests fail with a clear error message. Use `agentzero providers quota` to see per-key status.
+
+---
+
+## Cost-Aware Model Routing
+
+Route queries to cheaper models when the task is simple, preserving premium models for complex work. The complexity scorer evaluates character count, word count, code presence, and keyword signals to classify each query as Simple, Medium, or Complex.
+
+```toml
+# Define model routes by complexity tier
+[[model_routes]]
+hint = "simple"
+provider = "anthropic"
+model = "claude-haiku-4-5-20251001"
+
+[[model_routes]]
+hint = "medium"
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+
+[[model_routes]]
+hint = "complex"
+provider = "anthropic"
+model = "claude-opus-4-6"
+```
+
+Classification examples:
+- "hello" → **Simple** → Haiku
+- "explain how authentication works and compare with OAuth" → **Medium** → Sonnet
+- "implement a REST API with JWT tokens, refresh flow, and rate limiting" → **Complex** → Opus
+
+The scorer is conservative: uncertain queries (composite score 0.15–0.35) default to Medium, not Simple.
+
+---
+
+## Pre-Execution Cost Estimation
+
+The `CostEstimateLayer` estimates input token costs before each LLM call and logs a warning when the estimated cost exceeds a configurable threshold. This provides early visibility into expensive operations without blocking them — use `CostCapLayer` for hard limits.
+
+---
+
+## Prompt Caching
+
+The `PromptCacheLayer` annotates the system prompt and the last N messages with Anthropic's `cache_control` markers, enabling up to 90% input token cost reduction for repeated prefixes. This is Anthropic-specific — other providers ignore the annotation and pass through unchanged.
+
+---
+
+## Adaptive Thinking Effort
+
+When `adaptive_reasoning` is enabled, the reasoning budget adjusts dynamically based on query complexity:
+
+| Complexity | Reasoning |
+|------------|-----------|
+| Simple | Disabled |
+| Medium | Medium effort |
+| Complex | High effort |
+
+```toml
+[runtime]
+reasoning_enabled = true
+adaptive_reasoning = true
+```
+
+---
+
 ## Checking Provider Status
 
 ```bash

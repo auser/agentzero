@@ -1,4 +1,4 @@
-use crate::a2a::{a2a_rpc, agent_card};
+use crate::a2a::{a2a_agents, a2a_rpc, a2a_stream, agent_card};
 use crate::canvas::{
     canvas_history, delete_canvas as delete_canvas_handler, get_canvas, list_canvases, post_canvas,
     ws_canvas,
@@ -108,6 +108,8 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/mcp/message", post(mcp_message))
         .route("/.well-known/agent.json", get(agent_card))
         .route("/a2a", post(a2a_rpc))
+        .route("/a2a/stream", post(a2a_stream))
+        .route("/a2a/agents", get(a2a_agents))
         .route("/v1/config", get(get_config).put(update_config))
         .route("/v1/cron", get(list_cron).post(create_cron))
         .route("/v1/cron/:id", patch(update_cron).delete(delete_cron))

@@ -106,18 +106,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn verbosity_level_one_maps_to_error() {
-        assert_eq!(verbosity_to_level(1), "error");
+    fn verbosity_level_one_maps_to_info() {
+        assert_eq!(verbosity_to_level(1), "info");
     }
 
     #[test]
-    fn verbosity_level_two_maps_to_info() {
-        assert_eq!(verbosity_to_level(2), "info");
+    fn verbosity_level_two_maps_to_debug() {
+        assert_eq!(verbosity_to_level(2), "debug");
     }
 
     #[test]
-    fn verbosity_level_three_maps_to_debug() {
-        assert_eq!(verbosity_to_level(3), "debug");
+    fn verbosity_level_three_maps_to_trace() {
+        assert_eq!(verbosity_to_level(3), "trace");
     }
 
     #[test]

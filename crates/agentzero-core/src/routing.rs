@@ -172,6 +172,35 @@ impl ModelRouter {
             .and_then(|hint| self.resolve_hint(&hint))
     }
 
+    /// Classify by complexity tier and resolve to a matching route.
+    ///
+    /// Uses the complexity scorer to determine Simple/Medium/Complex,
+    /// then looks for routes with hints matching the tier name.
+    /// Falls back to rule-based classification if no complexity route matches.
+    pub fn route_by_complexity(
+        &self,
+        query: &str,
+        config: &crate::complexity::ComplexityConfig,
+    ) -> Option<ResolvedRoute> {
+        let score = crate::complexity::score(query, config);
+        let tier_hint = match score.tier {
+            crate::complexity::ComplexityTier::Simple => "simple",
+            crate::complexity::ComplexityTier::Medium => "medium",
+            crate::complexity::ComplexityTier::Complex => "complex",
+        };
+        debug!(
+            tier = tier_hint,
+            composite = score.composite,
+            "complexity classification"
+        );
+        // Try to resolve a route matching the tier name.
+        if let Some(route) = self.resolve_hint(tier_hint) {
+            return Some(route);
+        }
+        // Fallback to rule-based classification.
+        self.route_query(query)
+    }
+
     /// Resolve a hint with privacy filtering.
     ///
     /// - `"local_only"`: only `Local` routes

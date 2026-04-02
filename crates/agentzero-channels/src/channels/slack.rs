@@ -8,7 +8,7 @@ mod impl_ {
 
     super::super::channel_meta!(SLACK_DESCRIPTOR, "slack", "Slack");
 
-    const API_BASE: &str = "https://slack.com/api";
+    const DEFAULT_API_BASE: &str = "https://slack.com/api";
     const POLL_INTERVAL_SECS: u64 = 3;
     const MAX_MESSAGE_LENGTH: usize = 40000;
 
@@ -18,6 +18,7 @@ mod impl_ {
         channel_id: Option<String>,
         allowed_users: Vec<String>,
         client: reqwest::Client,
+        api_base: String,
     }
 
     impl SlackChannel {
@@ -37,6 +38,7 @@ mod impl_ {
                 channel_id,
                 allowed_users,
                 client,
+                api_base: DEFAULT_API_BASE.to_string(),
             }
         }
 
@@ -45,11 +47,17 @@ mod impl_ {
             self
         }
 
+        /// Override the API base URL (for testing with mock servers).
+        pub fn with_base_url(mut self, base_url: String) -> Self {
+            self.api_base = base_url;
+            self
+        }
+
         /// Get the bot's own user ID via auth.test.
         async fn get_bot_user_id(&self) -> anyhow::Result<String> {
             let resp = self
                 .client
-                .post(format!("{API_BASE}/auth.test"))
+                .post(format!("{}/auth.test", self.api_base))
                 .bearer_auth(&self.bot_token)
                 .send()
                 .await?;
@@ -80,7 +88,7 @@ mod impl_ {
 
                 let resp = self
                     .client
-                    .post(format!("{API_BASE}/chat.postMessage"))
+                    .post(format!("{}/chat.postMessage", self.api_base))
                     .bearer_auth(&self.bot_token)
                     .json(&body)
                     .send()
@@ -127,7 +135,8 @@ mod impl_ {
 
             loop {
                 let mut url = format!(
-                    "{API_BASE}/conversations.history?channel={channel_id}&limit=10"
+                    "{}/conversations.history?channel={channel_id}&limit=10",
+                    self.api_base
                 );
                 if !latest_ts.is_empty() {
                     url.push_str(&format!("&oldest={latest_ts}"));
@@ -219,7 +228,7 @@ mod impl_ {
 
         async fn health_check(&self) -> bool {
             self.client
-                .post(format!("{API_BASE}/auth.test"))
+                .post(format!("{}/auth.test", self.api_base))
                 .bearer_auth(&self.bot_token)
                 .send()
                 .await
@@ -243,7 +252,7 @@ mod impl_ {
             // Get WebSocket URL via apps.connections.open
             let resp = self
                 .client
-                .post(format!("{API_BASE}/apps.connections.open"))
+                .post(format!("{}/apps.connections.open", self.api_base))
                 .bearer_auth(app_token)
                 .send()
                 .await?;

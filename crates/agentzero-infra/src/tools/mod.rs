@@ -4,6 +4,7 @@ pub mod codegen;
 #[cfg(feature = "tools-full")]
 mod config_manage;
 pub mod dynamic_tool;
+pub mod insights_report;
 mod mcp;
 #[cfg(feature = "tools-full")]
 mod plugin_scaffold;
@@ -302,6 +303,7 @@ fn default_tools_inner(
             tools.push(Box::new(ConfigManageTool));
             tools.push(Box::new(SkillManageTool));
             tools.push(Box::new(PluginScaffoldTool));
+            tools.push(Box::new(insights_report::InsightsReportTool));
         }
 
         if policy.enable_claude_code {

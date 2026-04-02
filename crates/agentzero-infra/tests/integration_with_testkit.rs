@@ -29,6 +29,8 @@ async fn runtime_exec_uses_testkit_components_success_path() {
         recipe_store: None,
         pattern_capture: None,
         embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("."), "hello".to_string())
@@ -62,6 +64,8 @@ async fn runtime_exec_uses_testkit_components_negative_path() {
         recipe_store: None,
         pattern_capture: None,
         embedding_provider: None,
+        trajectory_recorder: None,
+        model_name: String::new(),
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("."), "hello".to_string())

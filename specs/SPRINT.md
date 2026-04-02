@@ -2585,6 +2585,70 @@ Add a 5th `Codegen` variant to `DynamicToolStrategy` that compiles LLM-generated
 
 ---
 
+## Sprint 81: Event Bus Improvements — Multi-Axis Filtering, Publish Metrics, Arc Payloads
+
+**Goal:** Three targeted improvements to the event bus inspired by the omnibus crate's design patterns. Add two-dimensional subscriber filtering (source + topic), return delivery metrics from publish, and Arc-wrap event payloads to reduce clone cost in fan-out scenarios. All changes must work across `GossipEventBus` for horizontal scaling with multiple agents across instances.
+
+**Baseline:** Sprint 80 complete. Event bus ecosystem: `InMemoryBus`, `FileBackedBus` (core), `SqliteEventBus` (storage), `GossipEventBus` (orchestrator). `EventSubscriber` currently filters on topic prefix only. `publish()` returns `Result<()>` with no delivery feedback. `Event.payload` is `String`, fully cloned per subscriber. `GossipEventBus` propagates all events across TCP mesh — filtering is client-side on each node.
+
+**Plan:** `specs/plans/40-event-bus-improvements.md`
+
+---
+
+### Consolidation: Delete Duplicate Orchestrator Event Bus
+
+The orchestrator had its own `EventBus` trait, `BusEvent`, `InMemoryEventBus`, `FileBackedEventBus` — all dead code. Every orchestrator module already imported `agentzero_core::EventBus`.
+
+- [x] **Delete `crates/agentzero-orchestrator/src/event_bus.rs`** — Removed entire file (361 lines) and `lib.rs` re-exports. Zero external consumers.
+
+### Phase A: Multi-Axis Subscriber Filtering (HIGH)
+
+Replaced `recv_filtered(topic_prefix)` with `recv_with_filter(&EventFilter)` — two-dimensional filtering on source and topic.
+
+- [x] **`EventFilter` struct** — `source: Option<String>`, `topic_prefix: Option<String>`. Constructors: `::topic()`, `::source()`, `::source_and_topic()`. `matches(&self, event: &Event) -> bool`.
+- [x] **`recv_with_filter()` on `EventSubscriber`** — Default implementation loops `recv()` and applies filter. Replaced `recv_filtered()` entirely (no backward compat needed).
+- [x] **`replay_with_filter()` on `SqliteEventBus`** — SQL-level `WHERE source = ? AND topic LIKE ?%` for efficient catch-up on node restart.
+- [x] **`idx_events_source` index** — Added to SQLite events table for source-filtered queries.
+- [x] **Update all callers** — `regression_bus.rs`, `coordinator.rs`, `agents_ipc.rs` all updated to use `EventFilter::topic()`.
+- [x] **Gossip compatibility** — Events from remote agents arrive with original `source` field intact; filtering works transparently.
+- [x] **Tests** — 8 tests: filter source-only, topic-only, both axes, default matches all, recv_with_filter source, recv_with_filter both, replay_with_filter (source, topic, both, since_id).
+
+### Phase B: Publish Result Feedback (MEDIUM)
+
+`publish()` now returns `PublishResult { delivered: usize }` instead of `()`.
+
+- [x] **`PublishResult` struct** — `#[derive(Debug, Clone, Copy, PartialEq, Eq)]` in `event_bus.rs`.
+- [x] **Update `EventBus::publish()` signature** — `Result<PublishResult>` on trait + all 4 implementations.
+- [x] **`InMemoryBus`** — `tx.send()` returns receiver count on `Ok`, 0 on `Err`.
+- [x] **`FileBackedBus`** — Propagates inner bus's `PublishResult`.
+- [x] **`SqliteEventBus`** — Returns broadcast count after SQLite insert.
+- [x] **`GossipEventBus`** — Returns local delivery count; gossip to remote nodes is best-effort.
+- [x] **All call sites compile unchanged** — `.await?` unwraps `Result<PublishResult>`, callers ignore unless they opt in.
+- [x] **Tests** — 3 tests: 0 subscribers → delivered=0, N subscribers → delivered=N, FileBackedBus matches inner.
+
+### Phase C: Arc-Wrapped Event Payloads (LOW)
+
+`Event.payload` changed from `String` to `Arc<str>` — clones are pointer copies on broadcast fan-out.
+
+- [x] **`Event.payload: Arc<str>`** — `Event::new()` converts via `Arc::from(payload.into())`.
+- [x] **Serde `rc` feature** — Added to workspace `Cargo.toml` for `Arc<str>` serialization.
+- [x] **All call sites fixed** — `SqliteEventBus` reads via `Arc::from(row.get::<_, String>())`, `coordinator.rs` uses `.to_string()` where `String` is needed, tests use `&*event.payload` for comparisons.
+- [x] **Tests** — 3 tests: serde roundtrip, cheap clone (`Arc::ptr_eq`), deref to `&str`.
+
+### Acceptance Criteria
+
+- [x] `cargo clippy --all-targets` — 0 warnings
+- [x] All workspace tests pass (existing + 15 new)
+- [x] `recv_with_filter(source=Some("agent-1"), topic_prefix=Some("tool."))` receives only matching events
+- [x] `publish()` returns `PublishResult` with accurate delivery count
+- [x] `Event.payload` is `Arc<str>`, no full-string clones on broadcast fan-out
+- [x] Horizontal scaling: filters work on `GossipEventBus` — events from remote agents match source filters correctly
+- [x] `SqliteEventBus` replay queries use SQL-level filtering for efficient catch-up
+
+**Sprint 81 complete.** 15 new tests. 0 clippy warnings. Deleted 361 lines of dead orchestrator event bus code. Unified to one event bus hierarchy.
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

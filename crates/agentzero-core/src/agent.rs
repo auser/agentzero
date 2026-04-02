@@ -1230,6 +1230,7 @@ impl Agent {
 
         let mut tool_history: Vec<(String, String, String)> = Vec::new();
         let mut failure_streak: usize = 0;
+        let mut compression_state = crate::context_compression::CompressionState::default();
         let mut loop_detector = self
             .loop_detection_config
             .as_ref()
@@ -1248,6 +1249,24 @@ impl Agent {
                 return Ok(AssistantMessage {
                     text: "[Execution cancelled]".to_string(),
                 });
+            }
+
+            // 4-phase context compression (when enabled).
+            if self.config.summarization.compression_enabled {
+                let comp_config = crate::context_compression::CompressionConfig {
+                    max_tool_result_chars: self.config.summarization.max_tool_result_chars,
+                    protect_head: self.config.summarization.protect_head,
+                    protect_tail: self.config.summarization.protect_tail,
+                    max_summary_chars: self.config.summarization.max_summary_chars,
+                    enable_summarization: self.config.summarization.enabled,
+                };
+                crate::context_compression::compress(
+                    &mut messages,
+                    &comp_config,
+                    &mut compression_state,
+                    Some(self.provider.as_ref()),
+                )
+                .await;
             }
 
             // Detect when the most recent tool result will be truncated away.
@@ -3863,6 +3882,7 @@ mod tests {
             reasoning: ReasoningConfig {
                 enabled: Some(true),
                 level: Some("high".to_string()),
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -3900,6 +3920,7 @@ mod tests {
             reasoning: ReasoningConfig {
                 enabled: Some(false),
                 level: None,
+                ..Default::default()
             },
             ..Default::default()
         };

@@ -23,9 +23,11 @@ tracing.workspace = true
 uuid.workspace = true
 
 # Feature-gated channel dependencies
-reqwest = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true, features = ["multipart"] }
 tokio-tungstenite = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
+cpal = { workspace = true, optional = true }
+hound = { workspace = true, optional = true }
 
 [features]
 default = ["channel-cli", "channel-webhook"]
@@ -58,7 +60,7 @@ channel-transcription = []
 channel-whatsapp-web = []
 channel-nostr = ["tokio-tungstenite", "futures-util"]
 channel-sms = ["reqwest"]
-channel-voice-wake = []
+channel-voice-wake = ["cpal", "hound", "reqwest"]
 tls-rustls = ["reqwest?/rustls-tls", "tokio-tungstenite?/rustls-tls-native-roots"]
 tls-native = ["reqwest?/native-tls", "tokio-tungstenite?/native-tls"]
 channels-standard = [
@@ -108,3 +110,7 @@ all-channels = [
     "channel-nostr",
     "channel-sms",
 ]
+
+[dev-dependencies]
+wiremock = { workspace = true }
+tokio = { workspace = true }

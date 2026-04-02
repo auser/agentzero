@@ -20,7 +20,7 @@ Response:
   "description": "AgentZero AI agent",
   "version": "0.6.0",
   "capabilities": {
-    "streaming": false,
+    "streaming": true,
     "pushNotifications": false,
     "stateTransitionHistory": true
   },
@@ -81,7 +81,8 @@ The response contains the completed task with the agent's response:
 
 | Method | Description |
 |--------|-------------|
-| `tasks/send` | Send a message and receive a response |
+| `tasks/send` | Send a message and receive a response (sync) |
+| `tasks/sendSubscribe` | Send a message and stream results via SSE |
 | `tasks/get` | Retrieve a task by ID (with optional history length) |
 | `tasks/cancel` | Cancel a running task |
 
@@ -116,10 +117,106 @@ timeout_secs = 60
 
 This means your local agents can seamlessly delegate work to remote A2A agents — they don't need to know whether the target is local or remote.
 
+## Streaming via SSE
+
+For long-running tasks, use the SSE streaming endpoint instead of the synchronous `tasks/send`:
+
+```
+POST /a2a/stream
+Content-Type: application/json
+
+{
+  "id": "task-456",
+  "message": {
+    "role": "user",
+    "parts": [{"type": "text", "text": "Analyze the full codebase and write a report"}]
+  }
+}
+```
+
+The response is a `text/event-stream` with typed events:
+
+```
+event: status
+data: {"id":"task-456","status":{"state":"working"},"final":false}
+
+event: artifact
+data: {"id":"task-456","artifact":{"name":"response","parts":[{"type":"text","text":"Section 1..."}],"index":0}}
+
+event: status
+data: {"id":"task-456","status":{"state":"completed","message":{"role":"agent","parts":[...]}},"final":true}
+```
+
+The Agent Card now advertises `"streaming": true` in its capabilities.
+
+## Multi-Turn with InputRequired
+
+Tasks can pause to request clarification. When the agent needs more information, the task enters the `input-required` state:
+
+```json
+{
+  "id": "task-789",
+  "status": {
+    "state": "input-required",
+    "message": {
+      "role": "agent",
+      "parts": [{"type": "text", "text": "What output format do you want? (PDF, HTML, or Markdown)"}]
+    }
+  }
+}
+```
+
+Resume the task by sending a new `tasks/send` with the same task ID:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tasks/send",
+  "params": {
+    "id": "task-789",
+    "message": {
+      "role": "user",
+      "parts": [{"type": "text", "text": "PDF please"}]
+    }
+  }
+}
+```
+
+The agent receives the full conversation history and continues from where it left off.
+
+## Agent Discovery
+
+List all known agents (local + discovered via presence):
+
+```
+GET /a2a/agents
+```
+
+```json
+{
+  "agents": [
+    {"name": "agentzero-gateway", "url": "http://localhost:3000", "status": "online"},
+    {"agent_id": "research-agent", "status": "Alive"}
+  ]
+}
+```
+
+## Rich Payloads
+
+Messages support three part types:
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `text` | Plain text content | `{"type": "text", "text": "Hello"}` |
+| `data` | Structured data with MIME type | `{"type": "data", "data": "...", "mimeType": "application/json"}` |
+| `file` | File attachment (base64 or URL) | `{"type": "file", "name": "report.pdf", "mimeType": "application/pdf", "data": "base64..."}` |
+
 ## Task Lifecycle
 
 ```
 submitted → working → completed
+                    → input-required → (user responds) → working → completed
                     → failed
                     → canceled (via tasks/cancel)
 ```

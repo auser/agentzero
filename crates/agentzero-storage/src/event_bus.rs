@@ -9,7 +9,7 @@ use agentzero_core::{Event, EventBus, EventSubscriber};
 use async_trait::async_trait;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -51,6 +51,7 @@ impl SqliteEventBus {
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_events_topic ON events(topic);
+            CREATE INDEX IF NOT EXISTS idx_events_source ON events(source);
             CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp_ms);
             CREATE INDEX IF NOT EXISTS idx_events_event_id ON events(event_id);",
         )?;
@@ -109,6 +110,76 @@ impl SqliteEventBus {
         Ok(events)
     }
 
+    /// Replay events matching a multi-axis filter with SQL-level optimization.
+    ///
+    /// Uses `WHERE source = ?` and `topic LIKE ?%` for efficient indexed queries
+    /// rather than client-side filtering. Ideal for horizontal scaling where a
+    /// restarting node needs to catch up on events from specific sources.
+    pub fn replay_with_filter(
+        &self,
+        filter: &agentzero_core::event_bus::EventFilter,
+        since_id: Option<&str>,
+    ) -> anyhow::Result<Vec<Event>> {
+        let conn = self.conn.lock().expect("event bus db lock poisoned");
+
+        let start_rowid: i64 = if let Some(sid) = since_id {
+            conn.query_row(
+                "SELECT rowid FROM events WHERE event_id = ?1",
+                [sid],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+        } else {
+            0
+        };
+
+        let mut events = Vec::new();
+
+        match (&filter.source, &filter.topic_prefix) {
+            (Some(src), Some(prefix)) => {
+                let topic_like = format!("{prefix}%");
+                let mut stmt = conn.prepare(
+                    "SELECT event_id, topic, source, payload, privacy_boundary, correlation_id, timestamp_ms
+                     FROM events WHERE rowid > ?1 AND source = ?2 AND topic LIKE ?3 ORDER BY rowid ASC",
+                )?;
+                let rows = stmt.query_map(
+                    rusqlite::params![start_rowid, src, topic_like],
+                    row_to_event,
+                )?;
+                for row in rows {
+                    events.push(row?);
+                }
+            }
+            (Some(src), None) => {
+                let mut stmt = conn.prepare(
+                    "SELECT event_id, topic, source, payload, privacy_boundary, correlation_id, timestamp_ms
+                     FROM events WHERE rowid > ?1 AND source = ?2 ORDER BY rowid ASC",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![start_rowid, src], row_to_event)?;
+                for row in rows {
+                    events.push(row?);
+                }
+            }
+            (None, Some(prefix)) => {
+                let topic_like = format!("{prefix}%");
+                let mut stmt = conn.prepare(
+                    "SELECT event_id, topic, source, payload, privacy_boundary, correlation_id, timestamp_ms
+                     FROM events WHERE rowid > ?1 AND topic LIKE ?2 ORDER BY rowid ASC",
+                )?;
+                let rows =
+                    stmt.query_map(rusqlite::params![start_rowid, topic_like], row_to_event)?;
+                for row in rows {
+                    events.push(row?);
+                }
+            }
+            (None, None) => {
+                return self.replay(None, since_id);
+            }
+        }
+
+        Ok(events)
+    }
+
     /// Delete events older than the given duration. Returns count deleted.
     pub fn gc(&self, max_age: Duration) -> anyhow::Result<usize> {
         let cutoff_ms =
@@ -124,7 +195,7 @@ fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Event> {
         id: row.get(0)?,
         topic: row.get(1)?,
         source: row.get(2)?,
-        payload: row.get(3)?,
+        payload: Arc::from(row.get::<_, String>(3)?),
         privacy_boundary: row.get::<_, String>(4)?,
         correlation_id: row.get(5)?,
         timestamp_ms: row.get::<_, i64>(6)? as u64,
@@ -133,7 +204,10 @@ fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<Event> {
 
 #[async_trait]
 impl EventBus for SqliteEventBus {
-    async fn publish(&self, event: Event) -> anyhow::Result<()> {
+    async fn publish(
+        &self,
+        event: Event,
+    ) -> anyhow::Result<agentzero_core::event_bus::PublishResult> {
         // Persist to SQLite first.
         {
             let conn = self.conn.lock().expect("event bus db lock poisoned");
@@ -144,7 +218,7 @@ impl EventBus for SqliteEventBus {
                     event.id,
                     event.topic,
                     event.source,
-                    event.payload,
+                    &*event.payload,
                     event.privacy_boundary,
                     event.correlation_id,
                     event.timestamp_ms as i64,
@@ -153,8 +227,8 @@ impl EventBus for SqliteEventBus {
         }
 
         // Then broadcast to in-process subscribers.
-        let _ = self.tx.send(event);
-        Ok(())
+        let delivered = self.tx.send(event).unwrap_or(0);
+        Ok(agentzero_core::event_bus::PublishResult { delivered })
     }
 
     fn subscribe(&self) -> Box<dyn EventSubscriber> {
@@ -234,7 +308,7 @@ mod tests {
 
         let event = sub.recv().await.expect("recv");
         assert_eq!(event.topic, "test.topic");
-        assert_eq!(event.payload, "hello");
+        assert_eq!(&*event.payload, "hello");
 
         let _ = std::fs::remove_file(&path);
     }
@@ -259,7 +333,7 @@ mod tests {
 
         let topic_a = bus.replay(Some("a.1"), None).expect("replay filtered");
         assert_eq!(topic_a.len(), 1);
-        assert_eq!(topic_a[0].payload, "one");
+        assert_eq!(&*topic_a[0].payload, "one");
 
         let _ = std::fs::remove_file(&path);
     }
@@ -284,8 +358,8 @@ mod tests {
 
         let since = bus.replay(None, Some(&first_id)).expect("replay since");
         assert_eq!(since.len(), 2);
-        assert_eq!(since[0].payload, "second");
-        assert_eq!(since[1].payload, "third");
+        assert_eq!(&*since[0].payload, "second");
+        assert_eq!(&*since[1].payload, "third");
 
         let _ = std::fs::remove_file(&path);
     }
@@ -311,7 +385,7 @@ mod tests {
 
         let remaining = bus.replay(None, None).expect("replay");
         assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].payload, "recent");
+        assert_eq!(&*remaining[0].payload, "recent");
 
         let _ = std::fs::remove_file(&path);
     }
@@ -331,7 +405,7 @@ mod tests {
             let bus = SqliteEventBus::open(&path, 16).expect("reopen");
             let events = bus.replay(None, None).expect("replay");
             assert_eq!(events.len(), 1);
-            assert_eq!(events[0].payload, "persisted");
+            assert_eq!(&*events[0].payload, "persisted");
         }
 
         let _ = std::fs::remove_file(&path);
@@ -352,8 +426,128 @@ mod tests {
 
         let e1 = sub1.recv().await.expect("recv1");
         let e2 = sub2.recv().await.expect("recv2");
-        assert_eq!(e1.payload, "data");
-        assert_eq!(e2.payload, "data");
+        assert_eq!(&*e1.payload, "data");
+        assert_eq!(&*e2.payload, "data");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn publish_result_delivery_count() {
+        let path = temp_db("pubresult");
+        let bus = SqliteEventBus::open(&path, 16).expect("open");
+
+        let r0 = bus
+            .publish(Event::new("t", "s", "no-sub"))
+            .await
+            .expect("publish");
+        assert_eq!(r0.delivered, 0);
+
+        let _sub = bus.subscribe();
+        let r1 = bus
+            .publish(Event::new("t", "s", "one-sub"))
+            .await
+            .expect("publish");
+        assert_eq!(r1.delivered, 1);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn replay_with_filter_source_only() {
+        let path = temp_db("filter-src");
+        let bus = SqliteEventBus::open(&path, 16).expect("open");
+
+        bus.publish(Event::new("t.a", "agent-1", "a1"))
+            .await
+            .expect("publish");
+        bus.publish(Event::new("t.b", "agent-2", "a2"))
+            .await
+            .expect("publish");
+        bus.publish(Event::new("t.c", "agent-1", "a1b"))
+            .await
+            .expect("publish");
+
+        let filter = agentzero_core::event_bus::EventFilter::source("agent-1");
+        let events = bus.replay_with_filter(&filter, None).expect("replay");
+        assert_eq!(events.len(), 2);
+        assert_eq!(&*events[0].payload, "a1");
+        assert_eq!(&*events[1].payload, "a1b");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn replay_with_filter_topic_prefix() {
+        let path = temp_db("filter-topic");
+        let bus = SqliteEventBus::open(&path, 16).expect("open");
+
+        bus.publish(Event::new("tool.exec", "s", "t1"))
+            .await
+            .expect("publish");
+        bus.publish(Event::new("channel.msg", "s", "c1"))
+            .await
+            .expect("publish");
+        bus.publish(Event::new("tool.write", "s", "t2"))
+            .await
+            .expect("publish");
+
+        let filter = agentzero_core::event_bus::EventFilter::topic("tool.");
+        let events = bus.replay_with_filter(&filter, None).expect("replay");
+        assert_eq!(events.len(), 2);
+        assert_eq!(&*events[0].payload, "t1");
+        assert_eq!(&*events[1].payload, "t2");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn replay_with_filter_both_axes() {
+        let path = temp_db("filter-both");
+        let bus = SqliteEventBus::open(&path, 16).expect("open");
+
+        bus.publish(Event::new("tool.exec", "agent-1", "match"))
+            .await
+            .expect("publish");
+        bus.publish(Event::new("tool.exec", "agent-2", "wrong-src"))
+            .await
+            .expect("publish");
+        bus.publish(Event::new("channel.msg", "agent-1", "wrong-topic"))
+            .await
+            .expect("publish");
+
+        let filter = agentzero_core::event_bus::EventFilter::source_and_topic("agent-1", "tool.");
+        let events = bus.replay_with_filter(&filter, None).expect("replay");
+        assert_eq!(events.len(), 1);
+        assert_eq!(&*events[0].payload, "match");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn replay_with_filter_since_id() {
+        let path = temp_db("filter-since");
+        let bus = SqliteEventBus::open(&path, 16).expect("open");
+
+        bus.publish(Event::new("tool.a", "agent-1", "first"))
+            .await
+            .expect("publish");
+        let all = bus.replay(None, None).expect("replay");
+        let first_id = all[0].id.clone();
+
+        bus.publish(Event::new("tool.b", "agent-1", "second"))
+            .await
+            .expect("publish");
+        bus.publish(Event::new("tool.c", "agent-2", "third"))
+            .await
+            .expect("publish");
+
+        let filter = agentzero_core::event_bus::EventFilter::source("agent-1");
+        let events = bus
+            .replay_with_filter(&filter, Some(&first_id))
+            .expect("replay");
+        assert_eq!(events.len(), 1);
+        assert_eq!(&*events[0].payload, "second");
 
         let _ = std::fs::remove_file(&path);
     }

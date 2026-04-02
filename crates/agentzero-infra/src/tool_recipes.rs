@@ -52,6 +52,17 @@ impl ToolRecipe {
     }
 }
 
+/// A detected gap where goals keep failing with no matching tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolGap {
+    /// Sorted keyword signature of the failing goal pattern.
+    pub goal_keywords: Vec<String>,
+    /// Number of failed runs with this pattern.
+    pub failure_count: usize,
+    /// An example goal string from the first failure.
+    pub sample_goal: String,
+}
+
 /// Wrapper for encrypted persistence.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct RecipeData {
@@ -315,6 +326,58 @@ impl RecipeStore {
             .collect()
     }
 
+    /// Detect goals that keep failing with no matching successful recipe.
+    ///
+    /// Returns goal keywords for patterns that have failed >= `min_failures` times
+    /// with no successful recipe matching above `min_jaccard` similarity.
+    /// These are candidates for proactive tool creation.
+    pub fn detect_tool_gaps(&self, min_failures: usize, min_jaccard: f64) -> Vec<ToolGap> {
+        // Group failed recipes by goal keyword signature.
+        let mut failure_groups: std::collections::HashMap<Vec<String>, Vec<&ToolRecipe>> =
+            std::collections::HashMap::new();
+        for r in &self.recipes {
+            if !r.success {
+                let mut kw = r.goal_keywords.clone();
+                kw.sort();
+                failure_groups.entry(kw).or_default().push(r);
+            }
+        }
+
+        let mut gaps = Vec::new();
+        for (keywords, failures) in &failure_groups {
+            if failures.len() < min_failures {
+                continue;
+            }
+
+            // Check if there's a successful recipe covering this goal.
+            let kw_set: HashSet<&str> = keywords.iter().map(|s| s.as_str()).collect();
+            let has_matching_success = self.recipes.iter().any(|r| {
+                if !r.success {
+                    return false;
+                }
+                let doc_set: HashSet<&str> = r.goal_keywords.iter().map(|s| s.as_str()).collect();
+                let intersection = kw_set.intersection(&doc_set).count() as f64;
+                let union = kw_set.union(&doc_set).count() as f64;
+                let jaccard = if union > 0.0 {
+                    intersection / union
+                } else {
+                    0.0
+                };
+                jaccard >= min_jaccard
+            });
+
+            if !has_matching_success {
+                gaps.push(ToolGap {
+                    goal_keywords: keywords.clone(),
+                    failure_count: failures.len(),
+                    sample_goal: failures[0].goal_summary.clone(),
+                });
+            }
+        }
+        gaps.sort_by(|a, b| b.failure_count.cmp(&a.failure_count));
+        gaps
+    }
+
     /// Clear all recipes.
     pub fn clear(&mut self) -> anyhow::Result<()> {
         self.recipes.clear();
@@ -489,5 +552,67 @@ mod tests {
     fn tokenize_splits_correctly() {
         let tokens = tokenize("summarize this video file");
         assert_eq!(tokens, vec!["summarize", "this", "video", "file"]);
+    }
+
+    #[test]
+    fn detect_tool_gaps_finds_repeated_failures() {
+        let dir = test_data_dir();
+        let mut store = RecipeStore::open(&dir).expect("open");
+
+        // Record 3 failures for the same goal pattern.
+        for _ in 0..3 {
+            store
+                .record("convert pdf to text", &["shell".to_string()], false)
+                .expect("record failure");
+        }
+
+        // No successful recipe for this goal.
+        let gaps = store.detect_tool_gaps(3, 0.5);
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].failure_count, 3);
+        assert!(gaps[0].sample_goal.contains("convert pdf"));
+    }
+
+    #[test]
+    fn detect_tool_gaps_ignores_covered_goals() {
+        let dir = test_data_dir();
+        let mut store = RecipeStore::open(&dir).expect("open");
+
+        // Record 3 failures.
+        for _ in 0..3 {
+            store
+                .record("convert pdf to text", &["shell".to_string()], false)
+                .expect("record failure");
+        }
+        // But also a success with matching keywords.
+        store
+            .record(
+                "convert pdf to text document",
+                &["pdf_read".to_string()],
+                true,
+            )
+            .expect("record success");
+
+        let gaps = store.detect_tool_gaps(3, 0.5);
+        assert!(
+            gaps.is_empty(),
+            "gap should be covered by the success recipe"
+        );
+    }
+
+    #[test]
+    fn detect_tool_gaps_requires_min_failures() {
+        let dir = test_data_dir();
+        let mut store = RecipeStore::open(&dir).expect("open");
+
+        // Only 2 failures — below threshold of 3.
+        for _ in 0..2 {
+            store
+                .record("some failing task", &["shell".to_string()], false)
+                .expect("record failure");
+        }
+
+        let gaps = store.detect_tool_gaps(3, 0.5);
+        assert!(gaps.is_empty(), "below minimum failure threshold");
     }
 }

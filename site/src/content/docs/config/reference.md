@@ -26,6 +26,11 @@ default_temperature = 0.7                        # 0.0 – 2.0
 # kind = "candle"
 # model = "qwen2.5-coder-3b"
 
+# Credential pooling — distribute across multiple API keys
+# [provider.credential_pool]
+# strategy = "round-robin"                        # fill-first, round-robin, random
+# keys = ["OPENAI_KEY_1", "OPENAI_KEY_2"]        # env var names
+
 # Local model tuning (shared by candle and builtin providers)
 # [local]
 # n_ctx = 8192                                   # context window (tokens)
@@ -62,6 +67,16 @@ enable_agent_manage = false
 # When enabled, agents can create new tools mid-session that persist across restarts.
 # Created tools are stored encrypted in .agentzero/dynamic-tools.json.
 enable_dynamic_tools = false
+
+[agent.summarization]
+enabled = false                                  # enable context summarization
+keep_recent = 10                                 # messages to keep verbatim
+min_entries_for_summarization = 20               # minimum entries before triggering
+max_summary_chars = 2000                         # max summary length
+compression_enabled = false                      # enable 4-phase context compression
+max_tool_result_chars = 4000                     # truncate tool results beyond this
+protect_head = 3                                 # messages to protect at start
+protect_tail = 10                                # messages to protect at end
 
 [agent.hooks]
 enabled = false
@@ -192,7 +207,8 @@ format = "markdown"                              # markdown or aieos
 # ─── Runtime ─────────────────────────────────────────────
 [runtime]
 kind = "native"                                  # native or docker
-# reasoning_enabled = true
+# reasoning_enabled = true                       # enable extended thinking
+# adaptive_reasoning = true                      # auto-adjust effort by query complexity
 
 [runtime.wasm]
 tools_dir = "tools/wasm"
@@ -347,6 +363,15 @@ key_store_path = ""                               # key persistence directory (e
 
 # [channels_config]
 # default_privacy_boundary = "encrypted_only"     # global default for all channels
+
+# [channels_config.voice_wake]
+# wake_words = ["hey agent", "ok computer"]       # wake words to listen for
+# energy_threshold = 0.05                         # RMS energy threshold for VAD
+# capture_timeout_secs = 10                       # max capture duration
+# transcription_url = "https://api.groq.com/openai/v1/audio/transcriptions"
+# transcription_api_key = ""                      # or GROQ_API_KEY env var
+# sample_rate = 16000                             # audio sample rate (Hz)
+# auto_tts_response = false                       # auto-speak agent responses
 ```
 
 ## [audio]

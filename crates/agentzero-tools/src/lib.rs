@@ -124,6 +124,7 @@ pub fn tool_tier(name: &str) -> ToolTier {
 // ── Core tier modules (always compiled) ──────────────────────────────
 pub mod apply_patch;
 pub mod autonomy;
+pub mod checkpoint;
 pub mod content_search;
 pub mod conversation_timerange;
 pub mod converse;

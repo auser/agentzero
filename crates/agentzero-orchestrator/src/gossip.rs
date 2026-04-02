@@ -238,17 +238,20 @@ impl GossipEventBus {
 
 #[async_trait]
 impl EventBus for GossipEventBus {
-    async fn publish(&self, event: Event) -> anyhow::Result<()> {
+    async fn publish(
+        &self,
+        event: Event,
+    ) -> anyhow::Result<agentzero_core::event_bus::PublishResult> {
         // Mark as seen to prevent re-ingestion from peers.
         {
             let mut seen = self.seen.lock().await;
             seen.insert(event.id.clone());
         }
         // Persist to local SQLite + broadcast to local subscribers.
-        self.local_bus.publish(event.clone()).await?;
+        let result = self.local_bus.publish(event.clone()).await?;
         // Notify the gossip broadcaster to send to peers.
         let _ = self.local_tx.send(event);
-        Ok(())
+        Ok(result)
     }
 
     fn subscribe(&self) -> Box<dyn EventSubscriber> {
@@ -377,7 +380,7 @@ mod tests {
             .expect("recv");
 
         assert_eq!(received.topic, "test.relay");
-        assert_eq!(received.payload, "hello from node 1");
+        assert_eq!(&*received.payload, "hello from node 1");
 
         // Cleanup.
         let _ = std::fs::remove_file(&db1);
@@ -458,7 +461,7 @@ mod tests {
         let received = read_frame(&mut stream).await.expect("read");
 
         assert_eq!(received.topic, "test.wire");
-        assert_eq!(received.payload, "wire payload");
+        assert_eq!(&*received.payload, "wire payload");
 
         writer.await.expect("writer task");
     }
