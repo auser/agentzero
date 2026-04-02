@@ -80,11 +80,14 @@ impl CodegenCompiler {
         std::fs::write(src_dir.join("lib.rs"), source).context("failed to write codegen source")?;
 
         // Build Cargo.toml
+        // [workspace] prevents Cargo from treating this as part of the parent workspace.
         let mut cargo_toml = format!(
             r#"[package]
 name = "agentzero-codegen-{tool_name}"
 version = "0.1.0"
 edition = "2021"
+
+[workspace]
 
 [lib]
 crate-type = ["cdylib"]
@@ -366,4 +369,307 @@ fn find_sdk_path() -> Option<PathBuf> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let seq = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "agentzero-codegen-{}-{nanos}-{seq}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// Find the workspace root by walking up from CARGO_MANIFEST_DIR.
+    fn workspace_root() -> PathBuf {
+        let manifest = std::env::var("CARGO_MANIFEST_DIR")
+            .expect("CARGO_MANIFEST_DIR should be set during tests");
+        PathBuf::from(manifest)
+            .parent() // crates/
+            .and_then(|p| p.parent()) // workspace root
+            .expect("should find workspace root")
+            .to_path_buf()
+    }
+
+    fn sdk_path() -> PathBuf {
+        workspace_root().join("crates/agentzero-plugin-sdk")
+    }
+
+    #[test]
+    fn scaffold_creates_project_structure() {
+        let dir = temp_dir();
+        let compiler = CodegenCompiler {
+            codegen_dir: dir.join("codegen"),
+            sdk_path: Some(sdk_path()),
+        };
+
+        let source = r#"
+use agentzero_plugin_sdk::prelude::*;
+declare_tool!("test_scaffold", handler);
+fn handler(input: ToolInput) -> ToolOutput {
+    ToolOutput::success("ok".to_string())
+}
+"#;
+
+        let project = compiler
+            .scaffold_project("test_scaffold", source, &[])
+            .expect("scaffold should succeed");
+
+        assert!(project.join("src/lib.rs").exists());
+        assert!(project.join("Cargo.toml").exists());
+        assert!(project.join(".cargo/config.toml").exists());
+
+        let cargo_toml = std::fs::read_to_string(project.join("Cargo.toml")).expect("read");
+        assert!(cargo_toml.contains("agentzero-plugin-sdk"));
+        assert!(cargo_toml.contains("[workspace]"));
+        assert!(cargo_toml.contains("cdylib"));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn scaffold_includes_extra_deps() {
+        let dir = temp_dir();
+        let compiler = CodegenCompiler {
+            codegen_dir: dir.join("codegen"),
+            sdk_path: Some(sdk_path()),
+        };
+
+        let project = compiler
+            .scaffold_project(
+                "with_deps",
+                "fn x(){}",
+                &[("regex", "1"), ("chrono", "0.4")],
+            )
+            .expect("scaffold");
+
+        let cargo_toml = std::fs::read_to_string(project.join("Cargo.toml")).expect("read");
+        assert!(cargo_toml.contains("regex = \"1\""));
+        assert!(cargo_toml.contains("chrono = \"0.4\""));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn scaffold_rejects_unlisted_deps() {
+        let dir = temp_dir();
+        let compiler = CodegenCompiler {
+            codegen_dir: dir.join("codegen"),
+            sdk_path: Some(sdk_path()),
+        };
+
+        let project = compiler
+            .scaffold_project("reject_deps", "fn x(){}", &[("tokio", "1"), ("regex", "1")])
+            .expect("scaffold");
+
+        let cargo_toml = std::fs::read_to_string(project.join("Cargo.toml")).expect("read");
+        assert!(cargo_toml.contains("regex"));
+        assert!(!cargo_toml.contains("tokio"));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn hash_source_deterministic() {
+        let h1 = CodegenCompiler::hash_source("hello world");
+        let h2 = CodegenCompiler::hash_source("hello world");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64); // SHA-256 = 32 bytes = 64 hex chars
+
+        let h3 = CodegenCompiler::hash_source("different");
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn gc_removes_stale_dirs() {
+        let dir = temp_dir();
+        let codegen_dir = dir.join("codegen");
+        std::fs::create_dir_all(codegen_dir.join("active_tool")).expect("mkdir");
+        std::fs::create_dir_all(codegen_dir.join("stale_tool")).expect("mkdir");
+        std::fs::create_dir_all(codegen_dir.join(".target")).expect("mkdir");
+
+        let compiler = CodegenCompiler {
+            codegen_dir: codegen_dir.clone(),
+            sdk_path: None,
+        };
+
+        let removed = compiler
+            .gc(&["active_tool".to_string()])
+            .expect("gc should work");
+
+        assert_eq!(removed, 1);
+        assert!(codegen_dir.join("active_tool").exists());
+        assert!(!codegen_dir.join("stale_tool").exists());
+        assert!(codegen_dir.join(".target").exists()); // .target preserved
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    // ── End-to-end: compile + execute WASM from source ────────────────
+    //
+    // These tests require `wasm32-wasip1` target and (for execution)
+    // the `wasm-plugins` feature. Run with:
+    //   cargo nextest run -p agentzero-infra --features wasm-plugins -E 'test(codegen)'
+
+    #[tokio::test]
+    async fn check_toolchain_passes() {
+        let dir = temp_dir();
+        let compiler = CodegenCompiler::new(&dir);
+        compiler
+            .check_toolchain()
+            .await
+            .expect("wasm32-wasip1 should be installed");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "wasm-plugins")]
+    async fn compile_and_execute_codegen_tool() {
+        let dir = temp_dir();
+        let compiler = CodegenCompiler {
+            codegen_dir: dir.join("codegen"),
+            sdk_path: Some(sdk_path()),
+        };
+
+        let source = r#"use agentzero_plugin_sdk::prelude::*;
+
+declare_tool!("reverse_string", handler);
+
+fn handler(input: ToolInput) -> ToolOutput {
+    let req: serde_json::Value = match serde_json::from_str(&input.input) {
+        Ok(v) => v,
+        Err(e) => return ToolOutput::error(format!("invalid input: {e}")),
+    };
+
+    let text = req["text"].as_str().unwrap_or("");
+    let reversed: String = text.chars().rev().collect();
+    ToolOutput::success(reversed)
+}
+"#;
+
+        // Build
+        let (wasm_path, wasm_sha256, source_hash) = compiler
+            .build_tool("reverse_string", source, &[])
+            .await
+            .expect("compilation should succeed");
+
+        assert!(
+            wasm_path.exists(),
+            "WASM file should exist at {}",
+            wasm_path.display()
+        );
+        assert_eq!(wasm_sha256.len(), 64, "SHA-256 should be 64 hex chars");
+        assert_eq!(source_hash.len(), 64);
+
+        // Verify hash is correct
+        let recomputed = CodegenCompiler::compute_hash(&wasm_path).expect("hash should work");
+        assert_eq!(wasm_sha256, recomputed);
+
+        // Execute
+        let ctx = agentzero_core::ToolContext::new(dir.to_string_lossy().to_string());
+        let result =
+            execute_codegen_tool(&wasm_path.to_string_lossy(), r#"{"text": "hello"}"#, &ctx)
+                .await
+                .expect("execution should succeed");
+
+        assert_eq!(result.output, "olleh");
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "wasm-plugins")]
+    async fn compile_with_extra_deps() {
+        let dir = temp_dir();
+        let compiler = CodegenCompiler {
+            codegen_dir: dir.join("codegen"),
+            sdk_path: Some(sdk_path()),
+        };
+
+        let source = r#"// deps: regex
+use agentzero_plugin_sdk::prelude::*;
+
+declare_tool!("regex_match", handler);
+
+fn handler(input: ToolInput) -> ToolOutput {
+    let req: serde_json::Value = match serde_json::from_str(&input.input) {
+        Ok(v) => v,
+        Err(e) => return ToolOutput::error(format!("invalid input: {e}")),
+    };
+
+    let pattern = req["pattern"].as_str().unwrap_or(".*");
+    let text = req["text"].as_str().unwrap_or("");
+
+    match regex::Regex::new(pattern) {
+        Ok(re) => {
+            let matched = re.is_match(text);
+            ToolOutput::success(format!("{matched}"))
+        }
+        Err(e) => ToolOutput::error(format!("invalid regex: {e}")),
+    }
+}
+"#;
+
+        let extra_deps = crate::tools::codegen::extract_deps_from_source(source);
+        let (wasm_path, _, _) = compiler
+            .build_tool("regex_match", source, &extra_deps)
+            .await
+            .expect("compilation with regex dep should succeed");
+
+        // Execute
+        let ctx = agentzero_core::ToolContext::new(dir.to_string_lossy().to_string());
+        let result = execute_codegen_tool(
+            &wasm_path.to_string_lossy(),
+            r#"{"pattern": "^he", "text": "hello"}"#,
+            &ctx,
+        )
+        .await
+        .expect("regex tool should execute");
+
+        assert_eq!(result.output, "true");
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn compile_failure_returns_error() {
+        let dir = temp_dir();
+        let compiler = CodegenCompiler {
+            codegen_dir: dir.join("codegen"),
+            sdk_path: Some(sdk_path()),
+        };
+
+        let bad_source = r#"
+use agentzero_plugin_sdk::prelude::*;
+declare_tool!("broken", handler);
+fn handler(input: ToolInput) -> ToolOutput {
+    let x: i32 = "not a number"; // type error
+    ToolOutput::success(format!("{x}"))
+}
+"#;
+
+        let result = compiler.build_tool("broken", bad_source, &[]).await;
+
+        assert!(result.is_err(), "compilation of bad source should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("compilation failed"),
+            "error should mention compilation: {err}"
+        );
+
+        std::fs::remove_dir_all(dir).ok();
+    }
 }
