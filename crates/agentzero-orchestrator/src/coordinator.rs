@@ -483,6 +483,12 @@ impl Coordinator {
             None
         };
 
+        // Keep abort handles so we can cancel all loops on shutdown.
+        let abort_ingestion = ingestion.abort_handle();
+        let abort_router = router_loop.abort_handle();
+        let abort_response = response_loop.abort_handle();
+        let abort_sync = sync_loop.as_ref().map(|h| h.abort_handle());
+
         // Wait for shutdown signal or any loop to exit.
         tokio::select! {
             _ = shutdown.changed() => {
@@ -508,6 +514,20 @@ impl Coordinator {
             "coordinator shutting down, waiting for in-flight tasks"
         );
         tokio::time::sleep(Duration::from_millis(coord.shutdown_grace_ms)).await;
+
+        // Abort all internal loops that may still be running.
+        abort_ingestion.abort();
+        abort_router.abort();
+        abort_response.abort();
+        if let Some(h) = abort_sync {
+            h.abort();
+        }
+
+        // Abort all agent worker tasks.
+        let agents = coord.agents.read().await;
+        for worker in agents.values() {
+            worker.join_handle.abort();
+        }
 
         Ok(())
     }

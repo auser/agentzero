@@ -400,12 +400,15 @@ mod tests {
 
     #[tokio::test]
     async fn web_search_accepts_bare_string_as_query() {
-        // The tool now accepts bare strings as queries (forgiving parsing).
-        // We can't actually run the search in tests, but we can verify it
-        // doesn't reject the input. It will fail at the network level.
-        let tool = WebSearchTool::default();
-        // "not json" is treated as a query string — it won't error on parsing,
-        // it will attempt the search (and fail due to network in tests).
+        // Verify bare strings are accepted as queries (forgiving parsing)
+        // without making a real network call. We use a Brave provider with
+        // a dummy API key — it will fail at the API level (not parsing).
+        let tool = WebSearchTool::new(WebSearchConfig {
+            provider: "brave".to_string(),
+            brave_api_key: Some("test-key-not-real".to_string()),
+            timeout_secs: 1,
+            ..Default::default()
+        });
         let result = tool
             .execute("not json", &ToolContext::new(".".to_string()))
             .await;
