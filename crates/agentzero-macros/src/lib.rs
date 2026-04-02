@@ -1,13 +1,15 @@
 //! Proc macros for reducing boilerplate in AgentZero tool definitions.
 //!
-//! Provides two macros:
+//! Provides three macros:
 //! - `#[tool(name = "...", description = "...")]` — generates `name()` and `description()` on Tool impl
 //! - `#[derive(ToolSchema)]` — generates `input_schema()` from struct fields and doc comments
+//! - `#[tool_fn(name = "...")]` — generates a full `Tool` impl from an async function
 
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
 
 mod tool_attr;
+mod tool_fn;
 mod tool_schema;
 
 /// Attribute macro for Tool structs that generates `name()` and `description()` trait methods.
@@ -59,4 +61,35 @@ pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn derive_tool_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     tool_schema::expand(input)
+}
+
+/// Function-level attribute macro that generates a complete `Tool` implementation from an
+/// async function.
+///
+/// # Usage
+/// ```ignore
+/// /// Reverse the input string.
+/// #[tool_fn(name = "reverse_string")]
+/// async fn reverse_string(
+///     /// The text to reverse
+///     text: String,
+///     #[ctx] ctx: &ToolContext,
+/// ) -> anyhow::Result<ToolResult> {
+///     Ok(ToolResult { output: text.chars().rev().collect() })
+/// }
+/// ```
+///
+/// This generates:
+/// - `ReverseStringInput` struct with `#[derive(Deserialize)]`
+/// - `ReverseStringTool` struct (unit struct for stateless tools)
+/// - `Tool` trait impl with name, description (from doc comment), input_schema, and execute
+///
+/// # Special parameter attributes
+/// - `#[ctx]` — marks the `&ToolContext` parameter (not included in schema)
+/// - `#[state]` — marks a state parameter; generates a struct with that field + `new()` constructor
+/// - `#[serde(default)]` — forwarded to the input struct field
+/// - `#[schema(enum_values = [...])]` — adds enum constraint to the JSON schema
+#[proc_macro_attribute]
+pub fn tool_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
+    tool_fn::expand(attr, item)
 }

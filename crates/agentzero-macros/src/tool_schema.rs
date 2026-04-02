@@ -100,7 +100,7 @@ pub fn expand(input: DeriveInput) -> proc_macro::TokenStream {
 }
 
 /// Extract doc comments from attributes and join them into a single description string.
-fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
+pub(crate) fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
     let docs: Vec<String> = attrs
         .iter()
         .filter_map(|attr| {
@@ -127,7 +127,7 @@ fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
 }
 
 /// Extract `#[schema(enum_values = ["a", "b", "c"])]` from field attributes.
-fn extract_schema_enum_values(attrs: &[Attribute]) -> Option<Vec<String>> {
+pub(crate) fn extract_schema_enum_values(attrs: &[Attribute]) -> Option<Vec<String>> {
     for attr in attrs {
         if !attr.path().is_ident("schema") {
             continue;
@@ -158,7 +158,7 @@ fn extract_schema_enum_values(attrs: &[Attribute]) -> Option<Vec<String>> {
 }
 
 /// Extract `#[schema(items_type = "string")]` from field attributes.
-fn extract_schema_items_type(attrs: &[Attribute]) -> Option<String> {
+pub(crate) fn extract_schema_items_type(attrs: &[Attribute]) -> Option<String> {
     for attr in attrs {
         if !attr.path().is_ident("schema") {
             continue;
@@ -180,7 +180,7 @@ fn extract_schema_items_type(attrs: &[Attribute]) -> Option<String> {
 }
 
 /// Check if the field has `#[serde(default)]`.
-fn has_serde_default_attr(attrs: &[Attribute]) -> bool {
+pub(crate) fn has_serde_default_attr(attrs: &[Attribute]) -> bool {
     for attr in attrs {
         if !attr.path().is_ident("serde") {
             continue;
@@ -201,7 +201,7 @@ fn has_serde_default_attr(attrs: &[Attribute]) -> bool {
 
 /// Map a Rust type to a JSON Schema type string.
 /// Returns (json_type, is_optional, is_array).
-fn rust_type_to_json_type(ty: &Type) -> (&'static str, bool, bool) {
+pub(crate) fn rust_type_to_json_type(ty: &Type) -> (&'static str, bool, bool) {
     if let Type::Path(type_path) = ty {
         let segments = &type_path.path.segments;
         if let Some(last) = segments.last() {

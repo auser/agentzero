@@ -333,9 +333,15 @@ dependencies = [
 name = "agentzero-macros"
 version = "0.10.0"
 dependencies = [
+ "agentzero-core",
+ "anyhow",
+ "async-trait",
  "proc-macro2",
  "quote",
+ "serde",
+ "serde_json",
  "syn",
+ "tokio",
 ]
 
 [[package]]
