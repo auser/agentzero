@@ -79,6 +79,24 @@ pub enum DynamicToolStrategy {
     /// Chain existing tools sequentially: each step's output becomes the
     /// next step's input.
     Composite { steps: Vec<CompositeStep> },
+    /// LLM-generated Rust source compiled to WASM and loaded via the plugin
+    /// runtime. The most capable strategy — runs native-speed sandboxed code.
+    Codegen {
+        /// Rust source code (using `declare_tool!` from plugin SDK).
+        source: String,
+        /// Path to the compiled `.wasm` file (relative to `.agentzero/codegen/`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wasm_path: Option<String>,
+        /// SHA-256 hex digest of the `.wasm` file for integrity verification.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wasm_sha256: Option<String>,
+        /// SHA-256 of the source code — used for rebuild avoidance.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_hash: Option<String>,
+        /// Last compilation error (cleared on success, used for retry/evolution).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compile_error: Option<String>,
+    },
 }
 
 /// A step in a composite tool chain.
@@ -217,6 +235,28 @@ impl Tool for DynamicTool {
                         "[Dynamic LLM tool — system prompt below]\n\n{system_prompt}\n\n[Input]\n{input}"
                     ),
                 })
+            }
+
+            DynamicToolStrategy::Codegen {
+                wasm_path,
+                compile_error,
+                ..
+            } => {
+                if let Some(err) = compile_error {
+                    return Err(anyhow::anyhow!(
+                        "codegen tool '{}' failed to compile: {err}",
+                        self.name
+                    ));
+                }
+                let wasm = wasm_path.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "codegen tool '{}' has no compiled WASM (compilation may have failed)",
+                        self.name
+                    )
+                })?;
+
+                // Execute via the WASM plugin runtime.
+                crate::tools::codegen::execute_codegen_tool(wasm, input, ctx).await
             }
 
             DynamicToolStrategy::Composite { steps } => {

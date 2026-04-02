@@ -225,6 +225,7 @@ impl ToolCreateTool {
                 DynamicToolStrategy::Http { .. } => "http",
                 DynamicToolStrategy::Llm { .. } => "llm",
                 DynamicToolStrategy::Composite { .. } => "composite",
+                DynamicToolStrategy::Codegen { .. } => "codegen",
             };
             lines.push(format!(
                 "- {} [{}]: {}",

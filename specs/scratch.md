@@ -6,4 +6,6 @@ Can we plan AUTO-IMPROVE and AUTO-LEARN? How about Two-stage tool selection and 
 
 ---
 
-I want you review the updated code as we have a plan for self-improving tools using wasm
+I want you to include all of those in our plans. I also really want to make sure A2A works, that event pub/sub works efficiently. What are we missing with Voice/STT?
+
+We have auto-generation of new tools described in @specs/plans/38-tool-fn-macro-codegen.md  -- review the code and revise the plan accordingly

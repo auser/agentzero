@@ -1,5 +1,6 @@
 #[cfg(feature = "tools-full")]
 pub mod agent_manage;
+pub mod codegen;
 #[cfg(feature = "tools-full")]
 mod config_manage;
 pub mod dynamic_tool;

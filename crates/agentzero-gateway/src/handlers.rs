@@ -2467,6 +2467,7 @@ pub(crate) async fn list_dynamic_tools(
                     agentzero_infra::tools::dynamic_tool::DynamicToolStrategy::Http { .. } => "http",
                     agentzero_infra::tools::dynamic_tool::DynamicToolStrategy::Llm { .. } => "llm",
                     agentzero_infra::tools::dynamic_tool::DynamicToolStrategy::Composite { .. } => "composite",
+                    agentzero_infra::tools::dynamic_tool::DynamicToolStrategy::Codegen { .. } => "codegen",
                 },
                 "created_at": d.created_at,
                 "total_invocations": d.total_invocations,
