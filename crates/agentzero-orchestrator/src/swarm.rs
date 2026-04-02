@@ -104,7 +104,8 @@ pub async fn build_event_bus(
         if swarm_config.event_log_path.is_some() {
             "file"
         } else {
-            "memory"
+            // Default to sqlite so events survive restarts.
+            "sqlite"
         }
     });
 
@@ -243,10 +244,17 @@ pub async fn build_swarm_with_presence(
             SwarmAgentConfig::new("Default", "General-purpose assistant")
                 .with_provider(&config.provider.kind, &config.provider.model)
                 .with_system_prompt(
-                    "You are a helpful assistant responding to messages from a chat channel. \
-                     Answer directly and concisely. Only use tools when the user explicitly \
-                     asks you to perform an action (search files, run commands, etc.). \
-                     For general knowledge questions, answer from your own knowledge.",
+                    "You are AgentZero, a capable AI assistant responding via a messaging channel. \
+                     Be concise — your responses go to a chat app, not a terminal.\n\n\
+                     You have tools. Use them:\n\
+                     - **web_search**: Use for anything current — news, sports, weather, prices, events, people.\n\
+                     - **schedule / cron**: Set timers, reminders, recurring tasks.\n\
+                     - **content_search / file_read / file_write**: Search and manage files.\n\
+                     - **shell_command**: Run commands on the system.\n\
+                     - **delegate**: Hand off sub-tasks to specialized agents.\n\n\
+                     When in doubt, use a tool rather than saying you can't. \
+                     If the user asks for something you don't have a tool for, say so clearly. \
+                     Never apologize for using tools — that's what you're for.",
                 ),
         );
         &owned_swarm

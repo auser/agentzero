@@ -1149,7 +1149,7 @@ pub struct BrowserConfig {
 impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             allowed_domains: Vec::new(),
             browser_open: "default".to_string(),
             session_name: None,
@@ -1206,7 +1206,7 @@ pub struct HttpRequestConfig {
 impl Default for HttpRequestConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             allowed_domains: Vec::new(),
             max_response_size: 1_000_000,
             timeout_secs: 30,
@@ -1242,7 +1242,7 @@ pub struct WebFetchConfig {
 impl Default for WebFetchConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             provider: "fast_html2md".to_string(),
             api_key: None,
             api_url: None,
@@ -1281,11 +1281,11 @@ pub struct WebSearchConfig {
 impl Default for WebSearchConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             provider: "duckduckgo".to_string(),
             fallback_providers: Vec::new(),
-            retries_per_provider: 0,
-            retry_backoff_ms: 250,
+            retries_per_provider: 2,
+            retry_backoff_ms: 500,
             api_key: None,
             api_url: None,
             brave_api_key: None,
@@ -1294,7 +1294,7 @@ impl Default for WebSearchConfig {
             jina_api_key: None,
             max_results: 5,
             timeout_secs: 15,
-            user_agent: "AgentZero/1.0".to_string(),
+            user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".to_string(),
             domain_filter: Vec::new(),
             language_filter: Vec::new(),
             country: None,

@@ -568,17 +568,40 @@ impl Coordinator {
                 }
             });
 
-            // Spawn a relay that publishes received messages to the bus
+            // Spawn a relay that publishes received messages to the bus.
+            // Auto-enriches channel messages with web search results so the
+            // agent has real-time context without needing to call tools itself.
             let relay_handle = tokio::spawn(async move {
+                // Shared HTTP client for auto-search.
+                let search_client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(10))
+                    .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                    .build()
+                    .ok();
+
                 while let Some(msg) = rx.recv().await {
                     let correlation_id = uuid_v4();
+
+                    // Auto-search: enrich the message with web results.
+                    let enriched_content = if let Some(ref client) = search_client {
+                        match auto_search(client, &msg.content).await {
+                            Some(results) => format!(
+                                "{}\n\n---\n[Web search results for context — use these to answer accurately]\n{}",
+                                msg.content, results
+                            ),
+                            None => msg.content.clone(),
+                        }
+                    } else {
+                        msg.content.clone()
+                    };
+
                     let event = Event::new(
                         format!("channel.{}.message", name),
                         format!("channel.{}", name),
                         serde_json::to_string(&serde_json::json!({
                             "sender": msg.sender,
                             "reply_target": msg.reply_target,
-                            "content": msg.content,
+                            "content": enriched_content,
                             "channel": msg.channel,
                             "thread_ts": msg.thread_ts,
                         }))
@@ -1140,6 +1163,97 @@ async fn agent_worker(
 
     status.store(STATUS_STOPPED, Ordering::Relaxed);
     tracing::info!(agent = %descriptor.id, "agent worker stopped");
+}
+
+/// Auto-search: run a DuckDuckGo search for channel messages and return
+/// formatted results. Returns `None` if the message doesn't look like it
+/// needs web context or if the search fails.
+async fn auto_search(client: &reqwest::Client, content: &str) -> Option<String> {
+    let trimmed = content.trim();
+
+    // Skip very short messages or obvious commands.
+    if trimmed.len() < 8 || trimmed.starts_with('/') {
+        return None;
+    }
+
+    tracing::info!(query = %trimmed, "auto-searching for channel message");
+
+    let url = format!(
+        "https://html.duckduckgo.com/html/?q={}",
+        simple_url_encode(trimmed)
+    );
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "auto-search request failed");
+            return None;
+        }
+    };
+
+    let body = match resp.text().await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "auto-search body read failed");
+            return None;
+        }
+    };
+
+    // Parse DuckDuckGo HTML results.
+    let mut results = Vec::new();
+    for (i, chunk) in body.split("class=\"result__a\"").skip(1).enumerate() {
+        if i >= 5 {
+            break;
+        }
+        let title = extract_between_simple(chunk, ">", "</a>").unwrap_or_default();
+        let snippet = if let Some(snip) = chunk.split("class=\"result__snippet\"").nth(1) {
+            extract_between_simple(snip, ">", "</")
+                .unwrap_or_default()
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+        } else {
+            String::new()
+        };
+        if !title.is_empty() {
+            results.push(format!("{}. {} — {}", i + 1, title.trim(), snippet.trim()));
+        }
+    }
+
+    if results.is_empty() {
+        tracing::info!("auto-search returned no results");
+        return None;
+    }
+
+    tracing::info!(count = results.len(), "auto-search found results");
+    Some(results.join("\n"))
+}
+
+/// Percent-encode a string for use in a URL query parameter.
+fn simple_url_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 2);
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => out.push('+'),
+            _ => {
+                out.push('%');
+                out.push(char::from(b"0123456789ABCDEF"[(b >> 4) as usize]));
+                out.push(char::from(b"0123456789ABCDEF"[(b & 0x0F) as usize]));
+            }
+        }
+    }
+    out
+}
+
+/// Simple helper to extract text between two delimiters.
+fn extract_between_simple(text: &str, start: &str, end: &str) -> Option<String> {
+    let start_idx = text.find(start)? + start.len();
+    let remaining = &text[start_idx..];
+    let end_idx = remaining.find(end)?;
+    Some(remaining[..end_idx].to_string())
 }
 
 /// Pick a random acknowledgment message for channel replies.
