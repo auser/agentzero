@@ -2552,10 +2552,10 @@ Transform a plain async function into a full `Tool` trait implementation. Genera
 
 **Tasks:**
 
-- [ ] **Macro entry point** — Add `#[proc_macro_attribute] pub fn tool_fn(...)` to `crates/agentzero-macros/src/lib.rs`
-- [ ] **Macro implementation** — New `crates/agentzero-macros/src/tool_fn.rs`: parse `ItemFn`, separate `#[ctx]`/`#[state]` params, extract doc comments, generate input struct + tool struct + `Tool` impl
-- [ ] **Shared schema helpers** — Extract `rust_type_to_json_type()`, `is_option()`, `inner_type()` from `tool_schema.rs` for reuse by both `#[derive(ToolSchema)]` and `#[tool_fn]`
-- [ ] **Tests** — New `crates/agentzero-macros/tests/tool_fn_tests.rs`: basic function, optional params, `#[state]`, no input, doc comments, serde passthrough, error cases
+- [x] **Macro entry point** — Add `#[proc_macro_attribute] pub fn tool_fn(...)` to `crates/agentzero-macros/src/lib.rs`
+- [x] **Macro implementation** — New `crates/agentzero-macros/src/tool_fn.rs`: parse `ItemFn`, separate `#[ctx]`/`#[state]` params, extract doc comments, generate input struct + tool struct + `Tool` impl
+- [x] **Shared schema helpers** — Extract `rust_type_to_json_type()`, `is_option()`, `inner_type()` from `tool_schema.rs` for reuse by both `#[derive(ToolSchema)]` and `#[tool_fn]`
+- [x] **Tests** — New `crates/agentzero-macros/tests/tool_fn_tests.rs`: 14 tests covering basic function, optional params, `#[state]`, no input, doc comments, integer/bool types, Vec params, error cases
 - [ ] **Proof-of-concept** — Convert `PdfReadTool` + one more stateless tool to `#[tool_fn]`
 
 ### Phase B: WASM Codegen Strategy (HIGH)
@@ -2564,12 +2564,12 @@ Add a 5th `Codegen` variant to `DynamicToolStrategy` that compiles LLM-generated
 
 **Tasks:**
 
-- [ ] **`Codegen` variant** — Add to `DynamicToolStrategy` in `dynamic_tool.rs` with `source`, `wasm_path`, `wasm_sha256`, `compile_error` fields
-- [ ] **Compilation pipeline** — New `crates/agentzero-infra/src/tools/codegen.rs`: `CodegenCompiler` with `check_toolchain()`, `scaffold_project()`, `compile()`, `compute_hash()`, `load_module()`. Shared `CARGO_TARGET_DIR` for fast incremental builds
-- [ ] **LLM source generation** — Add `"codegen"` strategy to `tool_create.rs` with system prompt targeting `declare_tool!` macro. Compile-error feedback loop (max 3 retries)
-- [ ] **Codegen execution** — `DynamicTool::execute()` `Codegen` arm: lazy-load pre-compiled WASM module, execute via `WasmPluginRuntime`, cache in `Arc<RwLock<HashMap<String, WasmModule>>>`
-- [ ] **Dependency allowlist** — Curated crate allowlist (`serde_json`, `regex`, `chrono`, `url`, `base64`, `sha2`, `hex`, `rand`, `csv`, `serde`) with pinned versions
-- [ ] **Garbage collection** — `codegen_gc()` removes `.agentzero/codegen/` directories not referenced by registered tools
+- [x] **`Codegen` variant** — Add to `DynamicToolStrategy` in `dynamic_tool.rs` with `source`, `wasm_path`, `wasm_sha256`, `source_hash`, `compile_error` fields
+- [x] **Compilation pipeline** — New `crates/agentzero-infra/src/tools/codegen.rs`: `CodegenCompiler` with `check_toolchain()`, `scaffold_project()`, `compile()`, `compute_hash()`, `load_module()`. Shared `CARGO_TARGET_DIR` for fast incremental builds
+- [x] **LLM source generation** — Add `"codegen"` strategy to `tool_create.rs` with `CODEGEN_PROMPT` targeting `declare_tool!` macro. Compile-error feedback loop (max 3 retries)
+- [x] **Codegen execution** — `DynamicTool::execute()` `Codegen` arm: execute via `WasmPluginRuntime::execute_v2_precompiled()`, feature-gated behind `wasm-plugins`
+- [x] **Dependency allowlist** — Curated crate allowlist (`serde_json`, `regex`, `chrono`, `url`, `base64`, `sha2`, `hex`, `rand`, `csv`, `serde`) with pinned versions. `extract_deps_from_source()` parses `// deps:` comments
+- [x] **Garbage collection** — `codegen_gc()` removes `.agentzero/codegen/` directories not referenced by registered tools
 - [ ] **Tests** — Compile minimal `declare_tool!` plugin from source, verify execution through `Codegen` strategy, test compile-error retry, test quality tracking
 
 ### Acceptance Criteria
