@@ -42,7 +42,7 @@ struct ToolCreateSchema {
     name: Option<String>,
     /// Optional hint for which strategy type to use (for 'create' action)
     #[serde(default)]
-    #[schema(enum_values = ["shell", "http", "llm", "composite"])]
+    #[schema(enum_values = ["shell", "http", "llm", "composite", "codegen"])]
     strategy_hint: Option<String>,
     /// JSON tool definition to import (for 'import' action)
     #[serde(default)]
@@ -86,6 +86,44 @@ Rules:
 - For reasoning/analysis tasks, prefer "llm" strategy
 - The name must be snake_case with only alphanumeric characters and underscores
 - Output ONLY the JSON object, no markdown fences or explanation"#;
+
+const CODEGEN_PROMPT: &str = r#"You are a Rust WASM tool generator. Given a description, output a complete Rust source file that compiles to a WASM plugin.
+
+Use this exact template:
+
+```rust
+use agentzero_plugin_sdk::prelude::*;
+
+declare_tool!("tool_name", handler);
+
+fn handler(input: ToolInput) -> ToolOutput {
+    // Parse input
+    let req: serde_json::Value = match serde_json::from_str(&input.input) {
+        Ok(v) => v,
+        Err(e) => return ToolOutput::error(format!("invalid input: {e}")),
+    };
+
+    // Your logic here
+
+    ToolOutput::success("result".to_string())
+}
+```
+
+Available types from `agentzero_plugin_sdk::prelude::*`:
+- `ToolInput` — has `.input: String` (JSON from LLM) and `.workspace_root: String`
+- `ToolOutput::success(msg: String)` — successful result
+- `ToolOutput::error(msg: String)` — error result
+
+Available crates (add a `// deps: name1, name2` comment on the first line if needed):
+- `serde_json` (always available)
+- `regex`, `chrono`, `url`, `base64`, `sha2`, `hex`, `rand`, `csv`, `serde`
+
+Rules:
+- Output ONLY the Rust source code, no markdown fences
+- The tool_name in declare_tool! must be snake_case
+- The handler function must be synchronous (no async)
+- Keep it simple — one function, minimal error handling
+- On the first line, add `// deps: crate1, crate2` if you need extra crates beyond serde_json"#;
 
 #[async_trait]
 impl Tool for ToolCreateTool {
@@ -141,6 +179,10 @@ pub async fn create_tool_from_nl(
     description: &str,
     strategy_hint: Option<&str>,
 ) -> anyhow::Result<String> {
+    if strategy_hint == Some("codegen") {
+        return create_codegen_tool(registry, provider, description).await;
+    }
+
     let hint = strategy_hint.unwrap_or("");
     let prompt = if hint.is_empty() {
         format!("{TOOL_CREATE_PROMPT}\n\nTool description: {description}")
@@ -185,6 +227,161 @@ pub async fn create_tool_from_nl(
 
     registry.register(def).await?;
     Ok(name)
+}
+
+/// Maximum compilation retry attempts when LLM-generated code fails to compile.
+const MAX_CODEGEN_RETRIES: usize = 3;
+
+/// Create a codegen (compiled WASM) tool from a natural language description.
+async fn create_codegen_tool(
+    registry: &DynamicToolRegistry,
+    provider: &dyn Provider,
+    description: &str,
+) -> anyhow::Result<String> {
+    use crate::tools::codegen::{extract_deps_from_source, CodegenCompiler};
+
+    let prompt = format!("{CODEGEN_PROMPT}\n\nTool description: {description}");
+
+    let result = provider.complete(&prompt).await?;
+    let mut source = extract_rust_source(&result.output_text);
+
+    // Extract tool name from declare_tool!("name", ...)
+    let name = extract_tool_name_from_source(&source).ok_or_else(|| {
+        anyhow::anyhow!("could not find declare_tool!(\"name\", ...) in LLM response")
+    })?;
+
+    // Find the data dir from the registry (use temp for now, real path from context)
+    let data_dir = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join(".agentzero");
+    let compiler = CodegenCompiler::new(&data_dir);
+
+    // Check toolchain first
+    compiler.check_toolchain().await?;
+
+    // Compile with retry loop
+    let mut last_error = String::new();
+    for attempt in 0..MAX_CODEGEN_RETRIES {
+        let extra_deps = extract_deps_from_source(&source);
+        match compiler.build_tool(&name, &source, &extra_deps).await {
+            Ok((wasm_path, wasm_sha256, source_hash)) => {
+                let def = DynamicToolDef {
+                    name: name.clone(),
+                    description: description.to_string(),
+                    strategy: DynamicToolStrategy::Codegen {
+                        source: source.clone(),
+                        wasm_path: Some(wasm_path.to_string_lossy().to_string()),
+                        wasm_sha256: Some(wasm_sha256),
+                        source_hash: Some(source_hash),
+                        compile_error: None,
+                    },
+                    input_schema: None,
+                    created_at: now_secs(),
+                    total_invocations: 0,
+                    total_successes: 0,
+                    total_failures: 0,
+                    last_error: None,
+                    generation: 0,
+                    parent_name: None,
+                    user_rated: false,
+                };
+
+                registry.register(def).await?;
+                tracing::info!(tool = %name, attempt = attempt + 1, "codegen tool compiled and registered");
+                return Ok(name);
+            }
+            Err(e) => {
+                last_error = e.to_string();
+                tracing::warn!(
+                    tool = %name,
+                    attempt = attempt + 1,
+                    error = %last_error,
+                    "codegen compilation failed, asking LLM to fix"
+                );
+
+                if attempt + 1 < MAX_CODEGEN_RETRIES {
+                    // Feed the error back to the LLM for a fix
+                    let fix_prompt = format!(
+                        "{CODEGEN_PROMPT}\n\n\
+                        Tool description: {description}\n\n\
+                        The previous source code failed to compile. Fix the error.\n\n\
+                        Previous source:\n```rust\n{source}\n```\n\n\
+                        Compilation error:\n{last_error}\n\n\
+                        Output ONLY the corrected Rust source code."
+                    );
+                    let fix_result = provider.complete(&fix_prompt).await?;
+                    source = extract_rust_source(&fix_result.output_text);
+                }
+            }
+        }
+    }
+
+    // All retries exhausted — register with compile error so it can be retried later
+    let def = DynamicToolDef {
+        name: name.clone(),
+        description: description.to_string(),
+        strategy: DynamicToolStrategy::Codegen {
+            source,
+            wasm_path: None,
+            wasm_sha256: None,
+            source_hash: None,
+            compile_error: Some(last_error.clone()),
+        },
+        input_schema: None,
+        created_at: now_secs(),
+        total_invocations: 0,
+        total_successes: 0,
+        total_failures: 0,
+        last_error: Some(format!("compilation failed: {last_error}")),
+        generation: 0,
+        parent_name: None,
+        user_rated: false,
+    };
+
+    registry.register(def).await?;
+    Err(anyhow::anyhow!(
+        "codegen tool '{name}' failed to compile after {MAX_CODEGEN_RETRIES} attempts: {last_error}"
+    ))
+}
+
+/// Extract Rust source from an LLM response (strip markdown fences if present).
+fn extract_rust_source(response: &str) -> String {
+    let trimmed = response.trim();
+
+    // Try ```rust ... ``` block
+    if let Some(start) = trimmed.find("```rust") {
+        let after = &trimmed[start + 7..];
+        if let Some(end) = after.find("```") {
+            return after[..end].trim().to_string();
+        }
+    }
+
+    // Try ``` ... ``` block
+    if let Some(start) = trimmed.find("```") {
+        let after = &trimmed[start + 3..];
+        // Skip language tag on same line
+        let after = if let Some(nl) = after.find('\n') {
+            &after[nl + 1..]
+        } else {
+            after
+        };
+        if let Some(end) = after.find("```") {
+            return after[..end].trim().to_string();
+        }
+    }
+
+    // No fences — use as-is
+    trimmed.to_string()
+}
+
+/// Extract the tool name from a `declare_tool!("name", handler)` invocation.
+fn extract_tool_name_from_source(source: &str) -> Option<String> {
+    // Look for: declare_tool!("some_name"
+    let marker = "declare_tool!(\"";
+    let start = source.find(marker)? + marker.len();
+    let rest = &source[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
 }
 
 impl ToolCreateTool {
@@ -540,5 +737,65 @@ mod tests {
 
         let with_text = "Here's the tool:\n{\"name\":\"test\"}";
         assert!(parse_json_from_response(with_text).is_ok());
+    }
+
+    #[test]
+    fn extract_rust_source_from_fenced() {
+        let fenced = "Here's the code:\n```rust\nuse foo;\nfn bar() {}\n```\nDone.";
+        assert_eq!(extract_rust_source(fenced), "use foo;\nfn bar() {}");
+    }
+
+    #[test]
+    fn extract_rust_source_bare() {
+        let bare = "use agentzero_plugin_sdk::prelude::*;\ndeclare_tool!(\"test\", h);";
+        assert_eq!(extract_rust_source(bare), bare);
+    }
+
+    #[test]
+    fn extract_tool_name_from_declare_tool() {
+        let source = r#"
+use agentzero_plugin_sdk::prelude::*;
+declare_tool!("reverse_string", handler);
+fn handler(input: ToolInput) -> ToolOutput { todo!() }
+"#;
+        assert_eq!(
+            extract_tool_name_from_source(source),
+            Some("reverse_string".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_tool_name_missing() {
+        assert_eq!(extract_tool_name_from_source("fn main() {}"), None);
+    }
+
+    #[test]
+    fn extract_deps_from_comment() {
+        use crate::tools::codegen::extract_deps_from_source;
+
+        let source = "// deps: regex, chrono\nuse agentzero_plugin_sdk::prelude::*;";
+        let deps = extract_deps_from_source(source);
+        assert_eq!(deps.len(), 2);
+        assert_eq!(deps[0].0, "regex");
+        assert_eq!(deps[1].0, "chrono");
+    }
+
+    #[test]
+    fn extract_deps_none() {
+        use crate::tools::codegen::extract_deps_from_source;
+
+        let source = "use agentzero_plugin_sdk::prelude::*;";
+        assert!(extract_deps_from_source(source).is_empty());
+    }
+
+    #[test]
+    fn extract_deps_rejects_unlisted() {
+        use crate::tools::codegen::extract_deps_from_source;
+
+        let source = "// deps: regex, tokio, chrono";
+        let deps = extract_deps_from_source(source);
+        // tokio is not in the allowlist
+        assert_eq!(deps.len(), 2);
+        assert!(deps.iter().all(|(n, _)| *n != "tokio"));
     }
 }
