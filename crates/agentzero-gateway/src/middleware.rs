@@ -368,7 +368,10 @@ pub async fn cors_middleware(
             let headers = response.headers_mut();
             headers.insert(
                 header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                origin.parse().unwrap_or_else(|_| "*".parse().unwrap()),
+                origin.parse().unwrap_or_else(|_| {
+                    "*".parse()
+                        .expect("literal '*' is always a valid HeaderValue")
+                }),
             );
         }
     }

@@ -6,8 +6,96 @@ use agentzero_core::{Provider, Tool, ToolContext, ToolResult};
 use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// ---------------------------------------------------------------------------
+// Codegen kill-switch
+//
+// The codegen dynamic tool strategy (Sprint 80) compiles LLM-generated Rust
+// source to WASM and hot-loads it. That's a powerful capability and a real
+// attack surface: a prompt-injected or malfunctioning agent can generate
+// arbitrary Rust that the host will compile and execute (inside the WASM
+// sandbox, which bounds the damage to the per-execution memory and
+// wall-clock limits set in `codegen.rs`, but still).
+//
+// Production operators need a way to disable the capability entirely,
+// without restarting the runtime, and without having to edit source code.
+// This process-wide `AtomicBool` is the mechanism.
+//
+// The flag is initialized from two sources, in precedence order:
+//   1. The env var `AGENTZERO_CODEGEN_ENABLED=false` (or `true`). This is the
+//      emergency operational override — flipping it requires nothing more
+//      than `systemctl set-environment` + a config reload.
+//   2. The TOML `[runtime] codegen_enabled = true|false` key. Wired into
+//      `agentzero-config::RuntimeConfig`.
+//
+// If neither source is set, codegen is **enabled** by default. This preserves
+// backward compatibility with existing deployments that relied on the
+// Sprint 80 default behavior.
+//
+// Callers that want to flip the flag programmatically (tests, a future
+// gateway admin endpoint, the config hot-reload watcher) use
+// `set_codegen_enabled()`. Reads are lock-free via `is_codegen_enabled()`.
+// ---------------------------------------------------------------------------
+
+/// Global codegen capability flag. Starts `true` (enabled) at process boot.
+static CODEGEN_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Marker so we only consult the env var once — once the runtime has set the
+/// flag from config, subsequent reads should not be overridden by late env
+/// changes (that would violate the "edit TOML + reload" contract).
+static CODEGEN_FLAG_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// Error message returned when the LLM attempts to create a codegen tool
+/// while the kill-switch is engaged. Exposed as a public constant so tests
+/// and documentation can reference the exact string.
+pub const CODEGEN_DISABLED_MESSAGE: &str =
+    "codegen dynamic tool strategy is disabled by runtime config or operational kill-switch. \
+     To re-enable, set `[runtime] codegen_enabled = true` in agentzero.toml and reload config, \
+     or set the `AGENTZERO_CODEGEN_ENABLED=true` env var.";
+
+/// Read the current codegen capability flag. Lock-free, safe to call in hot
+/// paths. On first call, consults the `AGENTZERO_CODEGEN_ENABLED` env var
+/// so emergency overrides work even without explicit runtime initialization.
+pub fn is_codegen_enabled() -> bool {
+    if !CODEGEN_FLAG_INITIALIZED.load(Ordering::Acquire) {
+        if let Ok(val) = std::env::var("AGENTZERO_CODEGEN_ENABLED") {
+            let enabled = matches!(
+                val.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            );
+            CODEGEN_ENABLED.store(enabled, Ordering::Release);
+        }
+        CODEGEN_FLAG_INITIALIZED.store(true, Ordering::Release);
+    }
+    CODEGEN_ENABLED.load(Ordering::Acquire)
+}
+
+/// Flip the codegen capability flag. Called by the runtime at startup after
+/// loading `RuntimeConfig`, and by a future gateway admin endpoint. Also
+/// marks the flag as initialized so subsequent `is_codegen_enabled` calls
+/// do not reconsult the env var.
+pub fn set_codegen_enabled(enabled: bool) {
+    CODEGEN_ENABLED.store(enabled, Ordering::Release);
+    CODEGEN_FLAG_INITIALIZED.store(true, Ordering::Release);
+    if enabled {
+        tracing::info!("codegen dynamic tool strategy enabled");
+    } else {
+        tracing::warn!("codegen dynamic tool strategy DISABLED by runtime kill-switch");
+    }
+}
+
+#[doc(hidden)]
+#[cfg(test)]
+pub(crate) fn reset_codegen_flag_for_test() {
+    // Only tests are allowed to reset both the value and the init marker.
+    // This exists so codegen tests can exercise the initialization path
+    // without leaking state across test runs.
+    CODEGEN_ENABLED.store(true, Ordering::Release);
+    CODEGEN_FLAG_INITIALIZED.store(false, Ordering::Release);
+}
 
 /// LLM-callable tool for runtime tool creation.
 ///
@@ -239,6 +327,18 @@ async fn create_codegen_tool(
     description: &str,
 ) -> anyhow::Result<String> {
     use crate::tools::codegen::{extract_deps_from_source, CodegenCompiler};
+
+    // Honor the runtime kill-switch. If the operator has disabled codegen via
+    // TOML config or the `AGENTZERO_CODEGEN_ENABLED` env var, reject the
+    // creation attempt with an actionable error message before we call the
+    // LLM or touch the compiler.
+    if !is_codegen_enabled() {
+        tracing::warn!(
+            description = %description,
+            "rejected codegen tool creation — kill-switch is engaged"
+        );
+        return Err(anyhow::anyhow!(CODEGEN_DISABLED_MESSAGE));
+    }
 
     let prompt = format!("{CODEGEN_PROMPT}\n\nTool description: {description}");
 
@@ -652,6 +752,124 @@ mod tests {
         let all = registry.list().await;
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].name, "whisper_transcribe");
+    }
+
+    // -----------------------------------------------------------------------
+    // Codegen kill-switch tests
+    //
+    // These tests mutate a process-global AtomicBool, so they must run
+    // serially with respect to each other. We guard them with a std::sync::
+    // Mutex — cargo test runs in parallel by default and will otherwise
+    // interleave flag reads and writes.
+    // -----------------------------------------------------------------------
+
+    static KILLSWITCH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[tokio::test]
+    async fn codegen_kill_switch_defaults_to_enabled() {
+        let _guard = KILLSWITCH_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Clear any env override so the default path is exercised.
+        std::env::remove_var("AGENTZERO_CODEGEN_ENABLED");
+        reset_codegen_flag_for_test();
+        assert!(is_codegen_enabled(), "codegen should be enabled by default");
+    }
+
+    #[tokio::test]
+    async fn codegen_kill_switch_can_be_disabled_programmatically() {
+        let _guard = KILLSWITCH_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("AGENTZERO_CODEGEN_ENABLED");
+        reset_codegen_flag_for_test();
+
+        set_codegen_enabled(false);
+        assert!(!is_codegen_enabled(), "flag should be off after set(false)");
+
+        set_codegen_enabled(true);
+        assert!(is_codegen_enabled(), "flag should be on after set(true)");
+    }
+
+    #[tokio::test]
+    async fn codegen_kill_switch_env_var_override() {
+        let _guard = KILLSWITCH_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        reset_codegen_flag_for_test();
+        std::env::set_var("AGENTZERO_CODEGEN_ENABLED", "false");
+        assert!(
+            !is_codegen_enabled(),
+            "env var AGENTZERO_CODEGEN_ENABLED=false should disable"
+        );
+
+        reset_codegen_flag_for_test();
+        std::env::set_var("AGENTZERO_CODEGEN_ENABLED", "true");
+        assert!(
+            is_codegen_enabled(),
+            "env var AGENTZERO_CODEGEN_ENABLED=true should enable"
+        );
+
+        std::env::remove_var("AGENTZERO_CODEGEN_ENABLED");
+    }
+
+    // `clippy::await_holding_lock` is intentional here — the whole point of
+    // `KILLSWITCH_TEST_LOCK` is to serialize a process-global flag across
+    // tests that each perform async work. Using `tokio::sync::Mutex` would
+    // make the test runner wait for a tokio runtime that's already holding
+    // a blocking lock, and we're fine holding a std Mutex for the handful
+    // of millis this test takes.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn create_codegen_tool_rejected_when_kill_switch_engaged() {
+        let _guard = KILLSWITCH_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("AGENTZERO_CODEGEN_ENABLED");
+        reset_codegen_flag_for_test();
+        set_codegen_enabled(false);
+
+        let dir = test_data_dir();
+        let registry = Arc::new(DynamicToolRegistry::open(&dir).expect("open"));
+        // The provider should never be called when the kill-switch is on,
+        // so we hand it a response that would panic if parsed.
+        let provider: Arc<dyn Provider> = Arc::new(MockCreateProvider {
+            response: "THIS SHOULD NEVER BE PARSED".to_string(),
+        });
+
+        let err = create_tool_from_nl(&registry, &*provider, "reverse a string", Some("codegen"))
+            .await
+            .expect_err("kill-switch should block the creation attempt");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("codegen dynamic tool strategy is disabled"),
+            "error should explain the kill-switch: got {msg}"
+        );
+        assert!(
+            msg.contains("codegen_enabled = true"),
+            "error should tell operators how to fix it: got {msg}"
+        );
+
+        // No tool should have been registered.
+        let all = registry.list().await;
+        assert!(
+            all.iter()
+                .all(|def| !matches!(def.strategy, DynamicToolStrategy::Codegen { .. })),
+            "no codegen tools should exist in the registry"
+        );
+
+        // Restore default for the next test.
+        set_codegen_enabled(true);
+    }
+
+    #[test]
+    fn codegen_disabled_message_is_actionable() {
+        // The error message must include both the reason and the fix — the
+        // string is exposed as a public const so docs and ops runbooks can
+        // reference the exact wording.
+        assert!(CODEGEN_DISABLED_MESSAGE.contains("disabled"));
+        assert!(CODEGEN_DISABLED_MESSAGE.contains("codegen_enabled = true"));
+        assert!(CODEGEN_DISABLED_MESSAGE.contains("AGENTZERO_CODEGEN_ENABLED"));
     }
 
     #[tokio::test]

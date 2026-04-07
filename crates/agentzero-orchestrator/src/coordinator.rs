@@ -1622,7 +1622,10 @@ async fn execute_fanout_steps(
 
         // Combine results with separators.
         merged_payload = if successful.len() == 1 {
-            successful.into_iter().next().unwrap()
+            successful
+                .into_iter()
+                .next()
+                .expect("guarded by the len() == 1 check on the line above")
         } else {
             successful.join("\n\n---\n\n")
         };

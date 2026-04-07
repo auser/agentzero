@@ -1063,6 +1063,14 @@ pub struct RuntimeConfig {
     pub reasoning_enabled: Option<bool>,
     /// Dynamically adjust reasoning effort based on query complexity.
     pub adaptive_reasoning: Option<bool>,
+    /// Enable the Codegen dynamic tool strategy (Sprint 80). When `false`,
+    /// `tool_create(strategy_hint: "codegen", ...)` returns an error at
+    /// the entry point — no LLM call, no compilation, no execution.
+    /// Defaults to `true` for backward compatibility. Set to `false` on
+    /// production deployments where LLM-generated code should not be
+    /// compiled into the host runtime. The `AGENTZERO_CODEGEN_ENABLED`
+    /// env var acts as an emergency override and wins over this TOML key.
+    pub codegen_enabled: bool,
     pub wasm: WasmRuntimeConfig,
 }
 
@@ -1072,6 +1080,7 @@ impl Default for RuntimeConfig {
             kind: "native".to_string(),
             reasoning_enabled: None,
             adaptive_reasoning: None,
+            codegen_enabled: true,
             wasm: WasmRuntimeConfig::default(),
         }
     }

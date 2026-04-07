@@ -2780,6 +2780,69 @@ Catch invalid feature combinations at `cargo check` time with actionable message
 
 ---
 
+## Sprint 84: Production Readiness Pass — Load Testing, Codegen Safety, Unwrap Audit
+
+**Goal:** Close three concrete operational gaps that were gating production-ready confidence: (1) we had no measured gateway throughput baseline, (2) the Sprint 80 codegen strategy had no kill-switch for operators, (3) the four hot crates still had `.unwrap()` calls in non-test code despite the `no_unwrap_in_production` feedback policy.
+
+**Baseline:** Sprint 83 Phases A + B complete. Gateway throughput unknown. Codegen runs with only the existing per-execution WASM sandbox limits (30s timeout, 256 MB memory). Hot crates have 7 `.unwrap()` calls in production code paths.
+
+**Plan:** `specs/plans/43-production-readiness-pass.md`
+
+---
+
+### Phase A: Pure-Rust Gateway Load Harness (HIGH) ✅
+
+Pure-Rust load harness for the HTTP gateway. No external tooling (`wrk`, `vegeta`, `k6` all forbidden by `AgentZero stays standalone`). Spawns the gateway in-process, hammers cheap endpoints, reports percentiles, exits clean.
+
+- [x] **`crates/agentzero-gateway/tests/load_baseline.rs`** — in-process gateway spawn via `run()` with `--no-auth` and unlimited rate limiting; hammers `/health/live`, `/health`, `/metrics` at configurable concurrency for a configurable duration; per-endpoint stats on RPS, error count, p50/p95/p99/max latency in milliseconds
+- [x] **No new workspace deps** — percentile math uses a sorted `Vec<u64>` latency collector, not `hdrhistogram`. Two `AtomicU64` counters for total/errors; one `Mutex<Vec>` that's only taken at the end of each worker to amortize contention
+- [x] **`GatewayMiddlewareConfig` re-export** — `MiddlewareConfig` is part of the public `GatewayRunOptions` surface but was crate-private. Added a `pub use` alias from the crate root so the harness and any future external caller can construct one without reaching into the `middleware` submodule by name
+- [x] **Env-var configuration** — `AZ_LOAD_DURATION_SECS`, `AZ_LOAD_CONCURRENCY`, `AZ_LOAD_PORT` (defaults 10s / 64 / 18800)
+- [x] **Gated behind `#[ignore]`** — does not run during `cargo test`; invoked explicitly with `cargo test --release -p agentzero-gateway --test load_baseline -- --ignored --nocapture load_baseline`
+- [x] **Sanity assertions** — every endpoint must produce at least one request, and `/health/live` error rate must stay below 5% under load (otherwise the gateway is unhealthy)
+- [x] **Unit tests** — 4 tests for the percentile/RPS math itself (empty input, basic case, zero elapsed, standard RPS), runs during normal `cargo test`
+- [x] **Measured baseline on dev MacBook** — 32 concurrent: `/health/live` at 68k RPS, p99 0.78ms, 0 errors; `/metrics` at 34k RPS, p99 1.55ms, 0 errors. 256 concurrent: same 68k RPS throughput, p99 rises proportionally to 8.2ms, still 0 errors. The gateway is **CPU-bound, not concurrency-limited**, and degrades gracefully under 8x contention
+- [x] **Site documentation** — New `/reference/load-testing/` page with invocation, measured baselines, capacity planning rules of thumb, and a "what to do if the baseline drops" section. Sidebar entry added
+
+### Phase B: Codegen Tool Kill-Switch + Runtime Config (HIGH) ✅
+
+The Sprint 80 Codegen dynamic tool strategy compiles LLM-generated Rust to WASM and hot-loads it. That's the most powerful and most dangerous capability in the codebase. Phase B adds the operational kill-switch that production deployments need.
+
+- [x] **Process-global `AtomicBool` kill-switch** — New static `CODEGEN_ENABLED` in `crates/agentzero-infra/src/tools/tool_create.rs`. `is_codegen_enabled()` for lock-free reads, `set_codegen_enabled(bool)` for writes
+- [x] **Env-var emergency override** — `AGENTZERO_CODEGEN_ENABLED=false` (or `true`) is consulted on first read if the flag hasn't been programmatically initialized yet. This lets operators disable codegen via `systemctl set-environment` without a code change
+- [x] **`[runtime] codegen_enabled` TOML key** — Added to `RuntimeConfig` in `agentzero-config::model`, defaults to `true` for backward compat. The TOML doc comment explains both the purpose and the env-var override
+- [x] **Runtime initialization wire-up** — `build_runtime_execution()` in `agentzero-infra::runtime` calls `set_codegen_enabled(config.runtime.codegen_enabled)` immediately after loading config, before any agent paths can reach `tool_create`. This means `agentzero.toml` + `ConfigWatcher` hot-reload is the operational path for flipping the flag without a restart
+- [x] **`create_codegen_tool()` guard** — Checks `is_codegen_enabled()` at the entry point and returns the `CODEGEN_DISABLED_MESSAGE` error **before** calling the LLM or touching the compiler. No wasted provider spend, no partial state, no audit confusion
+- [x] **Actionable error message** — `CODEGEN_DISABLED_MESSAGE` public const includes both the reason (*"disabled by runtime config or operational kill-switch"*) and the two fixes (edit TOML and reload, or set the env var). Referenced by tests to lock in the exact wording
+- [x] **Tests** — 5 new tests in `tool_create::tests`: default-enabled, programmatic flip, env-var override (both directions), `create_tool_from_nl` rejection path (verifies no provider call and no registry mutation), and a static assertion that the error message contains the actionable fix strings. Serialized via a module-level `Mutex` with an `#[allow(clippy::await_holding_lock)]` explained in a comment
+
+**Deferred from Phase B:**
+- **Per-execution audit log entries.** The existing WASM sandbox already enforces 30s wall-clock + 256 MB memory caps per codegen execution (set in `codegen.rs`). Plumbing an `AuditSink` through `create_tool_from_nl` / `ToolCreateTool::new` would touch every caller and is a bigger refactor than is prudent without a broader audit-sink consolidation pass. Flagged as a follow-up.
+- **Gateway admin endpoint `POST /v1/runtime/codegen-disable`.** The TOML config + hot-reload path is sufficient for an MVP operational kill-switch. A dedicated HTTP endpoint requires sharing the runtime `CODEGEN_ENABLED` flag with the gateway state, which is a separate plumbing exercise. Flagged as a follow-up.
+
+### Phase C: `.unwrap()` Audit in Hot Crates (MEDIUM) ✅
+
+Per the `no_unwrap_in_production` feedback policy, audit non-test code paths in the four crates where a panic translates to a 500 + dropped client connection.
+
+- [x] **`scripts/check-unwrap.sh`** — Bash audit script that walks `crates/<hot_crate>/src/`, excludes whole-file test modules (`tests.rs`, `*_tests.rs`, anything under `tests/`), and heuristically excludes inline `#[cfg(test)]` blocks. Prints `file:line:snippet` hits to stdout, counts per crate, and exits nonzero if any hits are found. Optional `TRIAGE=out.txt` env var writes the summary to a file
+- [x] **Initial hit count: 7** across the four hot crates after the whole-file test exclusion was added (down from 312 raw matches including test modules). Triaged hits: 5 in `agentzero-gateway`, 1 in `agentzero-orchestrator`, 0 in `agentzero-infra`, 1 in `agentzero-providers`
+- [x] **All 7 fixed with `.expect("descriptive reason")`** — every hit was safe-by-construction (literal header values, owned-String serde serialization, branch guarded by `len() == 1`, hardcoded progress bar template). No behavior change, just documented invariants
+- [x] **Final hit count: 0** in all four hot crates. Audit script exits 0
+
+### Acceptance Criteria (Sprint 84)
+
+- [x] `cargo clippy --workspace --all-targets` — 0 warnings
+- [x] All four hot crates pass their test suites (gateway 231, orchestrator 197, infra 198, providers 264; 890 total)
+- [x] `cargo test --release -p agentzero-gateway --test load_baseline -- --ignored load_baseline` runs cleanly and reports RPS + percentiles
+- [x] `scripts/check-unwrap.sh` exits 0 in the four hot crates
+- [x] Codegen kill-switch blocks creation when disabled and the provider is never called
+- [x] Baseline measurements captured in `/reference/load-testing/` and in a local-only `docs/runbooks/load-testing.md`
+- [x] Site documentation reflects Sprint 82 retrieval, Sprint 83 device detection, and Sprint 84 load testing
+
+**Sprint 84 complete.** 10 new tests (4 load harness unit + 5 codegen kill-switch + 1 public-const assertion). 0 clippy warnings. 7 `.unwrap()` calls eliminated from production code paths. First measured gateway baseline: ~68k RPS with sub-millisecond p99 under 32-way concurrency on commodity hardware, graceful degradation to p99 ~8ms under 256-way concurrency with zero errors. Audit log plumbing and gateway admin endpoint for codegen deferred as follow-ups.
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

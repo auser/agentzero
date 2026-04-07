@@ -125,7 +125,9 @@ pub(crate) async fn noise_handshake_step1(
     };
     (
         StatusCode::OK,
-        Json(serde_json::to_value(response).unwrap()),
+        Json(serde_json::to_value(response).expect(
+            "HandshakeStep1Response only contains owned String fields that always serialize cleanly",
+        )),
     )
 }
 
@@ -225,7 +227,9 @@ pub(crate) async fn noise_handshake_step2(
             };
             (
                 StatusCode::OK,
-                Json(serde_json::to_value(response).unwrap()),
+                Json(serde_json::to_value(response).expect(
+                    "HandshakeStep2Response only contains owned String fields that always serialize cleanly",
+                )),
             )
         }
         Err(e) => {
@@ -350,7 +354,9 @@ pub(crate) async fn noise_handshake_ik(
             };
             (
                 StatusCode::OK,
-                Json(serde_json::to_value(response).unwrap()),
+                Json(serde_json::to_value(response).expect(
+                    "HandshakeIkResponse only contains owned String fields that always serialize cleanly",
+                )),
             )
         }
         Err(e) => {

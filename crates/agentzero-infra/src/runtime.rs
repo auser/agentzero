@@ -176,6 +176,13 @@ impl Provider for PipelineProviderAdapter {
 pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<RuntimeExecution> {
     let mut config = load(&req.config_path)?;
 
+    // Initialize the codegen kill-switch from the freshly-loaded config. The
+    // AGENTZERO_CODEGEN_ENABLED env var still wins as an emergency operational
+    // override — set_codegen_enabled only stores the value, and any subsequent
+    // is_codegen_enabled() call that runs before this function is called will
+    // have already consulted the env var on the first-read init path.
+    crate::tools::tool_create::set_codegen_enabled(config.runtime.codegen_enabled);
+
     // Apply CLI overrides before resolving the API key / constructing provider.
     if let Some(ref kind) = req.provider_override {
         config.provider.kind = kind.clone();

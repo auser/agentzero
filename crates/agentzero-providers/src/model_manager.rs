@@ -49,7 +49,7 @@ pub fn ensure_model(repo: &str, filename: &str) -> Result<PathBuf> {
         ProgressStyle::with_template(
             "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})",
         )
-        .unwrap()
+        .expect("hardcoded progress bar template is known-valid")
         .progress_chars("=>-"),
     );
     pb.set_message(format!("Downloading {filename}"));

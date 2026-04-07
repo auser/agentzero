@@ -338,7 +338,12 @@ pub(crate) async fn strip_metadata_headers(
     headers.remove("x-forwarded-host");
     headers.remove("via");
     // Don't strip User-Agent entirely — replace with generic value.
-    headers.insert("user-agent", "agentzero-relay/1.0".parse().unwrap());
+    headers.insert(
+        "user-agent",
+        "agentzero-relay/1.0"
+            .parse()
+            .expect("literal user-agent string is always a valid HeaderValue"),
+    );
     next.run(request).await
 }
 
