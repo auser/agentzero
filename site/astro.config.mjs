@@ -64,6 +64,7 @@ export default defineConfig({
           items: [
             { label: "System Overview", slug: "architecture" },
             { label: "Trait System", slug: "architecture/traits" },
+            { label: "Retrieval & Memory", slug: "architecture/retrieval" },
             { label: "Roadmap", slug: "roadmap" },
           ],
         },
@@ -75,6 +76,7 @@ export default defineConfig({
             { label: "Tools & Plugins", slug: "reference/tools" },
             { label: "Plugin API", slug: "reference/plugin-api" },
             { label: "Benchmarks", slug: "reference/benchmarks" },
+            { label: "Load Testing", slug: "reference/load-testing" },
             { label: "Release Process", slug: "reference/release" },
           ],
         },

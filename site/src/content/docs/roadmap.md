@@ -156,6 +156,45 @@ description: AgentZero development roadmap — completed milestones and future d
 - **`ToolSource` trait** — Mid-session tool discovery so newly created tools are visible without restart
 - **Persistence** — `.agentzero/dynamic-tools.json`, `.agentzero/agents.json`, `.agentzero/tool-recipes.json` (all encrypted at rest)
 
+### Candle Metal GPU + KV Cache Reuse (Sprints 77–78)
+
+- **Apple Silicon GPU acceleration** — Bumped Candle 0.9 → 0.10, uncommented Metal feature gate, wired auto-detect with CPU fallback
+- **KV cache reuse across turns** — Track cached token sequence in `LoadedModel`, skip reprocessing common prompt prefix on subsequent calls (saves 2–4k tokens of recomputation per turn in multi-turn conversations)
+
+### Runtime Enhancements + `#[tool_fn]` + WASM Codegen (Sprints 79–80)
+
+- **Monotonic audit events** — `seq` + `session_id` on every `AuditEvent`, gateway endpoint `GET /v1/runs/:id/events?since_seq=N` for incremental polling
+- **Agent-agnostic instruction injection** — `InstructionMethod::{SystemPrompt, ToolDefinition, Custom}` for heterogeneous delegation
+- **WASM plugin CLI shim bridge** — Per-execution bearer token, host tool calls via local HTTP, auto-shutdown
+- **CoW overlay filesystem** for sandboxed plugin filesystem access
+- **`#[tool_fn]` proc macro** — Function-level macro that collapses tool boilerplate from ~60 lines to ~10
+- **Codegen dynamic tool strategy** — LLM writes Rust → compile to WASM → hot-load via existing plugin system, no restart required
+
+### Event Bus Production Hardening (Sprint 81)
+
+- **Multi-axis subscriber filtering** — `recv_with_filter(EventFilter { source, topic_prefix })` replaces topic-only filtering
+- **Publish delivery feedback** — `publish()` returns `PublishResult { delivered: usize }` instead of `()`
+- **`Arc<str>` event payloads** — broadcast fan-out is now a pointer copy, not a String clone
+- Deleted 361 lines of dead orchestrator event-bus code; one unified event bus hierarchy across the workspace
+
+### Retrieval Quality Upgrade (Sprint 82)
+
+- **Tantivy BM25 RAG index** — Replaces case-insensitive substring matching with a proper inverted index. `RagQueryMatch` carries a `score: f32` relevance field. Cold-start rebuild from the encrypted JSON store; legacy JSONL still migrates transparently.
+- **HNSW vector index for `MemoryStore::semantic_recall`** — Opt-in via `enable_hnsw_index(dir, dim)`. Replaces O(n) cosine scan with approximate nearest neighbor lookup. Mirror writes to disk every 100 inserts; cold-start rebuilds from SQLite when the index is missing.
+- **Hybrid retrieval with reciprocal rank fusion** — `MemoryStore::hybrid_recall(query_text, query_embedding, limit)` runs semantic + keyword in parallel and fuses with RRF (k=60). `SemanticRecallTool` exposes `mode: "hybrid"`.
+- See [Retrieval & Memory](/architecture/retrieval/) for the full design.
+
+### Device Detection + Compile-Time Feature Guards (Sprint 83 Phases A & B)
+
+- **`agentzero_core::device` capability detection** — `HardwareCapabilities` struct with `GpuType { Metal, Cuda, Vulkan, None }`, `NpuType { CoreML, Nnapi, None }`, thermal state, detection confidence. Cross-platform CPU/memory probe via `sysinfo`. Apple, Linux, and Android probes that don't link against CUDA or Metal at compile time.
+- **Wired into Candle backend selection** — `select_device_auto()` consults the capability profile before attempting any GPU init; logs the probe result so you can see what was detected and why.
+- **Wired into hardware tool surface** — `discover_boards()` prepends a `live-host` entry built from the live device probe alongside the existing simulator stubs.
+- **Compile-time feature guards** — `compile_error!` blocks for `candle-cuda` on macOS, `candle-metal` off-Apple, `candle-cuda` + `candle-metal` simultaneously, `candle` or `local-model` on `wasm32`, and `storage-encrypted` + `storage-plain` simultaneously. Each error includes both the *reason* and the *fix*.
+
+### Production-Readiness Pass — Load Testing (Sprint 84 Phase A)
+
+- **Pure-Rust gateway load harness** — In-process gateway spawn with `--no-auth`, hammers cheap endpoints, reports RPS + p50/p95/p99 latencies. See [Load Testing](/reference/load-testing/) for invocation and baseline numbers (~68k RPS for cheap endpoints on a dev MacBook, with graceful degradation under 8x concurrency contention).
+
 ## Planned
 
 ### Registry Repo, Audio Streaming & Image Generation (Sprint 31)

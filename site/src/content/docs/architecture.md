@@ -39,19 +39,20 @@ flowchart TD
     FFI --> CORE
 ```
 
-## Workspace Crates (18)
+## Workspace Crates (20 members)
 
-The workspace was consolidated from 46 crates and has grown to 18. Each crate corresponds to a real deployment or consumption boundary.
+The workspace was consolidated from 46 to 16 library crates plus a thin binary, the lightweight orchestrator, the test kit, and the macros crate — 20 members total. Each corresponds to a real deployment or consumption boundary.
 
 | Crate | Purpose |
 |---|---|
 | `bin/agentzero` | Thin binary entrypoint |
+| `bin/agentzero-lite` | Lightweight orchestrator (~5.8 MB release-min binary) for resource-constrained edge deployments |
 | `agentzero-cli` | Command parsing, dispatch, UX (absorbed 18 modules: daemon, doctor, health, hooks, service, etc.) |
-| `agentzero-core` | Agent traits, orchestrator, domain types, security, delegation, routing |
+| `agentzero-core` | Agent traits, orchestrator, domain types, security, delegation, routing, **device capability detection**, **retrieval ranking primitives** |
 | `agentzero-config` | Typed config model and policy validation |
-| `agentzero-providers` | OpenAI-compatible provider implementation (Anthropic, OpenAI, OpenRouter, Ollama, etc.) |
+| `agentzero-providers` | LLM provider implementations (Anthropic, OpenAI-compatible, Candle local, llama.cpp builtin) |
 | `agentzero-auth` | Credential management (OAuth, API keys, profiles) |
-| `agentzero-storage` | Encrypted KV store + conversation memory (SQLite, Turso, SQLCipher) |
+| `agentzero-storage` | Encrypted KV store + conversation memory (SQLite, Turso, SQLCipher) + **HNSW vector index** |
 | `agentzero-tools` | 57+ built-in tool implementations (includes autonomy, hardware, cron, skills) |
 | `agentzero-infra` | Agent orchestration, audit, runtime execution, tool wiring |
 | `agentzero-orchestrator` | Multi-agent coordination, swarm routing, pipeline integration |
@@ -59,10 +60,11 @@ The workspace was consolidated from 46 crates and has grown to 18. Each crate co
 | `agentzero-channels` | Platform integrations (Telegram, Discord, Slack) + leak guard |
 | `agentzero-plugins` | WASM plugin host runtime (wasmi default, wasmtime optional) |
 | `agentzero-plugin-sdk` | Plugin SDK (ABI v2, WASI) |
-| `agentzero-gateway` | HTTP/WebSocket server (Axum) with SSE streaming |
+| `agentzero-gateway` | HTTP/WebSocket server (Axum) with SSE streaming + **Tantivy BM25** (when `rag` feature enabled) |
 | `agentzero-ffi` | FFI bindings (Swift/Kotlin/Python via UniFFI, Node via napi-rs) |
+| `agentzero-config-ui` | Embedded config UI (feature-gated) |
+| `agentzero-macros` | `#[tool]`, `#[tool_fn]`, `#[derive(ToolSchema)]` proc macros |
 | `agentzero-testkit` | Test doubles and mocks (dev-only) |
-| `agentzero-bench` | Criterion benchmark suite (dev-only) |
 
 ## Command Execution Flow
 

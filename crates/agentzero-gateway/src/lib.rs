@@ -47,6 +47,11 @@ use tokio::sync::watch;
 use banner::print_gateway_banner;
 use middleware::MiddlewareConfig;
 use router::build_router;
+
+// Re-export `MiddlewareConfig` so callers configuring `GatewayRunOptions`
+// (which holds a `middleware: MiddlewareConfig` field) can construct one
+// without reaching into the `middleware` submodule by name.
+pub use middleware::MiddlewareConfig as GatewayMiddlewareConfig;
 use state::GatewayState;
 use token_store::{clear_paired_tokens, load_paired_tokens};
 use util::{generate_base32_secret, generate_pairing_code};

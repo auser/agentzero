@@ -44,6 +44,14 @@ default_temperature = 0.7                        # 0.0 – 2.0
 backend = "sqlite"                               # sqlite or turso
 sqlite_path = "~/.agentzero/agentzero.db"        # database file path
 
+# Semantic recall — by default, MemoryStore::semantic_recall does an O(n)
+# cosine scan over every embedded row. For larger stores, callers can opt
+# into an HNSW approximate nearest neighbor index by calling
+# `SqliteMemoryStore::enable_hnsw_index(dir, dim)` programmatically. The
+# index is rebuilt from SQLite on cold start if missing. A TOML config key
+# for this is planned. See https://tryagentzero.com/architecture/retrieval/
+# for the full design.
+
 # ─── Agent Settings ──────────────────────────────────────
 [agent]
 max_tool_iterations = 20                         # max tool calls per turn

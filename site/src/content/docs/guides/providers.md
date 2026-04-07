@@ -177,6 +177,12 @@ The Candle provider includes an in-process tokenizer, enabling accurate token es
 
 Build with `candle-metal` (Apple Silicon) or `candle-cuda` (NVIDIA) for GPU-accelerated inference. Set `device = "auto"` (default) to auto-detect, or `"metal"` / `"cuda"` to force a specific backend. Falls back to CPU if the GPU feature is not enabled or unavailable.
 
+When `device = "auto"`, AgentZero now consults a runtime hardware capability probe (`agentzero_core::device::detect()`) before attempting any GPU init. The probe inspects the host without linking against CUDA or Metal at compile time — it checks for `/System/Library/Frameworks/Metal.framework` and `/System/Library/Frameworks/CoreML.framework` on Apple targets, and `/proc/driver/nvidia` plus `nvidia-smi` on `PATH` on Linux. The capability profile (cores, memory, GPU type, NPU type, detection confidence) is logged at startup so you can see exactly which backend was selected and why.
+
+The probe is advisory: it informs which feature-gated init path to attempt, but the final selection still goes through the same `Device::new_metal(0)` / `Device::new_cuda(0)` calls that previously gated on cargo features alone. This means a misconfigured host (e.g., NVIDIA driver installed but unloaded) still falls back to CPU cleanly with a `warn!` log line, not a crash.
+
+Compile-time guards also prevent the most common feature-flag mistakes: building with `candle-cuda` on macOS, `candle-metal` on Linux, both at once, or any local-inference feature on `wasm32`. Each guard produces a multi-line `compile_error!` explaining both the reason and the fix.
+
 ### Limitations
 
 - The default 3B model is best for simple tasks — coding assistance, file operations, basic research
