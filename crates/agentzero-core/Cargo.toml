@@ -23,6 +23,7 @@ sha2.workspace = true
 base64 = { version = "0.22", optional = true }
 crypto_box = { workspace = true, optional = true }
 snow = { workspace = true, optional = true }
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 x25519-dalek = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

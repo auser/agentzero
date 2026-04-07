@@ -138,27 +138,52 @@ impl CandleProvider {
     }
 
     /// Auto-detect the best available device: Metal > CUDA > CPU.
+    ///
+    /// Consults `agentzero_core::device::detect()` first; the runtime capability
+    /// check informs which compiled-in backend is *worth* trying. We still gate
+    /// the actual `Device::new_*` call on the corresponding cargo feature so
+    /// linker errors stay impossible.
     fn select_device_auto() -> Result<Device> {
+        let caps = agentzero_core::device::detect();
+        info!(
+            cpu_cores = caps.cpu_cores,
+            memory_mb = caps.total_memory_mb,
+            gpu = ?caps.gpu,
+            npu = ?caps.npu,
+            confidence = ?caps.memory_confidence,
+            "device capability probe complete"
+        );
+
         #[cfg(feature = "candle-metal")]
-        match Device::new_metal(0) {
-            Ok(device) => {
-                info!("auto-detected Metal GPU for Candle inference");
-                return Ok(device);
-            }
-            Err(e) => {
-                warn!("Metal init failed, falling back: {e}");
+        if matches!(caps.gpu, agentzero_core::device::GpuType::Metal)
+            || caps.memory_confidence == agentzero_core::device::DetectionConfidence::Low
+        {
+            match Device::new_metal(0) {
+                Ok(device) => {
+                    info!("auto-detected Metal GPU for Candle inference");
+                    return Ok(device);
+                }
+                Err(e) => {
+                    warn!("Metal init failed, falling back: {e}");
+                }
             }
         }
+
         #[cfg(feature = "candle-cuda")]
-        match Device::new_cuda(0) {
-            Ok(device) => {
-                info!("auto-detected CUDA GPU for Candle inference");
-                return Ok(device);
-            }
-            Err(e) => {
-                warn!("CUDA init failed, falling back: {e}");
+        if matches!(caps.gpu, agentzero_core::device::GpuType::Cuda)
+            || caps.memory_confidence == agentzero_core::device::DetectionConfidence::Low
+        {
+            match Device::new_cuda(0) {
+                Ok(device) => {
+                    info!("auto-detected CUDA GPU for Candle inference");
+                    return Ok(device);
+                }
+                Err(e) => {
+                    warn!("CUDA init failed, falling back: {e}");
+                }
             }
         }
+
         info!("using CPU for Candle inference");
         Ok(Device::Cpu)
     }

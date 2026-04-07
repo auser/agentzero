@@ -1416,6 +1416,88 @@ pub trait MemoryStore: Send + Sync {
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         Ok(scored.into_iter().take(limit).map(|(_, e)| e).collect())
     }
+
+    /// Hybrid retrieval combining keyword (substring) matching with semantic
+    /// recall via reciprocal rank fusion. Returns the merged top-`limit` results.
+    ///
+    /// Default implementation:
+    ///   1. Semantic ranking via [`semantic_recall`](Self::semantic_recall)
+    ///   2. Keyword ranking by substring-matching `query_text` against
+    ///      `entry.content` over a window of recent entries
+    ///   3. Fuse rankings with [`reciprocal_rank_fusion`](crate::search::reciprocal_rank_fusion)
+    ///
+    /// Backends with native full-text search (Tantivy, FTS5) can override this
+    /// to use BM25 ranking instead of substring matching.
+    async fn hybrid_recall(
+        &self,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        use crate::search::{reciprocal_rank_fusion, DEFAULT_RRF_K};
+        use std::collections::HashMap;
+
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Over-fetch from each side so RRF has enough overlap to work with.
+        let overfetch = limit * 4;
+
+        let semantic = self.semantic_recall(query_embedding, overfetch).await?;
+        let candidates = self.recent(overfetch.max(64)).await?;
+
+        // Keyword scoring: substring match (case-insensitive). Order preserved
+        // by recency, which is the natural order returned by `recent()`.
+        let needle = query_text.to_ascii_lowercase();
+        let keyword: Vec<MemoryEntry> = candidates
+            .into_iter()
+            .filter(|e| e.content.to_ascii_lowercase().contains(&needle))
+            .take(overfetch)
+            .collect();
+
+        if semantic.is_empty() && keyword.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Use a stable fingerprint as the RRF key. We don't have row IDs at the
+        // trait level, so hash (role, content, created_at) which is stable across
+        // the same query session.
+        let mut fingerprint_to_entry: HashMap<i64, MemoryEntry> = HashMap::new();
+        let fp_of = |e: &MemoryEntry| -> i64 {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            e.role.hash(&mut h);
+            e.content.hash(&mut h);
+            e.created_at.hash(&mut h);
+            h.finish() as i64
+        };
+
+        let semantic_ids: Vec<i64> = semantic
+            .iter()
+            .map(|e| {
+                let fp = fp_of(e);
+                fingerprint_to_entry.entry(fp).or_insert_with(|| e.clone());
+                fp
+            })
+            .collect();
+        let keyword_ids: Vec<i64> = keyword
+            .iter()
+            .map(|e| {
+                let fp = fp_of(e);
+                fingerprint_to_entry.entry(fp).or_insert_with(|| e.clone());
+                fp
+            })
+            .collect();
+
+        let fused = reciprocal_rank_fusion(&[semantic_ids, keyword_ids], DEFAULT_RRF_K);
+        Ok(fused
+            .into_iter()
+            .filter_map(|(fp, _)| fingerprint_to_entry.remove(&fp))
+            .take(limit)
+            .collect())
+    }
 }
 
 /// Blanket implementation allowing `Arc<dyn MemoryStore>` to be used anywhere
@@ -1528,6 +1610,17 @@ impl<T: MemoryStore + ?Sized> MemoryStore for std::sync::Arc<T> {
         limit: usize,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         (**self).semantic_recall(query_embedding, limit).await
+    }
+
+    async fn hybrid_recall(
+        &self,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        (**self)
+            .hybrid_recall(query_text, query_embedding, limit)
+            .await
     }
 }
 

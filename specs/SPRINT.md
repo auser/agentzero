@@ -2649,6 +2649,137 @@ Replaced `recv_filtered(topic_prefix)` with `recv_with_filter(&EventFilter)` —
 
 ---
 
+## Sprint 82: Retrieval Quality Upgrade — Tantivy BM25 + HNSW Vector Index + Hybrid Search
+
+**Goal:** Replace the brute-force retrieval layer with production-grade search. Add Tantivy for BM25 full-text search (replacing substring matching in RAG), HNSW for approximate nearest neighbor vector search (replacing O(n) cosine scan in semantic recall), and reciprocal rank fusion for hybrid keyword+semantic queries.
+
+**Baseline:** Sprint 81 complete. Semantic recall is O(n) full-table scan with in-memory cosine ranking. RAG query is case-insensitive substring match with no ranking. No full-text index. No hybrid search.
+
+**Plan:** `specs/plans/41-retrieval-quality-upgrade.md`
+
+**New dependencies:** `tantivy = "0.22"` (BM25 full-text engine), `hnsw_rs = "0.3"` (pure Rust HNSW ANN). Both pure Rust, no C++ build deps.
+
+---
+
+### Phase A: Tantivy BM25 for RAG Full-Text Search (HIGH)
+
+Replace substring keyword search in `crates/agentzero-cli/src/rag.rs` with a Tantivy inverted index. BM25 scoring, phrase queries, boolean operators.
+
+- [x] **Tantivy index schema** — Fields: `id` (`STRING|STORED`), `text` (`TEXT|STORED`). Index at `<index_path>.tantivy/` sibling directory
+- [x] **Rewrite `ingest_document()`** — Writes to both encrypted JSON store (durability/rebuild source of truth) and Tantivy index
+- [x] **Rewrite `query_documents()`** — `QueryParser` with BM25 scoring, `RagQueryMatch` now carries a `score: f32` relevance field
+- [x] **Index rebuild on cold start** — `open_or_create_index()` rebuilds Tantivy from the encrypted JSON docs when dir is missing or corrupt
+- [x] **Feature gate** — All Tantivy code lives in the `rag` module which is already `#[cfg(feature = "rag")]`. Optional `tantivy` dep on `agentzero-cli`
+- [x] **Tests** — 9 tests: ingest+query roundtrip, BM25 ranks more relevant docs higher, empty query/limit rejection, legacy JSONL migration, malformed JSONL rejection, empty index, cold-start rebuild from encrypted store, empty text rejection
+
+### Phase B: HNSW for Semantic Recall (HIGH)
+
+Replace brute-force O(n) cosine scan in `crates/agentzero-storage/src/memory/sqlite.rs` with HNSW approximate nearest neighbor index via `hnsw_rs`.
+
+- [x] **`HnswMemoryIndex` wrapper** — `insert(id, embedding)`, `insert_batch()`, `search(query, limit)`, `save()`, `load(dir, dim)`, `len()`, `dim()`. New `crates/agentzero-storage/src/memory/hnsw_index.rs` with cosine distance
+- [x] **Index persistence** — `file_dump()` to `<hnsw_dir>/memory_hnsw.{graph,data}`. Checkpoint every `HNSW_CHECKPOINT_INTERVAL` (100) inserts; `checkpoint_hnsw()` for manual flush
+- [x] **Wire into `SqliteMemoryStore`** — New `enable_hnsw_index(dir, dim)` method. `append_with_embedding()` inserts into both SQLite and HNSW. `semantic_recall()` queries HNSW for candidate IDs, fetches full rows via `fetch_entries_by_ids_ordered()` preserving HNSW ranking
+- [x] **Cold start rebuild** — `rebuild_hnsw_from_sqlite()` scans `WHERE embedding IS NOT NULL` and repopulates the index when on-disk artifacts are missing
+- [x] **Brute-force fallback** — When HNSW is not enabled (no `enable_hnsw_index` call), `semantic_recall` falls back to the original full-table cosine scan for backward compatibility
+- [x] **Expired row filtering** — `fetch_entries_by_ids_ordered` applies `expires_at > unixepoch()` so HNSW candidates don't leak expired rows
+- [x] **Over-fetch for filtering** — Queries HNSW with `(limit*3).max(limit+8)` candidates to tolerate post-filter drops (expired rows; future org/agent filtering)
+- [x] **Tests** — 12 tests: 7 `HnswMemoryIndex` unit tests (insert/search, dim mismatch, empty, persist/load, missing-load, batch, negative id), 5 `SqliteMemoryStore` integration tests (HNSW nearest neighbors, persist & reload, cold-start rebuild from SQLite, brute-force fallback, expired row filtering)
+
+### Phase C: Hybrid Search — Reciprocal Rank Fusion (MEDIUM)
+
+Combine keyword and semantic results using reciprocal rank fusion (RRF).
+
+- [x] **`reciprocal_rank_fusion()`** — Standard RRF `score = sum(1 / (k + rank_i))`, k=60 default. New `crates/agentzero-core/src/search.rs` with `DEFAULT_RRF_K` constant. Tie-broken by lowest id for determinism
+- [x] **`hybrid_recall()` trait method** — New default method on `MemoryStore` trait in `agentzero-core/src/types.rs`. Runs `semantic_recall()` + substring keyword scan over `recent()` window, then fuses via RRF. Uses stable content fingerprint as the RRF key since trait-level doesn't expose row IDs. Forwarded through `Arc<T>` blanket impl
+- [x] **`SemanticRecallTool` upgrade** — Added optional `mode` parameter to input schema. `"hybrid"` calls `hybrid_recall()`; anything else (including unspecified) uses pure `semantic_recall()` for backward compat
+- [x] **Note on memory-content Tantivy index** — Deferred. The trait-level default `hybrid_recall` with substring matching ships now; a SQLite-side BM25 index for memory content can be a follow-up sprint if substring + semantic isn't enough
+- [x] **Tests** — 7 RRF unit tests (empty input, single list order preservation, items in both lists outrank singletons, disjoint lists, monotonic score, tie-breaking, three-way fusion). 1 new tool test for hybrid mode end-to-end
+
+### Phase D: Dependency & Build Validation (LOW)
+
+- [x] **Workspace Cargo.toml** — `tantivy = "0.22"` (`default-features = false, features = ["mmap"]`) and `hnsw_rs = "0.3"` added to `[workspace.dependencies]`
+- [x] **Feature propagation** — `tantivy` is optional in `agentzero-cli` and pulled in by the `rag` feature. `hnsw_rs` is a non-optional dep of `agentzero-storage` per sprint design (vector search is core)
+- [x] **Binary size check** — `agentzero-lite` builds cleanly in `release` profile. `cargo tree -p agentzero-lite` confirms `tantivy` is NOT pulled in; `hnsw_rs` is included as designed
+- [x] **Clippy clean** — 0 warnings across workspace (`cargo clippy --workspace --all-targets`) and with the `rag` feature (`cargo clippy -p agentzero-cli --features rag --all-targets`)
+- [x] **All existing tests pass** — Full `cargo test --workspace` green, 0 regressions. CLI with `rag` feature: 457 tests (11 new RAG tests). Storage: 53 tests (12 new HNSW tests). Core: 7 new RRF tests. Tools: 1 new hybrid mode test
+
+### Acceptance Criteria
+
+- [x] `cargo clippy --all-targets` — 0 warnings
+- [x] All workspace tests pass (existing + 31 new)
+- [x] RAG `query_documents()` returns BM25-ranked results with relevance scores
+- [x] `semantic_recall()` uses HNSW when enabled — O(log n) ANN lookup instead of O(n) scan
+- [x] `hybrid_recall()` combines keyword + semantic via RRF
+- [x] HNSW index persists to disk (`file_dump`) and survives restart (`HnswMemoryIndex::load`)
+- [x] Cold start rebuilds indexes automatically (Tantivy from encrypted store; HNSW from SQLite embeddings)
+- [x] `SemanticRecallTool` supports `mode: "hybrid"`
+- [x] `agentzero-lite` binary builds in release, no `tantivy` in dep tree
+
+**Sprint 82 complete.** 31 new tests (11 RAG Tantivy + 7 HNSW wrapper + 5 HNSW/SQLite integration + 7 RRF + 1 hybrid tool mode). 0 clippy warnings. Brute-force O(n) cosine scan replaced with HNSW ANN lookup (opt-in via `enable_hnsw_index`). RAG substring matching replaced with Tantivy BM25 ranking. Hybrid retrieval via trait-level RRF default. SQLite-side BM25 index for memory content deferred as a follow-up.
+
+---
+
+## Sprint 83: On-Device Inference Foundations — Capability Detection, Tensor Backend Trait, Model Bundles
+
+**Goal:** Close five concrete gaps in AgentZero's local-inference story: (1) runtime hardware capability detection, (2) compile-time guards for invalid feature combinations, (3) a tensor-level `InferenceBackend` sub-trait that lets new backends reuse chat templating + sampling, (4) marker-feature `build.rs` pattern so embedded builds drop the C++ toolchain dependency, and (5) a signed `.azb` model bundle format that distributes through the same channels as plugins.
+
+**Baseline:** Sprint 82 in progress (Tantivy + HNSW retrieval — orthogonal). Provider trait at `agentzero-core/src/types.rs:1109` is implemented directly by `BuiltinProvider` (llama.cpp) and `CandleProvider` with sampling/streaming duplicated per provider. Device selection is config-driven only — no capability struct, no NPU detection. Zero `compile_error!` guards in the workspace; several invalid feature combos compile silently. Models fetched ad-hoc via `hf-hub`; no signed bundle format. Embedded binary at 10.1 MB (target 5–8 MB per `project_embedded_size_reduction.md`).
+
+**Plan:** `specs/plans/42-on-device-inference-foundations.md`
+
+**New dependencies:** `sysinfo = "0.32"` in `agentzero-core` (already in workspace lockfile via providers — verify pin reuse). No new C/C++ build deps.
+
+---
+
+### Phase A: `agentzero-core::device` Capability Detection (HIGH) ✅
+
+Runtime hardware capability struct that backend selection and tools can query. Foundation for every later phase.
+
+- [x] **`device::types`** — `HardwareCapabilities`, `GpuType { Metal, Cuda, Vulkan, None }`, `NpuType { CoreML, Nnapi, None }`, `ThermalState`, `DetectionConfidence { High, Medium, Low }`. New `crates/agentzero-core/src/device/types.rs`. Includes `unknown()` safe-default constructor and serde roundtrip
+- [x] **`device::common`** — Cross-platform `detect_cpu_cores()`, `detect_memory_mb()` via `sysinfo` 0.32. New `crates/agentzero-core/src/device/common.rs`
+- [x] **`device::apple`** — `#[cfg(any(target_os="macos", target_os="ios"))]`. Metal + Core ML probed via framework presence at `/System/Library/Frameworks/{Metal,CoreML}.framework`
+- [x] **`device::linux`** — `#[cfg(target_os="linux")]`. CUDA probe via `/proc/driver/nvidia` + `nvidia-smi` on `PATH` (no link, no subprocess execution)
+- [x] **`device::android`** — `#[cfg(target_os="android")]`. NNAPI stub returns `(NpuType::Nnapi, Low)`; real probe deferred
+- [x] **`device::detect()`** — Top-level entry composing per-target detectors. Falls back to safe defaults on every error path
+- [x] **Wire into Candle backend selection** — `select_device_auto()` at `crates/agentzero-providers/src/candle_provider.rs` now consults `agentzero_core::device::detect()` and logs the capability profile before attempting Metal/CUDA init. Low-confidence detection still falls through to feature-gated probes
+- [x] **Wire into hardware tool surface** — `discover_boards()` at `crates/agentzero-tools/src/hardware.rs` prepends a `live-host` entry built from `device::detect()` (cores, memory, GPU type, host architecture) ahead of the simulator stubs
+- [x] **`Cargo.toml`** — `sysinfo = "0.32"` added to `agentzero-core` deps with `default-features = false, features = ["system"]`
+- [x] **Tests** — 9 new tests: `device::types` (safe defaults, serde roundtrip), `device::common` (CPU ≥ 1, memory > 0), `device::apple` (Metal + CoreML on macOS), `device::tests` (composed detect() returns nonzero CPU/memory and `Metal + CoreML` on Apple), `hardware::tests::discover_boards_includes_live_host`
+
+### Phase B: Compile-Time Feature Guards (MEDIUM) ✅
+
+Catch invalid feature combinations at `cargo check` time with actionable messages.
+
+- [x] **`agentzero-providers/src/lib.rs` guards** — `compile_error!` blocks for `candle-cuda` on macOS, `candle-metal` off-Apple, `candle-cuda` + `candle-metal` simultaneously, `candle` on `wasm32`, `local-model` on `wasm32`. Each message includes both the *reason* and the *fix*
+- [x] **`agentzero-storage/src/lib.rs` guard** — `storage-encrypted` + `storage-plain` simultaneously rejected with explanation of the conflicting `rusqlite` C symbols
+- [x] **`bin/agentzero/src/lib.rs` mirror** — Same Apple/CUDA/Metal guards at the binary entry point (most-likely-wrong-flags entry)
+- [x] **Verification** — Storage guard verified to fire with the full multi-line actionable message via `cargo check -p agentzero-storage --no-default-features --features storage-encrypted,storage-plain`. Provider guards present but `cudarc`'s own build script fails earlier than `compile_error!` evaluation when `candle-cuda` is set on macOS — the guards still serve as authoritative documentation and would catch any non-cudarc combo
+
+### Phase C: Tensor-Level `InferenceBackend` Sub-Trait (HIGH) — DEFERRED
+
+> **Status:** Not started this sprint. Phase C is a 2300+ LoC refactor across `candle_provider.rs` (815), `builtin.rs` (465), and `local_tools.rs` (1044), touching tensor sampling and KV-cache code. The plan's "smoke test produces identical output" acceptance criterion requires careful before/after parity testing that warrants its own focused session. Re-queue as a standalone sprint.
+
+### Phase D: `build.rs` Marker-Feature Pattern (HIGH) — DEFERRED
+
+> **Status:** Not started this sprint. Touching `agentzero-providers/build.rs` interacts with `llama-cpp-2`'s own build script and the embedded-binary-size budget; needs careful verification in a clean Docker environment without cmake. Re-queue as a standalone sprint.
+
+### Phase E: `.azb` Model Bundle Format (MEDIUM) — DEFERRED
+
+> **Status:** Not started this sprint. Largest by LoC and most isolated. Adding signed bundle format + CLI subcommands + shared signing helper across `agentzero-plugins` and the new `agentzero-providers::bundle` is a substantial standalone deliverable. Re-queue as a standalone sprint.
+
+### Acceptance Criteria (Phases A + B)
+
+- [x] `cargo clippy --workspace --all-targets` — 0 warnings
+- [x] `cargo test --workspace --lib` — all existing tests pass plus 9 new (8 device + 1 hardware)
+- [x] `cargo test -p agentzero-core --lib device::` — 8 device tests green
+- [x] Storage feature guard fires with multi-line message on `--features storage-encrypted,storage-plain`
+- [x] Existing Candle behavior unchanged — `select_device_auto` still selects the same backend; the device probe is logged before any GPU init attempt
+- [x] `agentzero-lite` release build still clean
+
+**Sprint 83 Phases A + B complete.** 9 new tests, 0 clippy warnings. Phases C, D, E deferred to future sprints (each warrants a dedicated session — see DEFERRED notes above).
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

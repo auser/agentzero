@@ -4,6 +4,57 @@
 //! Handles streaming, tool-use message formatting, model catalog lookup,
 //! and provider-specific quirks (reasoning tokens, system prompts).
 
+// ---------------------------------------------------------------------------
+// Compile-time feature guards
+//
+// These `compile_error!` blocks turn invalid feature combinations into clear
+// build failures at `cargo check` time, instead of cryptic linker errors or
+// silent runtime surprises.
+// ---------------------------------------------------------------------------
+
+#[cfg(all(feature = "candle-cuda", target_os = "macos"))]
+compile_error!(
+    "feature `candle-cuda` is not supported on macOS.\n\
+     Reason: CUDA requires an NVIDIA GPU; Apple Silicon uses Metal.\n\
+     Fix: build with `--features candle-metal` (Apple GPU) \
+     or `--features candle` (CPU) instead."
+);
+
+#[cfg(all(
+    feature = "candle-metal",
+    not(any(target_os = "macos", target_os = "ios"))
+))]
+compile_error!(
+    "feature `candle-metal` only works on Apple platforms.\n\
+     Reason: Metal is an Apple-specific GPU API.\n\
+     Fix: build with `--features candle-cuda` (NVIDIA) \
+     or `--features candle` (CPU) on this target."
+);
+
+#[cfg(all(feature = "candle-metal", feature = "candle-cuda"))]
+compile_error!(
+    "features `candle-metal` and `candle-cuda` are mutually exclusive.\n\
+     Reason: Candle links exactly one GPU backend per build.\n\
+     Fix: pick one — `--features candle-metal` (Apple) \
+     or `--features candle-cuda` (NVIDIA)."
+);
+
+#[cfg(all(feature = "candle", target_arch = "wasm32"))]
+compile_error!(
+    "feature `candle` is not supported on wasm32.\n\
+     Reason: Candle's tensor backend has no wasm32 support; \
+     local LLM inference cannot run in a browser bundle.\n\
+     Fix: use a remote provider (`anthropic`, `openai`, etc.) on wasm32."
+);
+
+#[cfg(all(feature = "local-model", target_arch = "wasm32"))]
+compile_error!(
+    "feature `local-model` is not supported on wasm32.\n\
+     Reason: `local-model` links llama.cpp via `llama-cpp-2`, which requires \
+     a native C++ toolchain and is not available on wasm32.\n\
+     Fix: use a remote provider on wasm32."
+);
+
 mod anthropic;
 #[cfg(feature = "local-model")]
 pub mod builtin;

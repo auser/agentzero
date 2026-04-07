@@ -1,3 +1,4 @@
+use crate::memory::HnswMemoryIndex;
 use crate::StorageKey;
 use agentzero_core::{MemoryEntry, MemoryStore};
 use anyhow::Context;
@@ -5,7 +6,7 @@ use async_trait::async_trait;
 use rusqlite::{params, Connection};
 use std::fs;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub(crate) const MEMORY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS memory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,7 +17,18 @@ pub(crate) const MEMORY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS memory (
 
 pub struct SqliteMemoryStore {
     conn: Mutex<Connection>,
+    /// Optional HNSW index for fast approximate nearest neighbor semantic recall.
+    /// When `Some`, `append_with_embedding` writes to both SQLite and the index,
+    /// and `semantic_recall` queries the index instead of doing a full table scan.
+    /// When `None`, falls back to the original brute-force scan.
+    hnsw: Option<Arc<HnswMemoryIndex>>,
+    /// Inserts since the last persist. Used to checkpoint the HNSW index periodically.
+    hnsw_inserts_since_save: Mutex<usize>,
 }
+
+/// Number of HNSW inserts between automatic on-disk checkpoints. Tuned to amortize
+/// dump cost without losing too much work on crash.
+const HNSW_CHECKPOINT_INTERVAL: usize = 100;
 
 impl SqliteMemoryStore {
     pub fn open(path: impl AsRef<Path>, key: Option<&StorageKey>) -> anyhow::Result<Self> {
@@ -65,6 +77,8 @@ impl SqliteMemoryStore {
                 .ok();
                 return Ok(Self {
                     conn: Mutex::new(conn),
+                    hnsw: None,
+                    hnsw_inserts_since_save: Mutex::new(0),
                 });
             }
         }
@@ -102,7 +116,80 @@ impl SqliteMemoryStore {
 
         Ok(Self {
             conn: Mutex::new(conn),
+            hnsw: None,
+            hnsw_inserts_since_save: Mutex::new(0),
         })
+    }
+
+    /// Enable HNSW-backed semantic recall. The index is loaded from `dir` if it
+    /// exists; otherwise it is rebuilt by scanning all rows in `memory` that
+    /// already have embeddings. After enabling, `append_with_embedding` writes to
+    /// both SQLite and the index, and `semantic_recall` queries the index instead
+    /// of doing a full table scan.
+    ///
+    /// `dim` must match the embedding dimension used by the configured embedding
+    /// provider (e.g. 384 for `all-MiniLM-L6-v2`).
+    pub fn enable_hnsw_index(&mut self, dir: impl AsRef<Path>, dim: usize) -> anyhow::Result<()> {
+        let dir = dir.as_ref().to_path_buf();
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create hnsw dir {}", dir.display()))?;
+
+        let index = match HnswMemoryIndex::load(&dir, dim)? {
+            Some(idx) => idx,
+            None => {
+                // Cold start: rebuild from SQLite.
+                let fresh = HnswMemoryIndex::with_params(
+                    dim,
+                    crate::memory::hnsw_index::DEFAULT_MAX_NB_CONNECTION,
+                    crate::memory::hnsw_index::DEFAULT_EF_CONSTRUCTION,
+                    crate::memory::hnsw_index::DEFAULT_MAX_LAYER,
+                    crate::memory::hnsw_index::DEFAULT_MAX_ELEMENTS,
+                    Some(dir.clone()),
+                );
+                self.rebuild_hnsw_from_sqlite(&fresh)?;
+                if !fresh.is_empty() {
+                    fresh.save()?;
+                }
+                fresh
+            }
+        };
+
+        self.hnsw = Some(Arc::new(index));
+        Ok(())
+    }
+
+    /// Scan the memory table for rows with embeddings and load them into `index`.
+    fn rebuild_hnsw_from_sqlite(&self, index: &HnswMemoryIndex) -> anyhow::Result<()> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, embedding FROM memory
+             WHERE embedding IS NOT NULL
+               AND (expires_at IS NULL OR expires_at > unixepoch())",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let bytes: Vec<u8> = row.get(1)?;
+            Ok((id, bytes))
+        })?;
+        for row in rows {
+            let (id, bytes) = row?;
+            let emb = agentzero_core::embedding::bytes_to_embedding(&bytes);
+            // Skip rows with mismatched dimension instead of failing the whole rebuild.
+            if emb.len() == index.dim() {
+                index.insert(id, &emb)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Force a checkpoint of the HNSW index to disk. Normally happens automatically
+    /// every `HNSW_CHECKPOINT_INTERVAL` inserts.
+    pub fn checkpoint_hnsw(&self) -> anyhow::Result<()> {
+        if let Some(idx) = self.hnsw.as_ref() {
+            idx.save()?;
+            *self.hnsw_inserts_since_save.lock().expect("mutex") = 0;
+        }
+        Ok(())
     }
 }
 
@@ -647,12 +734,34 @@ impl MemoryStore for SqliteMemoryStore {
         entry: MemoryEntry,
         embedding: Vec<f32>,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let embedding_bytes = agentzero_core::embedding::embedding_to_bytes(&embedding);
-        conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id, embedding) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id, entry.expires_at, entry.org_id, entry.agent_id, embedding_bytes],
-        )?;
+        let row_id: i64 = {
+            let conn = self.conn.lock().expect("sqlite mutex poisoned");
+            conn.execute(
+                "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id, embedding) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id, entry.expires_at, entry.org_id, entry.agent_id, embedding_bytes],
+            )?;
+            conn.last_insert_rowid()
+        };
+
+        // Mirror into the HNSW index if enabled. Checkpoint to disk periodically.
+        if let Some(idx) = self.hnsw.as_ref() {
+            if embedding.len() == idx.dim() {
+                idx.insert(row_id, &embedding)?;
+                let mut pending = self.hnsw_inserts_since_save.lock().expect("mutex");
+                *pending += 1;
+                if *pending >= HNSW_CHECKPOINT_INTERVAL {
+                    idx.save()?;
+                    *pending = 0;
+                }
+            } else {
+                agentzero_core::tracing::warn!(
+                    index_dim = idx.dim(),
+                    embedding_dim = embedding.len(),
+                    "dropping embedding from HNSW index due to dimension mismatch"
+                );
+            }
+        }
         Ok(())
     }
 
@@ -661,8 +770,23 @@ impl MemoryStore for SqliteMemoryStore {
         query_embedding: &[f32],
         limit: usize,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        use agentzero_core::embedding::cosine_similarity;
+        // Fast path: use the HNSW index if it's been enabled.
+        if let Some(idx) = self.hnsw.as_ref() {
+            if idx.dim() == query_embedding.len() && !idx.is_empty() {
+                // Over-fetch so filtering (e.g. expired rows) still yields `limit` results.
+                let overfetch = (limit * 3).max(limit + 8);
+                let neighbours = idx.search(query_embedding, overfetch)?;
+                if !neighbours.is_empty() {
+                    return self.fetch_entries_by_ids_ordered(
+                        neighbours.into_iter().map(|(id, _)| id).collect(),
+                        limit,
+                    );
+                }
+            }
+        }
 
+        // Fallback: brute-force cosine scan over all embedded rows.
+        use agentzero_core::embedding::cosine_similarity;
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT role, content, privacy_boundary, source_channel, conversation_id,
@@ -683,6 +807,60 @@ impl MemoryStore for SqliteMemoryStore {
         }
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         Ok(scored.into_iter().take(limit).map(|(_, e)| e).collect())
+    }
+}
+
+impl SqliteMemoryStore {
+    /// Fetch `MemoryEntry` rows by their SQLite primary key IDs, preserving the
+    /// input order (which carries HNSW ranking). Expired rows are filtered out.
+    /// Truncates to `limit` after filtering.
+    fn fetch_entries_by_ids_ordered(
+        &self,
+        ids: Vec<i64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, role, content, privacy_boundary, source_channel, conversation_id,
+                    datetime(created_at, 'unixepoch') as created_at_iso, expires_at, org_id, agent_id, embedding
+             FROM memory
+             WHERE id = ?1
+               AND (expires_at IS NULL OR expires_at > unixepoch())",
+        )?;
+        let mut by_id: std::collections::HashMap<i64, MemoryEntry> =
+            std::collections::HashMap::with_capacity(ids.len());
+        for id in &ids {
+            let mut rows = stmt.query(params![id])?;
+            if let Some(row) = rows.next()? {
+                // Columns are offset by 1 because we prepended `id`.
+                let embedding: Option<Vec<f32>> = row
+                    .get::<_, Option<Vec<u8>>>(10)
+                    .unwrap_or_default()
+                    .map(|bytes| agentzero_core::embedding::bytes_to_embedding(&bytes));
+                let entry = MemoryEntry {
+                    role: row.get(1)?,
+                    content: row.get(2)?,
+                    privacy_boundary: row.get::<_, String>(3).unwrap_or_default(),
+                    source_channel: row.get::<_, Option<String>>(4).unwrap_or_default(),
+                    conversation_id: row.get::<_, String>(5).unwrap_or_default(),
+                    created_at: row.get::<_, Option<String>>(6).ok().flatten(),
+                    expires_at: row.get::<_, Option<i64>>(7).unwrap_or_default(),
+                    org_id: row.get::<_, String>(8).unwrap_or_default(),
+                    agent_id: row.get::<_, String>(9).unwrap_or_default(),
+                    embedding,
+                };
+                by_id.insert(*id, entry);
+            }
+        }
+        let out: Vec<MemoryEntry> = ids
+            .into_iter()
+            .filter_map(|id| by_id.remove(&id))
+            .take(limit)
+            .collect();
+        Ok(out)
     }
 }
 
@@ -1794,5 +1972,209 @@ mod tests {
         assert_eq!(entries.len(), 3);
 
         fs::remove_file(db_path).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // HNSW-backed semantic recall tests
+    // -----------------------------------------------------------------------
+
+    fn temp_hnsw_dir() -> PathBuf {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos();
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "agentzero-memory-hnsw-{}-{nanos}-{seq}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("hnsw dir");
+        dir
+    }
+
+    fn make_entry(role: &str, content: &str) -> MemoryEntry {
+        MemoryEntry {
+            role: role.to_string(),
+            content: content.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn hnsw_semantic_recall_returns_nearest_neighbors() {
+        let db_path = temp_db_path();
+        let hnsw_dir = temp_hnsw_dir();
+
+        let mut store = SqliteMemoryStore::open(&db_path, None).expect("sqlite store should open");
+        store.enable_hnsw_index(&hnsw_dir, 4).expect("enable hnsw");
+
+        store
+            .append_with_embedding(make_entry("user", "alpha"), vec![1.0, 0.0, 0.0, 0.0])
+            .await
+            .unwrap();
+        store
+            .append_with_embedding(make_entry("user", "beta"), vec![0.9, 0.1, 0.0, 0.0])
+            .await
+            .unwrap();
+        store
+            .append_with_embedding(make_entry("user", "gamma"), vec![0.0, 1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+
+        let results = store
+            .semantic_recall(&[1.0, 0.0, 0.0, 0.0], 2)
+            .await
+            .expect("recall");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].content, "alpha");
+        assert_eq!(results[1].content, "beta");
+
+        fs::remove_file(db_path).ok();
+        fs::remove_dir_all(hnsw_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn hnsw_index_persists_and_reloads() {
+        let db_path = temp_db_path();
+        let hnsw_dir = temp_hnsw_dir();
+
+        // First session: create store, append rows, force checkpoint.
+        {
+            let mut store =
+                SqliteMemoryStore::open(&db_path, None).expect("sqlite store should open");
+            store.enable_hnsw_index(&hnsw_dir, 4).expect("enable hnsw");
+            store
+                .append_with_embedding(make_entry("user", "first"), vec![1.0, 0.0, 0.0, 0.0])
+                .await
+                .unwrap();
+            store
+                .append_with_embedding(make_entry("user", "second"), vec![0.0, 1.0, 0.0, 0.0])
+                .await
+                .unwrap();
+            store.checkpoint_hnsw().expect("checkpoint");
+        }
+
+        // Second session: reopen, should load from disk (not rebuild from SQLite).
+        let mut store2 = SqliteMemoryStore::open(&db_path, None).expect("reopen");
+        store2.enable_hnsw_index(&hnsw_dir, 4).expect("enable hnsw");
+
+        let results = store2
+            .semantic_recall(&[1.0, 0.0, 0.0, 0.0], 1)
+            .await
+            .expect("recall");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "first");
+
+        fs::remove_file(db_path).ok();
+        fs::remove_dir_all(hnsw_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn hnsw_cold_start_rebuilds_from_sqlite() {
+        let db_path = temp_db_path();
+        let hnsw_dir = temp_hnsw_dir();
+
+        // First session: append entries WITHOUT enabling HNSW yet.
+        {
+            let store = SqliteMemoryStore::open(&db_path, None).expect("sqlite store should open");
+            store
+                .append_with_embedding(make_entry("user", "first"), vec![1.0, 0.0, 0.0, 0.0])
+                .await
+                .unwrap();
+            store
+                .append_with_embedding(make_entry("user", "second"), vec![0.0, 1.0, 0.0, 0.0])
+                .await
+                .unwrap();
+        }
+
+        // Second session: enable HNSW. Index dir is empty, so it should rebuild
+        // from the SQLite rows that were inserted in the first session.
+        let mut store2 = SqliteMemoryStore::open(&db_path, None).expect("reopen");
+        assert!(!hnsw_dir.join("memory_hnsw.hnsw.graph").exists());
+        store2.enable_hnsw_index(&hnsw_dir, 4).expect("enable hnsw");
+
+        let results = store2
+            .semantic_recall(&[0.0, 1.0, 0.0, 0.0], 1)
+            .await
+            .expect("recall");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "second");
+
+        fs::remove_file(db_path).ok();
+        fs::remove_dir_all(hnsw_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn semantic_recall_falls_back_when_hnsw_disabled() {
+        let db_path = temp_db_path();
+        let store = SqliteMemoryStore::open(&db_path, None).expect("sqlite store should open");
+        // Note: hnsw is NOT enabled — we exercise the brute-force fallback.
+
+        store
+            .append_with_embedding(make_entry("user", "x"), vec![1.0, 0.0, 0.0, 0.0])
+            .await
+            .unwrap();
+        store
+            .append_with_embedding(make_entry("user", "y"), vec![0.0, 1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+
+        let results = store
+            .semantic_recall(&[1.0, 0.0, 0.0, 0.0], 1)
+            .await
+            .expect("recall");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "x");
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn hnsw_filters_expired_entries() {
+        let db_path = temp_db_path();
+        let hnsw_dir = temp_hnsw_dir();
+
+        let mut store = SqliteMemoryStore::open(&db_path, None).expect("sqlite store should open");
+        store.enable_hnsw_index(&hnsw_dir, 4).expect("enable hnsw");
+
+        // Live entry
+        store
+            .append_with_embedding(
+                MemoryEntry {
+                    role: "user".to_string(),
+                    content: "live".to_string(),
+                    expires_at: None,
+                    ..Default::default()
+                },
+                vec![1.0, 0.0, 0.0, 0.0],
+            )
+            .await
+            .unwrap();
+        // Already-expired entry
+        store
+            .append_with_embedding(
+                MemoryEntry {
+                    role: "user".to_string(),
+                    content: "expired".to_string(),
+                    expires_at: Some(1),
+                    ..Default::default()
+                },
+                vec![0.99, 0.01, 0.0, 0.0],
+            )
+            .await
+            .unwrap();
+
+        let results = store
+            .semantic_recall(&[1.0, 0.0, 0.0, 0.0], 5)
+            .await
+            .expect("recall");
+        // Even though both vectors are nearby, the expired one must be filtered.
+        assert!(results.iter().all(|e| e.content != "expired"));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "live");
+
+        fs::remove_file(db_path).ok();
+        fs::remove_dir_all(hnsw_dir).ok();
     }
 }

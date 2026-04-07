@@ -17,7 +17,7 @@ memory-sqlite = ["agentzero-infra/memory-sqlite", "agentzero-storage/storage-enc
 memory-sqlite-plain = ["agentzero-infra/memory-sqlite", "agentzero-storage/storage-plain"]
 document-tools = ["agentzero-infra/document-tools"]
 memory-turso = ["agentzero-storage/memory-turso", "agentzero-infra/memory-turso"]
-rag = ["agentzero-infra/rag"]
+rag = ["agentzero-infra/rag", "dep:tantivy"]
 hardware = []
 channels-standard = ["agentzero-channels/channels-standard"]
 embedded-minimal = ["memory-sqlite", "tools-full"]
@@ -69,6 +69,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"
 sha2 = "0.10"
+tantivy = { workspace = true, optional = true }
 rusqlite.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -89,3 +90,5 @@ windows-sys = { version = "0.59", features = [
 temp-env = "0.3"
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock = { workspace = true }
+agentzero-testkit = { workspace = true }

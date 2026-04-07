@@ -1,4 +1,6 @@
+pub(crate) mod hnsw_index;
 pub(crate) mod sqlite;
+pub use hnsw_index::HnswMemoryIndex;
 pub use sqlite::SqliteMemoryStore;
 
 #[cfg(feature = "pool")]

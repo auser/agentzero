@@ -266,6 +266,14 @@ where
 #[derive(Debug, Deserialize)]
 struct ChatResponse {
     choices: Vec<Choice>,
+    #[serde(default)]
+    usage: Option<Usage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Usage {
+    prompt_tokens: u64,
+    completion_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -994,11 +1002,17 @@ fn parse_tool_chat_response(body: &str) -> anyhow::Result<ChatResult> {
         }
     }
 
+    let (input_tokens, output_tokens) = response
+        .usage
+        .map(|u| (u.prompt_tokens, u.completion_tokens))
+        .unwrap_or((0, 0));
+
     Ok(ChatResult {
         output_text,
         tool_calls,
         stop_reason,
-        ..Default::default()
+        input_tokens,
+        output_tokens,
     })
 }
 

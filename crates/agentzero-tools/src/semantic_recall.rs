@@ -15,6 +15,9 @@ struct Input {
     query: String,
     #[serde(default = "default_limit")]
     limit: usize,
+    /// Retrieval mode: "semantic" (default), "hybrid" (semantic + keyword via RRF).
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 #[derive(ToolSchema, Deserialize)]
@@ -25,6 +28,9 @@ struct SemanticRecallSchema {
     /// Maximum results to return (default: 5)
     #[serde(default)]
     limit: Option<i64>,
+    /// Retrieval mode: "semantic" (default) or "hybrid" (combine semantic and keyword search)
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 fn default_limit() -> usize {
@@ -76,11 +82,19 @@ impl Tool for SemanticRecallTool {
             .await
             .map_err(|e| anyhow::anyhow!("failed to embed query: {e}"))?;
 
-        let entries = self
-            .store
-            .semantic_recall(&query_embedding, req.limit)
-            .await
-            .map_err(|e| anyhow::anyhow!("semantic recall failed: {e}"))?;
+        let entries = match req.mode.as_deref() {
+            Some("hybrid") => self
+                .store
+                .hybrid_recall(&req.query, &query_embedding, req.limit)
+                .await
+                .map_err(|e| anyhow::anyhow!("hybrid recall failed: {e}"))?,
+            // "semantic" or unspecified — use pure vector search.
+            _ => self
+                .store
+                .semantic_recall(&query_embedding, req.limit)
+                .await
+                .map_err(|e| anyhow::anyhow!("semantic recall failed: {e}"))?,
+        };
 
         if entries.is_empty() {
             return Ok(ToolResult {
@@ -244,6 +258,41 @@ mod tests {
 
         let lines: Vec<&str> = result.output.lines().collect();
         assert_eq!(lines.len(), 3, "should return exactly 3 results");
+    }
+
+    #[tokio::test]
+    async fn hybrid_mode_returns_results() {
+        let store = Arc::new(MockStore::new());
+        let embedder = Arc::new(MockEmbedder);
+
+        for (role, content) in &[
+            ("user", "rust async tokio runtime"),
+            ("assistant", "tokio is an async runtime for rust"),
+            ("user", "completely unrelated content about cooking"),
+        ] {
+            let entry = MemoryEntry {
+                role: role.to_string(),
+                content: content.to_string(),
+                ..Default::default()
+            };
+            let emb = embedder.embed(content).await.expect("embed");
+            store
+                .append_with_embedding(entry, emb)
+                .await
+                .expect("append");
+        }
+
+        let tool = SemanticRecallTool::new(store, embedder);
+        let result = tool
+            .execute(
+                r#"{"query": "tokio runtime", "limit": 2, "mode": "hybrid"}"#,
+                &test_ctx(),
+            )
+            .await
+            .expect("hybrid recall should succeed");
+
+        assert!(!result.output.contains("no semantically similar"));
+        assert!(result.output.contains("tokio") || result.output.contains("rust"));
     }
 
     #[tokio::test]
