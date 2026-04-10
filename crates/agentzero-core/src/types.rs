@@ -1681,6 +1681,15 @@ pub trait AuditSink: Send + Sync {
     async fn record(&self, event: AuditEvent) -> anyhow::Result<()>;
 }
 
+/// Blanket implementation allowing `Arc<dyn AuditSink>` to be used anywhere
+/// a `Box<dyn AuditSink>` is expected — mirrors the `MemoryStore` Arc blanket.
+#[async_trait]
+impl<T: AuditSink + ?Sized> AuditSink for std::sync::Arc<T> {
+    async fn record(&self, event: AuditEvent) -> anyhow::Result<()> {
+        (**self).record(event).await
+    }
+}
+
 #[async_trait]
 pub trait HookSink: Send + Sync {
     async fn record(&self, event: HookEvent) -> anyhow::Result<()>;

@@ -1113,6 +1113,7 @@ Rules:
                     provider.as_ref(),
                     &tool_def.description,
                     tool_def.strategy_hint.as_deref(),
+                    None,
                 )
                 .await
                 {

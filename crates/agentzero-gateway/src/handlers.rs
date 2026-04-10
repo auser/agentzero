@@ -3,17 +3,17 @@ use crate::auth::{authorize_request, authorize_with_scope};
 use crate::models::{
     AgentDetailResponse, AgentListResponse, AgentStatsResponse, ApiFallbackResponse,
     ApprovalsListResponse, AsyncSubmitRequest, AsyncSubmitResponse, CancelQuery, CancelResponse,
-    ChatCompletionsRequest, ChatCompletionsResponse, ChatRequest, ChatResponse, CompletionChoice,
-    CompletionChoiceMessage, ConfigResponse, ConfigSection, ConfigUpdateRequest,
-    ConfigUpdateResponse, CreateAgentRequest, CreateAgentResponse, CreateCronRequest,
-    CronJobResponse, CronListResponse, EstopResponse, EventItem, EventListResponse,
-    EventStreamQuery, EventsQuery, GatewayError, HealthResponse, JobListItem, JobListQuery,
-    JobListResponse, JobStatusResponse, LivenessResponse, MemoryForgetRequest,
-    MemoryForgetResponse, MemoryListItem, MemoryListQuery, MemoryListResponse, MemoryRecallRequest,
-    ModelItem, ModelsResponse, PairRequest, PairResponse, PingRequest, PingResponse, ReadyResponse,
-    ToolSummary, ToolsResponse, TopologyEdge, TopologyNode, TopologyResponse, TranscriptResponse,
-    UpdateAgentRequest, UpdateCronRequest, WebhookPayload, WebhookQuery, WebhookResponse,
-    WsRunQuery,
+    ChatCompletionsRequest, ChatCompletionsResponse, ChatRequest, ChatResponse,
+    CodegenControlResponse, CompletionChoice, CompletionChoiceMessage, ConfigResponse,
+    ConfigSection, ConfigUpdateRequest, ConfigUpdateResponse, CreateAgentRequest,
+    CreateAgentResponse, CreateCronRequest, CronJobResponse, CronListResponse, EstopResponse,
+    EventItem, EventListResponse, EventStreamQuery, EventsQuery, GatewayError, HealthResponse,
+    JobListItem, JobListQuery, JobListResponse, JobStatusResponse, LivenessResponse,
+    MemoryForgetRequest, MemoryForgetResponse, MemoryListItem, MemoryListQuery, MemoryListResponse,
+    MemoryRecallRequest, ModelItem, ModelsResponse, PairRequest, PairResponse, PingRequest,
+    PingResponse, ReadyResponse, ToolSummary, ToolsResponse, TopologyEdge, TopologyNode,
+    TopologyResponse, TranscriptResponse, UpdateAgentRequest, UpdateCronRequest, WebhookPayload,
+    WebhookQuery, WebhookResponse, WsRunQuery,
 };
 use crate::state::GatewayState;
 use crate::util::{generate_session_token, now_epoch_secs};
@@ -1873,6 +1873,55 @@ pub(crate) async fn emergency_stop(
             .iter()
             .map(|id| id.as_str().to_string())
             .collect(),
+    }))
+}
+
+/// POST /v1/runtime/codegen-disable — disable the codegen dynamic tool
+/// strategy for this runtime process. Admin-scoped.
+///
+/// This flips a process-global `AtomicBool` that `create_codegen_tool()`
+/// checks before calling the LLM or the compiler. No restart required.
+/// To re-enable, call `POST /v1/runtime/codegen-enable` or set
+/// `codegen_enabled = true` in `agentzero.toml` and reload the config.
+pub(crate) async fn runtime_codegen_disable(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Result<Json<CodegenControlResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
+
+    agentzero_infra::tools::tool_create::set_codegen_enabled(false);
+
+    crate::audit::audit(
+        crate::audit::AuditEvent::AdminAction,
+        "codegen disabled via gateway",
+        "",
+        "/v1/runtime/codegen-disable",
+    );
+
+    Ok(Json(CodegenControlResponse {
+        codegen_enabled: false,
+    }))
+}
+
+/// POST /v1/runtime/codegen-enable — re-enable the codegen dynamic tool
+/// strategy for this runtime process. Admin-scoped.
+pub(crate) async fn runtime_codegen_enable(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Result<Json<CodegenControlResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::Admin)?;
+
+    agentzero_infra::tools::tool_create::set_codegen_enabled(true);
+
+    crate::audit::audit(
+        crate::audit::AuditEvent::AdminAction,
+        "codegen enabled via gateway",
+        "",
+        "/v1/runtime/codegen-enable",
+    );
+
+    Ok(Json(CodegenControlResponse {
+        codegen_enabled: true,
     }))
 }
 

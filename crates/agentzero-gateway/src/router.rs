@@ -12,10 +12,10 @@ use crate::handlers::{
     import_dynamic_tool_bundle, import_workflow, job_cancel, job_events, job_list, job_result,
     job_status, job_transcript, legacy_webhook, list_approvals, list_cron, list_dynamic_tools,
     list_memory, list_templates, list_workflows, mcp_message, metrics, openapi_spec, pair, ping,
-    recall_memory, resume_workflow_run, sse_events, sse_run_stream, stream_workflow_run,
-    swarm_execute, tool_execute, topology, update_agent, update_config, update_cron,
-    update_template, update_workflow, v1_chat_completions, v1_models, webhook, webhook_with_agent,
-    ws_chat, ws_run_subscribe,
+    recall_memory, resume_workflow_run, runtime_codegen_disable, runtime_codegen_enable,
+    sse_events, sse_run_stream, stream_workflow_run, swarm_execute, tool_execute, topology,
+    update_agent, update_config, update_cron, update_template, update_workflow,
+    v1_chat_completions, v1_models, webhook, webhook_with_agent, ws_chat, ws_run_subscribe,
 };
 use crate::middleware::{self, MiddlewareConfig, RateLimiter};
 use crate::state::GatewayState;
@@ -95,6 +95,8 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/hooks/:channel/:agent_id", post(webhook_with_agent))
         .route("/v1/events", get(sse_events))
         .route("/v1/estop", post(emergency_stop))
+        .route("/v1/runtime/codegen-disable", post(runtime_codegen_disable))
+        .route("/v1/runtime/codegen-enable", post(runtime_codegen_enable))
         .route("/v1/tools", get(get_tools))
         .route("/v1/tool-execute", post(tool_execute))
         .route(

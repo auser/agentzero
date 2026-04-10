@@ -359,6 +359,11 @@ pub(crate) struct EstopResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(crate) struct CodegenControlResponse {
+    pub(crate) codegen_enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct ApiFallbackResponse {
     pub(crate) ok: bool,
     pub(crate) path: String,

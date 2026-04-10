@@ -357,6 +357,28 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
     // Append any extra tools (e.g. FFI-registered tools).
     tools.extend(req.extra_tools);
 
+    // Pre-build a shared audit sink for codegen lifecycle events. The same
+    // Arc is later moved into the RuntimeExecution output (as a Box) so only
+    // one sink instance exists per agent session.
+    let audit_policy = load_audit_policy(&req.workspace_root, &req.config_path)?;
+    let audit_path = audit_policy.path.clone();
+    let shared_audit_sink: Option<std::sync::Arc<SequencedAuditSink>> = if audit_policy.enabled {
+        let session_id = format!(
+            "ses-{}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+            std::process::id()
+        );
+        Some(std::sync::Arc::new(SequencedAuditSink::new(
+            Box::new(FileAuditSink::new(audit_path.clone())),
+            session_id,
+        )))
+    } else {
+        None
+    };
+
     // Load persisted dynamic tools and register the tool_create tool.
     let dynamic_registry = if tool_policy.enable_dynamic_tools {
         let data_dir = req.workspace_root.join(".agentzero");
@@ -380,10 +402,22 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
                         config.provider.model.clone(),
                         transport_config.clone(),
                     ));
-                tools.push(Box::new(crate::tools::tool_create::ToolCreateTool::new(
-                    std::sync::Arc::clone(&registry),
-                    provider_for_create,
-                )));
+                // Wire audit sink into tool_create so codegen lifecycle events
+                // (blocked, compile_start, compile_success, compile_failed) are
+                // recorded alongside the agent's regular audit trail.
+                let tool_create = if let Some(ref sink) = shared_audit_sink {
+                    crate::tools::tool_create::ToolCreateTool::new_with_audit(
+                        std::sync::Arc::clone(&registry),
+                        provider_for_create,
+                        std::sync::Arc::clone(sink) as std::sync::Arc<dyn AuditSink>,
+                    )
+                } else {
+                    crate::tools::tool_create::ToolCreateTool::new(
+                        std::sync::Arc::clone(&registry),
+                        provider_for_create,
+                    )
+                };
+                tools.push(Box::new(tool_create));
                 Some(registry)
             }
             Err(e) => {
@@ -424,9 +458,6 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             }
         }
     };
-
-    let audit_policy = load_audit_policy(&req.workspace_root, &req.config_path)?;
-    let audit_path = audit_policy.path.clone();
 
     Ok(RuntimeExecution {
         config: AgentConfig {
@@ -542,23 +573,10 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         provider,
         memory,
         tools,
-        audit_sink: if audit_policy.enabled {
-            let session_id = format!(
-                "ses-{}-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis(),
-                std::process::id()
-            );
-            let sequenced = SequencedAuditSink::new(
-                Box::new(FileAuditSink::new(audit_path.clone())),
-                session_id,
-            );
-            Some(Box::new(sequenced) as Box<dyn AuditSink>)
-        } else {
-            None
-        },
+        // Reuse the shared audit sink (already created earlier for codegen
+        // events). SequencedAuditSink implements AuditSink, so the Arc wraps
+        // cleanly into a Box<dyn AuditSink>.
+        audit_sink: shared_audit_sink.map(|arc| Box::new(arc) as Box<dyn AuditSink>),
         hook_sink: if config.agent.hooks.enabled {
             Some(Box::new(AuditHookSink {
                 sink: FileAuditSink::new(audit_path),

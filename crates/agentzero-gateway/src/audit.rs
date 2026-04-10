@@ -27,6 +27,7 @@ pub(crate) enum AuditEvent {
     ApiKeyRevoked,
     Estop,
     RateLimited,
+    AdminAction,
 }
 
 impl AuditEvent {
@@ -40,6 +41,7 @@ impl AuditEvent {
             Self::ApiKeyRevoked => "api_key_revoked",
             Self::Estop => "estop",
             Self::RateLimited => "rate_limited",
+            Self::AdminAction => "admin_action",
         }
     }
 }

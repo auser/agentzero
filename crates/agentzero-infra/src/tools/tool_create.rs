@@ -2,7 +2,7 @@
 //! dynamic tools at runtime. Created tools persist across sessions.
 
 use crate::tools::dynamic_tool::{DynamicToolDef, DynamicToolRegistry, DynamicToolStrategy};
-use agentzero_core::{Provider, Tool, ToolContext, ToolResult};
+use agentzero_core::{AuditEvent, AuditSink, Provider, Tool, ToolContext, ToolResult};
 use agentzero_macros::{tool, ToolSchema};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -114,6 +114,11 @@ pub(crate) fn reset_codegen_flag_for_test() {
 pub struct ToolCreateTool {
     registry: Arc<DynamicToolRegistry>,
     provider: Arc<dyn Provider>,
+    /// Optional audit sink for recording codegen lifecycle events
+    /// (creation blocked by kill-switch, compile success, compile failure).
+    /// `None` preserves backward compatibility for callers that don't
+    /// construct an audit sink (CLI onboard path, tests).
+    audit_sink: Option<Arc<dyn AuditSink>>,
 }
 
 #[derive(ToolSchema, Deserialize)]
@@ -143,7 +148,47 @@ struct ToolCreateSchema {
 
 impl ToolCreateTool {
     pub fn new(registry: Arc<DynamicToolRegistry>, provider: Arc<dyn Provider>) -> Self {
-        Self { registry, provider }
+        Self {
+            registry,
+            provider,
+            audit_sink: None,
+        }
+    }
+
+    /// Construct a `ToolCreateTool` that records codegen lifecycle events to
+    /// the supplied audit sink. Preferred for production runtime wiring;
+    /// the plain `new()` constructor is kept for tests and for CLI paths
+    /// that don't have an audit sink.
+    pub fn new_with_audit(
+        registry: Arc<DynamicToolRegistry>,
+        provider: Arc<dyn Provider>,
+        audit_sink: Arc<dyn AuditSink>,
+    ) -> Self {
+        Self {
+            registry,
+            provider,
+            audit_sink: Some(audit_sink),
+        }
+    }
+}
+
+/// Best-effort helper: record a codegen lifecycle event if an audit sink is
+/// configured. Errors from the sink are logged at `warn!` and otherwise
+/// swallowed — audit failures must never block the codegen path.
+async fn record_codegen_audit(
+    sink: Option<&Arc<dyn AuditSink>>,
+    stage: &str,
+    detail: serde_json::Value,
+) {
+    let Some(sink) = sink else { return };
+    let event = AuditEvent {
+        seq: 0,
+        session_id: String::new(),
+        stage: stage.to_string(),
+        detail,
+    };
+    if let Err(e) = sink.record(event).await {
+        tracing::warn!(error = %e, stage = %stage, "failed to record codegen audit event");
     }
 }
 
@@ -261,14 +306,20 @@ impl Tool for ToolCreateTool {
 /// Create a dynamic tool from a natural language description using the LLM.
 ///
 /// Returns the name of the created tool.
+///
+/// When `audit_sink` is `Some`, codegen lifecycle events (blocked by
+/// kill-switch, compile success, compile failure) are recorded for
+/// forensic replay. Non-codegen strategies do not emit audit events today
+/// since they don't compile or execute host code.
 pub async fn create_tool_from_nl(
     registry: &DynamicToolRegistry,
     provider: &dyn Provider,
     description: &str,
     strategy_hint: Option<&str>,
+    audit_sink: Option<Arc<dyn AuditSink>>,
 ) -> anyhow::Result<String> {
     if strategy_hint == Some("codegen") {
-        return create_codegen_tool(registry, provider, description).await;
+        return create_codegen_tool(registry, provider, description, audit_sink.as_ref()).await;
     }
 
     let hint = strategy_hint.unwrap_or("");
@@ -325,6 +376,7 @@ async fn create_codegen_tool(
     registry: &DynamicToolRegistry,
     provider: &dyn Provider,
     description: &str,
+    audit_sink: Option<&Arc<dyn AuditSink>>,
 ) -> anyhow::Result<String> {
     use crate::tools::codegen::{extract_deps_from_source, CodegenCompiler};
 
@@ -337,8 +389,26 @@ async fn create_codegen_tool(
             description = %description,
             "rejected codegen tool creation — kill-switch is engaged"
         );
+        record_codegen_audit(
+            audit_sink,
+            "codegen.blocked",
+            serde_json::json!({
+                "reason": "kill_switch_engaged",
+                "description": description,
+            }),
+        )
+        .await;
         return Err(anyhow::anyhow!(CODEGEN_DISABLED_MESSAGE));
     }
+
+    record_codegen_audit(
+        audit_sink,
+        "codegen.compile_start",
+        serde_json::json!({
+            "description": description,
+        }),
+    )
+    .await;
 
     let prompt = format!("{CODEGEN_PROMPT}\n\nTool description: {description}");
 
@@ -365,14 +435,15 @@ async fn create_codegen_tool(
         let extra_deps = extract_deps_from_source(&source);
         match compiler.build_tool(&name, &source, &extra_deps).await {
             Ok((wasm_path, wasm_sha256, source_hash)) => {
+                let wasm_path_str = wasm_path.to_string_lossy().to_string();
                 let def = DynamicToolDef {
                     name: name.clone(),
                     description: description.to_string(),
                     strategy: DynamicToolStrategy::Codegen {
                         source: source.clone(),
-                        wasm_path: Some(wasm_path.to_string_lossy().to_string()),
-                        wasm_sha256: Some(wasm_sha256),
-                        source_hash: Some(source_hash),
+                        wasm_path: Some(wasm_path_str.clone()),
+                        wasm_sha256: Some(wasm_sha256.clone()),
+                        source_hash: Some(source_hash.clone()),
                         compile_error: None,
                     },
                     input_schema: None,
@@ -388,6 +459,21 @@ async fn create_codegen_tool(
 
                 registry.register(def).await?;
                 tracing::info!(tool = %name, attempt = attempt + 1, "codegen tool compiled and registered");
+
+                record_codegen_audit(
+                    audit_sink,
+                    "codegen.compile_success",
+                    serde_json::json!({
+                        "name": name,
+                        "description": description,
+                        "attempt": attempt + 1,
+                        "wasm_sha256": wasm_sha256,
+                        "source_sha256": source_hash,
+                        "wasm_path": wasm_path_str,
+                    }),
+                )
+                .await;
+
                 return Ok(name);
             }
             Err(e) => {
@@ -439,6 +525,19 @@ async fn create_codegen_tool(
     };
 
     registry.register(def).await?;
+
+    record_codegen_audit(
+        audit_sink,
+        "codegen.compile_failed",
+        serde_json::json!({
+            "name": name,
+            "description": description,
+            "attempts": MAX_CODEGEN_RETRIES,
+            "last_error": last_error,
+        }),
+    )
+    .await;
+
     Err(anyhow::anyhow!(
         "codegen tool '{name}' failed to compile after {MAX_CODEGEN_RETRIES} attempts: {last_error}"
     ))
@@ -497,6 +596,7 @@ impl ToolCreateTool {
             self.provider.as_ref(),
             description,
             strategy_hint,
+            self.audit_sink.clone(),
         )
         .await?;
 
@@ -837,9 +937,15 @@ mod tests {
             response: "THIS SHOULD NEVER BE PARSED".to_string(),
         });
 
-        let err = create_tool_from_nl(&registry, &*provider, "reverse a string", Some("codegen"))
-            .await
-            .expect_err("kill-switch should block the creation attempt");
+        let err = create_tool_from_nl(
+            &registry,
+            &*provider,
+            "reverse a string",
+            Some("codegen"),
+            None,
+        )
+        .await
+        .expect_err("kill-switch should block the creation attempt");
         let msg = err.to_string();
         assert!(
             msg.contains("codegen dynamic tool strategy is disabled"),
