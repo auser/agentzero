@@ -14,7 +14,8 @@ AgentZero implements **defense-in-depth** security with 12 independent layers. E
 | Encryption at Rest | Data confidentiality | XChaCha20-Poly1305 AEAD, random nonce per write |
 | Network Security | SSRF, DNS rebinding | Private IP blocking + DNS resolution check |
 | Credential Leak Guard | Secret exfiltration | Pattern matching + Shannon entropy + channel boundary isolation |
-| LLM Guardrails | PII leakage, prompt injection | Regex-based detection, audit mode by default |
+| **PII Protection** | **Data leakage to remote LLM providers** | **Mandatory redaction of 9 PII categories + opaque request IDs (always on, cannot be disabled)** |
+| LLM Guardrails | Prompt injection, additional PII patterns | Regex-based detection, configurable enforcement mode |
 | WASM Plugin Sandbox | Malicious plugins | Fuel metering + memory cap + Ed25519 signatures |
 | Gateway Security | Unauthorized access, replay attacks | mTLS + HMAC-SHA256 signing + TLS enforcement |
 | MCP Attestation | Supply chain attacks | SHA-256 binary hash verification |

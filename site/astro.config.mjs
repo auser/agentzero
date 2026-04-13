@@ -88,6 +88,7 @@ export default defineConfig({
           label: "Security",
           items: [
             { label: "Security Overview", slug: "security/overview" },
+            { label: "PII Protection", slug: "security/pii-protection" },
             { label: "Security Boundaries", slug: "security/boundaries" },
             { label: "Threat Model", slug: "security/threat-model" },
             { label: "Dependency Policy", slug: "security/dependency-policy" },

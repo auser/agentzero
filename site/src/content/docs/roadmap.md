@@ -191,9 +191,20 @@ description: AgentZero development roadmap — completed milestones and future d
 - **Wired into hardware tool surface** — `discover_boards()` prepends a `live-host` entry built from the live device probe alongside the existing simulator stubs.
 - **Compile-time feature guards** — `compile_error!` blocks for `candle-cuda` on macOS, `candle-metal` off-Apple, `candle-cuda` + `candle-metal` simultaneously, `candle` or `local-model` on `wasm32`, and `storage-encrypted` + `storage-plain` simultaneously. Each error includes both the *reason* and the *fix*.
 
-### Production-Readiness Pass — Load Testing (Sprint 84 Phase A)
+### Production-Readiness Pass (Sprint 84)
 
-- **Pure-Rust gateway load harness** — In-process gateway spawn with `--no-auth`, hammers cheap endpoints, reports RPS + p50/p95/p99 latencies. See [Load Testing](/reference/load-testing/) for invocation and baseline numbers (~68k RPS for cheap endpoints on a dev MacBook, with graceful degradation under 8x concurrency contention).
+- **Pure-Rust gateway load harness** — In-process gateway spawn with `--no-auth`, hammers cheap endpoints, reports RPS + p50/p95/p99 latencies. See [Load Testing](/reference/load-testing/) for baseline numbers (~68k RPS on a dev MacBook, graceful degradation under 8x concurrency)
+- **Codegen dynamic tool kill-switch** — `[runtime] codegen_enabled` TOML key + `AGENTZERO_CODEGEN_ENABLED` env var + `POST /v1/runtime/codegen-{enable,disable}` admin endpoints. Blocks LLM-generated WASM tool creation at the entry point before calling the LLM or compiler
+- **Codegen audit log** — Every codegen lifecycle event (blocked by kill-switch, compile start, compile success, compile failure) recorded via `AuditSink` with source/WASM SHA-256 hashes
+- **`.unwrap()` audit** — Zero `.unwrap()` calls in the four hot crates (gateway, orchestrator, infra, providers) outside tests. Repeatable audit script at `scripts/check-unwrap.sh`
+
+### Privacy-First Provider Calls (Sprint 85)
+
+- **Single-use request IDs** — Every outbound HTTP request to a remote LLM provider carries `X-Request-ID: <uuid-v4>` (128-bit random, no timestamp, no MAC address, no PII) and `User-Agent: agentzero` (no version, no OS fingerprint). Applied at the transport layer across all 5 HTTP send paths (Anthropic sync + 2 streaming, OpenAI sync + 2 streaming)
+- **Mandatory PII stripping** — `PrivacyFirstLayer` wraps every `Provider::complete/streaming/tools` call. Runs `PiiRedactionGuard` on system messages, user messages, assistant content, and tool results. **Always on for remote providers, cannot be disabled.** Local providers (Candle, llama.cpp, Ollama) exempt
+- **9 PII detection patterns** — Email, US phone, SSN, API keys, credit cards (13-19 digit sequences), JWT tokens, SSH private keys, database connection strings (postgres/mysql/mongodb/redis with embedded credentials), IPv4 addresses. Pattern ordering: most specific first to prevent partial matches
+- **Prometheus counter** — `agentzero_pii_redactions_total` tracks redaction events by count (not content) for operational monitoring
+- See [PII Protection](/security/pii-protection/) for the full threat model, architecture, and pattern reference
 
 ## Planned
 
