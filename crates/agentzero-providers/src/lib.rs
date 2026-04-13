@@ -75,6 +75,7 @@ pub mod model_manager;
 mod models;
 mod openai;
 pub mod pipeline;
+pub mod pool;
 mod pricing;
 pub mod privacy_layer;
 pub mod provider_metrics;
@@ -98,6 +99,7 @@ pub use openai::OpenAiCompatibleProvider;
 pub use pipeline::{
     CostCapLayer, CostEstimateLayer, LlmLayer, MetricsLayer, PipelineBuilder, PromptCacheLayer,
 };
+pub use pool::ProviderPool;
 pub use pricing::{compute_cost_microdollars, model_pricing, ModelPricing};
 pub use transport::{
     health_probe, CircuitBreaker, CircuitBreakerStatus, CooldownState, HealthProbeResult,

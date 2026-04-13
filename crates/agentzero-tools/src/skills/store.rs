@@ -11,6 +11,11 @@ pub struct SkillRecord {
     pub name: String,
     pub source: String,
     pub enabled: bool,
+    /// Path to the skill bundle directory (e.g. `.agentzero/skills/my-skill/`).
+    /// When `Some`, the skill has a `skill.toml` + `prompt.md` bundle that
+    /// the `SkillLoader` can load at activation time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +49,35 @@ impl SkillStore {
             name: name.to_string(),
             source: source.to_string(),
             enabled: true,
+            bundle_path: None,
+        };
+        skills.push(record.clone());
+        self.store.save(&skills)?;
+        Ok(record)
+    }
+
+    /// Install a skill with an associated bundle directory.
+    pub fn install_bundle(
+        &self,
+        name: &str,
+        source: &str,
+        bundle_path: &str,
+    ) -> anyhow::Result<SkillRecord> {
+        validate_skill_name(name)?;
+        if source.trim().is_empty() {
+            bail!("skill source cannot be empty");
+        }
+
+        let mut skills = self.list()?;
+        if skills.iter().any(|skill| skill.name == name) {
+            bail!("skill `{name}` already installed");
+        }
+
+        let record = SkillRecord {
+            name: name.to_string(),
+            source: source.to_string(),
+            enabled: true,
+            bundle_path: Some(bundle_path.to_string()),
         };
         skills.push(record.clone());
         self.store.save(&skills)?;

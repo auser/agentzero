@@ -282,6 +282,9 @@ pub struct AgentConfig {
     /// Context summarization config. When enabled, older conversation entries
     /// are summarized by the LLM instead of being hard-truncated.
     pub summarization: SummarizationConfig,
+    /// Prompt fragments from active skills, injected after the system prompt.
+    /// Populated at runtime by the skill loader; empty by default.
+    pub skill_prompt_fragments: Vec<String>,
 }
 
 impl Default for AgentConfig {
@@ -309,6 +312,7 @@ impl Default for AgentConfig {
             tool_selection: ToolSelectionMode::All,
             tool_selection_model: None,
             summarization: SummarizationConfig::default(),
+            skill_prompt_fragments: Vec::new(),
         }
     }
 }
@@ -1498,6 +1502,55 @@ pub trait MemoryStore: Send + Sync {
             .take(limit)
             .collect())
     }
+
+    // ── Tree-structured sessions (Plan 45 Phase 2) ──────────────────────
+
+    /// Fork a conversation at a specific entry, creating a branch.
+    ///
+    /// Copies entries from `from_id` up to and including `at_entry_id` into
+    /// `new_id`, and records the branch relationship in the conversation tree.
+    async fn fork_conversation_at(
+        &self,
+        _from_id: &str,
+        _new_id: &str,
+        _at_entry_id: i64,
+        _label: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Retrieve the conversation tree rooted at `root_id`.
+    async fn conversation_tree(&self, _root_id: &str) -> anyhow::Result<Option<ConversationTree>> {
+        Ok(None)
+    }
+
+    /// Get the chain of ancestor conversation IDs from a branch back to root.
+    async fn conversation_ancestors(&self, _conversation_id: &str) -> anyhow::Result<Vec<String>> {
+        Ok(vec![])
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Conversation tree types (Plan 45 Phase 2)
+// ---------------------------------------------------------------------------
+
+/// A node in the conversation tree, representing a single conversation branch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationNode {
+    pub conversation_id: String,
+    pub parent_id: Option<String>,
+    /// The `memory.id` at which this branch diverged from its parent.
+    pub branch_point_entry_id: Option<i64>,
+    pub created_at: i64,
+    /// User-defined label for this branch.
+    pub label: String,
+}
+
+/// A tree of related conversations sharing a common root.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationTree {
+    pub root: String,
+    pub nodes: HashMap<String, ConversationNode>,
 }
 
 /// Blanket implementation allowing `Arc<dyn MemoryStore>` to be used anywhere
@@ -1622,6 +1675,26 @@ impl<T: MemoryStore + ?Sized> MemoryStore for std::sync::Arc<T> {
             .hybrid_recall(query_text, query_embedding, limit)
             .await
     }
+
+    async fn fork_conversation_at(
+        &self,
+        from_id: &str,
+        new_id: &str,
+        at_entry_id: i64,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        (**self)
+            .fork_conversation_at(from_id, new_id, at_entry_id, label)
+            .await
+    }
+
+    async fn conversation_tree(&self, root_id: &str) -> anyhow::Result<Option<ConversationTree>> {
+        (**self).conversation_tree(root_id).await
+    }
+
+    async fn conversation_ancestors(&self, conversation_id: &str) -> anyhow::Result<Vec<String>> {
+        (**self).conversation_ancestors(conversation_id).await
+    }
 }
 
 /// In-memory [`MemoryStore`] for ephemeral agents (workflow steps, delegates).
@@ -1674,6 +1747,118 @@ pub trait Tool: Send + Sync {
 
     /// Execute the tool with the given input and context.
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult>;
+}
+
+// ---------------------------------------------------------------------------
+// Skill bundle types — progressive skill loading (Plan 45 Phase 1)
+// ---------------------------------------------------------------------------
+
+/// When a skill should be activated in a session.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SkillTrigger {
+    /// Load in every session automatically.
+    Always,
+    /// Activate when any keyword is detected in the user message.
+    Keyword { keywords: Vec<String> },
+    /// Only activated via explicit `/skill activate <name>` command.
+    #[default]
+    Manual,
+}
+
+/// A tool definition bundled inside a skill.
+///
+/// This is a lightweight descriptor — the actual `Box<dyn Tool>` is
+/// constructed at activation time by the skill loader in `agentzero-infra`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SkillToolDef {
+    /// A shell/HTTP/composite dynamic tool definition (same schema as
+    /// `DynamicToolDef` from the infra crate, but stored as raw JSON so
+    /// core doesn't depend on infra).
+    DynamicTool {
+        /// Serialized `DynamicToolDef` — deserialized lazily by the loader.
+        definition: serde_json::Value,
+    },
+    /// An MCP server to start and expose tools from.
+    McpServer {
+        name: String,
+        config: serde_json::Value,
+    },
+}
+
+/// A self-contained skill bundle: prompt fragment + optional tool definitions.
+///
+/// Loaded from `.agentzero/skills/<name>/skill.toml` + `prompt.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillBundle {
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub trigger: SkillTrigger,
+    /// System prompt fragment injected when the skill is active.
+    /// Loaded from `prompt.md` in the skill directory.
+    #[serde(default)]
+    pub prompt_template: String,
+    /// Tools provided by this skill.
+    #[serde(default)]
+    pub tool_defs: Vec<SkillToolDef>,
+    /// Other skills that must be active before this one.
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    /// Loading priority (lower = earlier). Default 100.
+    #[serde(default = "default_skill_priority")]
+    pub priority: i32,
+}
+
+fn default_skill_priority() -> i32 {
+    100
+}
+
+/// Summary metadata for listing available skills without loading full bundles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillBundleMeta {
+    pub name: String,
+    pub description: String,
+    pub trigger: SkillTrigger,
+    pub has_tools: bool,
+    pub dependencies: Vec<String>,
+}
+
+/// The result of activating a skill — prompt to inject and tools to register.
+///
+/// Cannot derive `Debug` because `Box<dyn Tool>` is not Debug, so we provide
+/// a manual implementation.
+pub struct SkillActivation {
+    /// System prompt fragment to append after the base system prompt.
+    pub prompt_fragment: String,
+    /// Tools to add to the active tool set for this session.
+    pub tools: Vec<Box<dyn Tool>>,
+}
+
+impl std::fmt::Debug for SkillActivation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SkillActivation")
+            .field("prompt_fragment", &self.prompt_fragment)
+            .field("tools_count", &self.tools.len())
+            .finish()
+    }
+}
+
+/// Loads and manages skill bundles at runtime.
+#[async_trait]
+pub trait SkillLoader: Send + Sync {
+    /// Load the full bundle for a skill by name.
+    async fn load_bundle(&self, name: &str) -> anyhow::Result<SkillBundle>;
+
+    /// List metadata for all available skill bundles.
+    async fn list_available(&self) -> anyhow::Result<Vec<SkillBundleMeta>>;
+
+    /// Activate a skill: load its prompt and instantiate its tools.
+    async fn activate(&self, name: &str, ctx: &ToolContext) -> anyhow::Result<SkillActivation>;
+
+    /// Deactivate a skill (remove its prompt and tools from the session).
+    async fn deactivate(&self, name: &str) -> anyhow::Result<()>;
 }
 
 #[async_trait]

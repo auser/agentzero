@@ -13,4 +13,7 @@ pub mod wasm;
 #[cfg(feature = "plugin-dev")]
 pub mod watcher;
 
-pub use package_ref::{parse_plugin_package_ref, PluginPackageRef, PluginRefError};
+pub use package_ref::{
+    detect_package_type, parse_plugin_package_ref, PackageRef, PackageType, PluginPackageRef,
+    PluginRefError,
+};

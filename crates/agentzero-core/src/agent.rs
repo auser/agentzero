@@ -889,8 +889,17 @@ impl Agent {
             (recent_memory.as_slice(), None)
         };
 
+        // Prepend skill prompt fragments for the non-tool-use path.
+        let prompt_with_skills = if self.config.skill_prompt_fragments.is_empty() {
+            prompt.to_string()
+        } else {
+            let mut combined = self.config.skill_prompt_fragments.join("\n\n");
+            combined.push_str("\n\n");
+            combined.push_str(prompt);
+            combined
+        };
         let (provider_prompt, prompt_truncated) = build_provider_prompt(
-            prompt,
+            &prompt_with_skills,
             effective_memory,
             self.config.max_prompt_chars,
             summary_ref,
@@ -1213,9 +1222,22 @@ impl Agent {
 
         // Prepend system prompt if configured.
         if let Some(ref sp) = self.config.system_prompt {
-            messages.push(ConversationMessage::System {
-                content: sp.clone(),
-            });
+            // Combine base system prompt with any active skill prompt fragments.
+            let combined = if self.config.skill_prompt_fragments.is_empty() {
+                sp.clone()
+            } else {
+                let mut full = sp.clone();
+                for fragment in &self.config.skill_prompt_fragments {
+                    full.push_str("\n\n");
+                    full.push_str(fragment);
+                }
+                full
+            };
+            messages.push(ConversationMessage::System { content: combined });
+        } else if !self.config.skill_prompt_fragments.is_empty() {
+            // No base system prompt, but skill fragments exist — use them as the system prompt.
+            let combined = self.config.skill_prompt_fragments.join("\n\n");
+            messages.push(ConversationMessage::System { content: combined });
         }
 
         messages.extend(memory_to_messages(&recent_memory));

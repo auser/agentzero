@@ -6,6 +6,7 @@ mod config_manage;
 pub mod dynamic_tool;
 pub mod insights_report;
 mod mcp;
+pub mod model_switch;
 #[cfg(feature = "tools-full")]
 mod plugin_scaffold;
 pub mod shim_server;

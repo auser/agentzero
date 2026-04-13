@@ -246,6 +246,20 @@ const MIGRATIONS: &[Migration] = &[
         description: "add embedding column for semantic recall",
         statements: &["ALTER TABLE memory ADD COLUMN embedding BLOB DEFAULT NULL"],
     },
+    Migration {
+        version: 7,
+        description: "add conversation_tree table for tree-structured sessions",
+        statements: &[
+            "CREATE TABLE IF NOT EXISTS conversation_tree (
+                conversation_id TEXT PRIMARY KEY,
+                parent_id TEXT,
+                branch_point_entry_id INTEGER,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                label TEXT DEFAULT ''
+            )",
+            "CREATE INDEX IF NOT EXISTS idx_conv_tree_parent ON conversation_tree(parent_id)",
+        ],
+    },
 ];
 
 /// Run all pending migrations against the connection. Creates the version table
@@ -515,6 +529,13 @@ impl MemoryStore for SqliteMemoryStore {
 
     async fn fork_conversation(&self, from_id: &str, new_id: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        // Ensure the source conversation has a tree record (auto-create root).
+        conn.execute(
+            "INSERT OR IGNORE INTO conversation_tree(conversation_id, parent_id, branch_point_entry_id, label)
+             VALUES (?1, NULL, NULL, '')",
+            params![from_id],
+        )?;
+        // Copy all entries.
         conn.execute(
             "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id, embedding)
              SELECT role, content, privacy_boundary, source_channel, ?2, expires_at, org_id, agent_id, embedding
@@ -524,7 +545,143 @@ impl MemoryStore for SqliteMemoryStore {
              ORDER BY id",
             params![from_id, new_id],
         )?;
+        // Get last entry ID from the source for the branch point.
+        let last_id: Option<i64> = conn
+            .query_row(
+                "SELECT MAX(id) FROM memory WHERE conversation_id = ?1",
+                params![from_id],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten();
+        // Record the tree relationship.
+        conn.execute(
+            "INSERT OR REPLACE INTO conversation_tree(conversation_id, parent_id, branch_point_entry_id, label)
+             VALUES (?1, ?2, ?3, '')",
+            params![new_id, from_id, last_id],
+        )?;
         Ok(())
+    }
+
+    async fn fork_conversation_at(
+        &self,
+        from_id: &str,
+        new_id: &str,
+        at_entry_id: i64,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        // Ensure the source conversation has a tree record (auto-create root).
+        conn.execute(
+            "INSERT OR IGNORE INTO conversation_tree(conversation_id, parent_id, branch_point_entry_id, label)
+             VALUES (?1, NULL, NULL, '')",
+            params![from_id],
+        )?;
+        // Copy entries up to and including the branch point.
+        conn.execute(
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id, embedding)
+             SELECT role, content, privacy_boundary, source_channel, ?2, expires_at, org_id, agent_id, embedding
+             FROM memory
+             WHERE conversation_id = ?1
+               AND id <= ?3
+               AND (expires_at IS NULL OR expires_at > unixepoch())
+             ORDER BY id",
+            params![from_id, new_id, at_entry_id],
+        )?;
+        // Record the tree relationship.
+        conn.execute(
+            "INSERT OR REPLACE INTO conversation_tree(conversation_id, parent_id, branch_point_entry_id, label)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![new_id, from_id, at_entry_id, label],
+        )?;
+        Ok(())
+    }
+
+    async fn conversation_tree(
+        &self,
+        root_id: &str,
+    ) -> anyhow::Result<Option<agentzero_core::ConversationTree>> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        // Check if root exists.
+        let root_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_tree WHERE conversation_id = ?1)",
+                params![root_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !root_exists {
+            return Ok(None);
+        }
+
+        // Collect all nodes reachable from root via parent_id.
+        // Use iterative traversal since SQLite recursive CTEs are verbose.
+        let mut nodes = std::collections::HashMap::new();
+        let mut queue = vec![root_id.to_string()];
+        while let Some(current) = queue.pop() {
+            if nodes.contains_key(&current) {
+                continue;
+            }
+            // Load the node.
+            let node: Option<agentzero_core::ConversationNode> = conn
+                .query_row(
+                    "SELECT conversation_id, parent_id, branch_point_entry_id, created_at, label
+                     FROM conversation_tree WHERE conversation_id = ?1",
+                    params![current],
+                    |row| {
+                        Ok(agentzero_core::ConversationNode {
+                            conversation_id: row.get(0)?,
+                            parent_id: row.get(1)?,
+                            branch_point_entry_id: row.get(2)?,
+                            created_at: row.get(3)?,
+                            label: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                        })
+                    },
+                )
+                .ok();
+            if let Some(node) = node {
+                nodes.insert(current.clone(), node);
+                // Find children.
+                let mut stmt = conn.prepare(
+                    "SELECT conversation_id FROM conversation_tree WHERE parent_id = ?1",
+                )?;
+                let children: Vec<String> = stmt
+                    .query_map(params![current], |row| row.get(0))?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                queue.extend(children);
+            }
+        }
+
+        Ok(Some(agentzero_core::ConversationTree {
+            root: root_id.to_string(),
+            nodes,
+        }))
+    }
+
+    async fn conversation_ancestors(&self, conversation_id: &str) -> anyhow::Result<Vec<String>> {
+        let conn = self.conn.lock().expect("sqlite mutex poisoned");
+        let mut ancestors = Vec::new();
+        let mut current = conversation_id.to_string();
+        loop {
+            let parent: Option<String> = conn
+                .query_row(
+                    "SELECT parent_id FROM conversation_tree WHERE conversation_id = ?1",
+                    params![current],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten();
+            match parent {
+                Some(p) => {
+                    ancestors.push(p.clone());
+                    current = p;
+                }
+                None => break,
+            }
+        }
+        ancestors.reverse();
+        Ok(ancestors)
     }
 
     async fn gc_expired(&self) -> anyhow::Result<u64> {
@@ -1465,7 +1622,7 @@ mod tests {
 
     #[test]
     fn current_schema_version_equals_migration_count() {
-        assert_eq!(current_schema_version(), 6);
+        assert_eq!(current_schema_version(), 7);
     }
 
     #[tokio::test]
@@ -2176,5 +2333,138 @@ mod tests {
 
         fs::remove_file(db_path).ok();
         fs::remove_dir_all(hnsw_dir).ok();
+    }
+
+    // ── Tree-structured session tests ───────────────────────────────────
+
+    #[tokio::test]
+    async fn fork_conversation_creates_tree_record() {
+        let db_path = temp_db_path();
+        let key = test_key();
+        let store = SqliteMemoryStore::open(&db_path, Some(&key)).expect("open db");
+
+        for i in 0..3 {
+            store
+                .append(MemoryEntry {
+                    role: "user".into(),
+                    content: format!("message {i}"),
+                    conversation_id: "conv-a".into(),
+                    ..Default::default()
+                })
+                .await
+                .expect("append");
+        }
+
+        store
+            .fork_conversation("conv-a", "conv-b")
+            .await
+            .expect("fork");
+
+        let entries = store
+            .recent_for_conversation("conv-b", 10)
+            .await
+            .expect("recent");
+        assert_eq!(entries.len(), 3);
+
+        let tree = store.conversation_tree("conv-a").await.expect("tree");
+        let tree = tree.expect("tree should exist");
+        assert_eq!(tree.root, "conv-a");
+        assert_eq!(tree.nodes.len(), 2);
+        let branch = tree.nodes.get("conv-b").expect("branch should exist");
+        assert_eq!(branch.parent_id.as_deref(), Some("conv-a"));
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn fork_conversation_at_copies_partial_entries() {
+        let db_path = temp_db_path();
+        let key = test_key();
+        let store = SqliteMemoryStore::open(&db_path, Some(&key)).expect("open db");
+
+        for i in 0..5 {
+            store
+                .append(MemoryEntry {
+                    role: "user".into(),
+                    content: format!("msg-{i}"),
+                    conversation_id: "root".into(),
+                    ..Default::default()
+                })
+                .await
+                .expect("append");
+        }
+
+        // Get entry ID for msg-2 directly from the DB.
+        let entry_id: i64 = {
+            let conn = store.conn.lock().expect("lock");
+            conn.query_row(
+                "SELECT id FROM memory WHERE conversation_id = 'root' AND content = 'msg-2'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("find entry")
+        };
+
+        store
+            .fork_conversation_at("root", "branch-1", entry_id, "after msg-2")
+            .await
+            .expect("fork_at");
+
+        let branch_entries = store
+            .recent_for_conversation("branch-1", 10)
+            .await
+            .expect("recent");
+        assert_eq!(branch_entries.len(), 3);
+
+        let tree = store
+            .conversation_tree("root")
+            .await
+            .expect("tree")
+            .expect("should exist");
+        let node = tree.nodes.get("branch-1").expect("branch node");
+        assert_eq!(node.branch_point_entry_id, Some(entry_id));
+        assert_eq!(node.label, "after msg-2");
+
+        fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn conversation_ancestors_returns_path_to_root() {
+        let db_path = temp_db_path();
+        let key = test_key();
+        let store = SqliteMemoryStore::open(&db_path, Some(&key)).expect("open db");
+
+        store
+            .append(MemoryEntry {
+                role: "user".into(),
+                content: "root-msg".into(),
+                conversation_id: "root".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("append");
+
+        store
+            .fork_conversation("root", "branch-a")
+            .await
+            .expect("fork a");
+        store
+            .fork_conversation("branch-a", "branch-b")
+            .await
+            .expect("fork b");
+
+        let ancestors = store
+            .conversation_ancestors("branch-b")
+            .await
+            .expect("ancestors");
+        assert_eq!(ancestors, vec!["root", "branch-a"]);
+
+        let root_ancestors = store
+            .conversation_ancestors("root")
+            .await
+            .expect("ancestors");
+        assert!(root_ancestors.is_empty());
+
+        fs::remove_file(db_path).ok();
     }
 }

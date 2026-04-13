@@ -50,4 +50,8 @@ pub use types::{
     ToolContext, ToolDefinition, ToolExecutionRecord, ToolResult, ToolResultMessage,
     ToolSelectionMode, ToolSelector, ToolSummary, ToolUseRequest, UserMessage,
 };
+pub use types::{
+    ConversationNode, ConversationTree, SkillActivation, SkillBundle, SkillBundleMeta, SkillLoader,
+    SkillToolDef, SkillTrigger,
+};
 pub use validation::validate_json;

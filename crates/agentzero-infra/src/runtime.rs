@@ -577,6 +577,15 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
                 protect_head: config.agent.summarization.protect_head,
                 protect_tail: config.agent.summarization.protect_tail,
             },
+            skill_prompt_fragments: {
+                let skills_dir = config
+                    .skills
+                    .bundles_dir
+                    .as_deref()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| req.workspace_root.join(".agentzero").join("skills"));
+                load_skill_prompt_fragments(&skills_dir, &config.skills.auto_activate)
+            },
         },
         provider,
         memory,
@@ -693,6 +702,81 @@ fn build_guard_entries(
         ));
     }
     entries
+}
+
+/// Load prompt fragments from active skill bundles.
+///
+/// Scans the skills directory for bundles whose trigger is `Always` or whose
+/// name appears in `auto_activate`. Returns prompt fragments sorted by
+/// priority (lower = earlier).
+fn load_skill_prompt_fragments(skills_dir: &Path, auto_activate: &[String]) -> Vec<String> {
+    use agentzero_core::SkillTrigger;
+
+    let dirs = if !skills_dir.is_dir() {
+        return Vec::new();
+    } else {
+        // Use a blocking read since we're in a sync context within the config builder.
+        let entries = match std::fs::read_dir(skills_dir) {
+            Ok(e) => e,
+            Err(_) => return Vec::new(),
+        };
+        let mut dirs: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|e| e.path().is_dir() && e.path().join("skill.toml").exists())
+            .map(|e| e.path())
+            .collect();
+        dirs.sort();
+        dirs
+    };
+
+    let mut fragments: Vec<(i32, String)> = Vec::new();
+    for dir in &dirs {
+        let name = match dir.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        let manifest_path = dir.join("skill.toml");
+        let content = match std::fs::read_to_string(&manifest_path) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(skill = %name, "failed to read skill.toml: {e}");
+                continue;
+            }
+        };
+        let bundle: agentzero_core::SkillBundle = match toml::from_str(&content) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(skill = %name, "failed to parse skill.toml: {e}");
+                continue;
+            }
+        };
+
+        let should_activate = match &bundle.trigger {
+            SkillTrigger::Always => true,
+            SkillTrigger::Manual => auto_activate.contains(&name.to_string()),
+            SkillTrigger::Keyword { .. } => auto_activate.contains(&name.to_string()),
+        };
+
+        if !should_activate {
+            continue;
+        }
+
+        // Read prompt.md if it exists.
+        let prompt_path = dir.join("prompt.md");
+        let prompt = match std::fs::read_to_string(&prompt_path) {
+            Ok(p) if !p.trim().is_empty() => p,
+            _ => bundle.prompt_template.clone(),
+        };
+
+        if !prompt.is_empty() {
+            info!(skill = %name, priority = bundle.priority, "loading skill prompt fragment");
+            fragments.push((bundle.priority, prompt));
+        }
+    }
+
+    // Sort by priority (lower = earlier).
+    fragments.sort_by_key(|(priority, _)| *priority);
+    fragments.into_iter().map(|(_, prompt)| prompt).collect()
 }
 
 /// Build just a [`Provider`] from config, without tools/memory/audit.

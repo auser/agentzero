@@ -1423,6 +1423,15 @@ pub struct SkillsConfig {
     pub open_skills_dir: Option<String>,
     pub prompt_injection_mode: String,
     pub clawhub_token: Option<String>,
+    /// Skills to activate automatically at the start of every session.
+    /// Each entry is a skill name corresponding to a directory in the
+    /// skills directory (e.g. `.agentzero/skills/<name>/`).
+    #[serde(default)]
+    pub auto_activate: Vec<String>,
+    /// Directory containing skill bundles. Defaults to `.agentzero/skills/`
+    /// relative to the data directory.
+    #[serde(default)]
+    pub bundles_dir: Option<String>,
 }
 
 impl Default for SkillsConfig {
@@ -1432,6 +1441,8 @@ impl Default for SkillsConfig {
             open_skills_dir: None,
             prompt_injection_mode: "full".to_string(),
             clawhub_token: None,
+            auto_activate: Vec::new(),
+            bundles_dir: None,
         }
     }
 }
