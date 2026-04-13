@@ -76,6 +76,7 @@ mod models;
 mod openai;
 pub mod pipeline;
 mod pricing;
+pub mod privacy_layer;
 pub mod provider_metrics;
 pub(crate) mod transport;
 

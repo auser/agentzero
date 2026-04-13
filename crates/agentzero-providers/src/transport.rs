@@ -8,8 +8,50 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 // ---------------------------------------------------------------------------
-// W3C Traceparent header
+// Privacy-first request headers
+//
+// Every outbound HTTP request to a remote LLM provider gets:
+//   1. A single-use UUID v4 `X-Request-ID` — opaque, PII-free, no timestamp,
+//      no MAC address, not correlatable across requests.
+//   2. A minimal `User-Agent: agentzero` — no version, no OS fingerprint.
+//   3. Optionally, a W3C `traceparent` — derived from tracing spans, contains
+//      only process-internal IDs, no PII.
+//
+// These headers are applied at the transport layer (the last code that touches
+// the reqwest::RequestBuilder before `.send()`), so they cannot be bypassed
+// by higher-level provider code.
 // ---------------------------------------------------------------------------
+
+/// Generic User-Agent for all outbound provider calls. Deliberately minimal —
+/// no version, no platform info — to avoid fingerprinting.
+const USER_AGENT: &str = "agentzero";
+
+/// Generate a single-use, opaque request ID. Uses UUID v4 (128-bit random)
+/// which contains no timestamp, no MAC address, and no PII. Each call
+/// produces a fresh value that cannot be correlated with any other request.
+pub(crate) fn generate_request_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+/// Apply privacy-safe headers to an outbound request builder.
+///
+/// This is the **single chokepoint** for all headers that leave the host.
+/// Called from both the Anthropic and OpenAI transport impls immediately
+/// before `.send()`. The function:
+///   1. Sets `X-Request-ID` to a fresh UUID v4.
+///   2. Sets `User-Agent` to the generic `agentzero` string.
+///   3. Optionally sets `traceparent` if a tracing span is active.
+///   4. Returns both the updated builder and the request ID (for logging).
+pub(crate) fn apply_privacy_headers(
+    builder: reqwest::RequestBuilder,
+) -> (reqwest::RequestBuilder, String) {
+    let request_id = generate_request_id();
+    let mut builder = builder
+        .header("X-Request-ID", &request_id)
+        .header("User-Agent", USER_AGENT);
+    builder = apply_traceparent(builder);
+    (builder, request_id)
+}
 
 /// Generate a W3C `traceparent` header value from the current tracing span.
 ///
@@ -21,8 +63,6 @@ use tracing::{info, warn};
 pub(crate) fn generate_traceparent() -> Option<String> {
     let span = tracing::Span::current();
     let id = span.id()?;
-    // Format trace_id as zero-padded 32-hex-char string from span ID.
-    // Format span_id as zero-padded 16-hex-char string from span ID.
     let raw = id.into_u64();
     let trace_id = format!("{raw:032x}");
     let span_id = format!("{raw:016x}");
@@ -30,7 +70,7 @@ pub(crate) fn generate_traceparent() -> Option<String> {
 }
 
 /// Apply the traceparent header to a request builder if a tracing span is active.
-pub(crate) fn apply_traceparent(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+fn apply_traceparent(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     match generate_traceparent() {
         Some(value) => builder.header("traceparent", value),
         None => builder,
@@ -813,6 +853,48 @@ mod tests {
         }
         // Note: result may be None in some test environments where the
         // subscriber doesn't assign span IDs, which is acceptable.
+    }
+
+    #[test]
+    fn apply_privacy_headers_sets_request_id_and_user_agent() {
+        let client = reqwest::Client::new();
+        let builder = client.post("http://localhost:1/test");
+        let (request, request_id) = apply_privacy_headers(builder);
+        // Request ID should be a valid UUID v4.
+        let parsed = uuid::Uuid::parse_str(&request_id).expect("request_id should be a valid UUID");
+        assert_eq!(
+            parsed.get_version(),
+            Some(uuid::Version::Random),
+            "request ID should be UUID v4 (random, no timestamp)"
+        );
+        // Build the request to inspect headers.
+        let built = request
+            .build()
+            .expect("building test request should succeed");
+        assert_eq!(
+            built
+                .headers()
+                .get("X-Request-ID")
+                .and_then(|v| v.to_str().ok()),
+            Some(request_id.as_str()),
+            "X-Request-ID header should match the returned ID"
+        );
+        assert_eq!(
+            built
+                .headers()
+                .get("User-Agent")
+                .and_then(|v| v.to_str().ok()),
+            Some("agentzero"),
+            "User-Agent should be the generic 'agentzero' string"
+        );
+    }
+
+    #[test]
+    fn request_ids_are_unique_across_calls() {
+        let client = reqwest::Client::new();
+        let (_, id1) = apply_privacy_headers(client.post("http://localhost:1/a"));
+        let (_, id2) = apply_privacy_headers(client.post("http://localhost:1/b"));
+        assert_ne!(id1, id2, "each call should produce a unique request ID");
     }
 
     #[test]

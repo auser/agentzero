@@ -57,7 +57,8 @@ impl HttpTransport for ReqwestTransport {
         if !api_key.is_empty() {
             request = request.bearer_auth(api_key);
         }
-        request = crate::transport::apply_traceparent(request);
+        let (request, request_id) = crate::transport::apply_privacy_headers(request);
+        tracing::debug!(request_id = %request_id, "outbound provider call");
         let response = request.send().await.map_err(map_reqwest_error)?;
 
         let status = response.status().as_u16();
@@ -500,6 +501,7 @@ impl Provider for OpenAiCompatibleProvider {
             if !self.api_key.is_empty() {
                 request = request.bearer_auth(&self.api_key);
             }
+            let (request, _request_id) = crate::transport::apply_privacy_headers(request);
 
             let response = match request.send().await {
                 Ok(resp) => resp,
@@ -741,6 +743,7 @@ impl Provider for OpenAiCompatibleProvider {
             if !self.api_key.is_empty() {
                 request = request.bearer_auth(&self.api_key);
             }
+            let (request, _request_id) = crate::transport::apply_privacy_headers(request);
 
             let response = match request.send().await {
                 Ok(resp) => resp,

@@ -342,6 +342,14 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             pipeline = pipeline.layer(agentzero_providers::GuardrailsLayer::new(guard_entries));
         }
 
+        // PrivacyFirstLayer is the outermost layer — it runs PII redaction
+        // on every prompt before any other layer or the provider sees it.
+        // It cannot be disabled. This is a core project safety guarantee:
+        // no PII reaches a remote LLM provider, ever.
+        if !agentzero_core::common::local_providers::is_local_provider(&config.provider.kind) {
+            pipeline = pipeline.layer(agentzero_providers::privacy_layer::PrivacyFirstLayer);
+        }
+
         let wrapped = pipeline.build(provider_arc);
         // Convert Arc<dyn Provider> back to Box<dyn Provider> for RuntimeExecution.
         Box::new(PipelineProviderAdapter(wrapped))

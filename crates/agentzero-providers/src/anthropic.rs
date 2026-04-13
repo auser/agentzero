@@ -85,7 +85,8 @@ impl HttpTransport for ReqwestTransport {
         if use_bearer_auth {
             request = request.header("anthropic-beta", ANTHROPIC_OAUTH_BETA);
         }
-        request = crate::transport::apply_traceparent(request);
+        let (request, request_id) = crate::transport::apply_privacy_headers(request);
+        tracing::debug!(request_id = %request_id, "outbound provider call");
         let response = request
             .json(payload)
             .send()
@@ -704,6 +705,7 @@ impl Provider for AnthropicProvider {
             if self.use_bearer_auth {
                 request = request.header("anthropic-beta", ANTHROPIC_OAUTH_BETA);
             }
+            let (request, _request_id) = crate::transport::apply_privacy_headers(request);
             let response = match request.json(&payload).send().await {
                 Ok(resp) => resp,
                 Err(e) => {
@@ -1003,6 +1005,7 @@ impl Provider for AnthropicProvider {
             if self.use_bearer_auth {
                 request = request.header("anthropic-beta", ANTHROPIC_OAUTH_BETA);
             }
+            let (request, _request_id) = crate::transport::apply_privacy_headers(request);
             let response = match request.json(&payload).send().await {
                 Ok(resp) => resp,
                 Err(e) => {

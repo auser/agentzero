@@ -49,3 +49,4 @@ conversation-report.md
 debate-verdict.md
 **/.gitignore
 !.gitignore
+.hypergrep/
