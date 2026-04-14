@@ -7,6 +7,61 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.12.0] - 2026-04-14
+
+### Added
+- Add agentzero-macros crate with #[tool] and #[derive(ToolSchema)] proc macros — Introduces proc macros that eliminate boilerplate in tool definitions:
+- Migrate all ~70 production tools to #[tool] and #[derive(ToolSchema)] macros — Batch migration of every production tool across three crates:
+- Composable LLM pipeline with LlmLayer trait, MetricsLayer, and CostCapLayer — Adds tower-style composable middleware for LLM providers:
+- Add TypedTopic<M> for compile-time type-safe event bus pub/sub — Wraps the existing string-based EventBus with generic TypedTopic<M> that
+- Guardrails pipeline layer with PII redaction and prompt injection detection — Adds composable guardrails as an LlmLayer with three enforcement modes:
+- 12-layer security hardening with site documentation — Comprehensive security audit and hardening across the platform:
+- Self-evolution engine scaffolding and local inference support — - tool_evolver: auto-fix/improve dynamic tools via LLM feedback loops
+- Local LLM ecosystem — constrained decoding, chat templates, RAG chunking, local embeddings — Sprint 76 implementation:
+- Candle Metal GPU acceleration — bump candle 0.9 → 0.10, enable Apple Silicon inference — Candle's Metal backend blocker (candle-metal-kernels alpha) has cleared.
+- Runtime enhancements — audit replay, instruction injection, typed IDs, plugin shims, CoW overlay — Five enhancements inspired by external agent runtime research:
+- End-to-end channel messaging — Signal integration, swarm auto-wiring, routing fixes — Complete the channel messaging pipeline so messages received on external
+- Web search resilience, auto-search enrichment, swarm defaults — - Enable browser, HTTP, web fetch, and web search tools by default
+- Add #[tool_fn] function-level proc macro for tool authoring — New macro that generates a complete Tool trait implementation from an
+- Add Codegen strategy for dynamic tools — WASM compilation pipeline — Add 5th DynamicToolStrategy variant `Codegen` that compiles LLM-generated
+- Wire codegen strategy into tool_create — LLM-generated WASM tools — Complete the codegen pipeline in tool_create:
+- End-to-end codegen tests — compile Rust to WASM and execute — 9 tests for the codegen pipeline:
+- Convert ConversationTimerangeTool to #[tool_fn], mark Sprint 80 complete — Proof-of-concept conversion: 65 lines → 23 lines using #[tool_fn].
+- Production-harden event bus — multi-axis filtering, publish metrics, Arc payloads — Consolidate to one event bus hierarchy by deleting the orchestrator's
+- Add pending modules — channels e2e tests, tool middleware, insights, trajectory, credential pool, message queue — Untracked files from prior branch work, now passing `just test` (3192/3192).
+- Sprint 82 retrieval upgrade + Sprint 83 device detection & feature guards — This commit bundles Sprint 82 (retrieval quality upgrade) with Sprint 83
+- Sprint 84 Phase A — gateway load harness + production-readiness docs — Phase A of the production-readiness pass: a pure-Rust load harness for the
+- Sprint 84 Phases B+C — codegen kill-switch, unwrap audit — Phase B: Codegen dynamic tool strategy kill-switch
+- Codegen audit log + gateway admin endpoints for runtime codegen control — Closes the two Sprint 84 follow-ups that were deferred from the kill-switch
+- Sprint 85 Phases A+B — privacy-first provider calls (request IDs + mandatory PII stripping) — This is a core project safety guarantee: no PII reaches a remote LLM
+- Sprint 85 Phase C — extended PII patterns (credit cards, JWT, SSH keys, DB URIs, IPv4) — Extends PiiRedactionGuard with 5 new detection patterns, bringing the total
+- Plan 45 — Pi-inspired architecture patterns (4 phases) — Phase 1 — Progressive Skill Loading:
+- Sprint 83 — on-device inference foundations (Phases A-E) — Phase C: LocalLlm trait + shared GenerationLoop that eliminates ~300 lines
+- Production-ready security hardening (5 phases) — Phase 1 — Unified PII redaction: 18 shared patterns across audit sinks,
+- Add property-based testing for security invariants (Phase C) — Sprint 85 Phase C: Add proptest to the workspace and write property-based
+- Structured output, CI signing, UI cleanup (Sprint 85 final) — Structured output (llama.cpp grammar):
+
+### Fixed
+- Eliminate test leaks and stub real network calls — - Coordinator: abort all internal loop tasks (ingestion, router,
+
+### Changed
+- Strip non-core features + replace Supabase with SQLite in autopilot — Sprint 85 Phases A+B: Strategic scope reduction and local-first autopilot.
+- Optimize pre-commit hook and release-auto build times — Pre-commit hook:
+
+### Changed
+- Add PII Protection page + update security overview and roadmap — New /security/pii-protection/ page documenting the core project safety
+- Capability-based security design doc (Phase D) — Sprint 85 Phase D: Design document for replacing ToolSecurityPolicy's
+
+### Changed
+- Reduce dependencies and add `just install` — - Replace ureq with reqwest in agentzero-plugins, converting
+- Add Sprint 80 plan — #[tool_fn] macro + WASM codegen strategy — Sprint 80 plan for two-phase tool authoring enhancement:
+- Update Sprint 80 progress — Phase A complete, Phase B mostly done
+- Add pending untracked files — AI editor configs, daily driver test, hypergrep setup, Tauri plan — Housekeeping commit for files that accumulated across recent sessions but
+- Add commit signature verification scaffold — Advisory pre-push hook that verifies commits are signed by authorized
+
+### Plan
+- Sprint 76 — local LLM ecosystem with constrained decoding, chat templates, RAG pipeline — Add Sprint 76 to SPRINT.md and save detailed plan to specs/plans/.
+
 ## [0.10.0] - 2026-03-23
 
 ### Added
