@@ -2923,8 +2923,8 @@ Remove non-core tools that contradict self-contained, privacy-first philosophy.
 
 Design document only — no implementation this sprint.
 
-- [ ] **Design doc** — `specs/plans/46-capability-based-security.md` covering: capability types, composition rules, per-MCP-session scoping, A2A capability negotiation, migration from boolean flags
-- [ ] **Threat model update** — Integrate MCP server, A2A, memory poisoning attack surfaces
+- [x] **Design doc** — `specs/plans/46-capability-based-security.md`: 7 capability types, TOML config examples, per-agent/per-MCP-session/A2A scoping, composition rules (intersect, deny-overrides-grant), 3-phase migration from booleans, boolean-to-capability mapping table, property test specs, 8 files to modify
+- [x] **Threat model update** — 5 attack surfaces documented in design doc: MCP server mode, A2A protocol, autopilot self-modification, memory poisoning, dynamic tool creation
 
 ---
 
