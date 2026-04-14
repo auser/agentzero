@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Pre-push hook: verify all commits being pushed are signed by authorized keys.
+#
+# Requires:
+#   git config --local gpg.ssh.allowedSignersFile .repo/config/verification/allowed_commit_signers
+#
+# This hook is advisory — it warns but does not block (set STRICT=1 to enforce).
+
+set -euo pipefail
+
+STRICT="${AGENTZERO_STRICT_SIGNING:-0}"
+SIGNERS_FILE=".repo/config/verification/allowed_commit_signers"
+
+if [ ! -f "$SIGNERS_FILE" ]; then
+    echo "[verify-signatures] No allowed_commit_signers file found. Skipping."
+    exit 0
+fi
+
+# Count non-comment, non-empty lines in the signers file.
+SIGNER_COUNT=$(grep -cve '^\s*#' -e '^\s*$' "$SIGNERS_FILE" 2>/dev/null || true)
+if [ "$SIGNER_COUNT" -eq 0 ]; then
+    echo "[verify-signatures] No signers configured yet. Skipping (run the inception ceremony first)."
+    exit 0
+fi
+
+FAILURES=0
+
+while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+    # Skip branch deletion.
+    if [ "$LOCAL_SHA" = "0000000000000000000000000000000000000000" ]; then
+        continue
+    fi
+
+    # Range of commits being pushed.
+    if [ "$REMOTE_SHA" = "0000000000000000000000000000000000000000" ]; then
+        RANGE="$LOCAL_SHA"
+    else
+        RANGE="${REMOTE_SHA}..${LOCAL_SHA}"
+    fi
+
+    for COMMIT in $(git rev-list "$RANGE" 2>/dev/null); do
+        if ! git verify-commit "$COMMIT" 2>/dev/null; then
+            echo "[verify-signatures] WARNING: Commit $COMMIT is NOT signed by an authorized key."
+            FAILURES=$((FAILURES + 1))
+        fi
+    done
+done
+
+if [ "$FAILURES" -gt 0 ]; then
+    echo "[verify-signatures] $FAILURES commit(s) lack valid signatures."
+    if [ "$STRICT" = "1" ]; then
+        echo "[verify-signatures] STRICT mode: blocking push."
+        exit 1
+    else
+        echo "[verify-signatures] Advisory mode: push allowed. Set AGENTZERO_STRICT_SIGNING=1 to enforce."
+    fi
+fi

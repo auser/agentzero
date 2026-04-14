@@ -1,0 +1,17 @@
+# Authorized commit signers for AgentZero
+#
+# Format: <email> <key-type> <public-key> (<comment>)
+#
+# After the inception ceremony, only keys listed here may sign commits.
+# The inception key is retired after the trust transition commit.
+#
+# To add a new signer:
+#   1. Generate a dedicated Ed25519 SSH key:
+#      ssh-keygen -t ed25519 -C "your-email@domain" -f ~/.ssh/agentzero_signing
+#   2. Add the public key below (one line per signer)
+#   3. Commit this file, signed by an existing authorized signer
+#
+# --- Authorized signers ---
+# TODO: Add your signing key here during the inception ceremony
+# Example:
+# ari@agentzero.dev ssh-ed25519 AAAA... (primary signing key)
