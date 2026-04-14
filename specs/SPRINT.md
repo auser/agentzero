@@ -2866,6 +2866,82 @@ Per the `no_unwrap_in_production` feedback policy, audit non-test code paths in 
 
 ---
 
+## Sprint 85: Strategic Refactor — Strip Scope, Replace Supabase, Security Foundations
+
+**Goal:** Reduce surface area by removing non-core features (Composio, Canvas, Claude Code/Codex CLI/Gemini CLI/OpenCode CLI emulation, media gen), replace Supabase with SQLite/libSQL in autopilot, wire outlines-core into llama.cpp for structured output, add property-based testing for security invariants, and begin capability-based security design.
+
+**Baseline:** Sprint 84 complete. 2500+ tests, 0 clippy warnings.
+
+**Plan:** `specs/plans/45-strategic-review-strip-pull.md`
+
+**Branch:** `refactor/strategic-strip-pull`
+
+**Strategic decisions:**
+- **Identity:** Platform with local default — org_id stays as optional, local-first is the default experience
+- **Inference:** llama.cpp for inference, Candle for embeddings only
+- **Firecracker:** Handled by separate `mvm` project (gomicrovm.com), deprioritized in AgentZero
+
+---
+
+### Phase 0: Pre-Work (CRITICAL)
+
+- [x] **Verify serde backward compat** — Confirmed: no `deny_unknown_fields` in config crate. Existing TOML files with removed sections parse cleanly.
+- [x] **Measure baseline binary sizes** — `agentzero` = 26MB, `agentzero-lite` = 12MB (release builds)
+- [ ] **Update threat model** — Document MCP server, A2A, autopilot attack surfaces added since Sprint 58
+
+### Phase A: Strip Composio + Canvas + CLI Emulation + Media Gen (HIGH)
+
+Remove non-core tools that contradict self-contained, privacy-first philosophy.
+
+- [x] **Remove Composio** — Deleted `composio.rs`, WASM plugin dir, removed from tool registration, config model (`ComposioConfig`), policy, config-ui schema, `FULL_TOOL_NAMES`
+- [x] **Remove Canvas** — Deleted `canvas.rs` (tools + gateway + core), removed `CanvasStore`, gateway routes, state field, `EXTENDED_TOOL_NAMES`
+- [x] **Remove Claude Code / Codex CLI / Gemini CLI / OpenCode CLI** — Deleted 4 tool files, removed from registration, config (`enable_claude_code`, `enable_cli_harness`), policy, `FULL_TOOL_NAMES`
+- [x] **Remove Media Gen** — Deleted `media_gen.rs`, removed from registration, config model (`MediaGenConfig` + 3 sub-structs), policy, `FULL_TOOL_NAMES`
+- [ ] **UI cleanup** — Remove canvas route, update tools/config pages to not show stripped features
+- [x] **Measure binary size delta** — Baseline 26MB full / 12MB lite. Stripped tools were already feature-gated; source reduced by ~3,000 lines, 10 files deleted
+- [x] **Tests** — `cargo clippy --workspace` 0 warnings; `cargo test --workspace --lib` all pass (0 failures)
+
+### Phase B: Replace Supabase with SQLite/libSQL in Autopilot (HIGH)
+
+- [x] **`AutopilotStore` trait** — 14-method async trait: proposals CRUD, missions CRUD + heartbeat + stale query, aggregations (daily spend, concurrent count), events, content upsert
+- [x] **`SqliteAutopilotStore`** — SQLite backend with WAL mode, 5 tables (proposals, missions, events, cap_gate_ledger, content), 5 indexes. 11 unit tests.
+- [ ] **Optional `TursoAutopilotStore`** — Behind `memory-turso` feature for cloud sync (deferred to follow-up)
+- [x] **Remove `SupabaseClient`** — Deleted `supabase.rs`, removed `reqwest` dependency from autopilot crate, removed `supabase_url`/`supabase_service_role_key` config fields
+- [x] **Wire into autopilot** — `CapGate::check()` and `StaleRecovery` now use `&dyn AutopilotStore` instead of `&SupabaseClient`
+- [x] **Tests** — 46 autopilot tests pass offline (11 new store tests + 35 existing). Full workspace: 3,079 tests, 0 failures, 0 clippy warnings
+
+### Phase C: Structured Output + Property Testing (MEDIUM)
+
+- [ ] **Wire `outlines-core`** — Into llama.cpp provider for JSON schema-constrained output
+- [ ] **Add `proptest`** — Workspace dev-dependency
+- [ ] **Property tests** — PII redaction never leaks (arbitrary input), policy intersection monotonicity, encryption round-trip, sealed envelope integrity
+- [ ] **CI** — Reproducible build verification step, consider `cargo-vet`
+
+### Phase D: Capability-Based Security Design (MEDIUM)
+
+Design document only — no implementation this sprint.
+
+- [ ] **Design doc** — `specs/plans/46-capability-based-security.md` covering: capability types, composition rules, per-MCP-session scoping, A2A capability negotiation, migration from boolean flags
+- [ ] **Threat model update** — Integrate MCP server, A2A, memory poisoning attack surfaces
+
+---
+
+### Acceptance Criteria (Sprint 85)
+
+- [ ] Composio, Canvas, Claude Code/Codex/Gemini/OpenCode CLI, Media Gen tools removed
+- [ ] Existing `agentzero.toml` files with removed sections parse without error (backward compat)
+- [ ] Autopilot works fully offline with SQLite (no Supabase dependency)
+- [ ] Optional Turso sync behind `memory-turso` feature
+- [ ] `outlines-core` wired for structured local inference output
+- [ ] Property-based tests cover PII redaction, policy intersection, encryption
+- [ ] Capability-based security design document written
+- [ ] Binary size measured before/after stripping
+- [ ] `cargo clippy --workspace` — 0 warnings
+- [ ] All tests pass
+- [ ] UI builds cleanly with stripped features removed
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

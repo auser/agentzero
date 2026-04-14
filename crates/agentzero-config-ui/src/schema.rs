@@ -191,7 +191,6 @@ fn build_security_policy_descriptor() -> NodeTypeDescriptor {
         ("enable_agent_manage", "Enable Agent Manage", false),
         ("enable_domain_tools", "Enable Domain Tools", false),
         ("enable_mcp", "Enable MCP", false),
-        ("enable_composio", "Enable Composio", false),
         ("enable_pushover", "Enable Pushover", false),
         ("enable_wasm_plugins", "Enable WASM Plugins", false),
     ] {
@@ -1026,13 +1025,6 @@ pub fn build_tool_summaries() -> Vec<ToolSummary> {
             "research",
             false,
             Some("enable_domain_tools"),
-        ),
-        tool(
-            "composio",
-            "Composio integrations",
-            "integration",
-            false,
-            Some("enable_composio"),
         ),
         tool(
             "pushover",

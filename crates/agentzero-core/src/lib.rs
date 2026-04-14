@@ -7,7 +7,6 @@
 pub mod a2a_types;
 pub mod agent;
 pub mod agent_store;
-pub mod canvas;
 pub mod common;
 pub mod complexity;
 pub mod context_compression;
@@ -33,7 +32,6 @@ pub mod validation;
 pub use tracing;
 
 pub use agent::{Agent, ToolSource};
-pub use canvas::{Canvas, CanvasFrame, CanvasStore, CanvasSummary};
 pub use event_bus::{
     Event, EventBus, EventFilter, EventSubscriber, FileBackedBus, InMemoryBus, PublishResult,
     TypedSubscriber, TypedTopic,

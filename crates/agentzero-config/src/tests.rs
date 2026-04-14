@@ -1986,19 +1986,6 @@ fn privacy_private_mode_blocks_network_tools() {
             "html_extract should be disabled in private mode"
         );
         assert!(
-            !policy.enable_composio,
-            "composio should be disabled in private mode"
-        );
-        assert!(!policy.enable_tts, "tts should be disabled in private mode");
-        assert!(
-            !policy.enable_image_gen,
-            "image_gen should be disabled in private mode"
-        );
-        assert!(
-            !policy.enable_video_gen,
-            "video_gen should be disabled in private mode"
-        );
-        assert!(
             !policy.enable_domain_tools,
             "domain_tools should be disabled in private mode"
         );

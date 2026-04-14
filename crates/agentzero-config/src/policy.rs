@@ -93,12 +93,8 @@ pub fn load_tool_security_policy(
         enable_url_validation: true,
         enable_agents_ipc: true,
         enable_html_extract: config.web_fetch.enabled,
-        enable_composio: config.composio.enabled,
         enable_pushover: config.pushover.enabled,
         enable_code_interpreter: config.code_interpreter.enabled,
-        enable_tts: config.media_gen.tts.enabled,
-        enable_image_gen: config.media_gen.image_gen.enabled,
-        enable_video_gen: config.media_gen.video_gen.enabled,
         enable_autopilot: config.autopilot.enabled,
         enable_agent_manage: config.agent.enable_agent_manage,
         enable_domain_tools: config.agent.enable_domain_tools,
@@ -108,9 +104,6 @@ pub fn load_tool_security_policy(
         wasm_project_plugin_dir: config.security.plugin.project_plugin_dir.map(PathBuf::from),
         wasm_dev_plugin_dir: config.security.plugin.dev_plugin_dir.map(PathBuf::from),
         enable_a2a_tool: config.a2a.enabled,
-        enable_canvas: false, // Canvas is injected by gateway, not config-driven yet
-        enable_claude_code: config.agent.enable_claude_code,
-        enable_cli_harness: config.agent.enable_cli_harness,
         enable_dynamic_tools: config.agent.enable_dynamic_tools.unwrap_or(false),
     };
 
@@ -122,10 +115,6 @@ pub fn load_tool_security_policy(
         policy.enable_web_fetch = false;
         policy.enable_web_search = false;
         policy.enable_html_extract = false;
-        policy.enable_composio = false;
-        policy.enable_tts = false;
-        policy.enable_image_gen = false;
-        policy.enable_video_gen = false;
         policy.enable_domain_tools = false;
         policy.enable_a2a_tool = false;
         // NOTE: do NOT restrict url_access — cloud providers route through
@@ -137,10 +126,6 @@ pub fn load_tool_security_policy(
         policy.enable_web_fetch = false;
         policy.enable_web_search = false;
         policy.enable_html_extract = false;
-        policy.enable_composio = false;
-        policy.enable_tts = false;
-        policy.enable_image_gen = false;
-        policy.enable_video_gen = false;
         policy.enable_domain_tools = false;
         policy.enable_a2a_tool = false;
         // Restrict URL access to localhost only.

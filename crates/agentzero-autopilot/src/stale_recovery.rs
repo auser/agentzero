@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-use crate::supabase::SupabaseClient;
+use crate::store::AutopilotStore;
 use crate::types::{AutopilotEvent, MissionStatus};
 
 /// Monitors missions for stalled heartbeats and marks them accordingly.
@@ -10,14 +10,14 @@ use crate::types::{AutopilotEvent, MissionStatus};
 /// Runs as a background tokio task, checking every `check_interval_secs`
 /// for missions that have not sent a heartbeat within `threshold_minutes`.
 pub struct StaleRecovery {
-    client: Arc<SupabaseClient>,
+    client: Arc<dyn AutopilotStore>,
     threshold_minutes: u32,
     check_interval_secs: u64,
 }
 
 impl StaleRecovery {
     pub fn new(
-        client: Arc<SupabaseClient>,
+        client: Arc<dyn AutopilotStore>,
         threshold_minutes: u32,
         check_interval_secs: u64,
     ) -> Self {
@@ -106,18 +106,12 @@ impl StaleRecovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::SqliteAutopilotStore;
 
     #[test]
     fn stale_recovery_construction() {
-        // This just validates the struct can be constructed; actual integration
-        // tests require a live Supabase instance.
-        let config = crate::config::AutopilotConfig {
-            supabase_url: "https://test.supabase.co".to_string(),
-            supabase_service_role_key: "key".to_string(),
-            ..Default::default()
-        };
-        let client = Arc::new(SupabaseClient::new(&config).expect("client"));
-        let recovery = StaleRecovery::new(client, 30, 300);
+        let store = Arc::new(SqliteAutopilotStore::in_memory().expect("in-memory store"));
+        let recovery = StaleRecovery::new(store, 30, 300);
         assert_eq!(recovery.threshold_minutes, 30);
         assert_eq!(recovery.check_interval_secs, 300);
     }

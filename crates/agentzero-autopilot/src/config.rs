@@ -28,12 +28,10 @@ fn default_enabled() -> bool {
 pub struct AutopilotConfig {
     pub enabled: bool,
 
-    /// Supabase project URL (e.g. `https://xxx.supabase.co`).
-    pub supabase_url: String,
-
-    /// Supabase service-role key for full access.
+    /// Path to the autopilot SQLite database file.
+    /// Defaults to `autopilot.db` in the data directory.
     #[serde(default)]
-    pub supabase_service_role_key: String,
+    pub db_path: Option<String>,
 
     /// Maximum daily spend in cents before cap gate rejects proposals.
     #[serde(default = "default_max_daily_spend")]
@@ -106,8 +104,7 @@ mod tests {
     fn config_serde_roundtrip() {
         let cfg = AutopilotConfig {
             enabled: true,
-            supabase_url: "https://test.supabase.co".to_string(),
-            supabase_service_role_key: "key123".to_string(),
+            db_path: Some("/tmp/test-autopilot.db".to_string()),
             max_daily_spend_cents: 1000,
             max_concurrent_missions: 10,
             max_proposals_per_hour: 50,
@@ -119,7 +116,7 @@ mod tests {
         let json = serde_json::to_string(&cfg).expect("serialize");
         let cfg2: AutopilotConfig = serde_json::from_str(&json).expect("deserialize");
         assert!(cfg2.enabled);
-        assert_eq!(cfg2.supabase_url, "https://test.supabase.co");
+        assert_eq!(cfg2.db_path.as_deref(), Some("/tmp/test-autopilot.db"));
         assert_eq!(cfg2.max_daily_spend_cents, 1000);
     }
 }

@@ -95,7 +95,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "rand 0.8.5",
- "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "tokio",
