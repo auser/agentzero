@@ -237,7 +237,7 @@ impl ChatTemplate {
 
     /// Try to detect the chat template from known special tokens in the
     /// tokenizer's vocabulary. Returns `None` if unrecognized.
-    #[cfg(any(feature = "candle", feature = "local-model"))]
+    #[cfg(feature = "candle")]
     pub fn detect(tokenizer: &tokenizers::Tokenizer) -> Option<Self> {
         let added: Vec<String> = tokenizer
             .get_added_tokens_decoder()

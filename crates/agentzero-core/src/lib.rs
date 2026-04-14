@@ -41,14 +41,15 @@ pub use event_bus::{
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use metrics::{HistogramSnapshot, RuntimeMetrics, RuntimeMetricsSnapshot};
 pub use types::{
-    AgentConfig, AgentEndpoint, AgentError, AgentId, AnnounceMessage, AssistantMessage, AuditEvent,
-    AuditSink, ChannelEndpoint, ChatResult, ContentPart, ConversationMessage, DepthPolicy,
-    DepthRule, EphemeralMemory, HookEvent, HookFailureMode, HookPolicy, HookRiskTier, HookSink,
-    JobStatus, Lane, LoopAction, MemoryEntry, MemoryStore, MergeStrategy, MetricsSink, Provider,
-    QueueMode, ReasoningConfig, ResearchPolicy, ResearchTrigger, RunId, SessionId, StopReason,
-    StreamChunk, StreamSink, StreamToolCallAccumulator, SummarizationConfig, Tool, ToolCallDelta,
-    ToolContext, ToolDefinition, ToolExecutionRecord, ToolResult, ToolResultMessage,
-    ToolSelectionMode, ToolSelector, ToolSummary, ToolUseRequest, UserMessage,
+    AgentConfig, AgentEndpoint, AgentError, AgentId, AnnounceMessage, AssistantMessage,
+    AuditDetail, AuditEvent, AuditSink, ChannelEndpoint, ChatResult, ContentPart,
+    ConversationMessage, DepthPolicy, DepthRule, EphemeralMemory, HookEvent, HookFailureMode,
+    HookPolicy, HookRiskTier, HookSink, JobStatus, Lane, LoopAction, MemoryEntry, MemoryStore,
+    MergeStrategy, MetricsSink, Provider, QueueMode, ReasoningConfig, ResearchPolicy,
+    ResearchTrigger, RunId, SessionId, StopReason, StreamChunk, StreamSink,
+    StreamToolCallAccumulator, SummarizationConfig, Tool, ToolCallDelta, ToolContext,
+    ToolDefinition, ToolExecutionRecord, ToolResult, ToolResultMessage, ToolSelectionMode,
+    ToolSelector, ToolSummary, ToolUseRequest, UserMessage,
 };
 pub use types::{
     ConversationNode, ConversationTree, SkillActivation, SkillBundle, SkillBundleMeta, SkillLoader,

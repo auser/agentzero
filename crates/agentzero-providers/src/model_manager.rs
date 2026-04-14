@@ -21,9 +21,7 @@ pub const DEFAULT_BUILTIN_MODEL: &str = "qwen2.5-coder-3b";
 
 /// Returns the models cache directory (`~/.agentzero/models/`).
 pub fn models_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("cannot determine home directory")?;
-    let dir = home.join(".agentzero").join("models");
-    Ok(dir)
+    crate::bundle::models_dir()
 }
 
 /// Ensure a GGUF model file is available locally.
@@ -104,6 +102,38 @@ pub fn ensure_model(repo: &str, filename: &str) -> Result<PathBuf> {
 /// Ensure the default built-in model is available.
 pub fn ensure_default_model() -> Result<PathBuf> {
     ensure_model(DEFAULT_HF_REPO, DEFAULT_GGUF_FILE)
+}
+
+/// Load a model from a `.azb` bundle file.
+///
+/// Extracts the bundle into `~/.agentzero/models/{model_id}/{version}/` and
+/// returns the path to the first file with role `"model"`. If no model-role
+/// file is found, returns the first file in the bundle.
+pub fn load_from_bundle(bundle_path: &std::path::Path) -> Result<PathBuf> {
+    let bundle = crate::bundle::load_bundle(bundle_path)
+        .with_context(|| format!("failed to load bundle: {}", bundle_path.display()))?;
+
+    let install_dir = models_dir()?;
+    let extracted =
+        crate::bundle::extract_bundle(&bundle, &install_dir).context("failed to extract bundle")?;
+
+    // Find the model file: prefer role="model", fall back to first file.
+    let model_file = bundle
+        .manifest
+        .files
+        .iter()
+        .find(|f| f.role == "model")
+        .or_else(|| bundle.manifest.files.first())
+        .map(|f| extracted.join(&f.path))
+        .ok_or_else(|| anyhow::anyhow!("bundle contains no files"))?;
+
+    info!(
+        model_id = bundle.manifest.model_id,
+        path = %model_file.display(),
+        "model loaded from bundle"
+    );
+
+    Ok(model_file)
 }
 
 #[cfg(test)]

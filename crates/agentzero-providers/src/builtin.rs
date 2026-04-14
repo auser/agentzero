@@ -18,13 +18,15 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::sampling::LlamaSampler;
-use tracing::{debug, info, warn};
+use llama_cpp_2::token::LlamaToken;
+use tracing::{debug, info};
 
 use agentzero_core::types::{
     ChatResult, ConversationMessage, ReasoningConfig, StopReason, StreamChunk, ToolDefinition,
 };
 use agentzero_core::Provider;
 
+use crate::local_llm::{GenerationLoop, LocalLlm};
 use crate::model_manager;
 
 /// Process-global llama.cpp backend singleton.
@@ -53,6 +55,93 @@ pub struct BuiltinProvider {
 struct LoadedModel {
     model: LlamaModel,
 }
+
+// ---------------------------------------------------------------------------
+// LlamaCppLlm — LocalLlm implementation for llama.cpp
+// ---------------------------------------------------------------------------
+
+/// Short-lived wrapper created for a single generation run.
+///
+/// Holds the llama.cpp context, batch, and sampler state needed to drive
+/// token-by-token generation via [`LocalLlm`].
+struct LlamaCppLlm<'model> {
+    model: &'model LlamaModel,
+    ctx: llama_cpp_2::context::LlamaContext<'model>,
+    batch: LlamaBatch<'model>,
+    sampler: LlamaSampler,
+}
+
+impl<'model> LlamaCppLlm<'model> {
+    fn new(
+        model: &'model LlamaModel,
+        ctx: llama_cpp_2::context::LlamaContext<'model>,
+        n_ctx: usize,
+    ) -> Self {
+        Self {
+            model,
+            ctx,
+            batch: LlamaBatch::new(n_ctx, 1),
+            sampler: LlamaSampler::chain_simple([
+                LlamaSampler::temp(0.7),
+                LlamaSampler::top_p(0.9, 1),
+                LlamaSampler::dist(42),
+            ]),
+        }
+    }
+}
+
+impl LocalLlm for LlamaCppLlm<'_> {
+    fn tokenize(&self, text: &str) -> Result<Vec<u32>> {
+        let tokens = self
+            .model
+            .str_to_token(text, llama_cpp_2::model::AddBos::Always)
+            .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
+        Ok(tokens.iter().map(|t| t.0 as u32).collect())
+    }
+
+    fn feed_prompt(&mut self, tokens: &[u32]) -> Result<u32> {
+        self.batch.clear();
+        for (i, &token) in tokens.iter().enumerate() {
+            let is_last = i == tokens.len() - 1;
+            self.batch
+                .add(LlamaToken(token as i32), i as i32, &[0], is_last)
+                .map_err(|e| anyhow::anyhow!("batch add failed: {e}"))?;
+        }
+        self.ctx
+            .decode(&mut self.batch)
+            .map_err(|e| anyhow::anyhow!("decode failed: {e}"))?;
+        let token = self.sampler.sample(&self.ctx, -1);
+        Ok(token.0 as u32)
+    }
+
+    fn step(&mut self, token: u32, pos: usize) -> Result<u32> {
+        self.batch.clear();
+        self.batch
+            .add(LlamaToken(token as i32), pos as i32, &[0], true)
+            .map_err(|e| anyhow::anyhow!("batch add failed: {e}"))?;
+        self.ctx
+            .decode(&mut self.batch)
+            .map_err(|e| anyhow::anyhow!("decode failed: {e}"))?;
+        let next = self.sampler.sample(&self.ctx, -1);
+        Ok(next.0 as u32)
+    }
+
+    fn decode_token(&self, token: u32) -> Result<String> {
+        let bytes = self
+            .model
+            .token_to_piece_bytes(LlamaToken(token as i32), 64, true, None)
+            .map_err(|e| anyhow::anyhow!("token to bytes failed: {e}"))?;
+        Ok(String::from_utf8_lossy(&bytes).to_string())
+    }
+
+    fn is_eos(&self, token: u32) -> bool {
+        self.model.is_eog_token(LlamaToken(token as i32))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BuiltinProvider
+// ---------------------------------------------------------------------------
 
 impl BuiltinProvider {
     /// Create a new builtin provider.
@@ -85,6 +174,10 @@ impl BuiltinProvider {
         // Resolve model path
         let model_path = if !self.model_path.as_os_str().is_empty() {
             self.model_path.clone()
+        } else if self.model_name.ends_with(".azb")
+            && std::path::Path::new(&self.model_name).exists()
+        {
+            model_manager::load_from_bundle(std::path::Path::new(&self.model_name))?
         } else if self.model_name == model_manager::DEFAULT_BUILTIN_MODEL
             || self.model_name == "default"
         {
@@ -124,8 +217,17 @@ impl BuiltinProvider {
         Ok(())
     }
 
-    /// Run inference and return generated text.
-    fn generate(&self, prompt: &str, max_tokens: u32) -> Result<(String, u64, u64)> {
+    /// Run inference with the shared [`GenerationLoop`], optionally streaming.
+    ///
+    /// Locks the inner model, creates a fresh llama.cpp context + a
+    /// short-lived [`LlamaCppLlm`], tokenizes the prompt, validates against
+    /// the context window, and runs the loop.
+    fn run_inference(
+        &self,
+        prompt: &str,
+        max_tokens: u32,
+        sender: Option<&tokio::sync::mpsc::UnboundedSender<StreamChunk>>,
+    ) -> Result<(String, u64, u64)> {
         self.ensure_loaded()?;
 
         let guard = self.inner.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -137,21 +239,17 @@ impl BuiltinProvider {
             .with_n_ctx(std::num::NonZeroU32::new(self.n_ctx))
             .with_n_batch(self.n_ctx);
 
-        let mut ctx = loaded
+        let ctx = loaded
             .model
             .new_context(shared_backend(), ctx_params)
             .map_err(|e| anyhow::anyhow!("failed to create context: {e}"))?;
 
-        // Tokenize input
-        let tokens = loaded
-            .model
-            .str_to_token(prompt, llama_cpp_2::model::AddBos::Always)
-            .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
+        let mut llm = LlamaCppLlm::new(&loaded.model, ctx, self.n_ctx as usize);
 
-        let input_tokens = tokens.len() as u64;
+        let tokens = llm.tokenize(prompt)?;
 
         // Guard: prompt must fit in the context window with room for output.
-        let max_input = self.n_ctx.saturating_sub(256) as usize; // reserve 256 for generation
+        let max_input = self.n_ctx.saturating_sub(256) as usize;
         if tokens.len() > max_input {
             anyhow::bail!(
                 "prompt too large for context window: {} tokens exceeds limit of {} \
@@ -162,81 +260,11 @@ impl BuiltinProvider {
             );
         }
 
-        // Create batch with all input tokens
-        let mut batch = LlamaBatch::new(self.n_ctx as usize, 1);
-        for (i, &token) in tokens.iter().enumerate() {
-            let is_last = i == tokens.len() - 1;
-            batch
-                .add(token, i as i32, &[0], is_last)
-                .map_err(|e| anyhow::anyhow!("batch add failed: {e}"))?;
-        }
-
-        // Process prompt
-        ctx.decode(&mut batch)
-            .map_err(|e| anyhow::anyhow!("decode failed: {e}"))?;
-
-        // Create sampler chain: temperature + top-p + dist
-        let mut sampler = LlamaSampler::chain_simple([
-            LlamaSampler::temp(0.7),
-            LlamaSampler::top_p(0.9, 1),
-            LlamaSampler::dist(42),
-        ]);
-
-        // Generate tokens with repetition detection.
-        // Small models often get stuck repeating the same phrase — we detect
-        // this by checking if the last N characters appear twice in a row and
-        // stop early to avoid wasting compute.
-        let mut output = String::new();
-        let mut output_tokens = 0u64;
-        let mut n_cur = tokens.len() as i32;
-        const REPEAT_WINDOW: usize = 80; // check last 80 chars for repetition
-
-        for _ in 0..max_tokens {
-            let token = sampler.sample(&ctx, -1);
-
-            // Check for EOS
-            if loaded.model.is_eog_token(token) {
-                break;
-            }
-
-            let bytes = loaded
-                .model
-                .token_to_piece_bytes(token, 64, true, None)
-                .map_err(|e| anyhow::anyhow!("token to bytes failed: {e}"))?;
-            let piece = String::from_utf8_lossy(&bytes);
-            output.push_str(&piece);
-            output_tokens += 1;
-
-            // Repetition detection: if the last REPEAT_WINDOW chars appear
-            // earlier in the output, the model is looping.
-            if output.len() > REPEAT_WINDOW * 2 {
-                let tail = &output[output.len() - REPEAT_WINDOW..];
-                let before_tail = &output[..output.len() - REPEAT_WINDOW];
-                if before_tail.contains(tail) {
-                    warn!(
-                        tokens = output_tokens,
-                        "repetition detected in builtin model output, stopping early"
-                    );
-                    // Trim the repeated content
-                    if let Some(pos) = before_tail.rfind(tail) {
-                        output.truncate(pos + REPEAT_WINDOW);
-                    }
-                    break;
-                }
-            }
-
-            // Prepare next batch
-            batch.clear();
-            batch
-                .add(token, n_cur, &[0], true)
-                .map_err(|e| anyhow::anyhow!("batch add failed: {e}"))?;
-            n_cur += 1;
-
-            ctx.decode(&mut batch)
-                .map_err(|e| anyhow::anyhow!("decode failed: {e}"))?;
-        }
-
-        Ok((output, input_tokens, output_tokens))
+        let gen = GenerationLoop {
+            max_tokens,
+            repeat_window: 80,
+        };
+        gen.run(&mut llm, &tokens, sender)
     }
 
     /// Format conversation messages into a ChatML prompt string (no tools).
@@ -258,11 +286,15 @@ impl BuiltinProvider {
 
 #[async_trait]
 impl Provider for BuiltinProvider {
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
     async fn complete(&self, prompt: &str) -> Result<ChatResult> {
         let formatted = format!("<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n");
 
         let (output_text, input_tokens, output_tokens) =
-            tokio::task::block_in_place(|| self.generate(&formatted, 2048))?;
+            tokio::task::block_in_place(|| self.run_inference(&formatted, 2048, None))?;
 
         Ok(ChatResult {
             output_text,
@@ -278,13 +310,18 @@ impl Provider for BuiltinProvider {
         prompt: &str,
         sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
     ) -> Result<ChatResult> {
-        let result = self.complete(prompt).await?;
-        let _ = sender.send(StreamChunk {
-            delta: result.output_text.clone(),
-            done: true,
-            tool_call_delta: None,
-        });
-        Ok(result)
+        let formatted = format!("<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n");
+
+        let (output_text, input_tokens, output_tokens) =
+            tokio::task::block_in_place(|| self.run_inference(&formatted, 2048, Some(&sender)))?;
+
+        Ok(ChatResult {
+            output_text,
+            tool_calls: vec![],
+            stop_reason: Some(StopReason::EndTurn),
+            input_tokens,
+            output_tokens,
+        })
     }
 
     async fn complete_with_tools(
@@ -296,7 +333,7 @@ impl Provider for BuiltinProvider {
         let prompt = self.format_messages_with_tools(messages, tools);
 
         let (raw_output, input_tokens, output_tokens) =
-            tokio::task::block_in_place(|| self.generate(&prompt, 2048))?;
+            tokio::task::block_in_place(|| self.run_inference(&prompt, 2048, None))?;
 
         let (text, tool_calls) = crate::local_tools::parse_tool_calls(&raw_output);
 
@@ -325,16 +362,35 @@ impl Provider for BuiltinProvider {
         &self,
         messages: &[ConversationMessage],
         tools: &[ToolDefinition],
-        reasoning: &ReasoningConfig,
+        _reasoning: &ReasoningConfig,
         sender: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
     ) -> Result<ChatResult> {
-        let result = self.complete_with_tools(messages, tools, reasoning).await?;
-        let _ = sender.send(StreamChunk {
-            delta: result.output_text.clone(),
-            done: true,
-            tool_call_delta: None,
-        });
-        Ok(result)
+        let prompt = self.format_messages_with_tools(messages, tools);
+
+        let (raw_output, input_tokens, output_tokens) =
+            tokio::task::block_in_place(|| self.run_inference(&prompt, 2048, Some(&sender)))?;
+
+        let (text, tool_calls) = crate::local_tools::parse_tool_calls(&raw_output);
+
+        let stop_reason = if tool_calls.is_empty() {
+            StopReason::EndTurn
+        } else {
+            StopReason::ToolUse
+        };
+
+        debug!(
+            tool_count = tool_calls.len(),
+            text_len = text.len(),
+            "parsed builtin streaming response"
+        );
+
+        Ok(ChatResult {
+            output_text: text,
+            tool_calls,
+            stop_reason: Some(stop_reason),
+            input_tokens,
+            output_tokens,
+        })
     }
 }
 

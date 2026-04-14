@@ -58,6 +58,7 @@ compile_error!(
 mod anthropic;
 #[cfg(feature = "local-model")]
 pub mod builtin;
+pub mod bundle;
 #[cfg(feature = "candle")]
 pub mod candle_embedding;
 #[cfg(feature = "candle")]
@@ -69,6 +70,7 @@ pub mod credential_pool;
 pub mod embedding;
 mod fallback;
 pub mod guardrails;
+pub mod local_llm;
 pub mod local_tools;
 #[cfg(any(feature = "local-model", feature = "candle"))]
 pub mod model_manager;

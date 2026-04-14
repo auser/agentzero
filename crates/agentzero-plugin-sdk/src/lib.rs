@@ -45,6 +45,15 @@ pub struct ToolOutput {
     /// If set with non-empty output, appended as a warning.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Privacy boundary for this output.  Controls which channels may receive
+    /// it: `"local_only"` restricts to CLI/transcription, `"any"` (default)
+    /// allows all channels.  The host respects this when routing output.
+    #[serde(default = "default_boundary")]
+    pub privacy_boundary: String,
+}
+
+fn default_boundary() -> String {
+    "any".to_string()
 }
 
 impl ToolOutput {
@@ -53,6 +62,7 @@ impl ToolOutput {
         Self {
             output: output.into(),
             error: None,
+            privacy_boundary: default_boundary(),
         }
     }
 
@@ -61,6 +71,7 @@ impl ToolOutput {
         Self {
             output: String::new(),
             error: Some(msg.into()),
+            privacy_boundary: default_boundary(),
         }
     }
 
@@ -69,7 +80,14 @@ impl ToolOutput {
         Self {
             output: output.into(),
             error: Some(warning.into()),
+            privacy_boundary: default_boundary(),
         }
+    }
+
+    /// Set the privacy boundary on this output (builder pattern).
+    pub fn with_boundary(mut self, boundary: impl Into<String>) -> Self {
+        self.privacy_boundary = boundary.into();
+        self
     }
 }
 

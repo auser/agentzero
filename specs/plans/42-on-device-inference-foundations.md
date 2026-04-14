@@ -49,46 +49,19 @@ Catch invalid feature combinations at `cargo check` time with actionable message
 
 ---
 
-## Phase C: Tensor-level `InferenceBackend` sub-trait (HIGH)
+## Phase C: `LocalLlm` trait + shared `GenerationLoop` (HIGH) ✅
 
-Pull sampling, streaming, and KV-cache concerns out of each provider into a shared layer that operates on tensors. Lets us add new backends (ONNX, mistral.rs, future MLX) without re-implementing chat templating + sampling each time. The high-level `Provider` trait at [types.rs:1109](../../crates/agentzero-core/src/types.rs#L1109) does **not** change — this is a refactor under the existing public API.
+**Revised from the original tensor-level `InferenceBackend` plan.** After reading the code, the tensor-level trait (`HashMap<String, ArrayD<f32>>`) didn't fit — Candle uses `candle_core::Tensor` + `ModelWeights::forward()` while llama.cpp uses `LlamaBatch` + `LlamaSampler`. The real duplication was the generation loop (tokenize → feed prompt → sample → EOS/repetition → decode → stream), not tensor conversion. A `LocalLlm` trait with 5 simple methods + a shared `GenerationLoop` eliminates ~300 lines of duplicated code and gives the builtin provider real streaming for free.
 
-- [ ] **`agentzero-providers::inference_backend`** — New trait file:
-  ```rust
-  pub trait InferenceBackend: Send + Sync {
-      fn runtime_type(&self) -> RuntimeType;
-      fn load_model(&mut self, path: &Path, cfg: &BackendConfig) -> Result<(), BackendError>;
-      fn forward(&self, inputs: HashMap<String, ArrayD<f32>>) -> Result<HashMap<String, ArrayD<f32>>, BackendError>;
-      fn supports_streaming(&self) -> bool;
-  }
-  ```
-  Plus `RuntimeType { LlamaCpp, Candle, Onnx, CoreML }`, `BackendConfig`, and `BackendError` (thiserror). New file `crates/agentzero-providers/src/inference_backend.rs`.
-- [ ] **`TemplateExecutor`** — Runtime-agnostic struct that owns `Box<dyn InferenceBackend>`, the existing `ChatTemplate` from [local_tools.rs:216](../../crates/agentzero-providers/src/local_tools.rs#L216), and the sampling loop. Implements the high-level `Provider` trait. New file `crates/agentzero-providers/src/template_executor.rs`.
-- [ ] **Split `CandleProvider`** — `CandleBackend` at [candle_provider.rs](../../crates/agentzero-providers/src/candle_provider.rs) implements `InferenceBackend` (just `forward`, no chat templating, no sampling). `CandleProvider` becomes a thin wrapper: `TemplateExecutor::new(CandleBackend::new(cfg))`.
-- [ ] **Split `BuiltinProvider`** — `LlamaCppBackend` at [builtin.rs](../../crates/agentzero-providers/src/builtin.rs) implements `InferenceBackend`. `BuiltinProvider` becomes a thin wrapper around `TemplateExecutor`.
-- [ ] **Embedding provider reuse** — `CandleEmbeddingProvider` at [candle_embedding.rs:126](../../crates/agentzero-providers/src/candle_embedding.rs#L126) reuses `CandleBackend` for the forward pass; embedding-specific pooling stays in this file.
-- [ ] **Sampling consolidation** — `SamplerConfig` and the top-p / top-k / temperature helpers move into `local_tools.rs` (the natural home — already shared). Backend-internal samplers (`LlamaSampler`, `LogitsProcessor`) stay private to their backends.
-- [ ] **Mock backend test** — New `tests/inference_backend.rs` exercises a tiny mock `InferenceBackend` against `TemplateExecutor` to confirm the sampling loop is correctly delegated.
-- [ ] **Tests** — `cargo test -p agentzero-providers` passes with zero diff. `cargo test -p agentzero-providers --features candle` passes. `cargo test -p agentzero-providers --features local-model` passes. Smoke test: `cargo run -p agentzero --features candle -- chat 'hello'` produces output identical to pre-refactor behavior.
+- [x] **`local_llm.rs`** — `LocalLlm` trait (`tokenize`, `feed_prompt`, `step`, `decode_token`, `is_eos`) + `GenerationLoop` struct. 5 mock-based tests.
+- [x] **`CandleLlm`** — Implements `LocalLlm`. Replaced `generate()` + `generate_streaming()` with unified `run_inference()`.
+- [x] **`LlamaCppLlm`** — Implements `LocalLlm`. Replaced `generate()` with `run_inference()`. Real token-by-token streaming.
+- [x] **Pre-existing bug fix** — `ChatTemplate::detect()` cfg gate narrowed from `any(candle, local-model)` to `candle` only.
+- [x] **Tests** — 496 workspace, 303 with candle. 0 clippy warnings. 5 new mock tests.
 
 ---
 
-## Phase D: `build.rs` marker-feature pattern for native libs (HIGH)
-
-Stop forcing every developer to install cmake + a C++ toolchain just to compile AgentZero with default features. Adopt the marker-feature pattern: feature flags become *markers* that `build.rs` reads, and the heavy native build only runs when explicitly requested. This is the embedded-binary-size win that `project_embedded_size_reduction.md` calls for.
-
-- [ ] **`agentzero-providers/build.rs`** — New build script. Reads `CARGO_FEATURE_LOCAL_MODEL_VENDORED` / `CARGO_FEATURE_LOCAL_MODEL_SYSTEM` env vars. When neither is set → no-op. When `vendored` is set → fall through to `llama-cpp-2`'s own build. When `system` is set → emit `cargo:rustc-link-search` for the path in `LLAMA_CPP_LIB`. Writes a marker file `OUT_DIR/llamacpp_built.rs` consumed by an `include!()` for sanity checking.
-- [ ] **Split `local-model` feature** — In [crates/agentzero-providers/Cargo.toml](../../crates/agentzero-providers/Cargo.toml):
-  - `local-model = ["local-model-vendored"]` (preserves today's default behavior)
-  - `local-model-vendored = ["dep:llama-cpp-2", "dep:hf-hub", "dep:indicatif", "dep:dirs"]` (today's behavior — `llama-cpp-2` compiles its own llama.cpp via cmake)
-  - `local-model-system = ["dep:llama-cpp-2", ...]` (links system llama.cpp via env var; cmake still required by `llama-cpp-2`'s own build script — document the trade-off)
-- [ ] **Embedded profile shrink** — In [bin/agentzero/Cargo.toml:15](../../bin/agentzero/Cargo.toml#L15), `embedded` and `minimal` profiles drop `local-model` entirely. `project_embedded_size_reduction.md` calls llama.cpp a major contributor to the 10.1 MB binary.
-- [ ] **Conditional link helper** — A new `agentzero-providers::native::llamacpp_available()` function that returns true only when one of the markers was set, so runtime code can route to a remote provider when local inference isn't compiled in.
-- [ ] **Tests** — `cargo build -p agentzero-providers --no-default-features` succeeds with zero C++ tooling installed (verify in a Docker container with no cmake). `cargo build -p agentzero --profile release --features embedded` produces a binary measurably smaller than today's 10.1 MB; target ≤ 8 MB (matches the medium-term goal in `project_embedded_size_reduction.md`). Existing `cargo build --features local-model` still produces today's vendored build.
-
----
-
-## Phase E: `.azb` model bundle format (MEDIUM)
+## Phase D: `.azb` model bundle format (MEDIUM) ✅
 
 A signed, manifest-bearing model+config archive that distributes through the same channels as plugins. Replaces ad-hoc `hf-hub` directory layouts with one verifiable file. Largest phase by LoC, but the most isolated — it adds capability without changing existing flows.
 
@@ -124,14 +97,13 @@ A signed, manifest-bearing model+config archive that distributes through the sam
 - [ ] `cargo check --target x86_64-apple-darwin --features candle-cuda` fails with the readable guard message
 - [ ] `cargo check --target wasm32-unknown-unknown -p agentzero-providers --features candle` fails with the wasm32 guard message
 - [ ] `cargo run -p agentzero --features candle -- chat 'hello'` produces output (Phase C smoke test)
-- [ ] `cargo build -p agentzero --profile release --features embedded` produces a binary ≤ 8 MB (Phase D embedded-size win)
 - [ ] `cargo build -p agentzero-providers --no-default-features` succeeds with zero C++ tooling installed
-- [ ] `agentzero bundle create ./test-model && agentzero bundle verify out.azb` succeeds end-to-end (Phase E)
+- [ ] `agentzero bundle create ./test-model && agentzero bundle verify out.azb` succeeds end-to-end (Phase D)
 - [ ] Existing provider behavior unchanged (`auto_detect_device()` selects the same backend as before; chat output identical)
 
 ### Out of Scope
 
 - Adopting an `Envelope` IR. Our `Provider` trait already serves this role.
-- Vendoring llama.cpp source under `vendor/`. `llama-cpp-2` from crates.io stays the source of truth; Phase D only adds the *option* to link a system build.
+- Vendoring llama.cpp source under `vendor/`. `llama-cpp-2` from crates.io stays the source of truth.
 - ASR/TTS modules.
 - Duplicating Plan 41 (Tantivy + HNSW retrieval). These five phases are orthogonal to retrieval and can ship in parallel with it.

@@ -35,6 +35,15 @@ pub struct WasmIsolationPolicy {
     /// Filesystem overlay mode for sandboxed writes.
     #[serde(default)]
     pub overlay_mode: crate::overlay::OverlayMode,
+    /// When true, run `PiiRedactionGuard` on plugin input before passing to
+    /// WASM.  Default: false (backwards-compat).  New plugins should set true.
+    #[serde(default)]
+    pub sanitize_input: bool,
+    /// Per-plugin storage namespace.  If set, all KV operations from this
+    /// plugin are scoped to `plugin:{namespace}:*` keys.  Prevents
+    /// cross-plugin data access.  Derived from `plugin_id` when empty.
+    #[serde(default)]
+    pub storage_namespace: String,
 }
 
 impl Default for WasmIsolationPolicy {
@@ -51,6 +60,8 @@ impl Default for WasmIsolationPolicy {
             require_signed: cfg!(not(debug_assertions)),
             allowed_host_tools: Vec::new(),
             overlay_mode: crate::overlay::OverlayMode::default(),
+            sanitize_input: false,
+            storage_namespace: String::new(),
         }
     }
 }

@@ -1048,6 +1048,10 @@ pub struct MemoryEntry {
     /// Stored as little-endian f32 BLOB in SQLite, excluded from JSON serialization.
     #[serde(skip)]
     pub embedding: Option<Vec<f32>>,
+    /// SHA-256 hash of `role + ":" + content`.  Content-addressed identifier
+    /// for deduplication and integrity verification.  Empty when uncomputed.
+    #[serde(default)]
+    pub content_hash: String,
 }
 
 /// Structured record of a single tool execution for quality tracking.
@@ -1061,6 +1065,84 @@ pub struct ToolExecutionRecord {
     pub timestamp: u64,
 }
 
+/// Typed audit detail — shapes-only, no content.  Structured variants make
+/// it structurally impossible to log raw user/tool content in most code
+/// paths.  The `Custom` escape hatch still runs through `redact_text` in the
+/// `FileAuditSink`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AuditDetail {
+    ToolExecution {
+        request_id: String,
+        iteration: u32,
+        tool_name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output_len: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+    },
+    ProviderCall {
+        request_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        token_count: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        truncated: Option<bool>,
+    },
+    MemoryOp {
+        request_id: String,
+        op: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        item_count: Option<usize>,
+    },
+    HookEvent {
+        stage: String,
+        tier: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    LoopDetection {
+        request_id: String,
+        iteration: u32,
+        action: String,
+    },
+    FlowEvent {
+        request_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        iteration: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_name: Option<String>,
+    },
+    /// Escape hatch for untyped audit data.  `redact_text()` is applied to
+    /// Custom values before they are written to disk.
+    Custom(Value),
+}
+
+impl AuditDetail {
+    /// Serialize to a `Value` for JSON inspection (used in tests and sinks).
+    /// For `Custom` variants, returns the inner `Value` directly (no wrapper).
+    /// For typed variants, includes the `kind` discriminator.
+    pub fn to_value(&self) -> Value {
+        match self {
+            AuditDetail::Custom(v) => v.clone(),
+            other => serde_json::to_value(other).unwrap_or(Value::Null),
+        }
+    }
+}
+
+impl From<Value> for AuditDetail {
+    fn from(v: Value) -> Self {
+        AuditDetail::Custom(v)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
     /// Monotonic sequence number within a session (0 = unsequenced).
@@ -1070,7 +1152,7 @@ pub struct AuditEvent {
     #[serde(default)]
     pub session_id: String,
     pub stage: String,
-    pub detail: Value,
+    pub detail: AuditDetail,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

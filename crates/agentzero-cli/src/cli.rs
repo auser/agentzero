@@ -201,6 +201,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ModelCommands,
     },
+    /// Create, verify, and install .azb model bundles.
+    Bundle {
+        #[command(subcommand)]
+        command: BundleCommands,
+    },
     /// Evaluate approval requirements for high-risk actions.
     Approval {
         #[command(subcommand)]
@@ -527,6 +532,43 @@ pub enum ModelCommands {
         /// Provider to pull from (defaults to configured provider or ollama).
         #[arg(long)]
         provider: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BundleCommands {
+    /// Create a .azb bundle from a directory of model files.
+    Create {
+        /// Source directory containing model files.
+        source_dir: String,
+        /// Model identifier (e.g., "qwen2.5-coder-3b").
+        #[arg(long)]
+        model_id: String,
+        /// Version string (e.g., "1.0.0").
+        #[arg(long, default_value = "1.0.0")]
+        version: String,
+        /// Target triple or "any" for architecture-independent bundles.
+        #[arg(long, default_value = "any")]
+        target: String,
+        /// Preferred inference backend (informational).
+        #[arg(long, default_value = "auto")]
+        backend: String,
+        /// Output file path. Defaults to "{model_id}-{version}.azb".
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+    /// Verify a .azb bundle's integrity and optional signature.
+    Verify {
+        /// Path to the .azb bundle file.
+        bundle: String,
+        /// Ed25519 public key (hex) for signature verification.
+        #[arg(long)]
+        public_key: Option<String>,
+    },
+    /// Install a .azb bundle into the models directory.
+    Install {
+        /// Path to the .azb bundle file.
+        bundle: String,
     },
 }
 

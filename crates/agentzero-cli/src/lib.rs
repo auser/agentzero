@@ -202,6 +202,7 @@ fn command_label(command: &crate::cli::Commands) -> &'static str {
         Commands::Integrations { .. } => "integrations",
         Commands::Local { .. } => "local",
         Commands::Models { .. } => "models",
+        Commands::Bundle { .. } => "bundle",
         Commands::Approval { .. } => "approval",
         Commands::Identity { .. } => "identity",
         Commands::Coordination { .. } => "coordination",

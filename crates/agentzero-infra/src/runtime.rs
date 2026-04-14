@@ -116,7 +116,7 @@ impl HookSink for AuditHookSink {
                 seq: 0,
                 session_id: String::new(),
                 stage: format!("hook.{}", event.stage),
-                detail: json!({ "hook": event.detail }),
+                detail: json!({ "hook": event.detail }).into(),
             })
             .await
     }
@@ -691,7 +691,7 @@ fn build_guard_entries(
     let mut entries = Vec::new();
     if let Some(e) = to_enforcement(&gc.pii_mode) {
         entries.push(agentzero_providers::GuardEntry::new(
-            agentzero_providers::PiiRedactionGuard::default(),
+            agentzero_providers::PiiRedactionGuard,
             e,
         ));
     }

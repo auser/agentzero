@@ -131,6 +131,7 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
         org_id: row.get::<_, String>(7).unwrap_or_default(),
         agent_id: row.get::<_, String>(8).unwrap_or_default(),
         embedding,
+        content_hash: String::new(),
     })
 }
 

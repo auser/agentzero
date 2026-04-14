@@ -3,6 +3,7 @@ pub mod agents;
 pub mod approval;
 pub mod auth;
 pub mod backup;
+pub mod bundle;
 pub mod channel;
 pub mod completions;
 pub mod config;

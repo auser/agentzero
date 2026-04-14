@@ -92,96 +92,18 @@ impl GuardEntry {
 // ---------------------------------------------------------------------------
 
 /// Detects and optionally redacts personally identifiable information:
-/// email addresses, phone numbers, SSN-like patterns, and API key patterns.
-pub struct PiiRedactionGuard {
-    patterns: Vec<PiiPattern>,
-}
-
-struct PiiPattern {
-    name: &'static str,
-    regex: regex::Regex,
-    redaction: &'static str,
-}
+/// email addresses, phone numbers, SSN-like patterns, API key patterns,
+/// credit cards, JWTs, SSH keys, DB connection strings, IPv4 addresses,
+/// and credential material from Slack, GitHub, Anthropic, and AWS.
+///
+/// Patterns are defined in `agentzero_core::security::redaction::PII_PATTERNS`
+/// and shared with the audit-sink redactor so every path through the system
+/// applies identical coverage.
+pub struct PiiRedactionGuard;
 
 impl Default for PiiRedactionGuard {
     fn default() -> Self {
-        // Pattern ordering matters: more specific patterns run first so they
-        // replace their target text before a less specific pattern can match
-        // a sub-component. Example: db_connection_string must run before email
-        // because `user:pass@host.com` would otherwise be partially matched
-        // by the email regex.
-        Self {
-            patterns: vec![
-                // --- Most specific / structured patterns first ---
-                PiiPattern {
-                    name: "db_connection_string",
-                    regex: regex::Regex::new(
-                        r"(?:postgres|mysql|mongodb(?:\+srv)?|redis)://\S+:\S+@\S+",
-                    )
-                    .expect("db_conn regex should compile"),
-                    redaction: "[DB_CONN_REDACTED]",
-                },
-                PiiPattern {
-                    name: "ssh_private_key",
-                    regex: regex::Regex::new(
-                        r"-----BEGIN (?:RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----",
-                    )
-                    .expect("ssh_key regex should compile"),
-                    redaction: "[SSH_KEY_REDACTED]",
-                },
-                PiiPattern {
-                    name: "jwt",
-                    regex: regex::Regex::new(
-                        r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b",
-                    )
-                    .expect("jwt regex should compile"),
-                    redaction: "[JWT_REDACTED]",
-                },
-                PiiPattern {
-                    name: "api_key",
-                    regex: regex::Regex::new(
-                        r"\b(?:sk-[a-zA-Z0-9]{20,}|AKIA[A-Z0-9]{16}|ghp_[a-zA-Z0-9]{36})\b",
-                    )
-                    .expect("api_key regex should compile"),
-                    redaction: "[API_KEY_REDACTED]",
-                },
-                PiiPattern {
-                    name: "credit_card",
-                    regex: regex::Regex::new(r"\b(?:\d[ -]?){13,19}\b")
-                    .expect("credit_card regex should compile"),
-                    redaction: "[CC_REDACTED]",
-                },
-                // --- Less specific patterns last ---
-                PiiPattern {
-                    name: "email",
-                    regex: regex::Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
-                        .expect("email regex should compile"),
-                    redaction: "[EMAIL_REDACTED]",
-                },
-                PiiPattern {
-                    name: "phone_us",
-                    regex: regex::Regex::new(
-                        r"\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
-                    )
-                    .expect("phone regex should compile"),
-                    redaction: "[PHONE_REDACTED]",
-                },
-                PiiPattern {
-                    name: "ssn",
-                    regex: regex::Regex::new(r"\b\d{3}-\d{2}-\d{4}\b")
-                        .expect("ssn regex should compile"),
-                    redaction: "[SSN_REDACTED]",
-                },
-                PiiPattern {
-                    name: "ipv4_address",
-                    regex: regex::Regex::new(
-                        r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b",
-                    )
-                    .expect("ipv4 regex should compile"),
-                    redaction: "[IP_REDACTED]",
-                },
-            ],
-        }
+        Self
     }
 }
 
@@ -191,10 +113,12 @@ impl Guard for PiiRedactionGuard {
     }
 
     fn check_input(&self, text: &str) -> GuardVerdict {
+        use agentzero_core::security::redaction::PII_PATTERNS;
+
         let mut found = Vec::new();
         let mut sanitized = text.to_string();
 
-        for pattern in &self.patterns {
+        for pattern in PII_PATTERNS.iter() {
             if pattern.regex.is_match(text) {
                 found.push(pattern.name);
                 sanitized = pattern
@@ -618,7 +542,7 @@ mod tests {
 
     #[test]
     fn pii_guard_detects_email() {
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         match guard.check_input("Contact me at john@example.com please") {
             GuardVerdict::Violation { reason, sanitized } => {
                 assert!(reason.contains("email"));
@@ -633,7 +557,7 @@ mod tests {
 
     #[test]
     fn pii_guard_detects_ssn() {
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         match guard.check_input("SSN: 123-45-6789") {
             GuardVerdict::Violation { reason, sanitized } => {
                 assert!(reason.contains("ssn"));
@@ -645,7 +569,7 @@ mod tests {
 
     #[test]
     fn pii_guard_detects_api_key() {
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         match guard.check_input("key: sk-abcdefghijklmnopqrstuvwxyz") {
             GuardVerdict::Violation { reason, sanitized } => {
                 assert!(reason.contains("api_key"));
@@ -660,7 +584,7 @@ mod tests {
 
     #[test]
     fn pii_guard_passes_clean_text() {
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         assert!(matches!(
             guard.check_input("Hello, how are you?"),
             GuardVerdict::Pass
@@ -669,7 +593,7 @@ mod tests {
 
     #[test]
     fn pii_guard_detects_multiple() {
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         match guard.check_input("Email: a@b.com SSN: 123-45-6789") {
             GuardVerdict::Violation { reason, sanitized } => {
                 assert!(reason.contains("email"));
@@ -750,7 +674,7 @@ mod tests {
         let (provider, count) = MockProvider::new("response");
         let pipeline = PipelineBuilder::new()
             .layer(GuardrailsLayer::new(vec![GuardEntry::new(
-                PiiRedactionGuard::default(),
+                PiiRedactionGuard,
                 Enforcement::Sanitize,
             )]))
             .build(provider);
@@ -772,7 +696,7 @@ mod tests {
         let (provider, count) = MockProvider::new("response");
         let pipeline = PipelineBuilder::new()
             .layer(GuardrailsLayer::new(vec![GuardEntry::new(
-                PiiRedactionGuard::default(),
+                PiiRedactionGuard,
                 Enforcement::Audit,
             )]))
             .build(provider);
@@ -790,7 +714,7 @@ mod tests {
         let (provider, count) = MockProvider::new("hello");
         let pipeline = PipelineBuilder::new()
             .layer(GuardrailsLayer::new(vec![
-                GuardEntry::new(PiiRedactionGuard::default(), Enforcement::Block),
+                GuardEntry::new(PiiRedactionGuard, Enforcement::Block),
                 GuardEntry::new(PromptInjectionGuard::default(), Enforcement::Block),
             ]))
             .build(provider);
@@ -809,7 +733,7 @@ mod tests {
         let (provider, _) = MockProvider::new("Contact support at help@company.com");
         let pipeline = PipelineBuilder::new()
             .layer(GuardrailsLayer::new(vec![GuardEntry::new(
-                PiiRedactionGuard::default(),
+                PiiRedactionGuard,
                 Enforcement::Sanitize,
             )]))
             .build(provider);
@@ -886,7 +810,7 @@ mod tests {
         let (provider, count) = MockProvider::new("ok");
         let pipeline = PipelineBuilder::new()
             .layer(GuardrailsLayer::new(vec![
-                GuardEntry::new(PiiRedactionGuard::default(), Enforcement::Sanitize),
+                GuardEntry::new(PiiRedactionGuard, Enforcement::Sanitize),
                 GuardEntry::new(PromptInjectionGuard::default(), Enforcement::Block),
             ]))
             .build(provider);
@@ -908,7 +832,7 @@ mod tests {
 
     #[test]
     fn pii_guard_detects_credit_card() {
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         match guard.check_input("My card is 4111 1111 1111 1111") {
             GuardVerdict::Violation { reason, sanitized } => {
                 assert!(reason.contains("credit_card"));
@@ -922,7 +846,7 @@ mod tests {
 
     #[test]
     fn pii_guard_detects_jwt() {
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
         match guard.check_input(&format!("token: {jwt}")) {
             GuardVerdict::Violation { reason, sanitized } => {
@@ -937,7 +861,7 @@ mod tests {
 
     #[test]
     fn pii_guard_detects_ssh_private_key() {
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         match guard.check_input("-----BEGIN RSA PRIVATE KEY-----\nMIIEpQIBAAKC...") {
             GuardVerdict::Violation { reason, sanitized } => {
                 assert!(reason.contains("ssh_private_key"));
@@ -950,7 +874,7 @@ mod tests {
 
     #[test]
     fn pii_guard_detects_db_connection_string() {
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         match guard.check_input("postgres://admin:s3cret@db.prod.internal:5432/mydb") {
             GuardVerdict::Violation { reason, sanitized } => {
                 let clean = sanitized.expect("should sanitize");
@@ -967,7 +891,7 @@ mod tests {
 
     #[test]
     fn pii_guard_detects_ipv4_address() {
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         match guard.check_input("server at 203.0.113.42") {
             GuardVerdict::Violation { reason, sanitized } => {
                 assert!(reason.contains("ipv4_address"));
@@ -984,7 +908,7 @@ mod tests {
         // We intentionally redact ALL IPs including private ranges.
         // False positives are safer than false negatives for a
         // security-first tool.
-        let guard = PiiRedactionGuard::default();
+        let guard = PiiRedactionGuard;
         for ip in &["10.0.0.1", "192.168.1.1"] {
             match guard.check_input(&format!("connect to {ip}")) {
                 GuardVerdict::Violation { sanitized, .. } => {

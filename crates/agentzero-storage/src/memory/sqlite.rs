@@ -260,6 +260,14 @@ const MIGRATIONS: &[Migration] = &[
             "CREATE INDEX IF NOT EXISTS idx_conv_tree_parent ON conversation_tree(parent_id)",
         ],
     },
+    Migration {
+        version: 8,
+        description: "add content_hash column for content-addressed integrity",
+        statements: &[
+            "ALTER TABLE memory ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''",
+            "CREATE INDEX IF NOT EXISTS idx_memory_content_hash ON memory(content_hash)",
+        ],
+    },
 ];
 
 /// Run all pending migrations against the connection. Creates the version table
@@ -434,16 +442,21 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
         org_id: row.get::<_, String>(7).unwrap_or_default(),
         agent_id: row.get::<_, String>(8).unwrap_or_default(),
         embedding,
+        // content_hash is stored in DB but not needed on retrieval path —
+        // recomputed on demand via sha256_hex(role:content) when needed.
+        content_hash: String::new(),
     })
 }
 
 #[async_trait]
 impl MemoryStore for SqliteMemoryStore {
     async fn append(&self, entry: MemoryEntry) -> anyhow::Result<()> {
+        let hash =
+            crate::crypto::sha256_hex(format!("{}:{}", entry.role, entry.content).as_bytes());
         let conn = self.conn.lock().expect("sqlite mutex poisoned");
         conn.execute(
-            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id, entry.expires_at, entry.org_id, entry.agent_id],
+            "INSERT INTO memory(role, content, privacy_boundary, source_channel, conversation_id, expires_at, org_id, agent_id, content_hash) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![entry.role, entry.content, entry.privacy_boundary, entry.source_channel, entry.conversation_id, entry.expires_at, entry.org_id, entry.agent_id, hash],
         )?;
         Ok(())
     }
@@ -1008,6 +1021,7 @@ impl SqliteMemoryStore {
                     org_id: row.get::<_, String>(8).unwrap_or_default(),
                     agent_id: row.get::<_, String>(9).unwrap_or_default(),
                     embedding,
+                    content_hash: String::new(),
                 };
                 by_id.insert(*id, entry);
             }
@@ -1622,7 +1636,7 @@ mod tests {
 
     #[test]
     fn current_schema_version_equals_migration_count() {
-        assert_eq!(current_schema_version(), 7);
+        assert_eq!(current_schema_version(), 8);
     }
 
     #[tokio::test]

@@ -51,6 +51,8 @@ mod notepad_plugin {
             require_signed: false,
             allowed_host_tools: Vec::new(),
             overlay_mode: agentzero_plugins::overlay::OverlayMode::default(),
+            sanitize_input: false,
+            storage_namespace: String::new(),
         }
     }
 

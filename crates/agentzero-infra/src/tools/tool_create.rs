@@ -185,7 +185,7 @@ async fn record_codegen_audit(
         seq: 0,
         session_id: String::new(),
         stage: stage.to_string(),
-        detail,
+        detail: detail.into(),
     };
     if let Err(e) = sink.record(event).await {
         tracing::warn!(error = %e, stage = %stage, "failed to record codegen audit event");

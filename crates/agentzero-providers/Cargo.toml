@@ -10,10 +10,11 @@ repository.workspace = true
 [features]
 default = []
 privacy = ["agentzero-core/privacy"]
-local-model = ["dep:llama-cpp-2", "dep:hf-hub", "dep:indicatif", "dep:dirs"]
-candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:outlines-core", "dep:hf-hub", "dep:indicatif", "dep:dirs"]
+local-model = ["dep:llama-cpp-2", "dep:hf-hub", "dep:indicatif"]
+candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:outlines-core", "dep:hf-hub", "dep:indicatif"]
 candle-metal = ["candle", "candle-core/metal"]
 candle-cuda = ["candle", "candle-core/cuda"]
+bundle-signing = ["dep:ed25519-dalek", "dep:hex", "dep:rand"]
 
 [dependencies]
 anyhow.workspace = true
@@ -25,9 +26,12 @@ regex.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+tar = "0.4"
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+zstd = "0.13"
 llama-cpp-2 = { workspace = true, features = ["sampler"], optional = true }
 candle-core = { workspace = true, optional = true }
 candle-nn = { workspace = true, optional = true }
@@ -36,8 +40,12 @@ tokenizers = { workspace = true, optional = true }
 outlines-core = { workspace = true, optional = true }
 hf-hub = { workspace = true, optional = true }
 indicatif = { workspace = true, optional = true }
-dirs = { version = "5", optional = true }
+dirs = "5"
+ed25519-dalek = { version = "2", features = ["rand_core"], optional = true }
+hex = { version = "0.4", optional = true }
+rand = { version = "0.8", optional = true }
 
 [dev-dependencies]
 base64 = "0.22"
+tempfile = "3"
 tracing-subscriber = { workspace = true }

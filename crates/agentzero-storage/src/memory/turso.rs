@@ -224,6 +224,7 @@ fn turso_row_to_entry(row: &libsql::Row) -> anyhow::Result<MemoryEntry> {
         expires_at: row.get::<Option<i64>>(6).unwrap_or_default(),
         org_id: row.get::<String>(7).unwrap_or_default(),
         agent_id: row.get::<String>(8).unwrap_or_default(),
+        ..Default::default()
     })
 }
 

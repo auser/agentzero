@@ -454,14 +454,14 @@ impl Agent {
         self.tools.iter().any(|t| t.input_schema().is_some())
     }
 
-    async fn audit(&self, stage: &str, detail: serde_json::Value) {
+    async fn audit(&self, stage: &str, detail: impl Into<crate::AuditDetail>) {
         if let Some(sink) = &self.audit {
             let _ = sink
                 .record(AuditEvent {
                     seq: 0,
                     session_id: String::new(),
                     stage: stage.to_string(),
-                    detail,
+                    detail: detail.into(),
                 })
                 .await;
         }
@@ -1008,6 +1008,7 @@ impl Agent {
                 org_id: String::new(),
                 agent_id: agent_id.unwrap_or("").to_string(),
                 embedding: None,
+                content_hash: String::new(),
             })
             .await
             .map_err(|source| AgentError::Memory { source })?;
@@ -3042,8 +3043,8 @@ mod tests {
         let request_id = events
             .iter()
             .find_map(|e| {
-                e.detail
-                    .get("request_id")
+                let v = e.detail.to_value();
+                v.get("request_id")
                     .and_then(Value::as_str)
                     .map(ToString::to_string)
             })
@@ -3053,32 +3054,23 @@ mod tests {
             .iter()
             .find(|e| e.stage == "provider_call_success")
             .expect("provider success event should exist");
+        let pv = provider_event.detail.to_value();
         assert_eq!(
-            provider_event
-                .detail
-                .get("request_id")
-                .and_then(Value::as_str),
+            pv.get("request_id").and_then(Value::as_str),
             Some(request_id.as_str())
         );
-        assert!(provider_event
-            .detail
-            .get("duration_ms")
-            .and_then(Value::as_u64)
-            .is_some());
+        assert!(pv.get("duration_ms").and_then(Value::as_u64).is_some());
 
         let tool_event = events
             .iter()
             .find(|e| e.stage == "tool_execute_success")
             .expect("tool success event should exist");
+        let tv = tool_event.detail.to_value();
         assert_eq!(
-            tool_event.detail.get("request_id").and_then(Value::as_str),
+            tv.get("request_id").and_then(Value::as_str),
             Some(request_id.as_str())
         );
-        assert!(tool_event
-            .detail
-            .get("duration_ms")
-            .and_then(Value::as_u64)
-            .is_some());
+        assert!(tv.get("duration_ms").and_then(Value::as_u64).is_some());
     }
 
     #[tokio::test]

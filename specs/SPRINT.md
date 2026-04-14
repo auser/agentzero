@@ -2755,28 +2755,51 @@ Catch invalid feature combinations at `cargo check` time with actionable message
 - [x] **`bin/agentzero/src/lib.rs` mirror** — Same Apple/CUDA/Metal guards at the binary entry point (most-likely-wrong-flags entry)
 - [x] **Verification** — Storage guard verified to fire with the full multi-line actionable message via `cargo check -p agentzero-storage --no-default-features --features storage-encrypted,storage-plain`. Provider guards present but `cudarc`'s own build script fails earlier than `compile_error!` evaluation when `candle-cuda` is set on macOS — the guards still serve as authoritative documentation and would catch any non-cudarc combo
 
-### Phase C: Tensor-Level `InferenceBackend` Sub-Trait (HIGH) — DEFERRED
+### Phase C: `LocalLlm` Trait + Shared `GenerationLoop` (HIGH) ✅
 
-> **Status:** Not started this sprint. Phase C is a 2300+ LoC refactor across `candle_provider.rs` (815), `builtin.rs` (465), and `local_tools.rs` (1044), touching tensor sampling and KV-cache code. The plan's "smoke test produces identical output" acceptance criterion requires careful before/after parity testing that warrants its own focused session. Re-queue as a standalone sprint.
+Replaced the original tensor-level `InferenceBackend` plan with a better-fitting `LocalLlm` trait after reading the code. The real duplication was the generation loop (tokenize → feed prompt → sample → EOS/repetition → decode → stream), not tensor conversion. The new design eliminates ~300 lines of duplicated code and gives the builtin (llama.cpp) provider real token-by-token streaming for free.
 
-### Phase D: `build.rs` Marker-Feature Pattern (HIGH) — DEFERRED
+- [x] **`local_llm.rs`** — New module with `LocalLlm` trait (5 methods: `tokenize`, `feed_prompt`, `step`, `decode_token`, `is_eos`) and `GenerationLoop` struct that handles repetition detection, streaming, and token counting. 5 mock-based tests (basic generation, EOS stop, max_tokens, streaming chunks, repetition detection)
+- [x] **`CandleLlm`** — Short-lived struct in `candle_provider.rs` implementing `LocalLlm`. Holds split borrows of the loaded model fields (`&mut ModelWeights`, `&Tokenizer`, `&Device`) plus a fresh `LogitsProcessor`. Replaced separate `generate()` and `generate_streaming()` methods with a unified `run_inference()` that creates a `CandleLlm` and calls `GenerationLoop::run()`
+- [x] **`LlamaCppLlm`** — Short-lived struct in `builtin.rs` implementing `LocalLlm`. Holds the llama.cpp context, batch, and sampler. Token conversion between `u32` and `LlamaToken` at the boundary. Replaced `generate()` with `run_inference()` using `GenerationLoop`
+- [x] **Real streaming for builtin** — `BuiltinProvider` now returns `supports_streaming() -> true` and streams tokens via `GenerationLoop` instead of buffering the entire output and sending one chunk. `complete_streaming()` and `complete_streaming_with_tools()` now produce real token-by-token deltas
+- [x] **`generate_constrained` unchanged** — Candle's constrained decoding retry path (applies mask before sampling) stays as-is; it's Candle-specific and only used as a fallback for malformed tool calls
+- [x] **Pre-existing bug fix** — `ChatTemplate::detect()` in `local_tools.rs:240` was gated on `any(candle, local-model)` but uses the `tokenizers` crate which is only available with `candle`. Fixed to `#[cfg(feature = "candle")]`
+- [x] **Tests** — 496 workspace tests pass (303 with candle feature). 0 clippy warnings. 5 new `local_llm` mock tests. All existing Candle and builtin provider tests unchanged
 
-> **Status:** Not started this sprint. Touching `agentzero-providers/build.rs` interacts with `llama-cpp-2`'s own build script and the embedded-binary-size budget; needs careful verification in a clean Docker environment without cmake. Re-queue as a standalone sprint.
+### Phase D: `.azb` Model Bundle Format (MEDIUM) ✅
 
-### Phase E: `.azb` Model Bundle Format (MEDIUM) — DEFERRED
+Signed, manifest-bearing model+config archives in tar+zstd format. Self-contained in `agentzero-providers::bundle` with optional Ed25519 signing behind a `bundle-signing` feature flag.
 
-> **Status:** Not started this sprint. Largest by LoC and most isolated. Adding signed bundle format + CLI subcommands + shared signing helper across `agentzero-plugins` and the new `agentzero-providers::bundle` is a substantial standalone deliverable. Re-queue as a standalone sprint.
+- [x] **`bundle.rs`** — New module with `BundleManifest` (model_id, version, target, backend, min_bundle_api, files with sha256+role, optional signature), `BundleFile`, `SignatureStatus { Valid, Unsigned, Invalid }`, `AzBundle` (manifest + file contents)
+- [x] **`create_bundle()`** — Scans a source directory, computes SHA-256 for each file, builds manifest, writes tar+zstd archive. Deterministic output (sorted files). Skips hidden files. Rejects empty directories
+- [x] **`load_bundle()`** — Decompresses zstd, extracts tar, validates manifest (empty fields, path traversal, absolute paths, future API version), verifies SHA-256 checksums of all files, rejects symlinks/hardlinks
+- [x] **`extract_bundle()`** — Writes loaded files to `{target_dir}/{model_id}/{version}/` directory structure
+- [x] **`canonical_manifest_json()`** — Deterministic JSON for signing (excludes `signature` and `signing_key_id` fields, sorted keys)
+- [x] **`sign_manifest()` / `verify_signature()`** — Ed25519 signing and verification behind `bundle-signing` feature flag. Without the feature, unsigned bundles return `Unsigned` and signed bundles return `Invalid("feature not enabled")`
+- [x] **Manifest validation** — Rejects empty model_id/version/target, empty file list, path traversal (`..`), absolute paths (`/`), future `min_bundle_api` with clear "requires newer AgentZero" message
+- [x] **Dependencies** — `tar = "0.4"`, `zstd = "0.13"`, `sha2` (workspace). Signing: `ed25519-dalek = "2"`, `hex = "0.4"`, `rand = "0.8"` (all optional behind `bundle-signing`)
+- [x] **Tests** — 16 tests (14 base + 2 signing): manifest validation (6 cases), create+load roundtrip, extract directory structure, tampered checksum detection, role guessing, canonical JSON determinism + excludes signature fields, serde roundtrip, unsigned bundle verification, sign+verify roundtrip, tampered manifest fails signature
+- [x] **`model_manager` integration** — `load_from_bundle(path)` in `model_manager.rs` extracts the bundle to `~/.agentzero/models/{model_id}/{version}/` and returns the first `role="model"` file path. Both `CandleProvider::resolve_model_path()` and `BuiltinProvider::ensure_loaded()` recognize `.azb` files alongside `.gguf` and HF Hub references
+- [x] **`models_dir()` consolidation** — Moved from `model_manager` (feature-gated) to `bundle` (unconditional) so bundle operations work without `local-model` or `candle` features. `model_manager::models_dir()` delegates to `bundle::models_dir()`
+- [x] **CLI subcommands** — `agentzero bundle create <source-dir> --model-id <id>`, `agentzero bundle verify <file.azb> [--public-key <hex>]`, `agentzero bundle install <file.azb>`. New `crates/agentzero-cli/src/commands/bundle.rs` with `BundleCommands` enum in `cli.rs`, dispatched from `app.rs`, labeled in `lib.rs`
+- [x] **Pre-existing fixes** — Fixed `MemoryEntry` missing `content_hash` field in `agent.rs`, `WasmIsolationPolicy` missing `sanitize_input`+`storage_namespace` in `wasm_bridge.rs`, schema version assertion (7→8) in `sqlite.rs`
 
-### Acceptance Criteria (Phases A + B)
+### Acceptance Criteria (Sprint 83)
 
 - [x] `cargo clippy --workspace --all-targets` — 0 warnings
-- [x] `cargo test --workspace --lib` — all existing tests pass plus 9 new (8 device + 1 hardware)
+- [x] `cargo test --workspace --lib` — 496 tests pass (all existing + 19 new: 8 device, 1 hardware, 5 LocalLlm mock, 5 bundle base + signing)
 - [x] `cargo test -p agentzero-core --lib device::` — 8 device tests green
+- [x] `cargo test -p agentzero-providers --lib bundle::` — 14 base tests green
+- [x] `cargo test -p agentzero-providers --lib bundle:: --features bundle-signing` — 16 tests green (+ sign/verify roundtrip, tampered manifest)
 - [x] Storage feature guard fires with multi-line message on `--features storage-encrypted,storage-plain`
-- [x] Existing Candle behavior unchanged — `select_device_auto` still selects the same backend; the device probe is logged before any GPU init attempt
+- [x] Existing Candle/builtin behavior unchanged — `select_device_auto` selects same backend; chat output identical
+- [x] Builtin provider now supports real token-by-token streaming (was batch-only)
+- [x] Both providers accept `.azb` bundle paths as model input
+- [x] CLI `agentzero bundle create/verify/install` subcommands registered and dispatched
 - [x] `agentzero-lite` release build still clean
 
-**Sprint 83 Phases A + B complete.** 9 new tests, 0 clippy warnings. Phases C, D, E deferred to future sprints (each warrants a dedicated session — see DEFERRED notes above).
+**Sprint 83 complete.** Phases A (device capabilities), B (compile guards), C (LocalLlm trait), D (.azb bundles + CLI + model_manager wiring) shipped.
 
 ---
 

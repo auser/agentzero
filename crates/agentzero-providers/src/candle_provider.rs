@@ -23,6 +23,7 @@ use agentzero_core::types::{
 };
 use agentzero_core::Provider;
 
+use crate::local_llm::{GenerationLoop, LocalLlm};
 use crate::local_tools;
 use crate::model_manager;
 
@@ -78,6 +79,62 @@ struct LoadedModel {
 // Candle tensors are not Send, so we ensure all access stays on one thread.
 unsafe impl Send for CandleProvider {}
 unsafe impl Sync for CandleProvider {}
+
+// ---------------------------------------------------------------------------
+// CandleLlm — LocalLlm implementation for Candle
+// ---------------------------------------------------------------------------
+
+/// Short-lived wrapper created for a single generation run.
+///
+/// Holds split borrows of the loaded model's fields plus a fresh
+/// `LogitsProcessor` configured from the provider's sampling settings.
+struct CandleLlm<'a> {
+    weights: &'a mut ModelWeights,
+    tokenizer: &'a Tokenizer,
+    device: &'a Device,
+    logits_processor: LogitsProcessor,
+    eos_token: Option<u32>,
+}
+
+impl LocalLlm for CandleLlm<'_> {
+    fn tokenize(&self, text: &str) -> Result<Vec<u32>> {
+        let encoding = self
+            .tokenizer
+            .encode(text, true)
+            .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
+        Ok(encoding.get_ids().to_vec())
+    }
+
+    fn feed_prompt(&mut self, tokens: &[u32]) -> Result<u32> {
+        let input_tensor = Tensor::new(tokens, self.device)?.unsqueeze(0)?;
+        let logits = self.weights.forward(&input_tensor, 0)?;
+        let logits = logits.squeeze(0)?;
+        let logits = logits.get(logits.dim(0)? - 1)?;
+        Ok(self.logits_processor.sample(&logits)?)
+    }
+
+    fn step(&mut self, token: u32, pos: usize) -> Result<u32> {
+        let input = Tensor::new(&[token], self.device)?.unsqueeze(0)?;
+        let logits = self.weights.forward(&input, pos)?;
+        let logits = logits.squeeze(0)?;
+        let logits = logits.get(logits.dim(0)? - 1)?;
+        Ok(self.logits_processor.sample(&logits)?)
+    }
+
+    fn decode_token(&self, token: u32) -> Result<String> {
+        self.tokenizer
+            .decode(&[token], true)
+            .map_err(|e| anyhow::anyhow!("token decode failed: {e}"))
+    }
+
+    fn is_eos(&self, token: u32) -> bool {
+        self.eos_token == Some(token)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CandleProvider
+// ---------------------------------------------------------------------------
 
 impl CandleProvider {
     /// Create a new Candle provider with the given configuration.
@@ -239,8 +296,14 @@ impl CandleProvider {
         Ok(())
     }
 
-    /// Resolve the model path — download from HF Hub if needed.
+    /// Resolve the model path — load from bundle, local file, or HF Hub.
     fn resolve_model_path(&self) -> Result<PathBuf> {
+        // If it's a .azb bundle, extract and return the model file.
+        if self.config.model.ends_with(".azb") && std::path::Path::new(&self.config.model).exists()
+        {
+            return model_manager::load_from_bundle(std::path::Path::new(&self.config.model));
+        }
+
         // If it's a direct path to a .gguf file, use it
         if self.config.model.ends_with(".gguf") && std::path::Path::new(&self.config.model).exists()
         {
@@ -271,8 +334,16 @@ impl CandleProvider {
             .map_err(|e| anyhow::anyhow!("failed to load tokenizer: {e}"))
     }
 
-    /// Run inference and return generated text + token counts.
-    fn generate(&self, prompt: &str, max_tokens: u32) -> Result<(String, u64, u64)> {
+    /// Run inference with the shared [`GenerationLoop`], optionally streaming.
+    ///
+    /// Locks the inner model, creates a short-lived [`CandleLlm`], tokenizes
+    /// the prompt, validates against the context window, and runs the loop.
+    fn run_inference(
+        &self,
+        prompt: &str,
+        max_tokens: u32,
+        sender: Option<&mpsc::UnboundedSender<StreamChunk>>,
+    ) -> Result<(String, u64, u64)> {
         self.ensure_loaded()?;
 
         let mut guard = self.inner.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -280,12 +351,26 @@ impl CandleProvider {
             .as_mut()
             .context("model not loaded after ensure_loaded")?;
 
-        let encoding = loaded
-            .tokenizer
-            .encode(prompt, true)
-            .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
-        let tokens = encoding.get_ids();
-        let input_tokens = tokens.len() as u64;
+        let eos_token = resolve_eos_token(&loaded.tokenizer, loaded.template);
+
+        let logits_processor = LogitsProcessor::from_sampling(
+            self.config.seed,
+            candle_transformers::generation::Sampling::TopKThenTopP {
+                k: 40,
+                p: self.config.top_p,
+                temperature: self.config.temperature,
+            },
+        );
+
+        let mut llm = CandleLlm {
+            weights: &mut loaded.weights,
+            tokenizer: &loaded.tokenizer,
+            device: &loaded.device,
+            logits_processor,
+            eos_token,
+        };
+
+        let tokens = llm.tokenize(prompt)?;
 
         // Guard: prompt must fit in context window
         let max_input = self.config.n_ctx.saturating_sub(256) as usize;
@@ -299,182 +384,11 @@ impl CandleProvider {
             );
         }
 
-        let eos_token = self.resolve_eos_token(&loaded.tokenizer, loaded.template);
-
-        let mut logits_processor = LogitsProcessor::from_sampling(
-            self.config.seed,
-            candle_transformers::generation::Sampling::TopKThenTopP {
-                k: 40,
-                p: self.config.top_p,
-                temperature: self.config.temperature,
-            },
-        );
-
-        // Feed prompt tokens
-        let input_tensor = Tensor::new(tokens, &loaded.device)?.unsqueeze(0)?;
-        let logits = loaded.weights.forward(&input_tensor, 0)?;
-        let logits = logits.squeeze(0)?;
-        let logits = logits.get(logits.dim(0)? - 1)?;
-        let mut next_token = logits_processor.sample(&logits)?;
-
-        let mut output = String::new();
-        let mut output_tokens = 0u64;
-        let mut pos = tokens.len();
-
-        const REPEAT_WINDOW: usize = 80;
-
-        for _ in 0..max_tokens {
-            // Check EOS
-            if Some(next_token) == eos_token {
-                break;
-            }
-
-            // Decode token
-            let text = loaded
-                .tokenizer
-                .decode(&[next_token], true)
-                .map_err(|e| anyhow::anyhow!("token decode failed: {e}"))?;
-            output.push_str(&text);
-            output_tokens += 1;
-
-            // Repetition detection
-            if output.len() > REPEAT_WINDOW * 2 {
-                let tail = &output[output.len() - REPEAT_WINDOW..];
-                let before_tail = &output[..output.len() - REPEAT_WINDOW];
-                if before_tail.contains(tail) {
-                    warn!(
-                        tokens = output_tokens,
-                        "repetition detected, stopping early"
-                    );
-                    if let Some(pos) = before_tail.rfind(tail) {
-                        output.truncate(pos + REPEAT_WINDOW);
-                    }
-                    break;
-                }
-            }
-
-            // Next token
-            let input = Tensor::new(&[next_token], &loaded.device)?.unsqueeze(0)?;
-            let logits = loaded.weights.forward(&input, pos)?;
-            let logits = logits.squeeze(0)?;
-            let logits = logits.get(logits.dim(0)? - 1)?;
-            next_token = logits_processor.sample(&logits)?;
-            pos += 1;
-        }
-
-        Ok((output, input_tokens, output_tokens))
-    }
-
-    /// Run inference with streaming — sends tokens via mpsc channel as they're generated.
-    fn generate_streaming(
-        &self,
-        prompt: &str,
-        max_tokens: u32,
-        sender: &mpsc::UnboundedSender<StreamChunk>,
-    ) -> Result<(String, u64, u64)> {
-        self.ensure_loaded()?;
-
-        let mut guard = self.inner.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
-        let loaded = guard
-            .as_mut()
-            .context("model not loaded after ensure_loaded")?;
-
-        let encoding = loaded
-            .tokenizer
-            .encode(prompt, true)
-            .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
-        let tokens = encoding.get_ids();
-        let input_tokens = tokens.len() as u64;
-
-        let max_input = self.config.n_ctx.saturating_sub(256) as usize;
-        if tokens.len() > max_input {
-            anyhow::bail!(
-                "prompt too large for context window: {} tokens exceeds limit of {} \
-                 (n_ctx={}). Try reducing tool count or prompt length.",
-                tokens.len(),
-                max_input,
-                self.config.n_ctx,
-            );
-        }
-
-        let eos_token = self.resolve_eos_token(&loaded.tokenizer, loaded.template);
-
-        let mut logits_processor = LogitsProcessor::from_sampling(
-            self.config.seed,
-            candle_transformers::generation::Sampling::TopKThenTopP {
-                k: 40,
-                p: self.config.top_p,
-                temperature: self.config.temperature,
-            },
-        );
-
-        // Feed prompt
-        let input_tensor = Tensor::new(tokens, &loaded.device)?.unsqueeze(0)?;
-        let logits = loaded.weights.forward(&input_tensor, 0)?;
-        let logits = logits.squeeze(0)?;
-        let logits = logits.get(logits.dim(0)? - 1)?;
-        let mut next_token = logits_processor.sample(&logits)?;
-
-        let mut output = String::new();
-        let mut output_tokens = 0u64;
-        let mut pos = tokens.len();
-
-        const REPEAT_WINDOW: usize = 80;
-
-        for _ in 0..max_tokens {
-            if Some(next_token) == eos_token {
-                break;
-            }
-
-            let text = loaded
-                .tokenizer
-                .decode(&[next_token], true)
-                .map_err(|e| anyhow::anyhow!("token decode failed: {e}"))?;
-
-            if !text.is_empty() {
-                // Stream the token
-                let _ = sender.send(StreamChunk {
-                    delta: text.clone(),
-                    done: false,
-                    tool_call_delta: None,
-                });
-            }
-
-            output.push_str(&text);
-            output_tokens += 1;
-
-            // Repetition detection
-            if output.len() > REPEAT_WINDOW * 2 {
-                let tail = &output[output.len() - REPEAT_WINDOW..];
-                let before_tail = &output[..output.len() - REPEAT_WINDOW];
-                if before_tail.contains(tail) {
-                    warn!(
-                        tokens = output_tokens,
-                        "repetition detected, stopping early"
-                    );
-                    if let Some(rpos) = before_tail.rfind(tail) {
-                        output.truncate(rpos + REPEAT_WINDOW);
-                    }
-                    break;
-                }
-            }
-
-            let input = Tensor::new(&[next_token], &loaded.device)?.unsqueeze(0)?;
-            let logits = loaded.weights.forward(&input, pos)?;
-            let logits = logits.squeeze(0)?;
-            let logits = logits.get(logits.dim(0)? - 1)?;
-            next_token = logits_processor.sample(&logits)?;
-            pos += 1;
-        }
-
-        // Send final done chunk
-        let _ = sender.send(StreamChunk {
-            delta: String::new(),
-            done: true,
-            tool_call_delta: None,
-        });
-
-        Ok((output, input_tokens, output_tokens))
+        let gen = GenerationLoop {
+            max_tokens,
+            repeat_window: 80,
+        };
+        gen.run(&mut llm, &tokens, sender)
     }
 
     /// Get the detected chat template from the loaded model.
@@ -484,25 +398,6 @@ impl CandleProvider {
             .ok()
             .and_then(|g| g.as_ref().map(|l| l.template))
             .unwrap_or(local_tools::ChatTemplate::ChatML)
-    }
-
-    /// Resolve the EOS token ID for the loaded model using the detected template.
-    fn resolve_eos_token(
-        &self,
-        tokenizer: &Tokenizer,
-        template: local_tools::ChatTemplate,
-    ) -> Option<u32> {
-        // Try the template's specific EOS token first
-        if let Some(id) = tokenizer.token_to_id(template.eos_token()) {
-            return Some(id);
-        }
-        // Fallback to common EOS tokens
-        for candidate in &["<|im_end|>", "<|endoftext|>", "</s>", "<eos>"] {
-            if let Some(id) = tokenizer.token_to_id(candidate) {
-                return Some(id);
-            }
-        }
-        None
     }
 
     /// Retry tool call generation with constrained decoding.
@@ -570,7 +465,7 @@ impl CandleProvider {
         let tokens = encoding.get_ids();
         let input_tokens = tokens.len() as u64;
 
-        let eos_token = self.resolve_eos_token(&loaded.tokenizer, loaded.template);
+        let eos_token = resolve_eos_token(&loaded.tokenizer, loaded.template);
 
         let mut logits_processor = LogitsProcessor::from_sampling(
             self.config.seed,
@@ -624,6 +519,24 @@ impl CandleProvider {
     }
 }
 
+/// Resolve the EOS token ID for a template against a tokenizer.
+///
+/// Free function so it can be called without borrowing the full provider,
+/// which simplifies the split borrows needed for [`CandleLlm`].
+fn resolve_eos_token(tokenizer: &Tokenizer, template: local_tools::ChatTemplate) -> Option<u32> {
+    // Try the template's specific EOS token first
+    if let Some(id) = tokenizer.token_to_id(template.eos_token()) {
+        return Some(id);
+    }
+    // Fallback to common EOS tokens
+    for candidate in &["<|im_end|>", "<|endoftext|>", "</s>", "<eos>"] {
+        if let Some(id) = tokenizer.token_to_id(candidate) {
+            return Some(id);
+        }
+    }
+    None
+}
+
 #[async_trait]
 impl Provider for CandleProvider {
     fn supports_streaming(&self) -> bool {
@@ -647,7 +560,7 @@ impl Provider for CandleProvider {
         let formatted = local_tools::format_prompt(template, &[user_msg], &[]);
 
         let (output_text, input_tokens, output_tokens) = tokio::task::block_in_place(|| {
-            self.generate(&formatted, self.config.max_output_tokens)
+            self.run_inference(&formatted, self.config.max_output_tokens, None)
         })?;
 
         Ok(ChatResult {
@@ -673,7 +586,7 @@ impl Provider for CandleProvider {
         let formatted = local_tools::format_prompt(template, &[user_msg], &[]);
 
         let (output_text, input_tokens, output_tokens) = tokio::task::block_in_place(|| {
-            self.generate_streaming(&formatted, self.config.max_output_tokens, &sender)
+            self.run_inference(&formatted, self.config.max_output_tokens, Some(&sender))
         })?;
 
         Ok(ChatResult {
@@ -695,8 +608,9 @@ impl Provider for CandleProvider {
         let template = self.loaded_template();
         let prompt = local_tools::format_prompt(template, messages, tools);
 
-        let (raw_output, input_tokens, output_tokens) =
-            tokio::task::block_in_place(|| self.generate(&prompt, self.config.max_output_tokens))?;
+        let (raw_output, input_tokens, output_tokens) = tokio::task::block_in_place(|| {
+            self.run_inference(&prompt, self.config.max_output_tokens, None)
+        })?;
 
         let (text, mut tool_calls) = local_tools::parse_tool_calls(&raw_output);
 
@@ -745,7 +659,7 @@ impl Provider for CandleProvider {
         let prompt = local_tools::format_prompt(template, messages, tools);
 
         let (raw_output, input_tokens, output_tokens) = tokio::task::block_in_place(|| {
-            self.generate_streaming(&prompt, self.config.max_output_tokens, &sender)
+            self.run_inference(&prompt, self.config.max_output_tokens, Some(&sender))
         })?;
 
         // Parse tool calls from accumulated output

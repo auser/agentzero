@@ -28,7 +28,7 @@ impl LlmLayer for PrivacyFirstLayer {
     fn wrap(&self, inner: Arc<dyn Provider>) -> Arc<dyn Provider> {
         Arc::new(PrivacyFirstProvider {
             inner,
-            guard: PiiRedactionGuard::default(),
+            guard: PiiRedactionGuard,
             redactions: Arc::new(AtomicU64::new(0)),
         })
     }
@@ -291,7 +291,7 @@ mod tests {
             inner: Arc::new(CapturingProvider {
                 received_prompts: Mutex::new(Vec::new()),
             }),
-            guard: PiiRedactionGuard::default(),
+            guard: PiiRedactionGuard,
             redactions: Arc::new(AtomicU64::new(0)),
         };
 
@@ -327,7 +327,7 @@ mod tests {
             inner: Arc::new(CapturingProvider {
                 received_prompts: Mutex::new(Vec::new()),
             }),
-            guard: PiiRedactionGuard::default(),
+            guard: PiiRedactionGuard,
             redactions: Arc::new(AtomicU64::new(0)),
         };
 
