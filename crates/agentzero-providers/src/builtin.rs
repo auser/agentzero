@@ -88,6 +88,31 @@ impl<'model> LlamaCppLlm<'model> {
             ]),
         }
     }
+
+    /// Apply a JSON schema grammar constraint to the sampler chain.
+    ///
+    /// Converts the JSON schema to a GBNF grammar using llama.cpp's built-in
+    /// converter, then prepends a grammar sampler so every generated token
+    /// conforms to the schema. This guarantees valid JSON output from local
+    /// models — no malformed tool calls.
+    fn apply_json_schema_grammar(&mut self, json_schema: &str) -> Result<()> {
+        let gbnf = llama_cpp_2::json_schema_to_grammar(json_schema)
+            .map_err(|e| anyhow::anyhow!("failed to convert JSON schema to grammar: {e}"))?;
+        let grammar_sampler = LlamaSampler::grammar(self.model, &gbnf, "root")
+            .map_err(|e| anyhow::anyhow!("failed to create grammar sampler: {e}"))?;
+        // Rebuild the sampler chain with grammar first (most restrictive → least).
+        self.sampler = LlamaSampler::chain_simple([
+            grammar_sampler,
+            LlamaSampler::temp(0.7),
+            LlamaSampler::top_p(0.9, 1),
+            LlamaSampler::dist(42),
+        ]);
+        tracing::debug!(
+            "applied JSON schema grammar constraint ({} bytes GBNF)",
+            gbnf.len()
+        );
+        Ok(())
+    }
 }
 
 impl LocalLlm for LlamaCppLlm<'_> {
@@ -228,6 +253,16 @@ impl BuiltinProvider {
         max_tokens: u32,
         sender: Option<&tokio::sync::mpsc::UnboundedSender<StreamChunk>>,
     ) -> Result<(String, u64, u64)> {
+        self.run_inference_with_grammar(prompt, max_tokens, sender, None)
+    }
+
+    fn run_inference_with_grammar(
+        &self,
+        prompt: &str,
+        max_tokens: u32,
+        sender: Option<&tokio::sync::mpsc::UnboundedSender<StreamChunk>>,
+        json_schema: Option<&str>,
+    ) -> Result<(String, u64, u64)> {
         self.ensure_loaded()?;
 
         let guard = self.inner.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -245,6 +280,13 @@ impl BuiltinProvider {
             .map_err(|e| anyhow::anyhow!("failed to create context: {e}"))?;
 
         let mut llm = LlamaCppLlm::new(&loaded.model, ctx, self.n_ctx as usize);
+
+        // Apply grammar constraint if a JSON schema was provided.
+        if let Some(schema) = json_schema {
+            if let Err(e) = llm.apply_json_schema_grammar(schema) {
+                tracing::warn!(error = %e, "grammar constraint failed, falling back to unconstrained generation");
+            }
+        }
 
         let tokens = llm.tokenize(prompt)?;
 

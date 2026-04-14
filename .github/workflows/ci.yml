@@ -81,6 +81,20 @@ jobs:
           echo "| Default | ${DEFAULT_MB} MB | 28 MB |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Minimal | ${MINIMAL_MB} MB | 8 MB |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Embedded | ${EMBEDDED_MB} MB | 8 MB |" >> "$GITHUB_STEP_SUMMARY"
+      - name: reproducible build check
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          HASH1=$(sha256sum target/release/agentzero | awk '{print $1}')
+          rm target/release/agentzero
+          cargo build -p agentzero --release
+          HASH2=$(sha256sum target/release/agentzero | awk '{print $1}')
+          echo "Build 1: $HASH1"
+          echo "Build 2: $HASH2"
+          if [ "$HASH1" = "$HASH2" ]; then
+            echo "Reproducible build: PASS"
+          else
+            echo "::warning::Reproducible build check failed — hashes differ"
+          fi
       - name: cold-start latency
         if: matrix.os == 'ubuntu-latest'
         run: scripts/bench-cli-startup.sh --iterations 20 --command "--help"
