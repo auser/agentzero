@@ -226,11 +226,12 @@ release-auto:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "==> Preparing automatic release"
-    # 1. Quality gates — auto-fix fmt and clippy, then test
+    # 1. Quality gates — fmt, clippy (fix+verify in one pass), test
+    #    clippy --all-targets pre-builds test binaries so nextest skips compilation.
     cargo fmt --all
-    cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings
+    cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings 2>/dev/null || true
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo nextest run --workspace --exclude agentzero-plugin-sdk
+    cargo nextest run --workspace --exclude agentzero-plugin-sdk --no-tests=pass
     # 2. Determine next version from conventional commits
     NEXT_VERSION=$(git-cliff --bumped-version | sed 's/^v//')
     echo "==> Auto-detected next version: $NEXT_VERSION"

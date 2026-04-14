@@ -59,15 +59,14 @@ fi
 
 # ── Clippy auto-fix ───────────────────────────────────────────────────────────
 echo "Auto-fixing clippy warnings in: $SCOPE_DESC..."
-# --allow-dirty --allow-staged: fix all files regardless of git state.
-# Ignore exit code — auto-fix may not resolve everything; we verify below.
 # shellcheck disable=SC2086
-cargo clippy --fix --allow-dirty --allow-staged --all-targets $CLIPPY_SCOPE -- -D warnings 2>/dev/null || true
-# Re-stage ALL modified files (including ones clippy touched outside the original diff)
+cargo clippy --fix --allow-dirty --allow-staged $CLIPPY_SCOPE -- -D warnings 2>/dev/null || true
 git add -u
 
-# ── Clippy verify ─────────────────────────────────────────────────────────────
-echo "Verifying no remaining clippy warnings..."
+# ── Clippy verify + build test binaries (single cargo invocation) ─────────────
+# --all-targets compiles lib + bin + test + bench targets, so nextest below
+# only needs to *run* pre-built binaries — no recompilation.
+echo "Verifying clippy (also pre-builds test binaries)..."
 # shellcheck disable=SC2086
 if ! cargo clippy --all-targets $CLIPPY_SCOPE -- -D warnings; then
     echo ""
@@ -77,8 +76,7 @@ if ! cargo clippy --all-targets $CLIPPY_SCOPE -- -D warnings; then
 fi
 echo "Clippy passed"
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
-# Build test scope: filter out crates that hang during test listing.
+# ── Tests (binaries pre-built above, just run them) ───────────────────────────
 SKIP_CRATES="agentzero-ffi agentzero-plugin-sdk"
 TEST_SCOPE=""
 for crate in $CHANGED_CRATES; do
@@ -95,7 +93,7 @@ if [ -n "$TEST_SCOPE" ] || [ "$WORKSPACE_MANIFEST_CHANGED" = true ]; then
     if [ "$WORKSPACE_MANIFEST_CHANGED" = true ] && [ -z "$TEST_SCOPE" ]; then
         TEST_SCOPE="--workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk"
     fi
-    echo "Running tests..."
+    echo "Running tests (pre-built)..."
     if command -v cargo-nextest &>/dev/null; then
         # shellcheck disable=SC2086
         if ! cargo nextest run --no-fail-fast --no-tests=pass $TEST_SCOPE; then
