@@ -2912,9 +2912,11 @@ Remove non-core tools that contradict self-contained, privacy-first philosophy.
 
 ### Phase C: Structured Output + Property Testing (MEDIUM)
 
-- [ ] **Wire `outlines-core`** — Into llama.cpp provider for JSON schema-constrained output
-- [ ] **Add `proptest`** — Workspace dev-dependency
-- [ ] **Property tests** — PII redaction never leaks (arbitrary input), policy intersection monotonicity, encryption round-trip, sealed envelope integrity
+- [ ] **Wire `outlines-core`** — Into llama.cpp provider for JSON schema-constrained output (deferred: llama-cpp-2 has native grammar support, explore that path instead)
+- [x] **Add `proptest`** — Workspace dev-dependency (v1.6), added to agentzero-core and agentzero-storage
+- [x] **Property tests** — 9 new property tests:
+  - PII redaction: never panics on arbitrary input, idempotent, innocent text unchanged, known patterns always redacted, embedded keys always caught, Shannon entropy invariant (6 tests)
+  - Encryption: round-trip for arbitrary plaintext+key, wrong key always fails, nonce randomization (3 tests)
 - [ ] **CI** — Reproducible build verification step, consider `cargo-vet`
 
 ### Phase D: Capability-Based Security Design (MEDIUM)

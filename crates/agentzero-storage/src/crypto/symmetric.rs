@@ -117,4 +117,52 @@ mod tests {
             decrypt_json(key, &b).unwrap()
         );
     }
+
+    // ── Property-based tests ──────────────────────────────────────────
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// encrypt → decrypt is always the identity for any plaintext
+            /// and any valid key.
+            #[test]
+            fn round_trip_for_arbitrary_plaintext(
+                plaintext in proptest::collection::vec(any::<u8>(), 0..1024),
+                key in proptest::collection::vec(any::<u8>(), 32..=32)
+            ) {
+                let key_arr: [u8; 32] = key.try_into().expect("key must be 32 bytes");
+                let encrypted = encrypt_json(key_arr, &plaintext).expect("encryption must succeed");
+                let decrypted = decrypt_json(key_arr, &encrypted).expect("decryption must succeed");
+                prop_assert_eq!(plaintext, decrypted, "round-trip failed");
+            }
+
+            /// A different key must always fail to decrypt.
+            #[test]
+            fn wrong_key_always_fails(
+                plaintext in proptest::collection::vec(any::<u8>(), 1..256),
+                key1 in proptest::collection::vec(any::<u8>(), 32..=32),
+                key2 in proptest::collection::vec(any::<u8>(), 32..=32)
+            ) {
+                let k1: [u8; 32] = key1.try_into().expect("key1");
+                let k2: [u8; 32] = key2.try_into().expect("key2");
+                prop_assume!(k1 != k2);
+                let encrypted = encrypt_json(k1, &plaintext).expect("encrypt");
+                prop_assert!(decrypt_json(k2, &encrypted).is_err(), "wrong key should fail");
+            }
+
+            /// Same plaintext + same key always produces different ciphertext
+            /// (nonce randomization).
+            #[test]
+            fn nonce_randomization(
+                plaintext in proptest::collection::vec(any::<u8>(), 1..128),
+                key in proptest::collection::vec(any::<u8>(), 32..=32)
+            ) {
+                let k: [u8; 32] = key.try_into().expect("key");
+                let a = encrypt_json(k, &plaintext).expect("encrypt a");
+                let b = encrypt_json(k, &plaintext).expect("encrypt b");
+                prop_assert_ne!(a, b, "same input must produce different ciphertexts");
+            }
+        }
+    }
 }

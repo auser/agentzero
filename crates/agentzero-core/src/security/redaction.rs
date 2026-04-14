@@ -461,4 +461,90 @@ mod tests {
             );
         }
     }
+
+    // ── Property-based tests ──────────────────────────────────────────
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Any string that contains a known secret pattern must have that
+        /// pattern replaced after redaction — the original secret must
+        /// never survive `redact_text`.
+        #[test]
+        fn pii_redaction_never_leaks_known_patterns() {
+            let known_secrets = vec![
+                ("sk-ant-aBcDeFgHiJkLmNoPqRsT1234", "anthropic_key"),
+                ("AKIAIOSFODNN7EXAMPLE", "aws_access_key"),
+                ("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef1234", "github_token"),
+                ("xoxb-1234567890-abcdefghij", "slack_token"),
+                (
+                    "postgres://user:pass@db.example.com:5432/mydb",
+                    "db_connection_string",
+                ),
+                ("-----BEGIN RSA PRIVATE KEY-----", "ssh_private_key"),
+                (
+                    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123def456",
+                    "jwt",
+                ),
+            ];
+            for (secret, name) in &known_secrets {
+                let redacted = redact_text(secret);
+                assert!(
+                    !redacted.contains(secret),
+                    "{name}: secret survived redaction: input={secret}, output={redacted}"
+                );
+            }
+        }
+
+        proptest! {
+            /// redact_text must never panic on arbitrary input.
+            #[test]
+            fn redact_text_never_panics(input in "\\PC{0,500}") {
+                let _ = redact_text(&input);
+            }
+
+            /// redact_text is idempotent — running it twice produces the same
+            /// result as running it once. This ensures redaction markers
+            /// themselves are not re-matched.
+            #[test]
+            fn redact_text_is_idempotent(input in "\\PC{0,200}") {
+                let once = redact_text(&input);
+                let twice = redact_text(&once);
+                prop_assert_eq!(&once, &twice, "redaction is not idempotent");
+            }
+
+            /// Text without any secrets or PII-like patterns should pass
+            /// through unchanged. We generate only lowercase ASCII letters
+            /// and spaces, which can't trigger any pattern.
+            #[test]
+            fn innocent_text_passes_through(input in "[a-z ]{0,100}") {
+                let redacted = redact_text(&input);
+                prop_assert_eq!(input, redacted, "innocent text was modified by redaction");
+            }
+
+            /// Shannon entropy of a string of identical characters should be 0.
+            #[test]
+            fn entropy_of_uniform_string_is_zero(c in proptest::char::range('a', 'z'), len in 1usize..50) {
+                let s: String = std::iter::repeat(c).take(len).collect();
+                let e = shannon_entropy(&s);
+                prop_assert!((e - 0.0).abs() < f64::EPSILON, "entropy of uniform string should be 0, got {e}");
+            }
+
+            /// Embedding a known API key inside arbitrary prefix/suffix must
+            /// always be redacted.
+            #[test]
+            fn embedded_api_key_always_redacted(
+                prefix in "[a-z ]{0,20}",
+                suffix in "[a-z ]{0,20}"
+            ) {
+                let key = "sk-ant-aBcDeFgHiJkLmNoPqRsT1234";
+                let input = format!("{prefix}{key}{suffix}");
+                let redacted = redact_text(&input);
+                prop_assert!(
+                    !redacted.contains(key),
+                    "API key survived redaction in: {input}"
+                );
+            }
+        }
+    }
 }

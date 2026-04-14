@@ -32,3 +32,6 @@ serde_json.workspace = true
 sha2.workspace = true
 libsql = { version = "0.9.29", default-features = true, optional = true }
 tokio.workspace = true
+
+[dev-dependencies]
+proptest = { workspace = true }
