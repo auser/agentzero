@@ -368,6 +368,17 @@ jobs:
           sha256sum agentzero-* > SHA256SUMS
           echo "--- SHA256SUMS ---"
           cat SHA256SUMS
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign checksums with Sigstore
+        run: cosign sign-blob --yes --output-signature dist/SHA256SUMS.sig --output-certificate dist/SHA256SUMS.pem dist/SHA256SUMS
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: dist/
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:

@@ -210,7 +210,6 @@ pub fn config_to_graph(config: &AgentZeroConfig) -> GraphModel {
             "enable_cron": false,
             "enable_agents_ipc": true,
             "enable_mcp": config.security.mcp.enabled,
-            "enable_composio": false,
             "enable_pushover": false,
             "enable_wasm_plugins": config.security.plugin.wasm_enabled,
             "read_file_max_bytes": config.security.read_file.max_read_bytes,

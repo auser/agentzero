@@ -40,8 +40,8 @@ pub use agentzero_tools::{
 // ── Extended tier re-exports ─────────────────────────────────────────
 #[cfg(feature = "tools-extended")]
 pub use agentzero_tools::{
-    A2aTool, AgentsIpcTool, CanvasTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool,
-    CronListTool, CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, DiscordSearchTool,
+    A2aTool, AgentsIpcTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool, CronListTool,
+    CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, DiscordSearchTool,
     GitOperationsTool, HttpRequestTool, ModelRoutingConfigTool, ProxyConfigTool, ScheduleTool,
     SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, UrlValidationTool,
     WebFetchTool, WebSearchTool,
@@ -54,11 +54,10 @@ pub use agentzero_tools::{DocxReadTool, HtmlExtractTool};
 pub use agent_manage::{create_agent_from_nl, AgentManageTool};
 #[cfg(feature = "tools-full")]
 pub use agentzero_tools::{
-    BrowserOpenTool, BrowserTool, CodexCliTool, ComposioTool, DomainCreateTool, DomainInfoTool,
-    DomainLearnTool, DomainLessonsTool, DomainListTool, DomainSearchTool, DomainUpdateTool,
-    DomainVerifyTool, DomainWorkflowTool, GeminiCliTool, HardwareBoardInfoTool,
-    HardwareMemoryMapTool, HardwareMemoryReadTool, ImageGenTool, OpenCodeCliTool, PushoverTool,
-    TtsTool, VideoGenTool, WasmModuleTool, WasmToolExecTool,
+    BrowserOpenTool, BrowserTool, DomainCreateTool, DomainInfoTool, DomainLearnTool,
+    DomainLessonsTool, DomainListTool, DomainSearchTool, DomainUpdateTool, DomainVerifyTool,
+    DomainWorkflowTool, HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool,
+    PushoverTool, WasmModuleTool, WasmToolExecTool,
 };
 #[cfg(feature = "tools-full")]
 pub use config_manage::ConfigManageTool;
@@ -76,7 +75,7 @@ pub fn default_tools(
     router: Option<ModelRouter>,
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    default_tools_inner(policy, router, delegate_agents, None, None)
+    default_tools_inner(policy, router, delegate_agents, None)
 }
 
 /// Build the default tool set, optionally with an `AgentStore` for the
@@ -87,22 +86,7 @@ pub fn default_tools_with_store(
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
     agent_store: Option<Arc<dyn AgentStoreApi>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    default_tools_inner(policy, router, delegate_agents, agent_store, None)
-}
-
-/// Build the full default tool set with all optional stores.
-///
-/// This is the most complete variant — accepts both an `AgentStore` and a
-/// `CanvasStore` so the gateway (or any caller that has both) can register
-/// every available tool in a single call.
-pub fn default_tools_full(
-    policy: &ToolSecurityPolicy,
-    router: Option<ModelRouter>,
-    delegate_agents: Option<HashMap<String, DelegateConfig>>,
-    agent_store: Option<Arc<dyn AgentStoreApi>>,
-    canvas_store: Option<Arc<agentzero_core::CanvasStore>>,
-) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    default_tools_inner(policy, router, delegate_agents, agent_store, canvas_store)
+    default_tools_inner(policy, router, delegate_agents, agent_store)
 }
 
 fn default_tools_inner(
@@ -110,7 +94,6 @@ fn default_tools_inner(
     router: Option<ModelRouter>,
     delegate_agents: Option<HashMap<String, DelegateConfig>>,
     agent_store: Option<Arc<dyn AgentStoreApi>>,
-    canvas_store: Option<Arc<agentzero_core::CanvasStore>>,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
     // ── Core tier tools (always compiled) ────────────────────────────
     let mut tools: Vec<Box<dyn Tool>> = vec![
@@ -211,12 +194,6 @@ fn default_tools_inner(
             tools.push(Box::new(A2aTool));
         }
 
-        if policy.enable_canvas {
-            if let Some(ref store) = canvas_store {
-                tools.push(Box::new(CanvasTool::new(Arc::clone(store))));
-            }
-        }
-
         if let Some(ref r) = router {
             tools.push(Box::new(ModelRoutingConfigTool::new(r.clone())));
         }
@@ -254,18 +231,6 @@ fn default_tools_inner(
             tools.push(Box::new(BrowserOpenTool::default()));
         }
 
-        if policy.enable_tts {
-            tools.push(Box::new(TtsTool::default()));
-        }
-
-        if policy.enable_image_gen {
-            tools.push(Box::new(ImageGenTool::default()));
-        }
-
-        if policy.enable_video_gen {
-            tools.push(Box::new(VideoGenTool::default()));
-        }
-
         #[cfg(feature = "autopilot")]
         if policy.enable_autopilot {
             tools.push(Box::new(agentzero_autopilot::tools::ProposalCreateTool));
@@ -286,10 +251,6 @@ fn default_tools_inner(
             tools.push(Box::new(DomainLessonsTool));
         }
 
-        if policy.enable_composio {
-            tools.push(Box::new(ComposioTool));
-        }
-
         if policy.enable_pushover {
             tools.push(Box::new(PushoverTool));
         }
@@ -305,18 +266,6 @@ fn default_tools_inner(
             tools.push(Box::new(SkillManageTool));
             tools.push(Box::new(PluginScaffoldTool));
             tools.push(Box::new(insights_report::InsightsReportTool));
-        }
-
-        if policy.enable_claude_code {
-            tools.push(Box::new(
-                agentzero_tools::claude_code::ClaudeCodeTool::default(),
-            ));
-        }
-
-        if policy.enable_cli_harness {
-            tools.push(Box::new(CodexCliTool::default()));
-            tools.push(Box::new(GeminiCliTool::default()));
-            tools.push(Box::new(OpenCodeCliTool::default()));
         }
     }
 
@@ -365,7 +314,7 @@ fn default_tools_inner(
 
     // Suppress unused-variable warnings when tier features are disabled.
     #[cfg(not(feature = "tools-extended"))]
-    let _ = (router, canvas_store);
+    let _ = router;
     #[cfg(not(feature = "tools-full"))]
     let _ = agent_store;
 
@@ -390,7 +339,7 @@ pub fn default_tools_with_depth(
     depth: u8,
     depth_policy: &DepthPolicy,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
-    let all_tools = default_tools_inner(policy, router, delegate_agents, None, None)?;
+    let all_tools = default_tools_inner(policy, router, delegate_agents, None)?;
 
     if depth_policy.rules.is_empty() {
         return Ok(all_tools);

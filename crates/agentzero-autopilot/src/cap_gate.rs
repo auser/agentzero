@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::AutopilotConfig;
-use crate::supabase::SupabaseClient;
+use crate::store::AutopilotStore;
 use crate::types::Proposal;
 
 /// Result of a cap gate check.
@@ -39,11 +39,10 @@ impl CapGate {
     }
 
     /// Check whether a proposal should be approved based on current resource usage.
-    /// Queries Supabase for live state.
     pub async fn check(
         &self,
         proposal: &Proposal,
-        client: &SupabaseClient,
+        client: &dyn AutopilotStore,
     ) -> anyhow::Result<CapGateResult> {
         // Check daily spend
         let daily_spend = client.get_daily_spend().await?;

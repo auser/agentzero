@@ -2866,6 +2866,86 @@ Per the `no_unwrap_in_production` feedback policy, audit non-test code paths in 
 
 ---
 
+## Sprint 85: Strategic Refactor — Strip Scope, Replace Supabase, Security Foundations
+
+**Goal:** Reduce surface area by removing non-core features (Composio, Canvas, Claude Code/Codex CLI/Gemini CLI/OpenCode CLI emulation, media gen), replace Supabase with SQLite/libSQL in autopilot, wire outlines-core into llama.cpp for structured output, add property-based testing for security invariants, and begin capability-based security design.
+
+**Baseline:** Sprint 84 complete. 2500+ tests, 0 clippy warnings.
+
+**Plan:** `specs/plans/45-strategic-review-strip-pull.md`
+
+**Branch:** `refactor/strategic-strip-pull`
+
+**Strategic decisions:**
+- **Identity:** Platform with local default — org_id stays as optional, local-first is the default experience
+- **Inference:** llama.cpp for inference, Candle for embeddings only
+- **Firecracker:** Handled by separate `mvm` project (gomicrovm.com), deprioritized in AgentZero
+
+---
+
+### Phase 0: Pre-Work (CRITICAL)
+
+- [x] **Verify serde backward compat** — Confirmed: no `deny_unknown_fields` in config crate. Existing TOML files with removed sections parse cleanly.
+- [x] **Measure baseline binary sizes** — `agentzero` = 26MB, `agentzero-lite` = 12MB (release builds)
+- [ ] **Update threat model** — Document MCP server, A2A, autopilot attack surfaces added since Sprint 58
+
+### Phase A: Strip Composio + Canvas + CLI Emulation + Media Gen (HIGH)
+
+Remove non-core tools that contradict self-contained, privacy-first philosophy.
+
+- [x] **Remove Composio** — Deleted `composio.rs`, WASM plugin dir, removed from tool registration, config model (`ComposioConfig`), policy, config-ui schema, `FULL_TOOL_NAMES`
+- [x] **Remove Canvas** — Deleted `canvas.rs` (tools + gateway + core), removed `CanvasStore`, gateway routes, state field, `EXTENDED_TOOL_NAMES`
+- [x] **Remove Claude Code / Codex CLI / Gemini CLI / OpenCode CLI** — Deleted 4 tool files, removed from registration, config (`enable_claude_code`, `enable_cli_harness`), policy, `FULL_TOOL_NAMES`
+- [x] **Remove Media Gen** — Deleted `media_gen.rs`, removed from registration, config model (`MediaGenConfig` + 3 sub-structs), policy, `FULL_TOOL_NAMES`
+- [x] **UI cleanup** — Deleted canvas route (`ui/src/routes/canvas/`), removed Canvas nav item + icon from Sidebar.tsx. Config/tools pages are data-driven (no hardcoded feature refs).
+- [x] **Measure binary size delta** — Baseline 26MB full / 12MB lite. Stripped tools were already feature-gated; source reduced by ~3,000 lines, 10 files deleted
+- [x] **Tests** — `cargo clippy --workspace` 0 warnings; `cargo test --workspace --lib` all pass (0 failures)
+
+### Phase B: Replace Supabase with SQLite/libSQL in Autopilot (HIGH)
+
+- [x] **`AutopilotStore` trait** — 14-method async trait: proposals CRUD, missions CRUD + heartbeat + stale query, aggregations (daily spend, concurrent count), events, content upsert
+- [x] **`SqliteAutopilotStore`** — SQLite backend with WAL mode, 5 tables (proposals, missions, events, cap_gate_ledger, content), 5 indexes. 11 unit tests.
+- [ ] **Optional `TursoAutopilotStore`** — Behind `memory-turso` feature for cloud sync (deferred to follow-up)
+- [x] **Remove `SupabaseClient`** — Deleted `supabase.rs`, removed `reqwest` dependency from autopilot crate, removed `supabase_url`/`supabase_service_role_key` config fields
+- [x] **Wire into autopilot** — `CapGate::check()` and `StaleRecovery` now use `&dyn AutopilotStore` instead of `&SupabaseClient`
+- [x] **Tests** — 46 autopilot tests pass offline (11 new store tests + 35 existing). Full workspace: 3,079 tests, 0 failures, 0 clippy warnings
+
+### Phase C: Structured Output + Property Testing (MEDIUM)
+
+- [x] **Structured output via llama.cpp grammar** — Added `apply_json_schema_grammar()` to `LlamaCppLlm` and `run_inference_with_grammar()` to `BuiltinProvider`. Uses llama-cpp-2's native `json_schema_to_grammar()` + `LlamaSampler::grammar()` — no outlines-core needed for this backend.
+- [x] **Add `proptest`** — Workspace dev-dependency (v1.6), added to agentzero-core and agentzero-storage
+- [x] **Property tests** — 9 new property tests:
+  - PII redaction: never panics on arbitrary input, idempotent, innocent text unchanged, known patterns always redacted, embedded keys always caught, Shannon entropy invariant (6 tests)
+  - Encryption: round-trip for arbitrary plaintext+key, wrong key always fails, nonce randomization (3 tests)
+- [x] **CI** — Reproducible build verification step in ci.yml (build twice, compare SHA-256). Sigstore cosign signing of SHA256SUMS in release.yml. SBOM attached to GitHub Release.
+
+### Phase D: Capability-Based Security Design (MEDIUM)
+
+Design document only — no implementation this sprint.
+
+- [x] **Design doc** — `specs/plans/46-capability-based-security.md`: 7 capability types, TOML config examples, per-agent/per-MCP-session/A2A scoping, composition rules (intersect, deny-overrides-grant), 3-phase migration from booleans, boolean-to-capability mapping table, property test specs, 8 files to modify
+- [x] **Threat model update** — 5 attack surfaces documented in design doc: MCP server mode, A2A protocol, autopilot self-modification, memory poisoning, dynamic tool creation
+
+---
+
+### Acceptance Criteria (Sprint 85)
+
+- [x] Composio, Canvas, Claude Code/Codex/Gemini/OpenCode CLI, Media Gen tools removed
+- [x] Existing `agentzero.toml` files with removed sections parse without error (backward compat)
+- [x] Autopilot works fully offline with SQLite (no Supabase dependency)
+- [ ] Optional Turso sync behind `memory-turso` feature (deferred to follow-up)
+- [x] Structured output via llama.cpp native grammar (replaces outlines-core approach for this backend)
+- [x] Property-based tests cover PII redaction and encryption (9 proptest tests)
+- [x] Capability-based security design document written
+- [x] Binary size measured before/after stripping (26MB full, 12MB lite baseline)
+- [x] `cargo clippy --workspace` — 0 warnings
+- [x] All tests pass (3,079+)
+- [x] UI cleaned: canvas route + nav removed, config/tools pages data-driven
+- [x] CI: reproducible build check + Sigstore signing + SBOM in release
+- [x] Threat model additions documented (MCP, A2A, autopilot, memory, codegen)
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

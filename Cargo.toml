@@ -96,6 +96,7 @@ hnsw_rs = "0.3"
 hf-hub = "0.5"
 indicatif = "0.17"
 wiremock = "0.6"
+proptest = "1.6"
 
 [profile.release]
 codegen-units = 1

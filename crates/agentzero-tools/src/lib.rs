@@ -7,7 +7,7 @@
 //! Tools are organized into three tiers for embedded binary size reduction:
 //! - **Core**: Always compiled — essential file I/O, shell, search, memory, delegation.
 //! - **Extended**: Common but optional — web, git, cron, approval, IPC.
-//! - **Full**: Everything else — browser, hardware, composio, domain, media, etc.
+//! - **Full**: Everything else — browser, hardware, domain, WASM, etc.
 
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +23,7 @@ pub enum ToolTier {
     /// ~20 additional tools: web search, HTTP, git, cron, approval, IPC.
     /// Compiled with `tools-extended` or `tools-full` features.
     Extended = 1,
-    /// Everything else: browser, hardware, composio, domain, media, etc.
+    /// Everything else: browser, hardware, domain, WASM, etc.
     /// Compiled with `tools-full` feature (the default).
     Full = 2,
 }
@@ -113,7 +113,6 @@ pub fn tool_tier(name: &str) -> ToolTier {
         | "docx_read"
         | "html_extract"
         | "a2a"
-        | "canvas"
         | "chunk_document" => ToolTier::Extended,
 
         // --- Full tier: everything else ---
@@ -151,8 +150,6 @@ pub mod write_file;
 pub mod a2a;
 #[cfg(feature = "tools-extended")]
 pub mod agents_ipc;
-#[cfg(feature = "tools-extended")]
-pub mod canvas;
 #[cfg(feature = "tools-extended")]
 pub mod cli_discovery;
 #[cfg(feature = "tools-extended")]
@@ -197,23 +194,11 @@ pub mod browser;
 #[cfg(feature = "tools-full")]
 pub mod browser_open;
 #[cfg(feature = "tools-full")]
-pub mod claude_code;
-#[cfg(feature = "tools-full")]
-pub mod codex_cli;
-#[cfg(feature = "tools-full")]
-pub mod composio;
-#[cfg(feature = "tools-full")]
 pub mod domain;
-#[cfg(feature = "tools-full")]
-pub mod gemini_cli;
 #[cfg(feature = "tools-full")]
 pub mod hardware;
 #[cfg(feature = "tools-full")]
 pub mod hardware_tools;
-#[cfg(feature = "tools-full")]
-pub mod media_gen;
-#[cfg(feature = "tools-full")]
-pub mod opencode_cli;
 #[cfg(feature = "tools-full")]
 pub mod pushover;
 #[cfg(feature = "tools-full")]
@@ -252,8 +237,6 @@ pub use write_file::{WriteFilePolicy, WriteFileTool};
 pub use a2a::A2aTool;
 #[cfg(feature = "tools-extended")]
 pub use agents_ipc::AgentsIpcTool;
-#[cfg(feature = "tools-extended")]
-pub use canvas::CanvasTool;
 #[cfg(feature = "tools-extended")]
 pub use cli_discovery::CliDiscoveryTool;
 #[cfg(feature = "tools-extended")]
@@ -318,22 +301,12 @@ pub use browser::BrowserTool;
 #[cfg(feature = "tools-full")]
 pub use browser_open::BrowserOpenTool;
 #[cfg(feature = "tools-full")]
-pub use codex_cli::CodexCliTool;
-#[cfg(feature = "tools-full")]
-pub use composio::ComposioTool;
-#[cfg(feature = "tools-full")]
 pub use domain::{
     DomainCreateTool, DomainInfoTool, DomainLearnTool, DomainLessonsTool, DomainListTool,
     DomainSearchTool, DomainUpdateTool, DomainVerifyTool, DomainWorkflowTool,
 };
 #[cfg(feature = "tools-full")]
-pub use gemini_cli::GeminiCliTool;
-#[cfg(feature = "tools-full")]
 pub use hardware_tools::{HardwareBoardInfoTool, HardwareMemoryMapTool, HardwareMemoryReadTool};
-#[cfg(feature = "tools-full")]
-pub use media_gen::{ImageGenTool, TtsTool, VideoGenTool};
-#[cfg(feature = "tools-full")]
-pub use opencode_cli::OpenCodeCliTool;
 #[cfg(feature = "tools-full")]
 pub use pushover::PushoverTool;
 #[cfg(feature = "tools-full")]
@@ -373,12 +346,8 @@ pub struct ToolSecurityPolicy {
     pub enable_url_validation: bool,
     pub enable_agents_ipc: bool,
     pub enable_html_extract: bool,
-    pub enable_composio: bool,
     pub enable_pushover: bool,
     pub enable_code_interpreter: bool,
-    pub enable_tts: bool,
-    pub enable_image_gen: bool,
-    pub enable_video_gen: bool,
     pub enable_autopilot: bool,
     pub enable_agent_manage: bool,
     pub enable_domain_tools: bool,
@@ -389,12 +358,6 @@ pub struct ToolSecurityPolicy {
     pub wasm_dev_plugin_dir: Option<PathBuf>,
     /// Enable A2A (Agent-to-Agent) protocol tool for dynamic agent discovery and messaging.
     pub enable_a2a_tool: bool,
-    /// Enable canvas tool for live rich content rendering.
-    pub enable_canvas: bool,
-    /// Enable Claude Code delegation tool (spawns `claude` CLI as subprocess).
-    pub enable_claude_code: bool,
-    /// Enable CLI harness tools (Codex, Gemini, OpenCode CLI delegation).
-    pub enable_cli_harness: bool,
     /// Enable dynamic tool creation at runtime (tool_create tool).
     pub enable_dynamic_tools: bool,
 }
@@ -457,12 +420,8 @@ impl ToolSecurityPolicy {
             enable_url_validation: false,
             enable_agents_ipc: true,
             enable_html_extract: false,
-            enable_composio: false,
             enable_pushover: false,
             enable_code_interpreter: false,
-            enable_tts: false,
-            enable_image_gen: false,
-            enable_video_gen: false,
             enable_autopilot: false,
             enable_agent_manage: false,
             enable_domain_tools: false,
@@ -472,9 +431,6 @@ impl ToolSecurityPolicy {
             wasm_project_plugin_dir: None,
             wasm_dev_plugin_dir: None,
             enable_a2a_tool: false,
-            enable_canvas: false,
-            enable_claude_code: false,
-            enable_cli_harness: false,
             enable_dynamic_tools: false,
         }
     }
@@ -534,17 +490,12 @@ pub const EXTENDED_TOOL_NAMES: &[&str] = &[
     "docx_read",
     "html_extract",
     "a2a",
-    "canvas",
 ];
 
 /// All known full-tier tool names (not including core or extended).
 pub const FULL_TOOL_NAMES: &[&str] = &[
     "browser",
     "browser_open",
-    "tts",
-    "image_gen",
-    "video_gen",
-    "composio",
     "pushover",
     "hardware_board_info",
     "hardware_memory_map",
@@ -560,10 +511,6 @@ pub const FULL_TOOL_NAMES: &[&str] = &[
     "domain_workflow",
     "wasm_module",
     "wasm_tool_exec",
-    "claude_code",
-    "codex_cli",
-    "gemini_cli",
-    "opencode_cli",
     "agent_manage",
     "config_manage",
     "skill_manage",
@@ -665,7 +612,6 @@ mod tests {
             "proxy_config",
             "model_routing_config",
             "a2a",
-            "canvas",
         ];
         for name in &extended_tools {
             assert_eq!(

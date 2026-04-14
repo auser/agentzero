@@ -4,7 +4,6 @@ use crate::token_store::save_paired_tokens;
 use agentzero_channels::pipeline::PerplexityFilterSettings;
 use agentzero_channels::ChannelRegistry;
 use agentzero_config::AgentZeroConfig;
-use agentzero_core::canvas::CanvasStore;
 use agentzero_core::{EventBus, MemoryStore};
 use agentzero_orchestrator::{
     AgentStore, JobStore, NodeStatus, PresenceStore, TemplateStore, WorkflowStore,
@@ -105,7 +104,6 @@ pub(crate) struct GatewayState {
     /// A2A task store for Agent-to-Agent protocol.
     pub(crate) a2a_tasks: crate::a2a::A2aTaskStore,
     /// Canvas store for live canvas rendering.
-    pub(crate) canvas_store: Option<Arc<CanvasStore>>,
     /// Workflow store for visual workflow definitions.
     pub(crate) workflow_store: Option<Arc<WorkflowStore>>,
     /// Template store for reusable workflow templates.
@@ -175,7 +173,6 @@ impl GatewayState {
             agent_store: None,
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
-            canvas_store: None,
             workflow_store: None,
             template_store: None,
             workflow_runs: Arc::new(Mutex::new(HashMap::new())),
@@ -203,13 +200,6 @@ impl GatewayState {
         store: Arc<std::sync::Mutex<agentzero_infra::tool_recipes::RecipeStore>>,
     ) -> Self {
         self.recipe_store = Some(store);
-        self
-    }
-
-    /// Set the canvas store for live canvas rendering.
-    #[allow(dead_code)]
-    pub(crate) fn with_canvas_store(mut self, store: Arc<CanvasStore>) -> Self {
-        self.canvas_store = Some(store);
         self
     }
 
@@ -446,7 +436,6 @@ impl GatewayState {
             agent_store: None,
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
-            canvas_store: None,
             workflow_store: None,
             template_store: None,
             workflow_runs: Arc::new(Mutex::new(HashMap::new())),
@@ -499,7 +488,6 @@ impl GatewayState {
             agent_store: None,
             mcp_server: None,
             a2a_tasks: crate::a2a::A2aTaskStore::new(),
-            canvas_store: None,
             workflow_store: None,
             template_store: None,
             workflow_runs: Arc::new(Mutex::new(HashMap::new())),

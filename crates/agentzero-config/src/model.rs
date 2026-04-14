@@ -20,7 +20,6 @@ pub struct AgentZeroConfig {
     pub http_request: HttpRequestConfig,
     pub web_fetch: WebFetchConfig,
     pub web_search: WebSearchConfig,
-    pub composio: ComposioConfig,
     pub pushover: PushoverConfig,
     pub cost: CostConfig,
     pub identity: IdentityConfig,
@@ -40,7 +39,6 @@ pub struct AgentZeroConfig {
     pub swarm: SwarmConfig,
     pub logging: LoggingConfig,
     pub code_interpreter: CodeInterpreterConfig,
-    pub media_gen: MediaGenConfig,
     pub autopilot: AutopilotConfig,
     #[serde(default)]
     pub a2a: A2aConfig,
@@ -366,7 +364,6 @@ impl AgentZeroConfig {
         mask(&mut copy.web_search.perplexity_api_key);
         mask(&mut copy.web_search.exa_api_key);
         mask(&mut copy.web_search.jina_api_key);
-        mask(&mut copy.composio.api_key);
         mask(&mut copy.skills.clawhub_token);
         mask(&mut copy.gateway.node_control.auth_token);
         for profile in copy.model_providers.values_mut() {
@@ -634,12 +631,6 @@ pub struct AgentSettings {
     /// Enable self-configuration tools (config_manage, skill_manage, plugin_scaffold).
     #[serde(default)]
     pub enable_self_config: bool,
-    /// Enable the Claude Code delegation tool (spawns `claude` CLI as subprocess).
-    #[serde(default)]
-    pub enable_claude_code: bool,
-    /// Enable CLI harness tools (Codex, Gemini, OpenCode CLI delegation).
-    #[serde(default)]
-    pub enable_cli_harness: bool,
     /// Enable dynamic tool creation at runtime (tool_create tool).
     #[serde(default)]
     pub enable_dynamic_tools: Option<bool>,
@@ -674,8 +665,6 @@ impl Default for AgentSettings {
             enable_agent_manage: false,
             enable_domain_tools: false,
             enable_self_config: false,
-            enable_claude_code: false,
-            enable_cli_harness: false,
             enable_dynamic_tools: None,
         }
     }
@@ -1313,14 +1302,6 @@ impl Default for WebSearchConfig {
             recency_filter: None,
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-#[serde(default)]
-pub struct ComposioConfig {
-    pub enabled: bool,
-    pub api_key: Option<String>,
-    pub entity_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -2515,88 +2496,6 @@ impl Default for SummarizationSettings {
 }
 
 // ---------------------------------------------------------------------------
-// Media Generation (TTS, Image, Video)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(default)]
-pub struct MediaGenConfig {
-    pub tts: TtsToolConfig,
-    pub image_gen: ImageGenToolConfig,
-    pub video_gen: VideoGenToolConfig,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct TtsToolConfig {
-    pub enabled: bool,
-    pub api_url: String,
-    pub api_key_env: String,
-    pub model: String,
-    pub default_voice: String,
-    pub timeout_ms: u64,
-}
-
-impl Default for TtsToolConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            api_url: "https://api.openai.com/v1/audio/speech".into(),
-            api_key_env: "OPENAI_API_KEY".into(),
-            model: "tts-1".into(),
-            default_voice: "alloy".into(),
-            timeout_ms: 60_000,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct ImageGenToolConfig {
-    pub enabled: bool,
-    pub api_url: String,
-    pub api_key_env: String,
-    pub model: String,
-    pub default_size: String,
-    pub timeout_ms: u64,
-}
-
-impl Default for ImageGenToolConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            api_url: "https://api.openai.com/v1/images/generations".into(),
-            api_key_env: "OPENAI_API_KEY".into(),
-            model: "dall-e-3".into(),
-            default_size: "1024x1024".into(),
-            timeout_ms: 60_000,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct VideoGenToolConfig {
-    pub enabled: bool,
-    pub api_url: String,
-    pub api_key_env: String,
-    pub model: String,
-    pub timeout_ms: u64,
-}
-
-impl Default for VideoGenToolConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            api_url: "https://api.minimax.chat/v1/video_generation".into(),
-            api_key_env: "MINIMAX_API_KEY".into(),
-            model: "MiniMax-Hailuo-2.3".into(),
-            timeout_ms: 300_000,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Autopilot configuration
 // ---------------------------------------------------------------------------
 
@@ -2643,9 +2542,9 @@ fn default_autopilot_enabled() -> bool {
 #[serde(default)]
 pub struct AutopilotConfig {
     pub enabled: bool,
-    pub supabase_url: String,
+    /// Path to the autopilot SQLite database file.
     #[serde(default)]
-    pub supabase_service_role_key: String,
+    pub db_path: Option<String>,
     #[serde(default = "default_autopilot_max_daily_spend")]
     pub max_daily_spend_cents: u64,
     #[serde(default = "default_autopilot_max_concurrent")]
