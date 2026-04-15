@@ -525,6 +525,7 @@ fn handler(input: ToolInput) -> ToolOutput {
     //   cargo nextest run -p agentzero-infra --features wasm-plugins -E 'test(codegen)'
 
     #[tokio::test]
+    #[cfg(feature = "wasm-plugins")]
     async fn check_toolchain_passes() {
         let dir = temp_dir();
         let compiler = CodegenCompiler::new(&dir);
