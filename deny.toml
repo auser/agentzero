@@ -5,12 +5,15 @@
 unmaintained = "workspace"
 unsound = "workspace"
 ignore = [
+    # rand 0.8.5 unsound with custom logger + thread_rng reseeding.
+    # Direct dep in multiple crates; requires 0.8→0.9 migration (breaking).
+    # Condition requires custom logger accessing rand::rng() during reseed —
+    # not applicable to our usage. Tracked for eventual migration to rand 0.9+.
+    "RUSTSEC-2026-0097",
+    #
     # Transitive unmaintained/unsound deps are already filtered by the
     # `unmaintained = "workspace"` / `unsound = "workspace"` settings above,
-    # so they do NOT need ignore entries here (which would cause
-    # "no crate matched advisory criteria" errors in cargo-deny).
-    #
-    # Known transitive issues tracked for eventual upstream upgrades:
+    # so they do NOT need ignore entries here. Known transitive issues:
     #   paste 1.0.15 (RUSTSEC-2024-0436) via ratatui
     #   fxhash 0.2.1 (RUSTSEC-2025-0057) via inquire
     #   rustls-pemfile 2.2.0 (RUSTSEC-2025-0134) via libsql

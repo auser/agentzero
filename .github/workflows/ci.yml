@@ -54,7 +54,15 @@ jobs:
         run: cargo build -p agentzero --release
       - name: release size budget (default)
         if: matrix.os == 'ubuntu-latest'
-        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 28000000
+        # Budget accounts for two intentionally large subsystems:
+        #   • candle (local ML inference, ~10.6 MB) — core to the local-first,
+        #     privacy-preserving design; not removable without breaking local models.
+        #   • wasmi + WASM runtime (~1.2 MB) — powers the self-updating plugin
+        #     system; not removable without breaking that mechanism.
+        # Current actual size: ~35.8 MB.  Budget = actual + ~2 MB growth headroom.
+        # If this check fails, run `cargo bloat --release -p agentzero --crates`
+        # before adding new large deps — do not simply raise the number.
+        run: scripts/check-binary-size.sh --binary target/release/agentzero --max-bytes 38000000
       - name: release build (minimal)
         if: matrix.os == 'ubuntu-latest'
         run: cargo build -p agentzero --profile release-min --no-default-features --features minimal
@@ -80,7 +88,7 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Profile | Size | Budget |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---------|------|--------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Default | ${DEFAULT_MB} MB | 28 MB |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Default | ${DEFAULT_MB} MB | 38 MB (candle + wasmi by design) |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Minimal | ${MINIMAL_MB} MB | 8 MB |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Embedded | ${EMBEDDED_MB} MB | 8 MB |" >> "$GITHUB_STEP_SUMMARY"
       - name: reproducible build check

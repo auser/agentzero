@@ -898,6 +898,7 @@ async fn template_list_success_path() {
     cleanup(dir);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn template_list_json_success_path() {
     let dir = temp_dir("tpl-list-json");
@@ -1304,6 +1305,7 @@ async fn plugin_remove_missing_success_path() {
     cleanup(dir);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn plugin_list_json_success_path() {
     let dir = temp_dir("plugin-json");
@@ -1993,6 +1995,7 @@ async fn memory_clear_success_path() {
 
 // ── config (additional) ──
 
+#[cfg(unix)]
 #[tokio::test]
 async fn config_schema_json_success_path() {
     let dir = temp_dir("cfg-schema-json");

@@ -52,7 +52,14 @@ fi
 
 summary_path="$output_dir/summary.txt"
 
-cargo llvm-cov --workspace --lcov --output-path "$lcov_path" | tee "$summary_path"
+# Exclude agentzero-plugin-sdk (WASM-only crate, incompatible with
+# -C instrument-coverage which requires profiler_builtins).
+# The codegen tests in agentzero-infra also spawn wasm32-wasip1 compilation
+# that inherits coverage flags, so we exclude integration tests via --lib.
+cargo llvm-cov --workspace \
+  --exclude agentzero-plugin-sdk \
+  --lib \
+  --lcov --output-path "$lcov_path" | tee "$summary_path"
 
 echo "PASS: coverage artifacts generated"
 echo "  summary: $summary_path"

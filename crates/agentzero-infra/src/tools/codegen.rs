@@ -147,6 +147,11 @@ serde_json = "1"
             .arg("build")
             .arg("--release")
             .env("CARGO_TARGET_DIR", &shared_target)
+            // Unset coverage instrumentation flags so that wasm32-wasip1 builds
+            // spawned by codegen tests don't inherit `-C instrument-coverage` from
+            // cargo-llvm-cov, which is incompatible with the wasm target.
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
             .current_dir(project_dir)
             .output()
             .await
@@ -539,6 +544,11 @@ fn handler(input: ToolInput) -> ToolOutput {
     #[tokio::test]
     #[cfg(feature = "wasm-plugins")]
     async fn compile_and_execute_codegen_tool() {
+        // Coverage instrumentation flags are incompatible with wasm compilation.
+        if std::env::var_os("LLVM_PROFILE_FILE").is_some() {
+            eprintln!("skipping: wasm codegen incompatible with llvm-cov instrumentation");
+            return;
+        }
         let dir = temp_dir();
         let compiler = CodegenCompiler {
             codegen_dir: dir.join("codegen"),
@@ -594,6 +604,11 @@ fn handler(input: ToolInput) -> ToolOutput {
     #[tokio::test]
     #[cfg(feature = "wasm-plugins")]
     async fn compile_with_extra_deps() {
+        // Coverage instrumentation flags are incompatible with wasm compilation.
+        if std::env::var_os("LLVM_PROFILE_FILE").is_some() {
+            eprintln!("skipping: wasm codegen incompatible with llvm-cov instrumentation");
+            return;
+        }
         let dir = temp_dir();
         let compiler = CodegenCompiler {
             codegen_dir: dir.join("codegen"),
