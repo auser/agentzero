@@ -44,7 +44,9 @@ use std::io::Read;
 /// Captures stdout by redirecting fd 1 to a pipe.
 /// Drop restores the original fd.
 struct StdoutCapture {
+    #[cfg_attr(not(unix), allow(dead_code))]
     original_fd: i32,
+    #[cfg_attr(not(unix), allow(dead_code))]
     reader: std::fs::File,
 }
 
