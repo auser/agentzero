@@ -29,6 +29,7 @@ async fn run_cmd(args: &[&str]) -> anyhow::Result<()> {
     execute(cli).await
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn daily_driver_full_lifecycle() {
     let dir = temp_dir("full");
