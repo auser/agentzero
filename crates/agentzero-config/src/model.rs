@@ -1,4 +1,5 @@
 use agentzero_core::common::local_providers::is_local_provider;
+use agentzero_core::security::Capability;
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -48,6 +49,30 @@ pub struct AgentZeroConfig {
     pub guardrails: GuardrailsConfig,
     #[serde(default)]
     pub local: LocalModelConfig,
+    /// Capability-based security grants (Phase 1 — opt-in alongside `enable_*` booleans).
+    ///
+    /// When this list is **empty** (the default), all security decisions fall back to the
+    /// existing `[security]` boolean flags — existing configs are completely unaffected.
+    ///
+    /// When non-empty, the `CapabilitySet` built from this list drives `ToolSecurityPolicy`
+    /// permission checks instead of the individual `enable_*` fields.
+    ///
+    /// TOML usage:
+    /// ```toml
+    /// [[capabilities]]
+    /// type = "tool"
+    /// name = "web_search"
+    ///
+    /// [[capabilities]]
+    /// type = "file_write"
+    /// glob = "src/**/*.rs"
+    ///
+    /// [[capabilities]]
+    /// type = "shell"
+    /// commands = ["ls", "git", "cargo"]
+    /// ```
+    #[serde(default)]
+    pub capabilities: Vec<Capability>,
 }
 
 impl AgentZeroConfig {
@@ -1738,6 +1763,14 @@ pub struct DelegateAgentConfig {
     /// Defaults to `SystemPrompt` (inject as LLM system prompt).
     #[serde(default)]
     pub instruction_method: agentzero_core::delegation::InstructionMethod,
+    /// Per-agent capability grants (opt-in, Phase 1).
+    ///
+    /// When empty (the default), this agent inherits all capabilities from the
+    /// parent policy's `ToolSecurityPolicy`. When non-empty, the parent's
+    /// `CapabilitySet` is intersected with the set built from this list before
+    /// being applied to the agent — the child can never exceed the parent.
+    #[serde(default)]
+    pub capabilities: Vec<Capability>,
 }
 
 impl Default for DelegateAgentConfig {
@@ -1758,6 +1791,7 @@ impl Default for DelegateAgentConfig {
             max_cost_usd: None,
             max_tokens: None,
             instruction_method: agentzero_core::delegation::InstructionMethod::default(),
+            capabilities: Vec::new(),
         }
     }
 }

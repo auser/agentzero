@@ -327,7 +327,7 @@ For WASM plugin authors, the standalone SDK has no internal dependencies:
 cargo add agentzero-plugin-sdk
 ```
 
-## Workspace layout (16 crates)
+## Workspace layout (19 crates)
 
 | Crate | Purpose |
 |---|---|
@@ -335,20 +335,21 @@ cargo add agentzero-plugin-sdk
 | `bin/agentzero-lite` | Lightweight gateway binary for edge devices |
 | `agentzero-core` | Traits (`Provider`, `Tool`, `MemoryStore`, `Channel`), types, security policy |
 | `agentzero-config` | TOML config, loader, policy validation |
+| `agentzero-config-ui` | Browser-based configuration editor; React app served by gateway on /config-ui |
 | `agentzero-storage` | Encrypted persistence (SQLCipher, XChaCha20Poly1305, Turso) |
 | `agentzero-providers` | LLM providers (Anthropic, OpenAI-compatible) |
 | `agentzero-auth` | Authentication profiles (API keys, OAuth) |
+| `agentzero-autopilot` | Self-running company engine (proposals, missions, cap gates, SQLite store) |
 | `agentzero-tools` | 50+ tool implementations |
 | `agentzero-infra` | Runtime orchestration, tool wiring, MCP |
+| `agentzero-macros` | Proc macros: `#[tool_fn]` and codegen helpers |
 | `agentzero-channels` | Channel backends + outbound leak guard |
 | `agentzero-plugins` | WASM plugin runtime with integrity checks |
 | `agentzero-plugin-sdk` | Plugin SDK for third-party authors |
 | `agentzero-gateway` | HTTP/WebSocket gateway |
 | `agentzero-orchestrator` | Swarm coordination, event bus, pipelines |
-| `agentzero-ffi` | FFI bindings (Swift/Kotlin/Python/Node) |
 | `agentzero-cli` | CLI commands and UX |
 | `agentzero-testkit` | Shared test utilities |
-| `agentzero-bench` | Benchmark suite |
 
 ## Security
 

@@ -2887,7 +2887,7 @@ Per the `no_unwrap_in_production` feedback policy, audit non-test code paths in 
 
 - [x] **Verify serde backward compat** — Confirmed: no `deny_unknown_fields` in config crate. Existing TOML files with removed sections parse cleanly.
 - [x] **Measure baseline binary sizes** — `agentzero` = 26MB, `agentzero-lite` = 12MB (release builds)
-- [ ] **Update threat model** — Document MCP server, A2A, autopilot attack surfaces added since Sprint 58
+- [x] **Update threat model** — Document MCP server, A2A, autopilot attack surfaces added since Sprint 58 (→ Sprint 86 Phase 0)
 
 ### Phase A: Strip Composio + Canvas + CLI Emulation + Media Gen (HIGH)
 
@@ -2943,6 +2943,250 @@ Design document only — no implementation this sprint.
 - [x] UI cleaned: canvas route + nav removed, config/tools pages data-driven
 - [x] CI: reproducible build check + Sigstore signing + SBOM in release
 - [x] Threat model additions documented (MCP, A2A, autopilot, memory, codegen)
+
+---
+
+## Sprint 86: Alignment & Security Foundations — Close Sprint 85, Capability Security Phase 1, Doc Fixes, Security Audit
+
+**Goal:** Complete Sprint 85's remaining open items, implement capability-based security Phase 1 (backward-compatible alongside existing boolean flags), fix the stale README workspace layout, audit the already-shipped swarm/self-evolution code for capability gaps, and document the channel simplification tier decision.
+
+**Baseline:** Sprint 85 complete (minus threat model doc update). 3,079 tests, 0 clippy warnings.
+
+**Plan:** `specs/plans/47-alignment-and-security-foundations.md`
+
+**Branch:** `feat/sprint-86-alignment-security-foundations`
+
+---
+
+### Phase 0: Close Sprint 85 (CRITICAL)
+
+- [x] **Update `docs/security/THREAT_MODEL.md`** — Add section "Attack Surfaces Added Since Sprint 58" covering each of the 5 surfaces with threat description, current mitigation state, and residual risk level: MCP server mode (no per-session scoping — HIGH residual), A2A protocol (no capability negotiation — HIGH residual), autopilot self-modification (created entities inherit full server policy — MEDIUM), memory poisoning (no per-agent memory scope — MEDIUM), dynamic tool creation (inherits server-wide permissions, kill-switch is coarse gate — HIGH residual)
+- [x] **Mirror to `site/src/content/docs/security/threat-model.md`** — same 5 surfaces, user-facing language, links to config docs
+- [x] **Check off Sprint 85 Phase 0 threat model item** in `SPRINT.md`
+
+### Phase A: Capability-Based Security — Phase 1 Implementation (HIGH)
+
+Backward-compatible. When `capabilities` is empty (the default for all current configs), behavior is 100% identical to today. The new code path only activates when a `[[capabilities]]` array is present.
+
+**Reference:** `specs/plans/46-capability-based-security.md` · `specs/plans/47-alignment-and-security-foundations.md`
+
+#### A1: Core Types
+
+File: `crates/agentzero-core/src/security/capability.rs` (new)
+
+- [x] **`Capability` enum** — 7 serde-tagged variants (`#[serde(tag = "type", rename_all = "snake_case")]`): `FileRead { glob: String }`, `FileWrite { glob: String }`, `Shell { commands: Vec<String> }`, `Network { domains: Vec<String> }`, `Tool { name: String }`, `Memory { scope: Option<String> }`, `Delegate { max_capabilities: Vec<Capability> }`
+- [x] **`CapabilitySet` struct** — `capabilities: Vec<Capability>`, `deny: Vec<Capability>`
+  - `fn intersect(&self, other: &CapabilitySet) -> CapabilitySet` — child never exceeds parent
+  - `fn allows_tool(&self, name: &str) -> bool` — glob matching via `glob` crate (`mcp:*`, `cron_*`)
+  - `fn allows_file_read(&self, path: &Path) -> bool`
+  - `fn allows_file_write(&self, path: &Path) -> bool`
+  - `fn allows_network(&self, domain: &str) -> bool`
+  - `fn allows_shell(&self, command: &str) -> bool`
+  - `fn is_empty(&self) -> bool` — true when `capabilities` is empty (triggers boolean fallback)
+  - Deny always overrides grant — checked before grants in all `allows_*` methods
+  - `impl Default` — empty grants + deny (`is_empty` → true)
+- [x] **Register in `agentzero_core::security` module** — `pub mod capability;` + re-export
+
+#### A2: Config Model Integration
+
+File: `crates/agentzero-config/src/model.rs`
+
+- [x] **Top-level `capabilities`** — add `#[serde(default)] pub capabilities: Vec<Capability>` to `AgentZeroConfig`; default empty (backward compat)
+- [x] **Per-agent `capabilities`** — add `#[serde(default)] pub capabilities: Vec<Capability>` to `AgentConfig`; default empty
+
+#### A3: Policy Builder — Backward-Compatible Fallback
+
+File: `crates/agentzero-config/src/policy.rs`
+
+- [x] **`build_capability_set(config)`** — returns populated `CapabilitySet` when `config.capabilities` is non-empty; `CapabilitySet::default()` otherwise (is_empty → callers fall back to booleans)
+- [x] **`CapabilitySet::from_policy_booleans(policy)`** — 21-entry mapping table from Plan 46; used by unit tests only to verify boolean parity
+
+#### A4: `ToolSecurityPolicy` Integration
+
+- [x] **Locate `ToolSecurityPolicy`** — run `hypergrep --layer 1 "ToolSecurityPolicy" .` to confirm owning file
+- [x] **Add `capability_set: CapabilitySet` field** with `#[serde(default)]` — non-breaking; defaults to `CapabilitySet::default()` (is_empty)
+- [x] **Update `allows_tool()` check site** — if `self.capability_set.is_empty()`, use existing boolean logic; else use `self.capability_set.allows_tool(name)`
+- [x] **Verify zero regressions** — all existing tests pass without config changes
+
+#### A5: Property Tests
+
+- [x] **Intersection subset invariant** (`proptest`) — every action allowed by `a.intersect(b)` is allowed by both `a` and `b`
+- [x] **Deny overrides grant** (`proptest`) — `CapabilitySet::new([cap.clone()], [cap])` never allows `cap`
+- [x] **Empty set** — unit tests: all 5 `allows_*` methods return `false` on `CapabilitySet::default()`
+- [x] **Boolean fidelity** — 21 unit tests: `from_policy_booleans()` with each boolean set produces the expected `allows_tool()` result
+
+#### A6: Deprecation Warning + Docs
+
+- [x] **Startup deprecation log** — if any `enable_*` boolean is `true` AND `capabilities` is empty, emit `WARN` once per process via `std::sync::OnceLock`: `"security.enable_* fields are deprecated; migrate to [[capabilities]] array"`
+- [x] **Config reference** — `site/src/content/docs/config/reference.md` — add `[[capabilities]]` section with TOML examples from Plan 46 (tool glob, file_write, shell allowlist, network domains, per-agent)
+- [x] **Architecture doc** — `site/src/content/docs/architecture/index.md` — note `CapabilitySet` alongside legacy boolean flags, pointer to config reference
+
+### Phase B: README Workspace Layout Fix (MEDIUM)
+
+File: `README.md`
+
+- [x] **Remove `agentzero-ffi` row** — crate not yet in workspace
+- [x] **Remove `agentzero-bench` row** — crate not yet in workspace
+- [x] **Add `agentzero-config-ui`** — `Browser-based configuration editor; React app served by gateway on /config-ui`
+- [x] **Add `agentzero-autopilot`** — `Self-running company engine (proposals, missions, cap gates, SQLite store)`
+- [x] **Add `agentzero-macros`** — `Proc macros: \`#[tool_fn]\` and codegen helpers`
+- [x] **Fix crate count** — update "16 crates" to correct count; verify by cross-checking `Cargo.toml` workspace members
+
+### Phase C: Self-Evolution & Swarm Security Audit (MEDIUM)
+
+Sprints 72–75 are **complete**. This phase audits the security posture of the shipped systems and documents precisely how Phase A's `CapabilitySet` will close the known gaps. No feature code is written here — only verification, annotation, and documentation.
+
+- [x] **Audit `DynamicToolRegistry`** — locate where `enable_dynamic_tools` is checked; verify that when Phase A4's `allows_tool("tool_create")` check is in place it blocks creation for uncapable agents; if the check site is unreachable from Phase A4, add it as an explicit A4 sub-task
+- [x] **Add code comment to `DynamicToolRegistry`** — note that `Tool { name: "tool_create" }` capability is the authoritative gate; `enable_dynamic_tools` bool is a coarser kill-switch fallback
+- [x] **Audit `ToolEvolver` (AUTO-FIX/AUTO-IMPROVE)** — confirm evolved `DynamicToolDef` records do not expand effective permissions beyond the original; if no capability field exists on `DynamicToolDef`, flag adding `capability_set: Option<CapabilitySet>` as a Phase A4 sub-task
+- [x] **Add code comment to `ToolEvolver`** — note the capability inheritance requirement for AUTO-FIX/AUTO-IMPROVE
+- [x] **Audit `SwarmSupervisor` sub-agent spawning** — confirm where each swarm node's agent is instantiated and what policy it receives; verify that once Phase A4 is complete the swarm passes the intersection of the swarm's `CapabilitySet` and the per-node config's capability set; if not, add as A4 sub-task
+- [x] **Add code comment to `SwarmSupervisor`** — note the intended capability intersection model
+- [x] **Add `// NOTE:` to `MicroVmSandbox`** — "maintenance-only; new Firecracker investment belongs to the `mvm` project (gomicrovm.com) — see BACKLOG-EXTERNAL.md"
+- [x] **Add entry to `BACKLOG-EXTERNAL.md`** — "MicroVM Agent Backends" section: `MicroVmSandbox` exists as proof-of-concept; production Firecracker isolation handled by `mvm`; integrate as external dependency when interface stabilizes
+- [x] **Document audit findings** — update `specs/plans/47-alignment-and-security-foundations.md` with which gaps Phase A closes automatically, which require additional sub-tasks, and which are accepted risks
+
+### Phase D: Channel Simplification Audit (LOW)
+
+- [x] **Audit all channel integrations** — for each: integration test exists? CI coverage? feature-gated? community usage evidence?
+- [x] **Produce tier classification table** — Tier 1 (keep + CI-tested): Telegram, Discord, Slack, Webhook / Tier 2 (keep + feature-gate `channels-extended`): Matrix, Email, IRC, Nostr, WhatsApp, SMS / Tier 3 (BACKLOG-EXTERNAL): any channel with no tests and no usage evidence
+- [x] **Ensure Tier 1 channels each have ≥1 integration test stub** — add stub if missing (struct creation + mock send, no live credentials required)
+- [x] **Update `site/src/content/docs/reference/channels.md`** — add tier table with maintenance commitment description
+- [x] **Update `BACKLOG-EXTERNAL.md`** if any channels are reclassified to Tier 3
+
+---
+
+### Acceptance Criteria (Sprint 86)
+
+- [x] `docs/security/THREAT_MODEL.md` + site mirror updated with 5 new attack surfaces
+- [x] Sprint 85 Phase 0 threat model item checked off
+- [x] `Capability` enum and `CapabilitySet` exist in `agentzero_core::security`
+- [x] `CapabilitySet::intersect()` property-tested (1,000+ iterations, intersection ⊆ both inputs)
+- [x] Deny-overrides-grant property test passes (1,000+ iterations)
+- [x] All 5 `allows_*` methods return `false` on empty `CapabilitySet`
+- [x] 21 boolean-to-capability mapping unit tests all pass
+- [x] `ToolSecurityPolicy` has `capability_set: CapabilitySet` field; boolean fallback intact when empty
+- [x] Existing configs without `[[capabilities]]` behave identically to before (zero regressions)
+- [x] Config model accepts `[[capabilities]]` at top-level and per-agent
+- [x] Deprecation warning fires once at startup when `enable_*` booleans used without capability upgrade
+- [x] Config reference + architecture docs updated
+- [x] README workspace table matches `Cargo.toml` (correct crate count, no stale or missing entries)
+- [x] `DynamicToolRegistry`, `ToolEvolver`, and `SwarmSupervisor` have capability audit comments
+- [x] `MicroVmSandbox` has maintenance-only comment; BACKLOG-EXTERNAL updated
+- [x] Audit findings documented in `specs/plans/47-alignment-and-security-foundations.md`
+- [x] Channel tier classification table written and published to site docs
+- [x] Tier 1 channels each have ≥1 integration test
+- [x] `cargo fmt --all` — 0 violations
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
+- [x] `cargo test --workspace` — all tests pass (3,079+ baseline)
+
+---
+
+## Sprint 87: Capability Enforcement — Wire `CapabilitySet` Through Dynamic Tools, Delegation & Swarms
+
+**Goal:** Close the three security gaps identified in Sprint 86 Phase C audit: (1) dynamic tools inherit server-wide permissions instead of their creator's capability set, (2) delegate sub-agents are not capability-intersected against the parent's `CapabilitySet`, (3) swarm nodes inherit the full server policy instead of root ∩ node. Also stabilise the pre-existing flaky gossip relay test and land the deferred `TursoAutopilotStore` optional backend.
+
+**Baseline:** Sprint 86 complete. 57 capability tests pass. `CapabilitySet` is defined and wired into `ToolSecurityPolicy` but not yet propagated through dynamic tool creation, delegation, or swarm dispatch.
+
+**Plan:** `specs/plans/48-capability-enforcement.md`
+
+**Branch:** `feat/sprint-87-capability-enforcement`
+
+---
+
+### Phase A: `DynamicToolDef` Capability Bounding (HIGH)
+
+Every dynamically created or evolved tool must carry the `CapabilitySet` of its creator agent so that it can never be invoked by agents lacking the required permissions and so evolved tools never silently expand their own scope.
+
+**File:** `crates/agentzero-infra/src/tools/dynamic_tool.rs`
+
+- [ ] **Add `capability_set` to `DynamicToolDef`** — `#[serde(default, skip_serializing_if = "Option::is_none")] pub creator_capability_set: Option<CapabilitySet>`. Using `Option` preserves backward-compat: existing JSON records without the field deserialize to `None`.
+- [ ] **`DynamicToolRegistry::register()` signature** — accept an optional `creator_cap_set: Option<CapabilitySet>` parameter; store it on the `DynamicToolDef`. Callers that do not supply one pass `None` (existing callers unchanged).
+- [ ] **`ToolEvolver::maybe_fix()` + `maybe_improve()`** — when producing an evolved `DynamicToolDef` (calling `registry.register()`), clone the original def's `creator_capability_set` onto the evolved def. Capability inheritance: evolved tools can never exceed their origin tool's creator scope.
+- [ ] **`ToolSecurityPolicy::allows_tool()` dynamic check** — after the existing capability/boolean check, if the resolved `DynamicToolDef` (looked up from `DynamicToolRegistry`) carries a non-`None` `creator_capability_set`, verify the *caller's* capability set satisfies it via `intersect`. If not, deny. (Lookup is O(1) via the existing `DynamicToolRegistry::get_def()` method.)
+- [ ] **Unit tests** — (a) register a tool with a capability set, verify `get_def()` returns it; (b) evolve a tool, verify the evolved def carries the same capability set as the original; (c) `allows_tool` with a mismatched caller capability set returns `false`.
+
+**File:** `crates/agentzero-infra/src/tool_evolver.rs`
+
+- [ ] **Thread `creator_capability_set` through `evolve_tool()`** — the internal helper that builds the new `DynamicToolDef` must set `creator_capability_set` to the original's value before calling `registry.register()`.
+
+---
+
+### Phase B: `DelegateConfig` Capability Field + `build_delegate_agents` Intersection (HIGH)
+
+Delegate sub-agents must never receive more permissions than the intersection of the root config's `CapabilitySet` and their own per-agent `[[capabilities]]` list.
+
+**File:** `crates/agentzero-core/src/delegation.rs`
+
+- [ ] **Add `capability_set: CapabilitySet` to `DelegateConfig`** — `#[serde(default)]`; defaults to `CapabilitySet::default()` (is_empty → fallback to booleans). Backward-compatible: existing serialised `DelegateConfig` values deserialise cleanly.
+
+**File:** `crates/agentzero-infra/src/runtime.rs`
+
+- [ ] **`build_delegate_agents()` signature** — add `root_cap_set: &CapabilitySet` parameter (sourced from the already-built `ToolSecurityPolicy::capability_set` in `build_runtime_execution`).
+- [ ] **Populate `DelegateConfig::capability_set`** — for each agent entry, call `build_agent_capability_set(root_cap_set, &agent.capabilities)` (already implemented in `agentzero-config/src/policy.rs`) and assign to `DelegateConfig::capability_set`.
+- [ ] **Update the one `build_delegate_agents` call site** in `build_runtime_execution` to pass `&policy.capability_set`.
+- [ ] **`DelegateTool` consumption** — locate where `DelegateConfig` is consumed to build a sub-agent `ToolSecurityPolicy` (grep for `DelegateTool` in `agentzero-tools`); if `config.capability_set` is non-empty, set it on the sub-agent's `ToolSecurityPolicy` before the sub-agent runs.
+- [ ] **Unit tests** — (a) root cap set ∩ agent cap set = expected intersection; (b) agent with no per-agent capabilities gets `CapabilitySet::default()` (fallback to booleans); (c) agent cap set that exceeds root is clipped to root.
+
+---
+
+### Phase C: Swarm Node Capability Propagation (HIGH)
+
+Swarm nodes (sub-agents in a `PlannedWorkflow`) must receive at most the intersection of the swarm's root `CapabilitySet` and the per-node agent config's capability set.
+
+**File:** `crates/agentzero-infra/src/runtime.rs`
+
+- [ ] **Add `capability_set_override: CapabilitySet` to `RunAgentRequest`** — `#[serde(skip)] #[allow(dead_code)]`, defaults to `CapabilitySet::default()`. The `skip` prevents accidental serialisation; callers that don't set it get the is_empty fallback.
+- [ ] **Honour override in `build_runtime_execution`** — after calling `load_tool_security_policy`, if `req.capability_set_override` is non-empty, replace `policy.capability_set` with it.
+- [ ] **Locate swarm dispatch** — run `hypergrep --callers "build_runtime_execution" .` to confirm the swarm entry point (expected: `build_swarm_with_presence` or similar in `agentzero-infra` or `agentzero-gateway`).
+- [ ] **Set `capability_set_override` on swarm node requests** — in the swarm node dispatch path, compute `root_cap.intersect(&node_cap)` (where `node_cap` comes from `DelegateAgentConfig::capabilities`) and assign to `RunAgentRequest::capability_set_override`.
+- [ ] **Unit test** — build two `RunAgentRequest`s with different `capability_set_override` values from the same config; verify each produces a `RuntimeExecution` whose `ToolSecurityPolicy::capability_set` matches the override.
+
+---
+
+### Phase D: Gossip Relay Test Stabilisation (LOW)
+
+`gossip::tests::two_node_gossip_relay` uses hard-coded ports 19871/19872, causing intermittent `EADDRINUSE` failures on CI. Fix it to use ephemeral port binding throughout.
+
+**File:** `crates/agentzero-orchestrator/src/gossip.rs`
+
+- [ ] **Expose bound address from `GossipEventBus::start()`** — add `pub fn local_addr(&self) -> SocketAddr` that returns the address the listener actually bound to. The underlying `TcpListener` must be kept around (or its address queried) before the accept loop consumes it.
+- [ ] **Rewrite `two_node_gossip_relay`** — bind both nodes to `127.0.0.1:0`, query `local_addr()` on bus1, pass it as the peer for bus2. Remove the `drop` + restart dance and the hard-coded port constants.
+- [ ] **Increase relay timeout** from current value to 2 s to absorb scheduling jitter on slow CI runners.
+- [ ] **Verify** — run `cargo test -p agentzero-orchestrator --lib -- gossip` 3× in succession; all must pass.
+
+---
+
+### Phase E: `TursoAutopilotStore` Optional Backend (LOW)
+
+Deferred from Sprint 85 Phase B. Provides cloud sync for autopilot data via Turso/libSQL, gated behind the `memory-turso` feature flag so it never affects default builds.
+
+**File:** `crates/agentzero-autopilot/src/store.rs` (or `turso_store.rs` — new file)
+
+- [ ] **`TursoAutopilotStore`** — implement the `AutopilotStore` trait (14 methods) against a `libsql::Database` connection. Re-use the same SQL schema as `SqliteAutopilotStore` (WAL mode, 5 tables). Feature-gate the entire impl behind `#[cfg(feature = "memory-turso")]`.
+- [ ] **`Cargo.toml`** — add `memory-turso` feature to `agentzero-autopilot`; gate `libsql` dependency behind it.
+- [ ] **Config wiring** — in `agentzero-config`, when `memory-turso` is enabled and `autopilot.turso_url` is set, instantiate `TursoAutopilotStore` instead of `SqliteAutopilotStore`.
+- [ ] **Tests** — at least 3 round-trip tests (create proposal, update status, query stale) behind `#[cfg(feature = "memory-turso")]`.
+- [ ] **CI** — standard CI does not enable `memory-turso`; add an optional matrix entry to verify it compiles when the feature is set.
+
+---
+
+### Acceptance Criteria (Sprint 87)
+
+- [ ] `DynamicToolDef` has `creator_capability_set: Option<CapabilitySet>` field; existing JSON records deserialise without error
+- [ ] `DynamicToolRegistry::register()` accepts and stores a creator capability set
+- [ ] `ToolEvolver` evolves tools with the original's capability set preserved (not widened)
+- [ ] `DelegateConfig` has `capability_set: CapabilitySet` field; existing callers compile without changes
+- [ ] `build_delegate_agents()` intersects root cap set with per-agent cap set for each delegate
+- [ ] A delegate agent with stricter per-agent capabilities cannot exceed the root policy
+- [ ] `RunAgentRequest` has `capability_set_override: CapabilitySet`; swarm dispatch sets it
+- [ ] Swarm nodes receive root ∩ node capabilities (property test: node never exceeds root)
+- [ ] `two_node_gossip_relay` passes 3× in succession without hard-coded ports
+- [ ] `TursoAutopilotStore` compiles and 3 round-trip tests pass under `--features memory-turso`
+- [ ] Default build (no `memory-turso`) unaffected — `cargo build` still clean
+- [ ] `cargo fmt --all` — 0 violations
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
+- [ ] `cargo test --workspace` — all tests pass (previous baseline + new tests)
 
 ---
 

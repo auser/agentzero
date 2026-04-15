@@ -327,6 +327,16 @@ pub struct McpServerDef {
 
 #[derive(Debug, Clone)]
 pub struct ToolSecurityPolicy {
+    /// Capability-based security grants (Phase 1 — opt-in).
+    ///
+    /// When `is_empty()` returns `true` (the default), all permission decisions
+    /// fall back to the `enable_*` boolean fields below — existing configs are
+    /// completely unaffected.
+    ///
+    /// When non-empty (opt-in via `[[capabilities]]` in `agentzero.toml`),
+    /// the capability set drives all `allows_tool` checks and the `enable_*`
+    /// booleans are ignored.
+    pub capability_set: agentzero_core::security::CapabilitySet,
     pub read_file: ReadFilePolicy,
     pub write_file: WriteFilePolicy,
     pub shell: ShellPolicy,
@@ -363,8 +373,52 @@ pub struct ToolSecurityPolicy {
 }
 
 impl ToolSecurityPolicy {
+    /// Returns `true` if the given tool name is permitted.
+    ///
+    /// When a non-empty `CapabilitySet` is configured, delegates to
+    /// `capability_set.allows_tool()`. Otherwise falls back to the legacy
+    /// `enable_*` boolean fields — this is the behavior for all existing
+    /// configs that do not specify `[[capabilities]]`.
+    pub fn allows_tool(&self, tool_name: &str) -> bool {
+        if !self.capability_set.is_empty() {
+            return self.capability_set.allows_tool(tool_name);
+        }
+        // Legacy boolean fallback — checked by the tool registration code in
+        // agentzero-infra (default_tools_inner). This method provides a single
+        // place for callers that want a unified check without knowing which path
+        // is active.
+        match tool_name {
+            "git_operations" | "git_diff" | "git_log" | "git_status" | "git_commit"
+            | "git_branch" | "git_clone" => self.enable_git,
+            t if t.starts_with("cron") => self.enable_cron,
+            "web_search" => self.enable_web_search,
+            "browser" => self.enable_browser,
+            "browser_open" => self.enable_browser_open,
+            "http_request" => self.enable_http_request,
+            "web_fetch" => self.enable_web_fetch,
+            "url_validation" => self.enable_url_validation,
+            "agents_ipc" => self.enable_agents_ipc,
+            "html_extract" => self.enable_html_extract,
+            "pushover" => self.enable_pushover,
+            "code_interpreter" => self.enable_code_interpreter,
+            t if t.starts_with("proposal") || t.starts_with("mission") => self.enable_autopilot,
+            "agent_manage" => self.enable_agent_manage,
+            t if t.starts_with("domain") => self.enable_domain_tools,
+            "config_manage" | "skill_manage" => self.enable_self_config,
+            t if t.starts_with("wasm") => self.enable_wasm_plugins,
+            "a2a" => self.enable_a2a_tool,
+            "tool_create" => self.enable_dynamic_tools,
+            "write_file" => self.enable_write_file,
+            t if t.starts_with("mcp") => self.enable_mcp,
+            // Unknown tools default to denied unless the caller's registration
+            // logic has already admitted them.
+            _ => false,
+        }
+    }
+
     pub fn default_for_workspace(workspace_root: PathBuf) -> Self {
         Self {
+            capability_set: agentzero_core::security::CapabilitySet::default(),
             read_file: ReadFilePolicy::default_for_root(workspace_root.clone()),
             write_file: WriteFilePolicy::default_for_root(workspace_root),
             shell: ShellPolicy::default_with_commands(vec![

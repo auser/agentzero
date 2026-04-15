@@ -398,6 +398,19 @@ impl Default for MicroVmConfig {
     }
 }
 
+/// # Maintenance-only (Sprint 85)
+///
+/// This sandbox backend is maintenance-only. New Firecracker/microVM investment belongs
+/// to the `mvm` project (gomicrovm.com). AgentZero will integrate `mvm` as an external
+/// dependency when the interface stabilizes.
+///
+/// See `specs/BACKLOG-EXTERNAL.md` for the full rationale.
+///
+/// > **NOTE: Maintenance-only.** New Firecracker investment belongs to the `mvm`
+/// > project (gomicrovm.com) — see `BACKLOG-EXTERNAL.md` § "MicroVM Agent Backends".
+/// > This type exists as a proof-of-concept; do not add new features here without
+/// > first checking whether they should land in the external `mvm` integration instead.
+///
 /// Firecracker/Cloud Hypervisor microVM sandbox for kernel-level isolation.
 ///
 /// Each agent runs in its own microVM with:

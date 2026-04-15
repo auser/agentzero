@@ -187,3 +187,43 @@ The plugin system (`agentzero-plugins` crate) introduces additional attack surfa
 - **Local-only content to cloud channels** — Mitigated: `dispatch_with_boundary()` blocks messages with `local_only` boundary from being sent to non-local channels (Telegram, Discord, Slack, etc.). Only `cli` and `transcription` are treated as local.
 - **Leak guard boundary check** — Mitigated: `LeakGuardPolicy.check_boundary()` provides defense-in-depth by blocking `local_only` content from non-local channel dispatch, independent of the channel registry's own check.
 - **IK handshake with wrong server key** — Mitigated: IK pattern validates server static key during handshake; mismatched keys cause handshake failure rather than silent degradation.
+
+## New Attack Surfaces (Sprint 85–86)
+
+The following attack surfaces were added to AgentZero in Sprints 39–85 and are not yet covered in the sections above. Mitigations marked **[PLANNED]** are scheduled for Sprint 86 Phase A (Capability-Based Security Phase 1).
+
+### MCP Server Mode
+
+When AgentZero runs as an MCP server (stdio or HTTP), connecting clients receive access to the full tool set enabled on the server — there is no per-session capability narrowing.
+
+- **Full tool set exposure** — Risk: a connecting MCP client (e.g., Claude Desktop) receives all tools enabled in `agentzero.toml`, regardless of what the client actually needs. Residual risk: HIGH.
+- **Mitigation [PLANNED]** — Sprint 86 Phase A will introduce `CapabilitySet` and per-MCP-session scoping via `[mcp_sessions.<name>]` config. Until then, limit enabled tools to the minimum needed when running in MCP server mode.
+
+### A2A Protocol (Agent-to-Agent)
+
+External agents can submit tasks to AgentZero via the A2A protocol. Currently there is no capability negotiation — tasks run with the full server policy.
+
+- **Unconstrained task execution** — Risk: an external A2A agent can trigger any enabled tool by submitting an appropriate task. Residual risk: HIGH.
+- **Mitigation [PLANNED]** — Sprint 86 Phase A will enforce `max_capabilities` from `[a2a.agents.<name>]` config via capability intersection at task submission time.
+
+### Autopilot Self-Modification
+
+The autopilot engine can create new agents and missions. Created entities currently inherit the full server-wide `ToolSecurityPolicy` rather than being bounded by the autopilot's own permissions.
+
+- **Permission escalation via proposal** — Risk: an autopilot proposal that creates a new agent could grant that agent more capabilities than the autopilot itself has. Residual risk: MEDIUM.
+- **Mitigation [PLANNED]** — The `Delegate { max_capabilities }` capability type (Sprint 86 Phase A) will enforce that created agents receive at most the intersection of the creator's capability set and the new agent's configured capabilities.
+
+### Memory Poisoning
+
+Agents writing to shared memory can influence other agents' reasoning. There is currently no per-agent memory isolation enforced at the policy layer.
+
+- **Cross-agent memory influence** — Risk: a compromised or misbehaving agent writing adversarial content to memory (e.g., prompt injection payloads) can affect all other agents reading from the same memory store. Residual risk: MEDIUM.
+- **Mitigation [PLANNED]** — The `Memory { scope: Option<String> }` capability (Sprint 86 Phase A) will allow per-agent memory scoping. Defense-in-depth: `MemoryEntry.privacy_boundary` (Sprint 25) already provides boundary-level isolation; capability scoping adds finer-grained agent-level control.
+
+### Dynamic Tool Creation
+
+AgentZero can create WASM tools at runtime via the `tool_create` tool (Sprint 73). Dynamically created tools currently execute with the server's full policy rather than being bounded by the creator agent's permissions.
+
+- **Permission inheritance beyond creator scope** — Risk: an agent with limited permissions creates a dynamic tool; that tool executes with server-wide permissions on its next invocation. Residual risk: HIGH until Sprint 86 complete.
+- **Current mitigation** — `enable_dynamic_tools = false` by default (fail-closed). Sprint 84B added a runtime kill-switch (`codegen_enabled` in config). These are coarse gates.
+- **Mitigation [PLANNED]** — Sprint 86 Phase A will wire `CapabilitySet` into `ToolSecurityPolicy`. Dynamically created tools will be capability-checked via `allows_tool("tool_create")`, and `DynamicToolDef` will carry a `capability_set` field so evolved tools cannot exceed their creator's scope.

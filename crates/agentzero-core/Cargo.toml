@@ -13,6 +13,7 @@ privacy = ["dep:snow", "dep:x25519-dalek", "dep:crypto_box", "dep:base64"]
 
 [dependencies]
 anyhow.workspace = true
+glob.workspace = true
 async-trait.workspace = true
 dirs = "5"
 futures-util.workspace = true

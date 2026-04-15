@@ -1,6 +1,9 @@
 use crate::loader::load;
-use crate::model::{McpServerEntry, McpServersFile};
+use crate::model::{AgentZeroConfig, McpServerEntry, McpServersFile};
 use agentzero_core::common::paths::MCP_CONFIG_FILE;
+#[allow(unused_imports)]
+use agentzero_core::security::PolicyBooleanFlags;
+use agentzero_core::security::{Capability, CapabilitySet};
 use agentzero_tools::{
     McpServerDef, ReadFilePolicy, ShellPolicy, ToolSecurityPolicy, UrlAccessPolicy,
     WebSearchConfig, WriteFilePolicy,
@@ -8,6 +11,84 @@ use agentzero_tools::{
 use anyhow::Context;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
+
+/// Build a [`CapabilitySet`] from the top-level `capabilities` list in config.
+///
+/// When `config.capabilities` is empty (the default for all existing configs),
+/// returns `CapabilitySet::default()` whose [`is_empty`][CapabilitySet::is_empty]
+/// method returns `true`. Callers that see `is_empty() == true` must fall back
+/// to the legacy `enable_*` boolean checks on `ToolSecurityPolicy` — this
+/// preserves complete backward compatibility.
+///
+/// When `config.capabilities` is non-empty (opt-in via `[[capabilities]]` in
+/// `agentzero.toml`), the returned set drives all permission checks and the
+/// legacy booleans are ignored.
+pub fn build_capability_set(config: &AgentZeroConfig) -> CapabilitySet {
+    if config.capabilities.is_empty() {
+        return CapabilitySet::default();
+    }
+    CapabilitySet::new(config.capabilities.clone(), vec![])
+}
+
+/// Build a [`CapabilitySet`] for a named delegate agent.
+///
+/// When the agent has no per-agent `capabilities` configured, returns
+/// `CapabilitySet::default()` (is_empty → true) so the parent policy's
+/// capability set is used unchanged.
+///
+/// When the agent has capabilities configured, returns the intersection of
+/// the parent's capability set and the agent's configured set — the child
+/// can never exceed the parent.
+#[allow(dead_code)]
+pub fn build_agent_capability_set(
+    parent: &CapabilitySet,
+    agent_capabilities: &[Capability],
+) -> CapabilitySet {
+    if agent_capabilities.is_empty() {
+        return CapabilitySet::default();
+    }
+    let agent_set = CapabilitySet::new(agent_capabilities.to_vec(), vec![]);
+    parent.intersect(&agent_set)
+}
+
+/// Emit a once-per-process deprecation warning when `enable_*` boolean flags
+/// are active but no `[[capabilities]]` array has been configured.
+///
+/// The warning fires at most once per process (guarded by [`OnceLock`]).
+/// It points users toward the migration path documented in the config reference.
+fn maybe_warn_boolean_deprecation(config: &crate::model::AgentZeroConfig) {
+    static WARNED: OnceLock<()> = OnceLock::new();
+
+    if !config.capabilities.is_empty() {
+        // Capabilities explicitly configured — no warning needed.
+        return;
+    }
+
+    let has_any_boolean = config.security.write_file.enabled
+        || config.security.mcp.enabled
+        || config.web_search.enabled
+        || config.browser.enabled
+        || config.http_request.enabled
+        || config.web_fetch.enabled
+        || config.autopilot.enabled
+        || config.agent.enable_agent_manage
+        || config.agent.enable_domain_tools
+        || config.agent.enable_self_config
+        || config.agent.enable_dynamic_tools.unwrap_or(false)
+        || config.a2a.enabled
+        || config.security.plugin.wasm_enabled;
+
+    if has_any_boolean {
+        WARNED.get_or_init(|| {
+            tracing::warn!(
+                "security.enable_* fields are deprecated; migrate to [[capabilities]] array. \
+                 See: https://auser.github.io/agentzero/config/reference/#capabilities \
+                 (this warning fires once per process)"
+            );
+        });
+    }
+}
 
 pub fn load_tool_security_policy(
     workspace_root: &Path,
@@ -26,9 +107,14 @@ pub fn load_tool_security_policy(
         );
     }
 
+    maybe_warn_boolean_deprecation(&config);
+
+    let capability_set = build_capability_set(&config);
+
     let enable_git = config.security.allowed_commands.iter().any(|c| c == "git");
 
     let mut policy = ToolSecurityPolicy {
+        capability_set,
         read_file: ReadFilePolicy {
             allowed_root: allowed_root.clone(),
             max_read_bytes: config.security.read_file.max_read_bytes,

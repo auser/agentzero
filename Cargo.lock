@@ -224,6 +224,7 @@ dependencies = [
  "crypto_box",
  "dirs 5.0.1",
  "futures-util",
+ "glob",
  "hmac",
  "proptest",
  "regex",

@@ -399,6 +399,78 @@ Supported audio formats: `flac`, `mp3`, `mp4`, `m4a`, `ogg`, `opus`, `wav`, `web
 
 The default endpoint is compatible with the Groq audio API. To use OpenAI directly, set `api_url = "https://api.openai.com/v1/audio/transcriptions"` and `model = "whisper-1"`.
 
+## [[capabilities]]
+
+Opt-in capability-based security grants. When this list is **empty** (the default
+for all existing configs), all permission decisions fall back to the legacy
+`[security]` boolean flags — existing configs behave identically to before.
+
+When at least one `[[capabilities]]` entry is present, the `CapabilitySet` built
+from the list drives all `ToolSecurityPolicy` permission checks and the individual
+`enable_*` boolean fields are ignored for capability decisions.
+
+### Capability Types
+
+| `type` | Extra fields | Grants |
+|--------|-------------|--------|
+| `tool` | `name` (glob) | Allow named tool(s) — supports globs: `"mcp:*"`, `"cron_*"` |
+| `file_read` | `glob` | Allow reading files matching the glob path |
+| `file_write` | `glob` | Allow writing files matching the glob path |
+| `shell` | `commands` (list) | Allow specific shell commands |
+| `network` | `domains` (list) | Allow outbound connections to listed domains |
+| `memory` | `scope` (optional string) | Scope memory read/write to a named namespace |
+| `delegate` | `max_capabilities` (list) | Cap the capability set of delegated sub-agents |
+
+### Examples
+
+```
+# Allow only web search and read access to the src/ tree
+[[capabilities]]
+type = "tool"
+name = "web_search"
+
+[[capabilities]]
+type = "file_read"
+glob = "src/**"
+
+# Shell allowlist — only ls, git, and cargo
+[[capabilities]]
+type = "shell"
+commands = ["ls", "git", "cargo"]
+
+# Network allowlist
+[[capabilities]]
+type = "network"
+domains = ["api.openai.com", "api.anthropic.com"]
+```
+
+### Per-Agent Capabilities
+
+Individual delegate agents can have their own `[[capabilities]]` list:
+
+```
+[[agent.capabilities]]
+type = "tool"
+name = "web_search"
+```
+
+When a per-agent list is present, the agent's effective capability set is the
+**intersection** of the root capability set and the per-agent set — a sub-agent
+can never exceed the permissions of the root config.
+
+### Deprecation Warning
+
+If any `enable_*` boolean flag is `true` and no `[[capabilities]]` array is
+configured, AgentZero emits a single startup warning:
+
+```
+WARN security.enable_* fields are deprecated; migrate to [[capabilities]] array.
+     See: https://auser.github.io/agentzero/config/reference/#capabilities
+```
+
+For a full migration guide and the boolean-to-capability mapping table see
+`specs/plans/46-capability-based-security.md`.
+
 ## Config Inspection Commands
 
 ```bash

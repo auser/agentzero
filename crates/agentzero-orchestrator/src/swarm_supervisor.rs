@@ -135,6 +135,34 @@ pub struct SwarmRequest {
 /// 3. Registers agents with SwarmContext for cross-agent awareness
 /// 4. Executes the plan using the parallel JoinSet executor
 /// 5. Collects results and reports status
+///
+/// # Capability Security — Intended Model
+///
+/// Once Sprint 86 Phase A4 is complete, each swarm node's agent will be
+/// instantiated with a `CapabilitySet` equal to the intersection of:
+///   1. The swarm's own `CapabilitySet` (from the top-level config), and
+///   2. The per-node agent config's `CapabilitySet`.
+///
+/// This ensures a sub-agent in the swarm can never exceed the permissions
+/// granted to the swarm itself. Until Phase A4 wiring is complete, each node
+/// inherits the server-wide `ToolSecurityPolicy` — a known gap tracked in
+/// `specs/plans/47-alignment-and-security-foundations.md`.
+///
+/// # Capability intersection for sub-agents (Sprint 86)
+///
+/// When `SwarmSupervisor` spawns an agent for a workflow node, that agent receives
+/// a `ToolSecurityPolicy` derived from the swarm's configuration. Once capability-based
+/// security Phase 1 is fully wired (Sprint 86 Phase A4), this should use:
+///
+/// ```rust,ignore
+/// let effective_caps = swarm_policy.capability_set.intersect(&node_agent_caps);
+/// ```
+///
+/// where `node_agent_caps` comes from the per-node agent config's `capabilities` field.
+/// The child agent must never receive a `CapabilitySet` that exceeds the swarm's own.
+///
+/// Current state: sub-agents inherit the full swarm policy without capability intersection.
+/// This is a known gap tracked in `specs/plans/47-alignment-and-security-foundations.md`.
 pub struct SwarmSupervisor {
     event_bus: Option<Arc<dyn EventBus>>,
     /// Provider for re-planning LLM calls. When None, re-planning is disabled.

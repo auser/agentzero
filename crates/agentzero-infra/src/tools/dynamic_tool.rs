@@ -308,6 +308,37 @@ struct DynamicToolsData {
 
 /// Registry for runtime-created tools. Persists definitions to encrypted JSON
 /// and implements [`ToolSource`] so the agent can pick up new tools mid-session.
+///
+/// # Capability Security
+///
+/// The authoritative gate for tool creation is `Tool { name: "tool_create" }` in
+/// `CapabilitySet` (Sprint 86 Phase A). When `CapabilitySet` is non-empty,
+/// `ToolSecurityPolicy::allows_tool("tool_create")` is checked before any call
+/// to [`DynamicToolRegistry::register`] reaches this type.
+///
+/// The `enable_dynamic_tools` boolean in `ToolSecurityPolicy` is a coarser
+/// kill-switch fallback that activates when `CapabilitySet::is_empty()` is true
+/// (i.e., the operator has not yet opted in to `[[capabilities]]` config).
+///
+/// When Sprint 86 Phase A4 is fully wired through `build_runtime_execution`, a
+/// `DynamicToolDef` will carry a `capability_set: Option<CapabilitySet>` field
+/// so that evolved tools cannot exceed the permissions of their creator agent.
+///
+/// # Capability enforcement (Sprint 86)
+///
+/// Tool creation via this registry is gated by `enable_dynamic_tools` (boolean kill-switch,
+/// Sprint 84B). Starting Sprint 86, the preferred gate is:
+///
+/// ```rust,ignore
+/// policy.capability_set.allows_tool("tool_create")
+/// ```
+///
+/// The boolean `enable_dynamic_tools` remains as a coarser fallback when `capability_set.is_empty()`.
+///
+/// Dynamically created tools should carry the creator agent's `CapabilitySet`, not the
+/// server-wide policy. When `DynamicToolDef` gains a `capability_set` field (Phase 2), each
+/// tool invocation will be bounded by its creator's permissions. Until then, the kill-switch
+/// is the only enforcement mechanism.
 pub struct DynamicToolRegistry {
     defs: Arc<RwLock<Vec<DynamicToolDef>>>,
     store: EncryptedJsonStore,

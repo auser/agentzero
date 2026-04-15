@@ -29,7 +29,33 @@ const IMPROVE_MAX_GENERATION: u32 = 3;
 /// Maximum total evolutions per session.
 const MAX_EVOLUTIONS_PER_SESSION: usize = 5;
 
-/// Placeholder — full implementation in Phase B.
+/// AUTO-FIX / AUTO-IMPROVE engine for dynamic tools.
+///
+/// # Capability Inheritance Requirement
+///
+/// Every `DynamicToolDef` evolved by this type (via LLM-based strategy correction
+/// or enhancement) must not expand the effective permissions of the original tool.
+/// Concretely: when `DynamicToolDef` gains a `capability_set` field (Sprint 86
+/// Phase A4), the evolved definition must set `capability_set` to the intersection
+/// of the original tool's capability set and the evolver's own permission context.
+///
+/// Until that field exists, the AUTO-FIX / AUTO-IMPROVE path inherits the same
+/// `ToolSecurityPolicy` as the enclosing agent, which is the server-wide policy.
+/// This is a known gap — tracked in `specs/plans/47-alignment-and-security-foundations.md`.
+///
+/// # Capability inheritance requirement (Sprint 86)
+///
+/// When AUTO-FIX repairs a failing tool, or AUTO-IMPROVE creates an optimized variant,
+/// the evolved `DynamicToolDef` MUST NOT gain broader permissions than the original.
+///
+/// Current state: evolved tools inherit the server-wide `ToolSecurityPolicy`. This is a
+/// known gap until `DynamicToolDef` carries a `capability_set` field (Phase 2).
+///
+/// Invariant to enforce when implementing Phase 2:
+/// `evolved_tool.capability_set ⊆ original_tool.capability_set`
+///
+/// The `generation` counter on `DynamicToolDef` tracks evolution depth; cap generation
+/// at a reasonable maximum to bound the blast radius of runaway self-improvement.
 pub struct ToolEvolver {
     provider: Arc<dyn Provider>,
     registry: Arc<DynamicToolRegistry>,

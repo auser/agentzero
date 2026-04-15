@@ -13,7 +13,7 @@ AgentZero's core principle is that **every subsystem is a trait**. This means yo
 | **Memory** | `MemoryStore` | SQLite, Turso/libsql | Implement `MemoryStore` trait |
 | **Tools** | `Tool` | 50+ built-in (file I/O, shell, networking, browser, delegation, memory, git, SOP, cron, hardware) | Implement `Tool` trait, WASM plugin, or process plugin |
 | **Channels** | `Channel` | Telegram, Discord, Slack, Mattermost | Implement `Channel` trait |
-| **Security** | Policy config | Allowlists, OTP, audit, estop, leak guard, syscall anomaly | Config-driven (`[security.*]`) |
+| **Security** | `ToolSecurityPolicy` + `CapabilitySet` | Allowlists, OTP, audit, estop, leak guard, syscall anomaly; opt-in capability grants via `[[capabilities]]` | Config-driven (`[security.*]` + `[[capabilities]]`) |
 | **Observability** | Config-driven | Runtime traces, OpenTelemetry export | `[observability]` config |
 | **Runtime** | Orchestrator | Native single-process | `[runtime]` config (native/docker) |
 | **Plugins** | WASM sandbox | wasmi interpreter (wasmtime JIT optional) | `.wasm` modules with `manifest.json` |
@@ -23,6 +23,21 @@ AgentZero's core principle is that **every subsystem is a trait**. This means yo
 | **Agent Store** | `AgentStoreApi` | Encrypted JSON persistence (AgentStore) | Implement `AgentStoreApi` trait |
 | **Cost** | Tracker | Token + USD tracking with limits | `[cost]` config |
 | **Privacy** | Config-driven | Noise Protocol E2E encryption, sealed envelopes, key rotation, privacy boundaries | `[privacy]` config |
+
+### Security Policy
+
+`ToolSecurityPolicy` (in `agentzero-tools`) is the runtime representation of all
+permission decisions. It carries two parallel enforcement paths:
+
+- **Legacy booleans** (`enable_git`, `enable_web_search`, etc.) — active when no
+  `[[capabilities]]` array is configured. All existing configs use this path.
+- **`CapabilitySet`** (Sprint 86) — opt-in fine-grained grants. When at least one
+  `[[capabilities]]` entry is present, `CapabilitySet::allows_tool()` replaces the
+  boolean checks. The two paths are mutually exclusive per config: `CapabilitySet::is_empty()`
+  determines which path is active.
+
+See the [config reference](/config/reference/#capabilities) for TOML examples and the
+migration guide.
 
 ## Core Traits
 

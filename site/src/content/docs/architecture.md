@@ -122,6 +122,24 @@ All stores are encrypted at rest via `EncryptedJsonStore`. The system loads them
 
 The `GoalPlanner` decomposes natural language goals into multi-agent DAGs, the `HintedToolSelector` combines planner hints + recipe matches + keyword matching, and the `ToolSource` trait enables mid-session tool discovery.
 
+## Capability-Based Security (Sprint 86)
+
+`ToolSecurityPolicy` now carries a `capability_set: CapabilitySet` field alongside the legacy
+`enable_*` boolean flags. When `capability_set.is_empty()` (the default for all existing configs),
+all permission decisions fall back to the boolean flags — existing `agentzero.toml` files are
+completely unaffected.
+
+When a `[[capabilities]]` array is present in config, the `CapabilitySet` drives all tool
+permission checks. Key properties:
+
+- **Deny overrides grant** — explicit denials always win.
+- **Empty means fall back** — backward compatible with all existing configs.
+- **Child never exceeds parent** — `CapabilitySet::intersect()` is used when building
+  sub-agent policies during delegation.
+
+See [Configuration Reference](/config/reference/#capabilities) for TOML examples and the
+migration guide.
+
 ## See Also
 
 - [Security Boundaries](/security/boundaries/) — Layered defense-in-depth model
