@@ -286,11 +286,15 @@ rules:
     fn filesystem_check() {
         // Use a temp directory that definitely exists for canonicalization.
         let dir = std::env::temp_dir();
-        let dir_str = dir.to_string_lossy().to_string();
+        // Normalize to forward slashes before embedding in YAML.  The
+        // serde_yaml 0.9.x backend (unsafe-libyaml) rejects bare backslashes
+        // even inside single-quoted scalars, so Windows paths like
+        // C:\Users\... would cause a parse error.  Forward slashes are
+        // accepted by Windows for all file-system operations and are
+        // normalised back to the platform separator by canonicalize().
+        let dir_str = dir.to_string_lossy().replace('\\', "/");
 
         // Build a policy that allows the canonical temp dir.
-        // Use YAML single-quoted scalars so backslashes in Windows paths
-        // are not interpreted as escape sequences by the YAML parser.
         let yaml = format!(
             "default: deny\nrules:\n  - tool: read_file\n    filesystem: ['{dir_str}']\n    action: allow\n"
         );
@@ -319,10 +323,11 @@ rules:
         // Path that tries to escape via traversal should be denied
         // because it canonicalizes outside the allowed root.
         let dir = std::env::temp_dir();
-        let dir_str = dir.to_string_lossy().to_string();
+        // Same forward-slash normalisation as filesystem_check above —
+        // serde_yaml 0.9.x/unsafe-libyaml rejects backslashes in YAML
+        // scalars even when single-quoted.
+        let dir_str = dir.to_string_lossy().replace('\\', "/");
 
-        // Use YAML single-quoted scalars so backslashes in Windows paths
-        // are not interpreted as escape sequences by the YAML parser.
         let yaml = format!(
             "default: deny\nrules:\n  - tool: read_file\n    filesystem: ['{dir_str}']\n    action: allow\n"
         );

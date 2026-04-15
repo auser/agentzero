@@ -99,9 +99,11 @@ serde_json = "1"
 
         // Add SDK dependency
         if let Some(ref sdk) = self.sdk_path {
+            // Normalize to forward slashes: TOML rejects bare backslashes in
+            // double-quoted strings, which Windows paths contain.
+            let sdk_path_str = sdk.to_string_lossy().replace('\\', "/");
             cargo_toml.push_str(&format!(
-                "agentzero-plugin-sdk = {{ path = \"{}\" }}\n",
-                sdk.display()
+                "agentzero-plugin-sdk = {{ path = \"{sdk_path_str}\" }}\n",
             ));
         } else {
             // Fallback: assume it's published to crates.io
