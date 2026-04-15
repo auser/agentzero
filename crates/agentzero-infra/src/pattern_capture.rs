@@ -109,6 +109,7 @@ impl PatternCapture {
             generation: 0,
             parent_name: None,
             user_rated: false,
+            creator_capability_set: None,
         };
 
         self.registry.register(def).await?;

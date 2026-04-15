@@ -362,6 +362,7 @@ pub async fn create_tool_from_nl(
         generation: 0,
         parent_name: None,
         user_rated: false,
+        creator_capability_set: None,
     };
 
     registry.register(def).await?;
@@ -455,6 +456,7 @@ async fn create_codegen_tool(
                     generation: 0,
                     parent_name: None,
                     user_rated: false,
+                    creator_capability_set: None,
                 };
 
                 registry.register(def).await?;
@@ -522,6 +524,7 @@ async fn create_codegen_tool(
         generation: 0,
         parent_name: None,
         user_rated: false,
+        creator_capability_set: None,
     };
 
     registry.register(def).await?;
@@ -1018,6 +1021,7 @@ mod tests {
                 generation: 0,
                 parent_name: None,
                 user_rated: false,
+                creator_capability_set: None,
             })
             .await
             .expect("register");

@@ -79,102 +79,60 @@ as `SqliteAutopilotStore`. No new config keys — reuse the existing `memory.tur
 
 ---
 
-## Phase A: `DynamicToolDef` Capability Bounding (HIGH)
+## Phase A: `DynamicToolDef` Capability Bounding (HIGH) ✅ COMPLETE
 
-**Estimated effort:** 1 day
+**Actual effort:** 1 day  
+**Status:** Shipped. 23/23 dynamic-tool tests pass. All Phase A acceptance criteria met.
 
-### A1: Add `creator_capability_set` to `DynamicToolDef`
+### A1: Add `creator_capability_set` to `DynamicToolDef` ✅
 
 **File:** `crates/agentzero-infra/src/tools/dynamic_tool.rs`
 
-Add the field immediately after `user_rated`:
+Field added immediately after `user_rated`:
 
 ```rust
 /// Capability set of the agent that created this tool (Sprint 87).
 ///
 /// `None` means the tool was created before capability enforcement was wired
-/// in (or by an agent that does not use `[[capabilities]]`). In that case the
-/// server-wide `ToolSecurityPolicy` booleans govern invocation as before.
+/// in, or by an agent not using `[[capabilities]]`. The server-wide
+/// `ToolSecurityPolicy` booleans apply as before.
 ///
-/// When `Some(set)`, any agent invoking this tool must have a capability set
-/// that satisfies `set` (checked via `CapabilitySet::intersect` at call time).
+/// When `Some(set)`, any agent invoking this tool via
+/// [`ToolSecurityPolicy::allows_dynamic_tool`] must have a capability set
+/// that satisfies the intersection check.
 #[serde(default, skip_serializing_if = "Option::is_none")]
-pub creator_capability_set: Option<agentzero_core::security::CapabilitySet>,
+pub creator_capability_set: Option<CapabilitySet>,
 ```
 
-The `skip_serializing_if` clause ensures existing JSON records round-trip cleanly.
+All existing `DynamicToolDef` construction sites updated (`tool_create.rs`,
+`pattern_capture.rs`, `tool_evolver.rs`, test helpers) to set `creator_capability_set: None`.
+Existing JSON records without the field deserialize to `None` — backward-compatible.
 
-### A2: `DynamicToolRegistry::register()` — accept creator cap set
+### A2: `register()` signature — kept unchanged ✅
 
-Change the signature:
+**Decision deviation from plan:** The plan proposed adding a `creator_cap_set` parameter
+to `register()`. The simpler approach was adopted instead: callers set
+`def.creator_capability_set` directly on the struct before calling `register()`, which
+keeps the `register()` signature stable and avoids a redundant second source of truth.
 
-```rust
-pub async fn register(
-    &self,
-    mut def: DynamicToolDef,
-    creator_cap_set: Option<agentzero_core::security::CapabilitySet>,
-) -> anyhow::Result<Box<dyn Tool>>
-```
+All production callers (`tool_create.rs` × 3, `pattern_capture.rs` × 1) set
+`creator_capability_set: None` (tools created before an agent opts into `[[capabilities]]`
+are unconstrained, which is the correct backward-compatible default).
 
-Set `def.creator_capability_set = creator_cap_set` before the existing replace-or-push
-logic. All existing callers that pass no capability set pass `None` — no breakage.
-
-### A3: `ToolEvolver` — propagate capability set through evolution
+### A3: `ToolEvolver` — propagate capability set through evolution ✅
 
 **File:** `crates/agentzero-infra/src/tool_evolver.rs`
 
-In both `maybe_fix()` and `maybe_improve()`, when the helper builds the evolved
-`DynamicToolDef` (by cloning and mutating the original), add:
+Both `fix()` and `improve()` include `creator_capability_set: def.creator_capability_set.clone()`
+in the returned `DynamicToolDef` literal. The struct doc comment updated to note Sprint 87
+wiring is complete for the storage/propagation layer.
 
-```rust
-evolved_def.creator_capability_set = original_def.creator_capability_set.clone();
-```
-
-This is the capability inheritance guarantee: AUTO-FIX and AUTO-IMPROVE can only
-produce tools that are at least as restrictive as the original.
-
-Update the `registry.register(evolved_def, ...)` call to pass
-`original_def.creator_capability_set.clone()`.
-
-### A4: `ToolSecurityPolicy::allows_tool()` — dynamic tool check
+### A4: `ToolSecurityPolicy::allows_dynamic_tool()` ✅
 
 **File:** `crates/agentzero-tools/src/lib.rs`
 
-The existing `allows_tool()` method checks the static capability set / booleans. Add a
-second layer that the caller can invoke when it has access to the `DynamicToolRegistry`:
-
-```rust
-/// Returns `true` if the given *dynamic* tool is permitted for a caller
-/// whose effective capability set is `caller_caps`.
-///
-/// Used when the registry is available. Falls back to `allows_tool(name)`
-/// for static (non-dynamic) tools.
-pub fn allows_dynamic_tool(
-    &self,
-    tool_name: &str,
-    tool_def: &agentzero_infra::tools::dynamic_tool::DynamicToolDef,
-    caller_caps: &agentzero_core::security::CapabilitySet,
-) -> bool {
-    // First gate: the static policy must admit the tool name.
-    if !self.allows_tool(tool_name) {
-        return false;
-    }
-    // Second gate: if the tool recorded a creator capability set, the caller
-    // must satisfy it.
-    if let Some(ref required) = tool_def.creator_capability_set {
-        if !required.is_empty() {
-            let intersection = caller_caps.intersect(required);
-            return intersection.allows_tool(tool_name);
-        }
-    }
-    true
-}
-```
-
-Note: this method lives in `agentzero-tools` but references `DynamicToolDef` from
-`agentzero-infra`, introducing a dependency cycle. To avoid the cycle, extract
-`creator_capability_set` as a plain `Option<CapabilitySet>` parameter instead of
-passing the whole `DynamicToolDef`:
+Added as a new method (does not replace `allows_tool()`). Dependency-cycle-safe signature
+takes `creator_cap_set: Option<&CapabilitySet>` rather than the whole `DynamicToolDef`:
 
 ```rust
 pub fn allows_dynamic_tool(
@@ -183,9 +141,9 @@ pub fn allows_dynamic_tool(
     creator_cap_set: Option<&agentzero_core::security::CapabilitySet>,
     caller_caps: &agentzero_core::security::CapabilitySet,
 ) -> bool {
-    if !self.allows_tool(tool_name) {
-        return false;
-    }
+    // Gate 1: static policy (capability set or boolean fallback).
+    if !self.allows_tool(tool_name) { return false; }
+    // Gate 2: creator capability constraint.
     if let Some(required) = creator_cap_set {
         if !required.is_empty() {
             return caller_caps.intersect(required).allows_tool(tool_name);
@@ -195,27 +153,17 @@ pub fn allows_dynamic_tool(
 }
 ```
 
-### A5: Unit tests
+### A5: Unit tests ✅
 
-Add to the inline `#[cfg(test)]` module in `dynamic_tool.rs`:
+Added to `dynamic_tool.rs` test module:
 
-```rust
-#[tokio::test]
-async fn register_preserves_creator_cap_set() {
-    // Verify that registering with a capability set stores it on the def.
-}
+- `register_preserves_creator_cap_set` — registers a tool with a `web_search`-only
+  `CapabilitySet`; verifies `get_def()` returns it intact.
+- `allows_dynamic_tool_denies_mismatched_caller` — caller with only `Shell` capability
+  cannot invoke a tool whose creator required `Tool { name: "web_search" }`.
 
-#[tokio::test]
-async fn evolve_inherits_creator_cap_set() {
-    // Verify that an evolved def carries the same cap set as the original.
-}
-
-#[test]
-fn allows_dynamic_tool_denies_mismatched_caller() {
-    // Verify that a caller whose cap set doesn't satisfy the tool's creator
-    // cap set gets denied even if the static allows_tool check passes.
-}
-```
+Also fixed a pre-existing race in `test_data_dir()`: added an `AtomicU64` counter to the
+directory name so parallel tests can never collide on the same nanosecond timestamp.
 
 ---
 

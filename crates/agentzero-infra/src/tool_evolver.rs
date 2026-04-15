@@ -39,9 +39,10 @@ const MAX_EVOLUTIONS_PER_SESSION: usize = 5;
 /// Phase A4), the evolved definition must set `capability_set` to the intersection
 /// of the original tool's capability set and the evolver's own permission context.
 ///
-/// Until that field exists, the AUTO-FIX / AUTO-IMPROVE path inherits the same
-/// `ToolSecurityPolicy` as the enclosing agent, which is the server-wide policy.
-/// This is a known gap — tracked in `specs/plans/47-alignment-and-security-foundations.md`.
+/// Sprint 87 wires `creator_capability_set` through `fix()` and `improve()`:
+/// both methods copy the original definition's capability set onto the evolved
+/// definition. Until invocation-time enforcement is complete (Phase A4 of Plan 48),
+/// the field is stored but not yet checked on every call path.
 ///
 /// # Capability inheritance requirement (Sprint 86)
 ///
@@ -224,6 +225,7 @@ impl ToolEvolver {
             generation: def.generation + 1,
             parent_name: Some(def.name.clone()),
             user_rated: false,
+            creator_capability_set: def.creator_capability_set.clone(),
         })
     }
 
@@ -262,6 +264,7 @@ impl ToolEvolver {
             generation: def.generation + 1,
             parent_name: Some(def.name.clone()),
             user_rated: false,
+            creator_capability_set: def.creator_capability_set.clone(),
         })
     }
 }
@@ -378,6 +381,7 @@ mod tests {
             generation: 0,
             parent_name: None,
             user_rated: false,
+            creator_capability_set: None,
         };
         assert!(def.total_invocations >= FIX_MIN_INVOCATIONS);
         assert!((1.0 - def.success_rate()) >= FIX_FAILURE_RATE_THRESHOLD);
@@ -401,6 +405,7 @@ mod tests {
             generation: 0,
             parent_name: None,
             user_rated: false,
+            creator_capability_set: None,
         };
         assert!(def.total_invocations >= IMPROVE_MIN_INVOCATIONS);
         assert!(def.success_rate() >= IMPROVE_SUCCESS_RATE_THRESHOLD);

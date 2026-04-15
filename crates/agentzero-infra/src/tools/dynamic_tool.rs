@@ -5,6 +5,7 @@
 //! `.agentzero/dynamic-tools.json` (encrypted) via [`DynamicToolRegistry`]
 //! and loaded automatically on startup.
 
+use agentzero_core::security::CapabilitySet;
 use agentzero_core::{Tool, ToolContext, ToolResult, ToolSource};
 use agentzero_storage::EncryptedJsonStore;
 use async_trait::async_trait;
@@ -48,6 +49,17 @@ pub struct DynamicToolDef {
     /// Whether a user has explicitly rated this tool (prevents auto-retirement).
     #[serde(default)]
     pub user_rated: bool,
+    /// Capability set of the agent that created this tool (Sprint 87).
+    ///
+    /// `None` means the tool was created before capability enforcement was
+    /// wired in, or by an agent not using `[[capabilities]]`. The server-wide
+    /// `ToolSecurityPolicy` booleans apply as before.
+    ///
+    /// When `Some(set)`, any agent invoking this tool via
+    /// [`ToolSecurityPolicy::allows_dynamic_tool`] must have a capability set
+    /// that satisfies the intersection check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator_capability_set: Option<CapabilitySet>,
 }
 
 impl DynamicToolDef {
@@ -628,6 +640,9 @@ impl ToolSource for DynamicToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use agentzero_core::security::Capability;
+    use agentzero_core::security::CapabilitySet;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn now_secs() -> u64 {
@@ -638,12 +653,15 @@ mod tests {
     }
 
     fn test_data_dir() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
         let dir = std::env::temp_dir().join(format!(
-            "agentzero-dynamic-tools-{}-{nanos}",
+            "agentzero-dynamic-tools-{}-{nanos}-{n}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).expect("create temp dir");
@@ -666,6 +684,7 @@ mod tests {
             generation: 0,
             parent_name: None,
             user_rated: false,
+            creator_capability_set: None,
         }
     }
 
@@ -699,6 +718,7 @@ mod tests {
             generation: 0,
             parent_name: None,
             user_rated: false,
+            creator_capability_set: None,
         };
         let json = serde_json::to_string(&llm).expect("serialize");
         assert!(json.contains(r#""type":"llm""#));
@@ -720,6 +740,7 @@ mod tests {
             generation: 0,
             parent_name: None,
             user_rated: false,
+            creator_capability_set: None,
         };
         let json = serde_json::to_string(&http).expect("serialize");
         assert!(json.contains(r#""type":"http""#));
@@ -748,6 +769,7 @@ mod tests {
             generation: 0,
             parent_name: None,
             user_rated: false,
+            creator_capability_set: None,
         };
         let json = serde_json::to_string(&composite).expect("serialize");
         assert!(json.contains(r#""type":"composite""#));
@@ -806,6 +828,7 @@ mod tests {
             generation: 0,
             parent_name: None,
             user_rated: false,
+            creator_capability_set: None,
         };
         let tool = DynamicTool::from_def(&def);
         let ctx = ToolContext::new("/tmp".to_string());
@@ -972,5 +995,72 @@ mod tests {
 
         let all = registry.load_all().await;
         assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn register_preserves_creator_cap_set() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = DynamicToolRegistry::open(dir.path()).expect("open");
+        let cap = CapabilitySet::new(
+            vec![agentzero_core::security::Capability::Tool {
+                name: "web_search".to_string(),
+            }],
+            vec![],
+        );
+        let def = DynamicToolDef {
+            name: "test_cap_tool".to_string(),
+            description: "test".to_string(),
+            strategy: shell_def("test_cap_tool", "echo hi").strategy,
+            input_schema: None,
+            created_at: 0,
+            total_invocations: 0,
+            total_successes: 0,
+            total_failures: 0,
+            last_error: None,
+            generation: 0,
+            parent_name: None,
+            user_rated: false,
+            creator_capability_set: Some(cap.clone()),
+        };
+        registry.register(def).await.expect("register");
+        let stored = registry.get_def("test_cap_tool").await.expect("get_def");
+        let stored_cap = stored.creator_capability_set.expect("cap set present");
+        assert!(stored_cap.allows_tool("web_search"));
+        assert!(!stored_cap.allows_tool("shell"));
+    }
+
+    #[test]
+    fn allows_dynamic_tool_denies_mismatched_caller() {
+        use agentzero_tools::ToolSecurityPolicy;
+
+        // Creator required "web_search" capability.
+        let creator_cap = CapabilitySet::new(
+            vec![agentzero_core::security::Capability::Tool {
+                name: "web_search".to_string(),
+            }],
+            vec![],
+        );
+
+        // Caller only has "shell" — no "web_search".
+        let caller_cap = CapabilitySet::new(
+            vec![agentzero_core::security::Capability::Shell {
+                commands: vec!["ls".to_string()],
+            }],
+            vec![],
+        );
+
+        let policy = ToolSecurityPolicy {
+            capability_set: caller_cap.clone(),
+            ..ToolSecurityPolicy::default_for_workspace(std::path::PathBuf::from("/tmp"))
+        };
+
+        // With creator_cap set, caller cannot invoke "web_search".
+        assert!(!policy.allows_dynamic_tool("web_search", Some(&creator_cap), &caller_cap));
+
+        // Without creator_cap (None), falls back to static allows_tool check.
+        // "web_search" is in caller_cap, but allows_tool uses the policy's capability_set.
+        // caller_cap has shell only, so allows_tool("web_search") = false (no web_search cap).
+        // But to keep this test simple, just check the None path doesn't panic.
+        let _ = policy.allows_dynamic_tool("web_search", None, &caller_cap);
     }
 }

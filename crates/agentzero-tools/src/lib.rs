@@ -416,6 +416,44 @@ impl ToolSecurityPolicy {
         }
     }
 
+    /// Returns `true` if the given *dynamic* tool is permitted for a caller
+    /// with the given effective capability set.
+    ///
+    /// Two gates are applied in order:
+    ///
+    /// 1. **Static gate** — `self.allows_tool(tool_name)` must pass (capability
+    ///    set or boolean fallback, exactly as for any other tool).
+    /// 2. **Creator gate** — if the `DynamicToolDef` recorded a
+    ///    `creator_capability_set` when it was registered, the *caller's*
+    ///    capability set must satisfy it (intersection must allow the tool).
+    ///    When `creator_cap_set` is `None` or empty, this gate is skipped and
+    ///    the static gate alone governs.
+    ///
+    /// Pass `caller_caps` as `&CapabilitySet::default()` (is_empty → true) when
+    /// the calling agent has not yet opted into `[[capabilities]]`; the creator
+    /// gate will be skipped and the call degrades gracefully to the static gate.
+    pub fn allows_dynamic_tool(
+        &self,
+        tool_name: &str,
+        creator_cap_set: Option<&agentzero_core::security::CapabilitySet>,
+        caller_caps: &agentzero_core::security::CapabilitySet,
+    ) -> bool {
+        // Gate 1: static policy (capability set or boolean fallback).
+        if !self.allows_tool(tool_name) {
+            return false;
+        }
+        // Gate 2: creator capability constraint.
+        if let Some(required) = creator_cap_set {
+            if !required.is_empty() {
+                // The caller must have at least the permissions the creator had.
+                // We verify this by intersecting and checking the tool is still
+                // allowed in the intersection.
+                return caller_caps.intersect(required).allows_tool(tool_name);
+            }
+        }
+        true
+    }
+
     pub fn default_for_workspace(workspace_root: PathBuf) -> Self {
         Self {
             capability_set: agentzero_core::security::CapabilitySet::default(),

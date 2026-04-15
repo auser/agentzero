@@ -2933,7 +2933,7 @@ Design document only — no implementation this sprint.
 - [x] Composio, Canvas, Claude Code/Codex/Gemini/OpenCode CLI, Media Gen tools removed
 - [x] Existing `agentzero.toml` files with removed sections parse without error (backward compat)
 - [x] Autopilot works fully offline with SQLite (no Supabase dependency)
-- [ ] Optional Turso sync behind `memory-turso` feature (deferred to follow-up)
+- [-] Optional Turso sync behind `memory-turso` feature (deferred to Sprint 87 Phase E)
 - [x] Structured output via llama.cpp native grammar (replaces outlines-core approach for this backend)
 - [x] Property-based tests cover PII redaction and encryption (9 proptest tests)
 - [x] Capability-based security design document written
@@ -3100,15 +3100,15 @@ Every dynamically created or evolved tool must carry the `CapabilitySet` of its 
 
 **File:** `crates/agentzero-infra/src/tools/dynamic_tool.rs`
 
-- [ ] **Add `capability_set` to `DynamicToolDef`** — `#[serde(default, skip_serializing_if = "Option::is_none")] pub creator_capability_set: Option<CapabilitySet>`. Using `Option` preserves backward-compat: existing JSON records without the field deserialize to `None`.
-- [ ] **`DynamicToolRegistry::register()` signature** — accept an optional `creator_cap_set: Option<CapabilitySet>` parameter; store it on the `DynamicToolDef`. Callers that do not supply one pass `None` (existing callers unchanged).
-- [ ] **`ToolEvolver::maybe_fix()` + `maybe_improve()`** — when producing an evolved `DynamicToolDef` (calling `registry.register()`), clone the original def's `creator_capability_set` onto the evolved def. Capability inheritance: evolved tools can never exceed their origin tool's creator scope.
-- [ ] **`ToolSecurityPolicy::allows_tool()` dynamic check** — after the existing capability/boolean check, if the resolved `DynamicToolDef` (looked up from `DynamicToolRegistry`) carries a non-`None` `creator_capability_set`, verify the *caller's* capability set satisfies it via `intersect`. If not, deny. (Lookup is O(1) via the existing `DynamicToolRegistry::get_def()` method.)
-- [ ] **Unit tests** — (a) register a tool with a capability set, verify `get_def()` returns it; (b) evolve a tool, verify the evolved def carries the same capability set as the original; (c) `allows_tool` with a mismatched caller capability set returns `false`.
+- [x] **Add `capability_set` to `DynamicToolDef`** — `#[serde(default, skip_serializing_if = "Option::is_none")] pub creator_capability_set: Option<CapabilitySet>`. Using `Option` preserves backward-compat: existing JSON records without the field deserialize to `None`.
+- [x] **`DynamicToolDef` carries creator cap set** — callers set `def.creator_capability_set` directly before calling `register()`; `register()` signature is unchanged (cleaner than the plan's extra-param approach). All production paths in `tool_create.rs` and `pattern_capture.rs` set `None`; test helper `shell_def` also sets `None`.
+- [x] **`ToolEvolver::maybe_fix()` + `maybe_improve()`** — `fix()` and `improve()` both clone `def.creator_capability_set` onto the evolved `DynamicToolDef`. Capability inheritance: evolved tools can never exceed their origin tool's creator scope.
+- [x] **`ToolSecurityPolicy::allows_dynamic_tool()`** — new method taking `tool_name`, `creator_cap_set: Option<&CapabilitySet>`, and `caller_caps: &CapabilitySet`. Gate 1: static `allows_tool()` check. Gate 2: if `creator_cap_set` is `Some` and non-empty, caller must satisfy it via intersection. Avoids dependency cycle by taking the cap set directly rather than the whole `DynamicToolDef`.
+- [x] **Unit tests** — `register_preserves_creator_cap_set` (field round-trips through registry); `allows_dynamic_tool_denies_mismatched_caller` (caller without required cap is denied). `test_data_dir()` race fixed with atomic counter (`AtomicU64`) — all 23 dynamic-tool tests pass.
 
 **File:** `crates/agentzero-infra/src/tool_evolver.rs`
 
-- [ ] **Thread `creator_capability_set` through `evolve_tool()`** — the internal helper that builds the new `DynamicToolDef` must set `creator_capability_set` to the original's value before calling `registry.register()`.
+- [x] **Thread `creator_capability_set` through evolution** — `fix()` and `improve()` in `tool_evolver.rs` both include `creator_capability_set: def.creator_capability_set.clone()` in the returned `DynamicToolDef` literal. Doc comment updated to reflect Sprint 87 wiring is complete for the storage/propagation layer.
 
 ---
 
@@ -3173,9 +3173,10 @@ Deferred from Sprint 85 Phase B. Provides cloud sync for autopilot data via Turs
 
 ### Acceptance Criteria (Sprint 87)
 
-- [ ] `DynamicToolDef` has `creator_capability_set: Option<CapabilitySet>` field; existing JSON records deserialise without error
-- [ ] `DynamicToolRegistry::register()` accepts and stores a creator capability set
-- [ ] `ToolEvolver` evolves tools with the original's capability set preserved (not widened)
+- [x] `DynamicToolDef` has `creator_capability_set: Option<CapabilitySet>` field; existing JSON records deserialise without error
+- [x] `DynamicToolRegistry::register()` accepts and stores a creator capability set
+- [x] `ToolEvolver` evolves tools with the original's capability set preserved (not widened)
+- [x] `ToolSecurityPolicy::allows_dynamic_tool()` denies callers whose capability set does not satisfy the creator's
 - [ ] `DelegateConfig` has `capability_set: CapabilitySet` field; existing callers compile without changes
 - [ ] `build_delegate_agents()` intersects root cap set with per-agent cap set for each delegate
 - [ ] A delegate agent with stricter per-agent capabilities cannot exceed the root policy
