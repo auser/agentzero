@@ -32,6 +32,20 @@ docs-lint:
 test:
     cargo nextest run --workspace --exclude agentzero-plugin-sdk
 
+# Run only library unit tests — skips integration test binaries and the
+# expensive gateway/infra compilation they pull in.  ~3-5× faster than
+# `just test` for quick edit→verify cycles.
+test-unit:
+    cargo nextest run --workspace --exclude agentzero-plugin-sdk -E 'kind(lib)'
+
+# Remove stale incremental compilation state.
+# Run this when target/ has grown unwieldy (check with: du -sh target/debug/).
+# The next build after this will be a full recompile but subsequent
+# incremental builds will be fast again.
+clean-incremental:
+    rm -rf target/debug/incremental/
+    @echo "Incremental state cleared."
+
 # Run tests with verbose output
 test-verbose:
     cargo nextest run --workspace --exclude agentzero-plugin-sdk --no-capture

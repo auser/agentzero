@@ -111,3 +111,37 @@ opt-level = "z"
 
 [profile.release-min.package."*"]
 opt-level = "z"
+
+# ── Development profile ────────────────────────────────────────────────────────
+# These settings cut `just test` cycle time by addressing two root causes:
+#
+#   1. Dependency rlibs are enormous at opt-level=0 + full DWARF.
+#      agentzero-gateway alone was 115 MB × 60 stale copies = 6.2 GB.
+#      `debug = "line-tables-only"` drops variable-level DWARF from deps
+#      (file:line backtraces still work); combined with opt-level=1 this
+#      shrinks each rlib ~60-70%, cutting both link time and incremental I/O.
+#
+#   2. The linker has to merge all those rlibs on every test binary.
+#      Smaller inputs = proportionally faster link step.
+#
+# Tradeoff: dep backtraces show file:line but not local-variable values.
+# For a full debug session on a dependency, override temporarily with:
+#   CARGO_PROFILE_DEV_PACKAGE_CANDLE_CORE_DEBUG=2 cargo test …
+#
+[profile.dev.package."*"]
+# Drop full DWARF from deps — keeps file:line for backtraces, removes
+# the variable/type info that inflates rlib sizes by 3-5×.
+debug = "line-tables-only"
+# Light optimisation: smaller codegen units, faster link, no meaningful
+# increase in per-crate compile time for most crates.
+opt-level = 1
+
+# ML / codec crates must be fast at runtime or any test touching them stalls.
+[profile.dev.package.candle-core]
+opt-level = 3
+[profile.dev.package.candle-nn]
+opt-level = 3
+[profile.dev.package.candle-transformers]
+opt-level = 3
+[profile.dev.package.tokenizers]
+opt-level = 3
