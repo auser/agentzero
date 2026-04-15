@@ -31,7 +31,8 @@ jobs:
           fi
       - name: Install NASM (Windows)
         if: matrix.os == 'windows-latest'
-        uses: ilammy/setup-nasm@v1
+        shell: pwsh
+        run: choco install nasm --no-progress -y
       - name: fmt
         run: cargo fmt --all --check
       - name: clippy (unix)
@@ -130,7 +131,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build container image for scanning
         run: docker build -t agentzero:scan .
       - name: Run Trivy vulnerability scanner
