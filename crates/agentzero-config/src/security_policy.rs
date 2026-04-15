@@ -289,8 +289,10 @@ rules:
         let dir_str = dir.to_string_lossy().to_string();
 
         // Build a policy that allows the canonical temp dir.
+        // Use YAML single-quoted scalars so backslashes in Windows paths
+        // are not interpreted as escape sequences by the YAML parser.
         let yaml = format!(
-            "default: deny\nrules:\n  - tool: read_file\n    filesystem: [\"{dir_str}\"]\n    action: allow\n"
+            "default: deny\nrules:\n  - tool: read_file\n    filesystem: ['{dir_str}']\n    action: allow\n"
         );
         let policy: SecurityPolicyFile = serde_yaml::from_str(&yaml).expect("parse");
 
@@ -319,8 +321,10 @@ rules:
         let dir = std::env::temp_dir();
         let dir_str = dir.to_string_lossy().to_string();
 
+        // Use YAML single-quoted scalars so backslashes in Windows paths
+        // are not interpreted as escape sequences by the YAML parser.
         let yaml = format!(
-            "default: deny\nrules:\n  - tool: read_file\n    filesystem: [\"{dir_str}\"]\n    action: allow\n"
+            "default: deny\nrules:\n  - tool: read_file\n    filesystem: ['{dir_str}']\n    action: allow\n"
         );
         let policy: SecurityPolicyFile = serde_yaml::from_str(&yaml).expect("parse");
 
