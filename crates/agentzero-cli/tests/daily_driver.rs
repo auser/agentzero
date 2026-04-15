@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use agentzero_cli::{execute, parse_cli_from};
 use base64::Engine as _;
 use serde_json::json;
@@ -29,7 +31,6 @@ async fn run_cmd(args: &[&str]) -> anyhow::Result<()> {
     execute(cli).await
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn daily_driver_full_lifecycle() {
     let dir = temp_dir("full");
