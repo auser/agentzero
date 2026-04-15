@@ -257,7 +257,7 @@ fn hash_key(raw_key: &str) -> String {
 fn generate_api_key() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.gen::<u8>()).collect();
     format!(
         "az_{}",
         bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
@@ -274,7 +274,7 @@ fn now_epoch() -> u64 {
 fn generate_hmac_secret() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.gen::<u8>()).collect();
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
