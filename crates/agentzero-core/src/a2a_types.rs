@@ -227,6 +227,12 @@ pub struct TaskSendParams {
     pub message: Message,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Arbitrary metadata attached by the caller (Sprint 88 — Phase G).
+    ///
+    /// AgentZero uses `metadata.agentZeroMaxCapabilities` (a JSON array of
+    /// serialised `Capability` values) as a per-request capability ceiling.
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// `tasks/get` parameters.
@@ -436,5 +442,32 @@ mod tests {
         assert_eq!(params.id, "task-1");
         assert_eq!(params.message.role, MessageRole::User);
         assert_eq!(params.message.parts.len(), 1);
+    }
+
+    #[test]
+    fn task_send_params_deserializes_metadata() {
+        let json = serde_json::json!({
+            "id": "t1",
+            "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+            "metadata": {
+                "agentZeroMaxCapabilities": [
+                    {"type": "Tool", "name": "web_search"}
+                ]
+            }
+        });
+        let params: TaskSendParams = serde_json::from_value(json).expect("deserialize");
+        assert!(params.metadata.is_some());
+        let meta = params.metadata.unwrap();
+        assert!(meta["agentZeroMaxCapabilities"].is_array());
+    }
+
+    #[test]
+    fn task_send_params_metadata_defaults_to_none() {
+        let json = serde_json::json!({
+            "id": "t1",
+            "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
+        });
+        let params: TaskSendParams = serde_json::from_value(json).expect("deserialize");
+        assert!(params.metadata.is_none());
     }
 }

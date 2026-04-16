@@ -122,6 +122,10 @@ pub(crate) struct GatewayState {
         Option<Arc<std::sync::Mutex<agentzero_infra::tool_recipes::RecipeStore>>>,
     /// Configurable WebSocket timeouts.
     pub(crate) ws_config: agentzero_config::WebSocketConfig,
+    /// Pre-built capability ceiling for all inbound A2A requests (Sprint 88 — Phase G).
+    /// Built from `config.a2a.capability_ceiling` at gateway startup.
+    /// Default: empty CapabilitySet (no restriction).
+    pub(crate) a2a_inbound_cap_ceiling: agentzero_core::security::CapabilitySet,
 }
 
 impl GatewayState {
@@ -180,6 +184,7 @@ impl GatewayState {
             dynamic_tool_registry: None,
             recipe_store: None,
             ws_config: agentzero_config::WebSocketConfig::default(),
+            a2a_inbound_cap_ceiling: agentzero_core::security::CapabilitySet::default(),
         }
     }
 
@@ -323,6 +328,15 @@ impl GatewayState {
         self
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn with_a2a_cap_ceiling(
+        mut self,
+        ceiling: agentzero_core::security::CapabilitySet,
+    ) -> Self {
+        self.a2a_inbound_cap_ceiling = ceiling;
+        self
+    }
+
     /// Return the current pairing code if it exists and hasn't expired.
     pub(crate) fn pairing_code_valid(&self) -> Option<&str> {
         let code = self.pairing_code.as_deref()?;
@@ -443,6 +457,7 @@ impl GatewayState {
             dynamic_tool_registry: None,
             recipe_store: None,
             ws_config: agentzero_config::WebSocketConfig::default(),
+            a2a_inbound_cap_ceiling: agentzero_core::security::CapabilitySet::default(),
         }
     }
 
@@ -495,6 +510,7 @@ impl GatewayState {
             dynamic_tool_registry: None,
             recipe_store: None,
             ws_config: agentzero_config::WebSocketConfig::default(),
+            a2a_inbound_cap_ceiling: agentzero_core::security::CapabilitySet::default(),
         }
     }
 }

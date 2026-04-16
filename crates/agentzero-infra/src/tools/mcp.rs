@@ -419,6 +419,7 @@ impl Tool for McpIndividualTool {
 /// If a server fails to connect, it is skipped with a warning (graceful degradation).
 pub fn create_mcp_tools(
     servers: &HashMap<String, McpServerDef>,
+    policy: &agentzero_tools::ToolSecurityPolicy,
 ) -> anyhow::Result<Vec<Box<dyn Tool>>> {
     if servers.is_empty() {
         return Ok(vec![]);
@@ -465,6 +466,17 @@ pub fn create_mcp_tools(
 
         for info in tool_infos {
             let full_name = format!("mcp__{}__{}", server_name, sanitize_tool_name(&info.name));
+            // Phase F — Sprint 88: filter MCP tools by the agent's capability set.
+            // When capability_set is non-empty, only expose tools the agent is
+            // permitted to use; empty capability_set means fall back to enable_mcp
+            // boolean (all tools from this server are permitted).
+            if !policy.capability_set.is_empty() && !policy.capability_set.allows_tool(&full_name) {
+                tracing::debug!(
+                    tool = %full_name,
+                    "mcp tool filtered out by agent capability set"
+                );
+                continue;
+            }
             let leaked_name: &'static str = Box::leak(full_name.into_boxed_str());
             let leaked_desc: &'static str = Box::leak(info.description.into_boxed_str());
 
@@ -684,7 +696,83 @@ mod tests {
     fn create_mcp_tools_empty_servers_returns_empty() {
         // Can't use block_in_place outside tokio runtime, but empty servers
         // short-circuits before hitting async code.
-        let result = create_mcp_tools(&HashMap::new()).expect("empty servers should succeed");
+        let policy = agentzero_tools::ToolSecurityPolicy::default_for_workspace(
+            std::path::PathBuf::from("."),
+        );
+        let result =
+            create_mcp_tools(&HashMap::new(), &policy).expect("empty servers should succeed");
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn mcp_tool_naming_matches_capability_pattern() {
+        // Verify the full_name format used by create_mcp_tools matches the
+        // capability pattern expected by CapabilitySet::allows_tool.
+        let server = "filesystem";
+        let raw_tool = "read-file";
+        let full = format!("mcp__{}__{}", server, sanitize_tool_name(raw_tool));
+        assert_eq!(full, "mcp__filesystem__read_file");
+
+        // Verify glob match
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+        let cap = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "mcp__*".to_string(),
+            }],
+            vec![],
+        );
+        assert!(cap.allows_tool(&full));
+    }
+
+    #[test]
+    fn mcp_capability_filter_predicate() {
+        // Unit-test the filtering predicate without spawning a subprocess.
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+        use agentzero_tools::ToolSecurityPolicy;
+
+        let cap_set = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "mcp__fs__read_file".to_string(),
+            }],
+            vec![],
+        );
+        let policy = ToolSecurityPolicy {
+            capability_set: cap_set,
+            enable_mcp: true,
+            ..ToolSecurityPolicy::default_for_workspace(std::path::PathBuf::from("."))
+        };
+
+        // Simulate the filter predicate from create_mcp_tools.
+        let check = |name: &str| -> bool {
+            if !policy.capability_set.is_empty() {
+                policy.capability_set.allows_tool(name)
+            } else {
+                true
+            }
+        };
+
+        assert!(check("mcp__fs__read_file"), "allowed tool should pass");
+        assert!(
+            !check("mcp__fs__write_file"),
+            "disallowed tool should be filtered"
+        );
+
+        // Empty capability_set means all tools pass (existing behaviour).
+        let open_policy = ToolSecurityPolicy {
+            capability_set: CapabilitySet::default(),
+            enable_mcp: true,
+            ..ToolSecurityPolicy::default_for_workspace(std::path::PathBuf::from("."))
+        };
+        let check_open = |name: &str| -> bool {
+            if !open_policy.capability_set.is_empty() {
+                open_policy.capability_set.allows_tool(name)
+            } else {
+                true
+            }
+        };
+        assert!(
+            check_open("mcp__fs__write_file"),
+            "open policy should allow all"
+        );
     }
 }

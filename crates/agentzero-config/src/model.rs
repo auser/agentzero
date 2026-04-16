@@ -2685,6 +2685,15 @@ pub struct A2aConfig {
     pub bearer_token: Option<String>,
     /// External A2A agents to register as swarm participants.
     pub agents: HashMap<String, A2aAgentConfig>,
+    /// Capability ceiling applied to ALL inbound A2A requests to this gateway.
+    ///
+    /// When non-empty, intersected with any `metadata.agentZeroMaxCapabilities`
+    /// supplied by the caller to produce the effective `capability_set_override`
+    /// for the handling agent.
+    ///
+    /// Default: empty (no restriction on inbound requests).
+    #[serde(default)]
+    pub capability_ceiling: Vec<Capability>,
 }
 
 /// Configuration for a single external A2A agent.
@@ -2697,6 +2706,15 @@ pub struct A2aAgentConfig {
     pub auth_token: Option<String>,
     /// Timeout in seconds for A2A calls (default: 120).
     pub timeout_secs: u64,
+    /// Capability ceiling for this external A2A agent (Sprint 88 — Phase G).
+    ///
+    /// When non-empty, included as `metadata.agentZeroMaxCapabilities` in every
+    /// outbound `tasks/send` call so the remote AgentZero instance can apply it
+    /// as a `capability_set_override`.
+    ///
+    /// Default: empty (no ceiling).
+    #[serde(default)]
+    pub max_capabilities: Vec<Capability>,
 }
 
 impl Default for A2aAgentConfig {
@@ -2705,6 +2723,7 @@ impl Default for A2aAgentConfig {
             url: String::new(),
             auth_token: None,
             timeout_secs: 120,
+            max_capabilities: Vec::new(),
         }
     }
 }

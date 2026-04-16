@@ -21,6 +21,8 @@ pub struct A2aAgentEndpoint {
     client: reqwest::Client,
     /// Timeout in seconds for A2A calls.
     timeout_secs: u64,
+    /// Capability ceiling forwarded to the remote agent on every `tasks/send`.
+    max_capabilities: Vec<agentzero_core::security::capability::Capability>,
 }
 
 impl A2aAgentEndpoint {
@@ -29,6 +31,7 @@ impl A2aAgentEndpoint {
         base_url: String,
         auth_token: Option<String>,
         timeout_secs: u64,
+        max_capabilities: Vec<agentzero_core::security::capability::Capability>,
     ) -> anyhow::Result<Self> {
         if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
             return Err(anyhow::anyhow!(
@@ -41,6 +44,7 @@ impl A2aAgentEndpoint {
             auth_token,
             client: reqwest::Client::new(),
             timeout_secs,
+            max_capabilities,
         })
     }
 
@@ -133,18 +137,23 @@ impl A2aAgentEndpoint {
 #[async_trait]
 impl AgentEndpoint for A2aAgentEndpoint {
     async fn send(&self, message: &str, conversation_id: &str) -> anyhow::Result<String> {
-        let result = self
-            .rpc_call(
-                "tasks/send",
-                json!({
-                    "id": conversation_id,
-                    "message": {
-                        "role": "user",
-                        "parts": [{"type": "text", "text": message}]
-                    }
-                }),
-            )
-            .await?;
+        let mut params = serde_json::json!({
+            "id": conversation_id,
+            "message": {
+                "role": "user",
+                "parts": [{"type": "text", "text": message}]
+            }
+        });
+
+        if !self.max_capabilities.is_empty() {
+            params["metadata"] = serde_json::json!({
+                "agentZeroMaxCapabilities":
+                    serde_json::to_value(&self.max_capabilities)
+                        .unwrap_or(serde_json::Value::Null)
+            });
+        }
+
+        let result = self.rpc_call("tasks/send", params).await?;
 
         // Try to get the status message text, or fall back to last history entry.
         let text = result
@@ -175,6 +184,7 @@ mod tests {
             "https://agent.example.com".to_string(),
             None,
             30,
+            vec![],
         )
         .expect("valid URL should succeed");
         assert_eq!(endpoint.agent_id(), "remote-agent");
@@ -187,6 +197,7 @@ mod tests {
             "https://agent.example.com/".to_string(),
             None,
             30,
+            vec![],
         )
         .expect("valid URL should succeed");
         assert_eq!(endpoint.base_url, "https://agent.example.com");
@@ -199,6 +210,7 @@ mod tests {
             "ftp://agent.example.com".to_string(),
             None,
             30,
+            vec![],
         )
         .expect_err("ftp scheme should be rejected");
         assert!(err.to_string().contains("http://"));
@@ -211,6 +223,7 @@ mod tests {
             "http://localhost:1".to_string(), // Invalid port
             None,
             5,
+            vec![],
         )
         .expect("valid URL should succeed");
         let err = endpoint
@@ -230,6 +243,7 @@ mod tests {
             "http://localhost:1".to_string(),
             None,
             5,
+            vec![],
         )
         .expect("valid URL should succeed");
         let err = endpoint.fetch_agent_card().await.expect_err("should fail");
@@ -243,6 +257,7 @@ mod tests {
             "http://localhost:1".to_string(),
             None,
             5,
+            vec![],
         )
         .expect("valid URL should succeed");
         let err = endpoint
@@ -262,6 +277,7 @@ mod tests {
             "http://localhost:1".to_string(),
             None,
             5,
+            vec![],
         )
         .expect("valid URL should succeed");
         let err = endpoint
@@ -272,5 +288,41 @@ mod tests {
             err.to_string().contains("request failed"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn a2a_endpoint_new_with_max_capabilities() {
+        use agentzero_core::security::capability::Capability;
+        let caps = vec![Capability::Tool {
+            name: "web_search".to_string(),
+        }];
+        let endpoint = A2aAgentEndpoint::new(
+            "agent-x".to_string(),
+            "https://agent.example.com".to_string(),
+            None,
+            30,
+            caps,
+        )
+        .expect("valid");
+        assert_eq!(endpoint.agent_id(), "agent-x");
+        assert_eq!(endpoint.max_capabilities.len(), 1);
+    }
+
+    #[test]
+    fn a2a_max_capabilities_metadata_serializes_correctly() {
+        use agentzero_core::security::capability::Capability;
+        let caps = vec![
+            Capability::Tool {
+                name: "web_search".to_string(),
+            },
+            Capability::Tool {
+                name: "read_file".to_string(),
+            },
+        ];
+        let metadata = serde_json::json!({
+            "agentZeroMaxCapabilities": serde_json::to_value(&caps).unwrap()
+        });
+        let arr = metadata["agentZeroMaxCapabilities"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
     }
 }

@@ -229,6 +229,28 @@ async fn handle_tasks_send(state: &GatewayState, params: &Value) -> Result<Value
 
     let text = extract_text_from_parts(&send_params.message.parts);
 
+    // Sprint 88 Phase G: extract inbound capability ceiling from request metadata.
+    let request_caps: agentzero_core::security::CapabilitySet = send_params
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("agentZeroMaxCapabilities"))
+        .and_then(|v| {
+            serde_json::from_value::<Vec<agentzero_core::security::capability::Capability>>(
+                v.clone(),
+            )
+            .ok()
+        })
+        .filter(|caps| !caps.is_empty())
+        .map(|caps| agentzero_core::security::CapabilitySet::new(caps, vec![]))
+        .unwrap_or_default();
+
+    // Effective ceiling = gateway ceiling ∩ request ceiling (tighter wins).
+    let effective_cap = if !state.a2a_inbound_cap_ceiling.is_empty() {
+        state.a2a_inbound_cap_ceiling.intersect(&request_caps)
+    } else {
+        request_caps
+    };
+
     if text.is_empty() {
         return Err(json!({
             "code": -32602,
@@ -278,6 +300,46 @@ async fn handle_tasks_send(state: &GatewayState, params: &Value) -> Result<Value
             .map(|s| s.tool_count())
             .unwrap_or(0);
         format!("task received ({tool_count} tools available, no agent loop configured)")
+    } else if state.config_path.is_some() {
+        // Direct mode: no swarm channel — run the agent inline with the inbound
+        // capability override applied (Sprint 88 Phase G).
+        let config_path = state
+            .config_path
+            .as_ref()
+            .expect("checked above")
+            .as_ref()
+            .clone();
+        let workspace_root = state
+            .workspace_root
+            .as_ref()
+            .map(|p| p.as_ref().clone())
+            .unwrap_or_else(|| {
+                config_path
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .to_path_buf()
+            });
+        let req = agentzero_infra::runtime::RunAgentRequest {
+            workspace_root,
+            config_path,
+            message: text.clone(),
+            provider_override: None,
+            model_override: None,
+            profile_override: None,
+            extra_tools: vec![],
+            conversation_id: send_params.session_id.clone(),
+            agent_store: state
+                .agent_store
+                .as_ref()
+                .map(|s| Arc::clone(s) as Arc<dyn agentzero_core::agent_store::AgentStoreApi>),
+            memory_override: None,
+            memory_window_override: None,
+            capability_set_override: effective_cap,
+        };
+        match agentzero_infra::runtime::run_agent_once(req).await {
+            Ok(out) => out.response_text,
+            Err(e) => format!("agent error: {e}"),
+        }
     } else {
         "task received (no tools loaded)".to_string()
     };

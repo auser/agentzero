@@ -65,7 +65,7 @@ pub enum Capability {
     Network { domains: Vec<String> },
 
     /// Access a specific tool by name. Supports glob patterns:
-    /// `"mcp:*"` → all MCP tools, `"cron_*"` → all cron tools.
+    /// `"mcp__*"` → all MCP tools, `"cron_*"` → all cron tools.
     Tool { name: String },
 
     /// Access the memory store, optionally restricted to a named scope.
@@ -385,7 +385,7 @@ impl CapabilitySet {
         push_tool!(flags.enable_wasm_plugins, "wasm_*");
         push_tool!(flags.enable_a2a_tool, "a2a");
         push_tool!(flags.enable_dynamic_tools, "tool_create");
-        push_tool!(flags.enable_mcp, "mcp:*");
+        push_tool!(flags.enable_mcp, "mcp__*");
 
         if flags.enable_write_file {
             capabilities.push(Capability::FileWrite {
@@ -556,10 +556,40 @@ mod tests {
 
     #[test]
     fn tool_mcp_glob_matches_all_mcp_tools() {
-        let s = tool_set(&["mcp:*"]);
-        assert!(s.allows_tool("mcp:filesystem:read_file"));
-        assert!(s.allows_tool("mcp:github:list_prs"));
+        let s = tool_set(&["mcp__*"]);
+        assert!(s.allows_tool("mcp__filesystem__read_file"));
+        assert!(s.allows_tool("mcp__github__list_prs"));
         assert!(!s.allows_tool("git_operations"));
+    }
+
+    #[test]
+    fn mcp_tool_name_format_matches_capability_pattern() {
+        // Verify the double-underscore naming convention used by create_mcp_tools
+        // is correctly matched by the mcp__* capability pattern.
+        let s = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "mcp__*".to_string(),
+            }],
+            vec![],
+        );
+        for tool in &[
+            "mcp__fs__read",
+            "mcp__github__create_pr",
+            "mcp__slack__send_message",
+        ] {
+            assert!(s.allows_tool(tool), "{tool} should be allowed by mcp__*");
+        }
+        // Per-server pattern
+        let s2 = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "mcp__filesystem__*".to_string(),
+            }],
+            vec![],
+        );
+        assert!(s2.allows_tool("mcp__filesystem__read_file"));
+        assert!(!s2.allows_tool("mcp__github__list_prs"));
+        // Non-MCP tools are unaffected
+        assert!(!s.allows_tool("web_search"));
     }
 
     #[test]
@@ -901,7 +931,7 @@ mod tests {
     bool_map_test_tool!(
         bool_map_enable_mcp,
         field = enable_mcp,
-        tool = "mcp:filesystem:read"
+        tool = "mcp__filesystem__read"
     );
 
     #[test]

@@ -200,7 +200,7 @@ fn default_tools_inner(
     }
 
     if policy.enable_mcp && !policy.mcp_servers.is_empty() {
-        let mcp_tools = create_mcp_tools(&policy.mcp_servers)?;
+        let mcp_tools = create_mcp_tools(&policy.mcp_servers, policy)?;
         tools.extend(mcp_tools);
     }
 

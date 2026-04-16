@@ -539,6 +539,7 @@ fn register_a2a_endpoints(
             agent_cfg.url.clone(),
             agent_cfg.auth_token.clone(),
             agent_cfg.timeout_secs,
+            agent_cfg.max_capabilities.clone(),
         ) {
             Ok(ep) => ep,
             Err(e) => {
@@ -576,6 +577,7 @@ mod tests {
                 enabled,
                 agents,
                 bearer_token: None,
+                capability_ceiling: vec![],
             },
             ..Default::default()
         }
@@ -590,6 +592,7 @@ mod tests {
                 url: "https://coder.example.com".to_string(),
                 auth_token: Some("tok-123".to_string()),
                 timeout_secs: 60,
+                max_capabilities: vec![],
             },
         );
         agents.insert(
@@ -598,6 +601,7 @@ mod tests {
                 url: "https://writer.example.com".to_string(),
                 auth_token: None,
                 timeout_secs: 120,
+                max_capabilities: vec![],
             },
         );
         let config = make_config_with_a2a(true, agents);
@@ -621,6 +625,7 @@ mod tests {
                 url: "https://agent.example.com".to_string(),
                 auth_token: None,
                 timeout_secs: 30,
+                max_capabilities: vec![],
             },
         );
         let config = make_config_with_a2a(false, agents);
@@ -643,6 +648,7 @@ mod tests {
                 url: String::new(),
                 auth_token: None,
                 timeout_secs: 30,
+                max_capabilities: vec![],
             },
         );
         let config = make_config_with_a2a(true, agents);
@@ -651,5 +657,30 @@ mod tests {
         register_a2a_endpoints(&config, &mut endpoints);
 
         assert!(endpoints.is_empty(), "should skip agents with empty URL");
+    }
+
+    #[test]
+    fn register_a2a_endpoints_passes_max_capabilities() {
+        use agentzero_core::security::capability::Capability;
+
+        let mut agents = std::collections::HashMap::new();
+        agents.insert(
+            "capped-agent".to_string(),
+            A2aAgentConfig {
+                url: "https://agent.example.com".to_string(),
+                auth_token: None,
+                timeout_secs: 30,
+                max_capabilities: vec![Capability::Tool {
+                    name: "web_search".to_string(),
+                }],
+            },
+        );
+
+        let config = make_config_with_a2a(true, agents);
+        let mut endpoints = std::collections::HashMap::new();
+        register_a2a_endpoints(&config, &mut endpoints);
+
+        // The endpoint should be registered successfully.
+        assert!(endpoints.contains_key("capped-agent"));
     }
 }
