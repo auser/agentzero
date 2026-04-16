@@ -514,6 +514,11 @@ fn build_child_ctx(ctx: &ToolContext, config: &DelegateConfig, agent_name: &str)
     );
     child_ctx.conversation_id = Some(child_conversation_id);
 
+    // Phase K — Sprint 90: propagate the child's capability set (already computed
+    // as root ∩ agent_caps in build_delegate_agents) into the child ToolContext.
+    // This ensures memory tools and nested delegations enforce the child's scope.
+    child_ctx.capability_set = config.capability_set.clone();
+
     child_ctx
 }
 
@@ -685,6 +690,22 @@ async fn run_agentic(
             .collect()
     } else {
         effective_tools
+    };
+
+    // Phase K — Sprint 90: apply Delegate { max_capabilities } ceiling from the
+    // parent's capability set. If the parent's CapabilitySet contains any
+    // Capability::Delegate { max_capabilities } grants, those form an additional
+    // ceiling on the tools the sub-agent may receive.
+    let effective_tools: Vec<Box<dyn Tool>> = {
+        let ceiling = ctx.capability_set.delegate_ceiling();
+        if !ceiling.is_empty() {
+            effective_tools
+                .into_iter()
+                .filter(|t| ceiling.allows_tool(t.name()))
+                .collect()
+        } else {
+            effective_tools
+        }
     };
 
     let agent = Agent::new(agent_config, provider, Box::new(memory), effective_tools);
@@ -1153,4 +1174,45 @@ mod tests {
             "should not be a missing-agent error: {err}"
         );
     }
+
+    #[test]
+    fn delegate_ceiling_filters_child_tools() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+        // Simulate: parent has Delegate { max_capabilities: [web_search] }
+        // Child should only get web_search, even if its config would allow more.
+        let parent_cap_set = CapabilitySet::new(
+            vec![Capability::Delegate {
+                max_capabilities: vec![
+                    Capability::Tool { name: "web_search".to_string() },
+                ],
+            }],
+            vec![],
+        );
+        let ceiling = parent_cap_set.delegate_ceiling();
+        assert!(!ceiling.is_empty());
+        assert!(ceiling.allows_tool("web_search"));
+        assert!(!ceiling.allows_tool("shell"));
+        assert!(!ceiling.allows_tool("memory_store"));
+    }
+
+    #[test]
+    fn build_child_ctx_propagates_capability_set() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+        use agentzero_core::delegation::DelegateConfig;
+        use agentzero_core::ToolContext;
+
+        let cap = CapabilitySet::new(
+            vec![Capability::Tool { name: "web_search".to_string() }],
+            vec![],
+        );
+        let mut config = DelegateConfig::default();
+        config.capability_set = cap.clone();
+
+        let parent_ctx = ToolContext::new("/tmp".to_string());
+        let child_ctx = super::build_child_ctx(&parent_ctx, &config, "test-agent");
+
+        assert!(child_ctx.capability_set.allows_tool("web_search"));
+        assert!(!child_ctx.capability_set.allows_tool("shell"));
+    }
+
 }

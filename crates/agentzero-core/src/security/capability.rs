@@ -275,6 +275,54 @@ impl CapabilitySet {
             .any(|cap| cap_matches_shell(cap, command))
     }
 
+    /// Returns `true` if this capability set permits memory access to `namespace`.
+    ///
+    /// - Empty capability set → `true` (backward-compatible unrestricted access).
+    /// - `Memory { scope: None }` → full memory access (all namespaces).
+    /// - `Memory { scope: Some(s) }` → only namespace `s`.
+    /// - No `Memory` capability present in a non-empty set → `false` (not granted).
+    pub fn allows_memory(&self, namespace: &str) -> bool {
+        if self.is_empty() {
+            return true;
+        }
+        self.capabilities.iter().any(|c| match c {
+            Capability::Memory { scope: None } => true,
+            Capability::Memory { scope: Some(s) } => s == namespace,
+            _ => false,
+        }) && !self.deny.iter().any(|d| match d {
+            Capability::Memory { scope: None } => true,
+            Capability::Memory { scope: Some(s) } => s == namespace,
+            _ => false,
+        })
+    }
+
+    /// Build a `CapabilitySet` from all `Capability::Delegate { max_capabilities }`
+    /// grants in this set.
+    ///
+    /// When a parent agent calls the delegate tool, the combined `max_capabilities`
+    /// from all `Delegate` grants form a ceiling on what capabilities the child
+    /// agent may receive.
+    ///
+    /// Returns an empty `CapabilitySet` when no `Delegate` grants are present
+    /// (meaning no ceiling beyond what is already computed from config intersection).
+    pub fn delegate_ceiling(&self) -> CapabilitySet {
+        let mut caps: Vec<Capability> = self
+            .capabilities
+            .iter()
+            .filter_map(|c| {
+                if let Capability::Delegate { max_capabilities } = c {
+                    Some(max_capabilities.clone())
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect();
+        caps.dedup();
+        CapabilitySet::new(caps, vec![])
+    }
+
+
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     /// Check whether `self` covers (allows) the given capability.
@@ -1094,5 +1142,71 @@ mod tests {
                 );
             }
         }
+
+    }
+    #[test]
+    fn allows_memory_empty_set_permits_all() {
+        let s = CapabilitySet::default();
+        assert!(s.allows_memory("default"));
+        assert!(s.allows_memory("private"));
+        assert!(s.allows_memory("any_namespace"));
+    }
+
+    #[test]
+    fn allows_memory_full_scope_permits_all() {
+        let s = CapabilitySet::new(
+            vec![Capability::Memory { scope: None }],
+            vec![],
+        );
+        assert!(s.allows_memory("default"));
+        assert!(s.allows_memory("private"));
+    }
+
+    #[test]
+    fn allows_memory_scoped_permits_only_own_namespace() {
+        let s = CapabilitySet::new(
+            vec![Capability::Memory { scope: Some("agent_a".to_string()) }],
+            vec![],
+        );
+        assert!(s.allows_memory("agent_a"));
+        assert!(!s.allows_memory("default"));
+        assert!(!s.allows_memory("agent_b"));
+    }
+
+    #[test]
+    fn allows_memory_no_memory_cap_in_nonempty_set_denies() {
+        // A non-empty capability set without any Memory grant should deny memory access.
+        let s = CapabilitySet::new(
+            vec![Capability::Tool { name: "web_search".to_string() }],
+            vec![],
+        );
+        assert!(!s.allows_memory("default"));
+    }
+
+    #[test]
+    fn delegate_ceiling_empty_when_no_delegate_cap() {
+        let s = CapabilitySet::new(
+            vec![Capability::Tool { name: "web_search".to_string() }],
+            vec![],
+        );
+        assert!(s.delegate_ceiling().is_empty());
+    }
+
+    #[test]
+    fn delegate_ceiling_built_from_delegate_caps() {
+        let s = CapabilitySet::new(
+            vec![Capability::Delegate {
+                max_capabilities: vec![
+                    Capability::Tool { name: "web_search".to_string() },
+                    Capability::Memory { scope: None },
+                ],
+            }],
+            vec![],
+        );
+        let ceiling = s.delegate_ceiling();
+        assert!(!ceiling.is_empty());
+        assert!(ceiling.allows_tool("web_search"));
+        assert!(!ceiling.allows_tool("shell"));
+        assert!(ceiling.allows_memory("any_namespace"));
     }
 }

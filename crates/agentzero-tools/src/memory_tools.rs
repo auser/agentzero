@@ -89,6 +89,13 @@ impl Tool for MemoryStoreTool {
             .as_deref()
             .unwrap_or(DEFAULT_NAMESPACE)
             .to_string();
+
+        // Phase J — Sprint 90: enforce memory namespace scope from capability set.
+        if !ctx.capability_set.is_empty() && !ctx.capability_set.allows_memory(&ns) {
+            return Err(anyhow::anyhow!(
+                "memory access denied: capability set does not grant access to namespace '{ns}'"
+            ));
+        }
         let mut store = MemoryStore::load(&ctx.workspace_root).await?;
         store
             .namespaces
@@ -154,6 +161,13 @@ impl Tool for MemoryRecallTool {
             .context("memory_recall expects JSON: {\"key\"?, \"namespace\"?, \"limit\"?}")?;
 
         let ns = req.namespace.as_deref().unwrap_or(DEFAULT_NAMESPACE);
+
+        // Phase J — Sprint 90: enforce memory namespace scope from capability set.
+        if !ctx.capability_set.is_empty() && !ctx.capability_set.allows_memory(&ns) {
+            return Err(anyhow::anyhow!(
+                "memory access denied: capability set does not grant access to namespace '{ns}'"
+            ));
+        }
         let store = MemoryStore::load(&ctx.workspace_root).await?;
 
         let entries = match store.namespaces.get(ns) {
@@ -248,6 +262,13 @@ impl Tool for MemoryForgetTool {
             .as_deref()
             .unwrap_or(DEFAULT_NAMESPACE)
             .to_string();
+
+        // Phase J — Sprint 90: enforce memory namespace scope from capability set.
+        if !ctx.capability_set.is_empty() && !ctx.capability_set.allows_memory(&ns) {
+            return Err(anyhow::anyhow!(
+                "memory access denied: capability set does not grant access to namespace '{ns}'"
+            ));
+        }
         let mut store = MemoryStore::load(&ctx.workspace_root).await?;
 
         let removed = store
@@ -406,4 +427,58 @@ mod tests {
         assert!(result.output.contains("b=2"));
         fs::remove_dir_all(dir).ok();
     }
+
+    #[tokio::test]
+    async fn memory_store_denied_by_capability_set() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+        let dir = temp_dir();
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        ctx.capability_set = CapabilitySet::new(
+            vec![Capability::Tool { name: "memory_store".to_string() }],
+            vec![],
+        );
+        // capability_set has no Memory grant → access denied
+        let err = MemoryStoreTool
+            .execute(r#"{"key": "x", "value": "v"}"#, &ctx)
+            .await
+            .expect_err("should be denied");
+        assert!(err.to_string().contains("memory access denied"), "{err}");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn memory_store_allowed_by_scoped_capability() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+        let dir = temp_dir();
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        ctx.capability_set = CapabilitySet::new(
+            vec![Capability::Memory { scope: Some("agent_a".to_string()) }],
+            vec![],
+        );
+        // Allowed in "agent_a" namespace
+        MemoryStoreTool
+            .execute(r#"{"key": "k", "value": "v", "namespace": "agent_a"}"#, &ctx)
+            .await
+            .expect("scoped access should succeed");
+        // Denied in "agent_b" namespace
+        let err = MemoryStoreTool
+            .execute(r#"{"key": "k", "value": "v", "namespace": "agent_b"}"#, &ctx)
+            .await
+            .expect_err("should deny wrong namespace");
+        assert!(err.to_string().contains("memory access denied"), "{err}");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn memory_store_empty_capability_set_allows_all() {
+        // Empty capability set → backward-compatible unrestricted access.
+        let dir = temp_dir();
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        MemoryStoreTool
+            .execute(r#"{"key": "k", "value": "v", "namespace": "anything"}"#, &ctx)
+            .await
+            .expect("empty cap set should allow all namespaces");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
 }

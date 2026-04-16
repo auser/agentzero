@@ -679,6 +679,14 @@ pub struct ToolContext {
     /// and consumed by the runtime for quality tracking and persistence.
     #[serde(skip)]
     pub tool_executions: Arc<std::sync::Mutex<Vec<ToolExecutionRecord>>>,
+    /// Effective capability set for this execution (Sprint 90 — Phase J/K).
+    ///
+    /// When non-empty, memory tools enforce namespace access and delegate tools
+    /// apply `Delegate { max_capabilities }` ceilings.
+    /// Set by the runtime from `tool_policy.capability_set`.
+    /// Empty (default) = unrestricted / backward-compatible.
+    #[serde(skip, default)]
+    pub capability_set: crate::security::CapabilitySet,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -752,6 +760,7 @@ impl ToolContext {
             cancellation_token: None,
             task_id: None,
             tool_executions: Arc::new(std::sync::Mutex::new(Vec::new())),
+            capability_set: crate::security::CapabilitySet::default(),
         }
     }
 

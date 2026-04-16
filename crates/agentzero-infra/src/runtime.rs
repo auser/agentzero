@@ -113,6 +113,11 @@ pub struct RuntimeExecution {
     /// Optional local embedding provider for cosine-similarity re-ranking.
     pub embedding_provider:
         Option<std::sync::Arc<dyn agentzero_core::embedding::EmbeddingProvider>>,
+    /// Effective capability set for tool context (Sprint 90 — Phase J).
+    ///
+    /// Derived from `tool_policy.capability_set` in `build_runtime_execution`.
+    /// Threaded into `ToolContext.capability_set` at execution time.
+    pub capability_set: agentzero_core::security::CapabilitySet,
 }
 
 struct AuditHookSink {
@@ -675,6 +680,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
             }
         },
         model_name: config.provider.model.clone(),
+        capability_set: tool_policy.capability_set.clone(),
     })
 }
 
@@ -937,6 +943,7 @@ pub fn run_agent_streaming(
         ctx.max_cost_microdollars = execution.max_cost_microdollars;
         ctx.source_channel = execution.source_channel.clone();
         ctx.sender_id = execution.sender_id.clone();
+        ctx.capability_set = execution.capability_set.clone();
 
         let response = agent
             .respond_streaming(UserMessage { text: message }, &ctx, tx)
@@ -1025,6 +1032,7 @@ pub async fn run_agent_with_runtime(
     ctx.max_cost_microdollars = execution.max_cost_microdollars;
     ctx.source_channel = execution.source_channel.clone();
     ctx.sender_id = execution.sender_id.clone();
+        ctx.capability_set = execution.capability_set.clone();
 
     // Transcribe [AUDIO:path] markers before the message reaches the LLM.
     let goal_summary = message.clone();
@@ -1952,6 +1960,7 @@ mod tests {
             embedding_provider: None,
             trajectory_recorder: None,
             model_name: String::new(),
+            capability_set: agentzero_core::security::CapabilitySet::default(),
         }
     }
 
