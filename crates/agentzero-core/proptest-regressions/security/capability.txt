@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 1a1f7e2940acbf81ee5575f29f85bf744e6004f7ba8c7140c309b966cd9687e4 # shrinks to grant_a = [Tool { name: "h_*" }], grant_b = [Tool { name: "h*" }], probe_names = ["h_"]
