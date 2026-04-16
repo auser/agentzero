@@ -385,6 +385,7 @@ impl StepDispatcher for CliStepDispatcher {
             agent_store: self.agent_store.clone(),
             memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
             memory_window_override: None,
+            capability_set_override: agentzero_core::security::CapabilitySet::default(),
         };
 
         // Extract tool_hints from step metadata for per-node tool filtering.
@@ -478,6 +479,7 @@ impl agentzero_core::AgentEndpoint for CliWorkflowAgentEndpoint {
             agent_store: self.agent_store.clone(),
             memory_override: Some(Box::new(agentzero_core::EphemeralMemory::default())),
             memory_window_override: None,
+            capability_set_override: agentzero_core::security::CapabilitySet::default(),
         };
 
         let output = run_agent_once(req).await?;

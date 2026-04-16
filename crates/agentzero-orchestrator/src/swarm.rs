@@ -11,8 +11,9 @@ use crate::agent_router::{AgentDescriptor, AgentRouter};
 use crate::coordinator::{Coordinator, TaskMessage};
 use crate::presence::PresenceStore;
 use agentzero_channels::ChannelRegistry;
-use agentzero_config::{AgentZeroConfig, SwarmAgentConfig};
+use agentzero_config::{build_agent_capability_set, AgentZeroConfig, SwarmAgentConfig};
 use agentzero_core::event_bus::{Event, EventBus, FileBackedBus, InMemoryBus};
+use agentzero_core::security::CapabilitySet;
 use agentzero_core::{Agent, AgentEndpoint};
 use agentzero_infra::runtime::{build_memory_store, build_runtime_execution, RunAgentRequest};
 use agentzero_storage::SqliteEventBus;
@@ -287,6 +288,7 @@ pub async fn build_swarm_with_presence(
             agent_store: None,
             memory_override: None,
             memory_window_override: None,
+            capability_set_override: CapabilitySet::default(),
         };
         match build_runtime_execution(router_req).await {
             Ok(exec) => AgentRouter::new(
@@ -351,6 +353,14 @@ pub async fn build_swarm_with_presence(
 
     // ── Pass 1: Build all agents and create task channels ───────────────
 
+    // Build the root capability set from top-level config. Swarm nodes are
+    // bounded to root ∩ per-node capabilities (Phase C, Sprint 87).
+    let root_cap_set = if config.capabilities.is_empty() {
+        CapabilitySet::default()
+    } else {
+        CapabilitySet::new(config.capabilities.clone(), vec![])
+    };
+
     let mut built_agents: Vec<BuiltAgent> = Vec::new();
     let mut any_wants_converse = false;
 
@@ -373,6 +383,11 @@ pub async fn build_swarm_with_presence(
             privacy_boundary: agent_cfg.privacy_boundary.clone(),
         };
 
+        // Phase C: compute per-node capability set as root ∩ node caps.
+        // When agent_cfg.capabilities is empty, returns CapabilitySet::default()
+        // (is_empty → true) so build_runtime_execution uses the config-built policy.
+        let node_cap_set = build_agent_capability_set(&root_cap_set, &agent_cfg.capabilities);
+
         let req = RunAgentRequest {
             workspace_root: workspace_root.to_path_buf(),
             config_path: config_path.to_path_buf(),
@@ -393,6 +408,7 @@ pub async fn build_swarm_with_presence(
             agent_store: None,
             memory_override: Some(Box::new(shared_memory.clone())),
             memory_window_override: None,
+            capability_set_override: node_cap_set,
         };
 
         match build_runtime_execution(req).await {

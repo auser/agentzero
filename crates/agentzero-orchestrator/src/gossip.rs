@@ -58,7 +58,6 @@ pub struct GossipEventBus {
     /// Broadcast sender for notifying the gossip layer about new local events.
     local_tx: broadcast::Sender<Event>,
     /// Listen address (stored for test/debug).
-    #[allow(dead_code)]
     listen_addr: SocketAddr,
 }
 
@@ -120,19 +119,22 @@ impl GossipEventBus {
             })
             .collect();
 
+        // Bind listener here so we can capture the actual address (important for port 0).
+        let listener = TcpListener::bind(config.listen_addr).await?;
+        let actual_addr = listener.local_addr()?;
+
         let bus = Arc::new(Self {
             local_bus,
             seen,
             peers: Arc::new(Mutex::new(peers)),
             local_tx: local_tx.clone(),
-            listen_addr: config.listen_addr,
+            listen_addr: actual_addr,
         });
 
         // Spawn the TCP listener for incoming gossip connections.
         let bus_clone = bus.clone();
-        let listen_addr = config.listen_addr;
         tokio::spawn(async move {
-            if let Err(e) = bus_clone.run_listener(listen_addr).await {
+            if let Err(e) = bus_clone.run_listener_from(listener).await {
                 warn!(error = %e, "gossip listener exited");
             }
         });
@@ -164,14 +166,19 @@ impl GossipEventBus {
             }
         });
 
-        info!(addr = %config.listen_addr, peers = config.peers.len(), "gossip event bus started");
+        info!(addr = %actual_addr, peers = config.peers.len(), "gossip event bus started");
         Ok(bus)
     }
 
-    /// Accept inbound connections and handle gossip frames.
-    async fn run_listener(self: &Arc<Self>, addr: SocketAddr) -> anyhow::Result<()> {
-        let listener = TcpListener::bind(addr).await?;
-        info!(addr = %addr, "gossip listener started");
+    /// Returns the address this node is actually listening on.
+    /// When the config used port 0, this returns the OS-assigned port.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.listen_addr
+    }
+
+    /// Accept inbound connections from an already-bound listener and handle gossip frames.
+    async fn run_listener_from(self: &Arc<Self>, listener: TcpListener) -> anyhow::Result<()> {
+        info!(addr = %self.listen_addr, "gossip listener started");
         loop {
             let (stream, peer_addr) = listener.accept().await?;
             debug!(peer = %peer_addr, "accepted gossip connection");
@@ -322,31 +329,25 @@ mod tests {
 
     #[tokio::test]
     async fn two_node_gossip_relay() {
-        // Start two gossip nodes that peer with each other.
         let db1 = temp_db_path();
         let db2 = temp_db_path();
 
-        let bus1 = GossipEventBus::start(GossipConfig {
+        // Start bus2 first (listener only — no peers needed for receiving).
+        // bus1 will broadcast TO bus2.
+        let bus2 = GossipEventBus::start(GossipConfig {
             listen_addr: "127.0.0.1:0".parse().expect("addr"),
             peers: vec![],
-            db_path: db1.clone(),
+            db_path: db2.clone(),
             capacity: 64,
         })
         .await
-        .expect("bus1 start");
+        .expect("bus2 start");
 
-        // Get the actual bound address of bus1's listener.
-        // Since we bind to port 0, we need to use a fixed port approach for testing.
-        // Instead, use known ports.
-        let addr1: SocketAddr = "127.0.0.1:19871".parse().expect("addr");
-        let addr2: SocketAddr = "127.0.0.1:19872".parse().expect("addr");
+        let addr2 = bus2.local_addr();
 
-        // Clean up and restart with fixed ports.
-        drop(bus1);
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
+        // Start bus1 with bus2 as its peer, so bus1 broadcasts to bus2.
         let bus1 = GossipEventBus::start(GossipConfig {
-            listen_addr: addr1,
+            listen_addr: "127.0.0.1:0".parse().expect("addr"),
             peers: vec![addr2],
             db_path: db1.clone(),
             capacity: 64,
@@ -354,26 +355,17 @@ mod tests {
         .await
         .expect("bus1 start");
 
-        let bus2 = GossipEventBus::start(GossipConfig {
-            listen_addr: addr2,
-            peers: vec![addr1],
-            db_path: db2.clone(),
-            capacity: 64,
-        })
-        .await
-        .expect("bus2 start");
-
         // Give the gossip layer time to connect.
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // Subscribe on bus2 to receive events from bus1.
+        // Subscribe on bus2 BEFORE publishing.
         let mut sub2 = bus2.subscribe();
 
         // Publish an event on bus1.
         let event = Event::new("test.relay", "node1", "hello from node 1");
         bus1.publish(event.clone()).await.expect("publish");
 
-        // bus2 should receive it via gossip.
+        // bus2 should receive it via gossip within 2 s.
         let received = tokio::time::timeout(Duration::from_secs(2), sub2.recv())
             .await
             .expect("timeout waiting for gossip relay")
@@ -413,10 +405,9 @@ mod tests {
     #[tokio::test]
     async fn local_publish_persists_and_subscribes() {
         let db = temp_db_path();
-        let addr: SocketAddr = "127.0.0.1:19873".parse().expect("addr");
 
         let bus = GossipEventBus::start(GossipConfig {
-            listen_addr: addr,
+            listen_addr: "127.0.0.1:0".parse().expect("addr"),
             peers: vec![],
             db_path: db.clone(),
             capacity: 64,

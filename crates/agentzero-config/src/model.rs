@@ -2314,6 +2314,14 @@ pub struct SwarmAgentConfig {
     /// Conversation settings for bidirectional agent-to-agent interactions.
     #[serde(default)]
     pub conversation: ConversationConfig,
+    /// Per-agent capability grants (Sprint 87).
+    ///
+    /// When empty (the default), this agent inherits all capabilities from the
+    /// root `CapabilitySet`. When non-empty, the root `CapabilitySet` is
+    /// intersected with the set built from this list before the agent runs —
+    /// a swarm node can never exceed the root policy.
+    #[serde(default)]
+    pub capabilities: Vec<Capability>,
 }
 
 impl Default for SwarmAgentConfig {
@@ -2333,6 +2341,7 @@ impl Default for SwarmAgentConfig {
             system_prompt: None,
             max_iterations: 20,
             conversation: ConversationConfig::default(),
+            capabilities: Vec::new(),
         }
     }
 }

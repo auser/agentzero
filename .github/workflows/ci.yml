@@ -50,6 +50,9 @@ jobs:
       - name: verify dependency policy
         if: matrix.os == 'ubuntu-latest'
         run: scripts/verify-dependency-policy.sh
+      - name: Check agentzero-autopilot with memory-turso feature
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo check -p agentzero-autopilot --features memory-turso
       - name: release build (default)
         if: matrix.os == 'ubuntu-latest'
         run: cargo build -p agentzero --release

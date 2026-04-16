@@ -2,6 +2,7 @@ use crate::audio::process_audio_markers;
 use crate::audit::{FileAuditSink, SequencedAuditSink};
 use crate::tools::default_tools_with_store;
 use agentzero_auth::AuthManager;
+use agentzero_config::build_agent_capability_set;
 use agentzero_config::{
     load, load_audit_policy, load_env_var, load_tool_security_policy, AudioConfig,
 };
@@ -51,6 +52,16 @@ pub struct RunAgentRequest {
     /// Override memory_window_size from config. When `Some(0)`, no prior
     /// conversation history is loaded (useful for stateless one-shot commands).
     pub memory_window_override: Option<usize>,
+    /// Capability set injected by the swarm orchestrator or delegation layer
+    /// (Sprint 87 — Phase C).
+    ///
+    /// When non-empty, overrides the `CapabilitySet` that would normally be
+    /// built from `config.capabilities` in `build_runtime_execution`. This is
+    /// the mechanism by which swarm nodes and delegate agents receive the
+    /// root ∩ node intersection instead of the full server-wide set.
+    ///
+    /// Default: `CapabilitySet::default()` (is_empty → use config as normal).
+    pub capability_set_override: agentzero_core::security::CapabilitySet,
 }
 
 #[derive(Debug, Clone)]
@@ -213,7 +224,6 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
     .await?;
 
     let router = build_model_router(&config);
-    let delegate_agents = build_delegate_agents(&config);
 
     // Wire transport settings from [provider.transport] in config.
     let transport_config = agentzero_providers::TransportConfig {
@@ -359,7 +369,15 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         Some(m) => m,
         None => build_memory_store(&req.config_path).await?,
     };
-    let tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
+    let mut tool_policy = load_tool_security_policy(&req.workspace_root, &req.config_path)?;
+    // Phase C: if the caller injected a capability override (e.g. from a swarm
+    // orchestrator), apply it on top of whatever the config built.
+    if !req.capability_set_override.is_empty() {
+        tool_policy.capability_set = req.capability_set_override.clone();
+    }
+    // Phase B: build delegate agents with the (potentially overridden) root
+    // capability set so each delegate is bounded to root ∩ per-agent caps.
+    let delegate_agents = build_delegate_agents(&config, &tool_policy.capability_set);
     let mut tools: Vec<Box<dyn Tool>> =
         default_tools_with_store(&tool_policy, router, delegate_agents, req.agent_store)?;
     // Append any extra tools (e.g. FFI-registered tools).
@@ -1510,6 +1528,7 @@ fn build_model_router(config: &agentzero_config::AgentZeroConfig) -> Option<Mode
 
 fn build_delegate_agents(
     config: &agentzero_config::AgentZeroConfig,
+    root_cap_set: &agentzero_core::security::CapabilitySet,
 ) -> Option<HashMap<String, DelegateConfig>> {
     if config.agents.is_empty() {
         return None;
@@ -1529,6 +1548,11 @@ fn build_delegate_agents(
                 &agent.privacy_boundary,
                 global_boundary,
             );
+
+            // Phase B: compute per-agent capability set as root ∩ agent caps.
+            // When agent.capabilities is empty, returns CapabilitySet::default()
+            // (is_empty → true) so the sub-agent falls back to boolean flags.
+            let capability_set = build_agent_capability_set(root_cap_set, &agent.capabilities);
 
             (
                 name.clone(),
@@ -1552,6 +1576,7 @@ fn build_delegate_agents(
                         .unwrap_or(0),
                     system_prompt_hash: None,
                     instruction_method: agent.instruction_method.clone(),
+                    capability_set,
                 },
             )
         })
@@ -1985,6 +2010,139 @@ mod tests {
     }
 
     #[test]
+    fn build_delegate_agents_intersects_capabilities() {
+        use agentzero_core::security::{Capability, CapabilitySet};
+
+        // Root cap set allows "web_search" only.
+        let root_cap = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "web_search".to_string(),
+            }],
+            vec![],
+        );
+
+        // Agent config has capabilities allowing "web_search" + "shell_command".
+        let mut agents = std::collections::HashMap::new();
+        agents.insert(
+            "researcher".to_string(),
+            agentzero_config::DelegateAgentConfig {
+                provider: "openrouter".to_string(),
+                model: "gpt-4o".to_string(),
+                capabilities: vec![
+                    Capability::Tool {
+                        name: "web_search".to_string(),
+                    },
+                    Capability::Tool {
+                        name: "shell_command".to_string(),
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+        let config = agentzero_config::AgentZeroConfig {
+            agents,
+            ..Default::default()
+        };
+
+        let result =
+            super::build_delegate_agents(&config, &root_cap).expect("should build delegate agents");
+        let researcher = result.get("researcher").expect("researcher should exist");
+
+        // Intersection: only "web_search" (root does not allow "shell_command").
+        assert!(
+            researcher.capability_set.allows_tool("web_search"),
+            "web_search should be allowed by intersection"
+        );
+        assert!(
+            !researcher.capability_set.allows_tool("shell_command"),
+            "shell_command should be denied — not in root"
+        );
+    }
+
+    #[test]
+    fn build_delegate_agents_no_per_agent_caps_returns_empty() {
+        // Agent config has no [[capabilities]].
+        let root_cap = agentzero_core::security::CapabilitySet::default();
+
+        let mut agents = std::collections::HashMap::new();
+        agents.insert(
+            "worker".to_string(),
+            agentzero_config::DelegateAgentConfig {
+                provider: "openrouter".to_string(),
+                model: "gpt-4o".to_string(),
+                capabilities: vec![],
+                ..Default::default()
+            },
+        );
+        let config = agentzero_config::AgentZeroConfig {
+            agents,
+            ..Default::default()
+        };
+
+        let result =
+            super::build_delegate_agents(&config, &root_cap).expect("should build delegate agents");
+        let worker = result.get("worker").expect("worker should exist");
+
+        // Empty agent caps → CapabilitySet::default() (is_empty = true).
+        assert!(
+            worker.capability_set.is_empty(),
+            "no per-agent caps should yield empty capability set"
+        );
+    }
+
+    #[test]
+    fn build_delegate_agents_agent_subset_of_root() {
+        use agentzero_core::security::{Capability, CapabilitySet};
+
+        // Root allows web_search + shell_command + git_operations.
+        let root_cap = CapabilitySet::new(
+            vec![
+                Capability::Tool {
+                    name: "web_search".to_string(),
+                },
+                Capability::Tool {
+                    name: "shell_command".to_string(),
+                },
+                Capability::Tool {
+                    name: "git_operations".to_string(),
+                },
+            ],
+            vec![],
+        );
+
+        // Agent has a single capability.
+        let mut agents = std::collections::HashMap::new();
+        agents.insert(
+            "coder".to_string(),
+            agentzero_config::DelegateAgentConfig {
+                provider: "openrouter".to_string(),
+                model: "gpt-4o".to_string(),
+                capabilities: vec![Capability::Tool {
+                    name: "git_operations".to_string(),
+                }],
+                ..Default::default()
+            },
+        );
+        let config = agentzero_config::AgentZeroConfig {
+            agents,
+            ..Default::default()
+        };
+
+        let result =
+            super::build_delegate_agents(&config, &root_cap).expect("should build delegate agents");
+        let coder = result.get("coder").expect("coder should exist");
+
+        assert!(
+            coder.capability_set.allows_tool("git_operations"),
+            "git_operations in both root and agent — should be allowed"
+        );
+        assert!(
+            !coder.capability_set.allows_tool("web_search"),
+            "web_search not in agent caps — should be denied"
+        );
+    }
+
+    #[test]
     fn build_delegate_agents_resolves_provider_url() {
         let mut agents = std::collections::HashMap::new();
         agents.insert(
@@ -2001,7 +2159,11 @@ mod tests {
             ..Default::default()
         };
 
-        let result = super::build_delegate_agents(&config).expect("should build delegate agents");
+        let result = super::build_delegate_agents(
+            &config,
+            &agentzero_core::security::CapabilitySet::default(),
+        )
+        .expect("should build delegate agents");
         let researcher = result.get("researcher").expect("researcher should exist");
         assert_eq!(researcher.provider_kind, "openrouter");
         assert!(
@@ -2009,5 +2171,145 @@ mod tests {
             "provider URL should be resolved, got: {}",
             researcher.provider
         );
+    }
+
+    #[test]
+    fn capability_set_override_empty_does_not_replace() {
+        use agentzero_core::security::{Capability, CapabilitySet};
+
+        // An empty override must leave the delegate capability set untouched.
+        let root_cap = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "web_search".to_string(),
+            }],
+            vec![],
+        );
+        let empty_override = CapabilitySet::default();
+        assert!(
+            empty_override.is_empty(),
+            "empty override should be is_empty"
+        );
+
+        // The effective capability set after a no-op override is the root.
+        // Simulate what build_runtime_execution does:
+        let mut effective = root_cap.clone();
+        if !empty_override.is_empty() {
+            effective = empty_override.clone();
+        }
+
+        assert!(
+            effective.allows_tool("web_search"),
+            "root caps should be preserved when override is empty"
+        );
+    }
+
+    #[test]
+    fn capability_set_override_replaces_config_built_set() {
+        use agentzero_core::security::{Capability, CapabilitySet};
+
+        // A non-empty override should replace the config-built set entirely.
+        let root_cap = CapabilitySet::new(
+            vec![
+                Capability::Tool {
+                    name: "web_search".to_string(),
+                },
+                Capability::Tool {
+                    name: "shell_command".to_string(),
+                },
+            ],
+            vec![],
+        );
+        let override_cap = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "web_search".to_string(),
+            }],
+            vec![],
+        );
+
+        // Simulate what build_runtime_execution does:
+        let mut effective = root_cap.clone();
+        if !override_cap.is_empty() {
+            effective = override_cap.clone();
+        }
+
+        assert!(
+            effective.allows_tool("web_search"),
+            "web_search should remain allowed after override"
+        );
+        assert!(
+            !effective.allows_tool("shell_command"),
+            "shell_command should be denied — not in override"
+        );
+    }
+
+    #[test]
+    fn swarm_node_never_exceeds_root() {
+        use agentzero_core::security::{Capability, CapabilitySet};
+
+        const SAMPLE_TOOLS: &[&str] = &[
+            "web_search",
+            "shell_command",
+            "git_operations",
+            "write_file",
+            "read_file",
+        ];
+
+        // Run several root × node combinations and assert the intersection
+        // never grants a tool that the root does not grant.
+        let combinations: &[(&[&str], &[&str])] = &[
+            (
+                &["web_search", "shell_command"],
+                &["web_search", "write_file"],
+            ),
+            (&["web_search"], &["web_search", "shell_command"]),
+            (&[], &["web_search"]),
+            (&["web_search", "git_operations"], &[]),
+        ];
+
+        for (root_tools, node_tools) in combinations {
+            let root = if root_tools.is_empty() {
+                CapabilitySet::default()
+            } else {
+                CapabilitySet::new(
+                    root_tools
+                        .iter()
+                        .map(|t| Capability::Tool {
+                            name: t.to_string(),
+                        })
+                        .collect(),
+                    vec![],
+                )
+            };
+            let node = if node_tools.is_empty() {
+                CapabilitySet::default()
+            } else {
+                CapabilitySet::new(
+                    node_tools
+                        .iter()
+                        .map(|t| Capability::Tool {
+                            name: t.to_string(),
+                        })
+                        .collect(),
+                    vec![],
+                )
+            };
+
+            // Simulate build_agent_capability_set(root, node_caps).
+            let intersection = if node.is_empty() {
+                CapabilitySet::default()
+            } else {
+                root.intersect(&node)
+            };
+
+            for tool in SAMPLE_TOOLS {
+                if intersection.allows_tool(tool) {
+                    assert!(
+                        root.allows_tool(tool),
+                        "intersection allowed '{tool}' but root did not — \
+                         root={root_tools:?}, node={node_tools:?}"
+                    );
+                }
+            }
+        }
     }
 }

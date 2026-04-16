@@ -121,12 +121,22 @@ pub struct CapabilitySet {
     /// Capabilities that are explicitly denied. Deny always overrides any grant.
     #[serde(default)]
     pub deny: Vec<Capability>,
+
+    /// Optional composite intersection representation.
+    /// When present, this `CapabilitySet` represents the logical AND of the
+    /// two operand sets. Permission checks evaluate against both operands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composite: Option<Box<(CapabilitySet, CapabilitySet)>>,
 }
 
 impl CapabilitySet {
     /// Create a new capability set with the given grants and explicit denials.
     pub fn new(capabilities: Vec<Capability>, deny: Vec<Capability>) -> Self {
-        Self { capabilities, deny }
+        Self {
+            capabilities,
+            deny,
+            composite: None,
+        }
     }
 
     /// Returns `true` when no capabilities are granted.
@@ -141,28 +151,34 @@ impl CapabilitySet {
     /// }
     /// ```
     pub fn is_empty(&self) -> bool {
-        self.capabilities.is_empty()
+        // Consider the set empty only when there are no explicit grants and no
+        // composite representation. A composite set represents a (potentially)
+        // non-empty logical intersection even if the materialized grant list
+        // is empty.
+        self.capabilities.is_empty() && self.composite.is_none()
     }
 
     /// Compute the intersection of `self` and `other`.
     ///
-    /// The result contains only capabilities from `self` that `other` also
-    /// allows. Deny lists are merged (union — deny in either set means denied
-    /// in the result), making the intersection strictly more restrictive.
+    /// The result is represented compositionally: rather than attempting to
+    /// compute a canonical list of intersected glob patterns (which is error
+    /// prone), we store both operands and evaluate permission checks as the
+    /// logical AND of the operands. Deny lists are merged (union — deny in
+    /// either set means denied in the result).
     ///
     /// Use this when delegating: `effective = parent.intersect(child_config)`.
-    ///
-    /// # Invariant
-    ///
-    /// For all possible actions `a`:
-    /// `result.allows(a)` implies `self.allows(a)` AND `other.allows(a)`.
     pub fn intersect(&self, other: &CapabilitySet) -> CapabilitySet {
-        let capabilities = self
-            .capabilities
-            .iter()
-            .filter(|cap| other.allows_capability(cap))
-            .cloned()
-            .collect();
+        // Preserve legacy semantics: when either operand is empty (no explicit
+        // grants and no composite), the intersection must be empty. This lets
+        // callers fall back to boolean `enable_*` semantics when capability
+        // lists are not in use.
+        if self.is_empty() || other.is_empty() {
+            return CapabilitySet {
+                capabilities: Vec::new(),
+                deny: Vec::new(),
+                composite: None,
+            };
+        }
 
         // Deny lists are unioned: deny in either operand = deny in result.
         let mut deny = self.deny.clone();
@@ -172,16 +188,25 @@ impl CapabilitySet {
             }
         }
 
-        CapabilitySet { capabilities, deny }
+        CapabilitySet {
+            capabilities: Vec::new(), // materialized grants omitted; evaluation uses composite
+            deny,
+            composite: Some(Box::new((self.clone(), other.clone()))),
+        }
     }
 
     // ── Permission checks ─────────────────────────────────────────────────────
 
     /// Returns `true` if the given tool name is permitted.
     ///
-    /// Tool name patterns in grants support globs: `"mcp:*"` matches any MCP
-    /// tool, `"cron_*"` matches any cron tool.
+    /// For composite intersections we evaluate the logical AND of both operands.
     pub fn allows_tool(&self, name: &str) -> bool {
+        // Composite case: both operands must allow the tool.
+        if let Some(boxed) = &self.composite {
+            let (a, b) = &**boxed;
+            return a.allows_tool(name) && b.allows_tool(name);
+        }
+
         if self.is_denied(|cap| cap_matches_tool(cap, name)) {
             return false;
         }
@@ -192,6 +217,11 @@ impl CapabilitySet {
 
     /// Returns `true` if reading the given path is permitted.
     pub fn allows_file_read(&self, path: &Path) -> bool {
+        if let Some(boxed) = &self.composite {
+            let (a, b) = &**boxed;
+            return a.allows_file_read(path) && b.allows_file_read(path);
+        }
+
         if self.is_denied(|cap| cap_matches_file_read(cap, path)) {
             return false;
         }
@@ -202,6 +232,11 @@ impl CapabilitySet {
 
     /// Returns `true` if writing the given path is permitted.
     pub fn allows_file_write(&self, path: &Path) -> bool {
+        if let Some(boxed) = &self.composite {
+            let (a, b) = &**boxed;
+            return a.allows_file_write(path) && b.allows_file_write(path);
+        }
+
         if self.is_denied(|cap| cap_matches_file_write(cap, path)) {
             return false;
         }
@@ -212,6 +247,11 @@ impl CapabilitySet {
 
     /// Returns `true` if accessing the given domain is permitted.
     pub fn allows_network(&self, domain: &str) -> bool {
+        if let Some(boxed) = &self.composite {
+            let (a, b) = &**boxed;
+            return a.allows_network(domain) && b.allows_network(domain);
+        }
+
         if self.is_denied(|cap| cap_matches_network(cap, domain)) {
             return false;
         }
@@ -222,6 +262,11 @@ impl CapabilitySet {
 
     /// Returns `true` if the given shell command is permitted.
     pub fn allows_shell(&self, command: &str) -> bool {
+        if let Some(boxed) = &self.composite {
+            let (a, b) = &**boxed;
+            return a.allows_shell(command) && b.allows_shell(command);
+        }
+
         if self.is_denied(|cap| cap_matches_shell(cap, command)) {
             return false;
         }
@@ -234,10 +279,12 @@ impl CapabilitySet {
 
     /// Check whether `self` covers (allows) the given capability.
     ///
-    /// Used by [`intersect`][Self::intersect] to decide whether to retain a
-    /// capability from `self` — it is kept only when `other.allows_capability`
-    /// returns `true`.
-    fn allows_capability(&self, cap: &Capability) -> bool {
+    /// This helper is used internally by `intersect` to decide whether to retain
+    /// a capability grant from an operand. It is `pub(crate)` to allow other
+    /// modules within the crate (for example test helpers or composition logic)
+    /// to call it without exposing it as part of the public API.
+    #[allow(dead_code)]
+    pub(crate) fn allows_capability(&self, cap: &Capability) -> bool {
         match cap {
             Capability::Tool { name } => self.allows_tool(name),
 
@@ -349,6 +396,7 @@ impl CapabilitySet {
         CapabilitySet {
             capabilities,
             deny: vec![],
+            composite: None,
         }
     }
 }

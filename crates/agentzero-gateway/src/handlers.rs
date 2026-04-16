@@ -313,6 +313,7 @@ fn build_agent_request(
         agent_store: None,
         memory_override: None,
         memory_window_override: None,
+        capability_set_override: agentzero_core::security::CapabilitySet::default(),
     })
 }
 
@@ -719,6 +720,7 @@ async fn handle_text_message(
         agent_store: agent_store.clone(),
         memory_override: None,
         memory_window_override: None,
+        capability_set_override: agentzero_core::security::CapabilitySet::default(),
     };
     let execution = match build_runtime_execution(req).await {
         Ok(exec) => exec,

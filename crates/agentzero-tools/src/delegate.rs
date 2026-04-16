@@ -672,6 +672,21 @@ async fn run_agentic(
             .collect()
     };
 
+    // Phase B: apply the delegate's capability set if non-empty.
+    // When capability_set.is_empty() (the default), this is a no-op and the
+    // sub-agent inherits the full tool set built above. When non-empty (set by
+    // build_delegate_agents as root ∩ per-agent caps), tools not permitted by
+    // the capability set are removed so the sub-agent can never exceed its
+    // assigned capability scope.
+    let effective_tools: Vec<Box<dyn Tool>> = if !config.capability_set.is_empty() {
+        effective_tools
+            .into_iter()
+            .filter(|t| config.capability_set.allows_tool(t.name()))
+            .collect()
+    } else {
+        effective_tools
+    };
+
     let agent = Agent::new(agent_config, provider, Box::new(memory), effective_tools);
 
     let response = agent

@@ -13,6 +13,8 @@ pub mod stale_recovery;
 pub mod store;
 pub mod tools;
 pub mod trigger;
+#[cfg(feature = "memory-turso")]
+pub mod turso_store;
 pub mod types;
 
 pub use cap_gate::{CapGate, CapGateResult};
@@ -21,4 +23,6 @@ pub use reaction_matrix::ReactionMatrix;
 pub use stale_recovery::StaleRecovery;
 pub use store::{AutopilotStore, SqliteAutopilotStore};
 pub use trigger::TriggerEngine;
+#[cfg(feature = "memory-turso")]
+pub use turso_store::TursoAutopilotStore;
 pub use types::*;

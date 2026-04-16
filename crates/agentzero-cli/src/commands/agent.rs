@@ -53,6 +53,7 @@ impl AgentZeroCommand for AgentCommand {
             agent_store,
             memory_override: None,
             memory_window_override,
+            capability_set_override: agentzero_core::security::CapabilitySet::default(),
         })
         .await?;
 
@@ -95,6 +96,7 @@ async fn run_streaming(ctx: &CommandContext, opts: AgentOptions) -> anyhow::Resu
         agent_store,
         memory_override: None,
         memory_window_override,
+        capability_set_override: agentzero_core::security::CapabilitySet::default(),
     })
     .await?;
 

@@ -61,6 +61,13 @@ pub struct DelegateConfig {
     /// `SystemPrompt` which injects as the LLM system prompt.
     #[serde(default)]
     pub instruction_method: InstructionMethod,
+    /// Effective capability set for this delegate agent (Sprint 87).
+    ///
+    /// Computed as the intersection of the parent's `CapabilitySet` and the
+    /// per-agent `[[capabilities]]` list from config. When `is_empty()` (the
+    /// default), the sub-agent falls back to the parent's boolean flags.
+    #[serde(default)]
+    pub capability_set: crate::security::CapabilitySet,
 }
 
 impl Default for DelegateConfig {
@@ -82,6 +89,7 @@ impl Default for DelegateConfig {
             max_cost_microdollars: 0,
             system_prompt_hash: None,
             instruction_method: InstructionMethod::default(),
+            capability_set: crate::security::CapabilitySet::default(),
         }
     }
 }

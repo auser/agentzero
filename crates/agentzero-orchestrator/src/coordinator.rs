@@ -352,6 +352,7 @@ impl Coordinator {
                 .as_ref()
                 .map(|m| Box::new(Arc::clone(m)) as Box<dyn agentzero_core::MemoryStore>),
             memory_window_override: None,
+            capability_set_override: agentzero_core::security::CapabilitySet::default(),
         };
 
         let exec = build_runtime_execution(req).await?;
