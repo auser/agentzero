@@ -295,6 +295,19 @@ fn default_tools_inner(
             isolation.allow_network = false;
         }
         for plugin in discovered {
+            // Phase H — Sprint 89: filter WASM plugins by the agent's capability set.
+            // When capability_set is non-empty, only expose plugins whose id is
+            // allowed; empty capability_set falls back to the enable_wasm_plugins
+            // boolean (all discovered plugins are permitted).
+            if !policy.capability_set.is_empty()
+                && !policy.capability_set.allows_tool(&plugin.manifest.id)
+            {
+                tracing::debug!(
+                    plugin = %plugin.manifest.id,
+                    "wasm plugin filtered out by agent capability set"
+                );
+                continue;
+            }
             match WasmTool::from_manifest(
                 plugin.manifest.clone(),
                 plugin.wasm_path.clone(),
@@ -675,6 +688,68 @@ mod tests {
             core_only.len() >= 10,
             "core should have at least 10 tools, got {}",
             core_only.len(),
+        );
+    }
+    #[test]
+    fn wasm_capability_filter_predicate() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+        let cap_set = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "my_plugin".to_string(),
+            }],
+            vec![],
+        );
+        // Simulate the filter predicate from default_tools_inner.
+        let check = |name: &str| -> bool {
+            if !cap_set.is_empty() {
+                cap_set.allows_tool(name)
+            } else {
+                true
+            }
+        };
+        assert!(check("my_plugin"), "allowed plugin should pass filter");
+        assert!(
+            !check("other_plugin"),
+            "disallowed plugin should be filtered"
+        );
+    }
+
+    #[test]
+    fn wasm_empty_capability_set_allows_all() {
+        use agentzero_core::security::capability::CapabilitySet;
+        let empty = CapabilitySet::default();
+        let check_open = |name: &str| -> bool {
+            if !empty.is_empty() {
+                empty.allows_tool(name)
+            } else {
+                true
+            }
+        };
+        assert!(
+            check_open("anything_goes"),
+            "empty capability set should allow all plugins"
+        );
+        assert!(
+            check_open("another_plugin"),
+            "empty capability set should allow all plugins"
+        );
+    }
+
+    #[test]
+    fn wasm_tool_name_matches_capability_wildcard() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+        // Verify the wasm_* glob pattern works for plugin ids.
+        let cap = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "wasm_*".to_string(),
+            }],
+            vec![],
+        );
+        assert!(cap.allows_tool("wasm_my_custom_plugin"));
+        assert!(cap.allows_tool("wasm_image_classifier"));
+        assert!(
+            !cap.allows_tool("mcp__fs__read"),
+            "non-wasm tool should not match wasm_*"
         );
     }
 }

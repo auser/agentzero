@@ -11,6 +11,11 @@ pub(crate) struct AuthIdentity {
     pub(crate) scopes: HashSet<Scope>,
     /// API key identity info, if authenticated via API key.
     pub(crate) api_key: Option<ApiKeyInfo>,
+    /// Capability ceiling for this request (Sprint 89 — Phase I).
+    ///
+    /// Derived from `ApiKeyInfo.capability_ceiling` when authenticated via API key.
+    /// Empty for bearer/paired-token authentication (no restriction).
+    pub(crate) capability_ceiling: agentzero_core::security::CapabilitySet,
 }
 
 impl AuthIdentity {
@@ -25,6 +30,7 @@ impl AuthIdentity {
             ]
             .into(),
             api_key: None,
+            capability_ceiling: agentzero_core::security::CapabilitySet::default(),
         }
     }
 
@@ -65,6 +71,7 @@ pub(crate) fn authorize_request(
         // Try API key as fallback.
         if let Some(info) = try_api_key(state, token) {
             return Ok(AuthIdentity {
+                capability_ceiling: info.capability_ceiling.clone(),
                 scopes: info.scopes.clone(),
                 api_key: Some(info),
             });
@@ -109,6 +116,7 @@ pub(crate) fn authorize_request(
     // Check API key store.
     if let Some(info) = try_api_key(state, token) {
         return Ok(AuthIdentity {
+            capability_ceiling: info.capability_ceiling.clone(),
             scopes: info.scopes.clone(),
             api_key: Some(info),
         });
@@ -573,5 +581,54 @@ mod tests {
 
         let headers = bearer_headers("legacy-tok");
         assert!(authorize_request(&state, &headers, false).is_ok());
+    }
+    #[test]
+    fn full_access_identity_has_empty_ceiling() {
+        // Bearer/paired token identity should have an unrestricted (empty) ceiling.
+        // Empty CapabilitySet means "no restriction" by convention.
+        let state = GatewayState::test_with_bearer(Some("secret"));
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer secret".parse().unwrap(),
+        );
+        let identity = authorize_request(&state, &headers, false).expect("should auth");
+        assert!(
+            identity.capability_ceiling.is_empty(),
+            "bearer token identity should have empty (unrestricted) capability ceiling"
+        );
+    }
+
+    #[test]
+    fn api_key_identity_carries_capability_ceiling() {
+        use crate::api_keys::{ApiKeyStore, Scope};
+        use agentzero_core::security::capability::Capability;
+        use std::{collections::HashSet, sync::Arc};
+
+        let store = ApiKeyStore::new();
+        let scopes: HashSet<Scope> = [Scope::RunsWrite].into();
+        let ceiling = vec![Capability::Tool {
+            name: "web_search".to_string(),
+        }];
+        let (raw_key, _) = store
+            .create_with_ceiling("org-1", "u-1", scopes, None, ceiling)
+            .unwrap();
+
+        let mut state = GatewayState::test_with_bearer(None);
+        state.paired_tokens.lock().unwrap().clear();
+        state.api_key_store = Some(Arc::new(store));
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {raw_key}").parse().unwrap(),
+        );
+        let identity = authorize_request(&state, &headers, false).expect("should auth");
+        assert!(
+            !identity.capability_ceiling.is_empty(),
+            "api key identity should carry the capability ceiling"
+        );
+        assert!(identity.capability_ceiling.allows_tool("web_search"));
+        assert!(!identity.capability_ceiling.allows_tool("shell"));
     }
 }

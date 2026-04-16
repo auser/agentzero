@@ -288,6 +288,7 @@ fn build_agent_request(
     state: &GatewayState,
     message: String,
     model_override: Option<String>,
+    capability_override: agentzero_core::security::CapabilitySet,
 ) -> Result<RunAgentRequest, GatewayError> {
     let config_path = state
         .config_path
@@ -313,7 +314,7 @@ fn build_agent_request(
         agent_store: None,
         memory_override: None,
         memory_window_override: None,
-        capability_set_override: agentzero_core::security::CapabilitySet::default(),
+        capability_set_override: capability_override,
     })
 }
 
@@ -322,7 +323,7 @@ pub(crate) async fn api_chat(
     headers: HeaderMap,
     Json(req): Json<ChatRequest>,
 ) -> Result<Response, GatewayError> {
-    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
+    let identity = authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
     if let Some(reason) = check_perplexity(&req.message, &state.effective_perplexity_filter()) {
         tracing::warn!(reason = %reason, "gateway api_chat blocked by perplexity filter");
@@ -352,7 +353,7 @@ pub(crate) async fn api_chat(
     }
 
     // Fallback: single-agent execution (no swarm).
-    let agent_req = build_agent_request(&state, req.message, None)?;
+    let agent_req = build_agent_request(&state, req.message, None, identity.capability_ceiling)?;
     let output = run_agent_once(agent_req).await.map_err(|e| {
         tracing::error!(error = %e, "api_chat agent execution failed");
         GatewayError::AgentExecutionFailed {
@@ -384,7 +385,7 @@ pub(crate) async fn v1_chat_completions(
     headers: HeaderMap,
     Json(req): Json<ChatCompletionsRequest>,
 ) -> Result<Response, GatewayError> {
-    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
+    let identity = authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
     let last_user = req
         .messages
@@ -404,7 +405,13 @@ pub(crate) async fn v1_chat_completions(
     let model_override = req.model;
 
     if req.stream {
-        return v1_chat_completions_stream(&state, &last_user, model_override).await;
+        return v1_chat_completions_stream(
+            &state,
+            &last_user,
+            model_override,
+            identity.capability_ceiling.clone(),
+        )
+        .await;
     }
 
     // Route through swarm pipeline when available.
@@ -434,7 +441,12 @@ pub(crate) async fn v1_chat_completions(
         .into_response());
     }
 
-    let agent_req = build_agent_request(&state, last_user, model_override)?;
+    let agent_req = build_agent_request(
+        &state,
+        last_user,
+        model_override,
+        identity.capability_ceiling,
+    )?;
     let output = run_agent_once(agent_req).await.map_err(|e| {
         tracing::error!(error = %e, "v1_chat_completions agent execution failed");
         GatewayError::AgentExecutionFailed {
@@ -474,8 +486,14 @@ async fn v1_chat_completions_stream(
     state: &GatewayState,
     message: &str,
     model_override: Option<String>,
+    capability_override: agentzero_core::security::CapabilitySet,
 ) -> Result<Response, GatewayError> {
-    let agent_req = build_agent_request(state, message.to_string(), model_override)?;
+    let agent_req = build_agent_request(
+        state,
+        message.to_string(),
+        model_override,
+        capability_override,
+    )?;
     let execution = build_runtime_execution(agent_req).await.map_err(|e| {
         tracing::error!(error = %e, "v1_chat_completions_stream build failed");
         GatewayError::AgentExecutionFailed {
@@ -795,7 +813,7 @@ pub(crate) async fn async_submit(
     headers: HeaderMap,
     Json(req): Json<AsyncSubmitRequest>,
 ) -> Result<Response, GatewayError> {
-    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
+    let identity = authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
 
     let job_store = state
         .job_store
@@ -830,7 +848,12 @@ pub(crate) async fn async_submit(
             // Submit a new run linked to the original conversation.
             let run_id = job_store.submit("agent".to_string(), lane, None).await;
 
-            let mut agent_req = build_agent_request(&state, req.message, req.model)?;
+            let mut agent_req = build_agent_request(
+                &state,
+                req.message,
+                req.model,
+                identity.capability_ceiling.clone(),
+            )?;
             agent_req.conversation_id = Some(existing_run_id.to_string());
 
             let store = job_store.clone();
@@ -881,6 +904,7 @@ pub(crate) async fn async_submit(
             let store = job_store.clone();
             let rid = run_id.clone();
             let collect_count = 3usize; // fan-out to N parallel copies
+            let cap_ceiling = identity.capability_ceiling.clone();
 
             tokio::spawn(async move {
                 store
@@ -893,8 +917,9 @@ pub(crate) async fn async_submit(
                     let msg = message.clone();
                     let mdl = model.clone();
                     let st = state_clone.clone();
+                    let cap = cap_ceiling.clone();
                     handles.push(tokio::spawn(async move {
-                        let req = match build_agent_request(&st, msg, mdl) {
+                        let req = match build_agent_request(&st, msg, mdl, cap) {
                             Ok(r) => r,
                             Err(e) => return Err(anyhow::anyhow!("{e:?}")),
                         };
@@ -948,7 +973,12 @@ pub(crate) async fn async_submit(
 
             let run_id = job_store.submit("agent".to_string(), lane, None).await;
 
-            let agent_req = build_agent_request(&state, req.message, req.model)?;
+            let agent_req = build_agent_request(
+                &state,
+                req.message,
+                req.model,
+                identity.capability_ceiling.clone(),
+            )?;
             let store = job_store.clone();
             let rid = run_id.clone();
             tokio::spawn(async move {
@@ -990,7 +1020,12 @@ pub(crate) async fn async_submit(
             // Steer mode (default): single agent submission.
             let run_id = job_store.submit("agent".to_string(), lane, None).await;
 
-            let agent_req = build_agent_request(&state, req.message, req.model)?;
+            let agent_req = build_agent_request(
+                &state,
+                req.message,
+                req.model,
+                identity.capability_ceiling.clone(),
+            )?;
             let store = job_store.clone();
             let rid = run_id.clone();
             tokio::spawn(async move {
@@ -4396,4 +4431,35 @@ pub(crate) fn fallback_response_headers() -> Vec<(String, String)> {
         .ok()
         .flatten()
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::GatewayState;
+
+    #[test]
+    fn build_agent_request_uses_capability_override() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+        use std::path::PathBuf;
+
+        let mut state = GatewayState::test_with_bearer(None);
+        state.config_path = Some(std::sync::Arc::new(PathBuf::from("/tmp/test.toml")));
+        state.workspace_root = Some(std::sync::Arc::new(PathBuf::from("/tmp")));
+
+        let ceiling = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "web_search".to_string(),
+            }],
+            vec![],
+        );
+        let req = build_agent_request(&state, "hello".to_string(), None, ceiling.clone())
+            .expect("should build request");
+        assert!(
+            !req.capability_set_override.is_empty(),
+            "capability_set_override should be set from the override parameter"
+        );
+        assert!(req.capability_set_override.allows_tool("web_search"));
+        assert!(!req.capability_set_override.allows_tool("shell"));
+    }
 }

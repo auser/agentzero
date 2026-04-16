@@ -3,6 +3,7 @@
 //! Foundation layer for RBAC: API keys carry organization isolation,
 //! user identity, and permission scopes.
 
+use agentzero_core::security::capability::{Capability, CapabilitySet};
 use agentzero_storage::EncryptedJsonStore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -63,6 +64,14 @@ pub struct ApiKeyRecord {
     /// and `X-AZ-Timestamp` headers for replay protection.
     #[serde(default)]
     pub hmac_secret: Option<String>,
+    /// Capability ceiling for this API key (Sprint 89 — Phase I).
+    ///
+    /// When non-empty, requests authenticated with this key are bounded by this
+    /// capability ceiling in `RunAgentRequest.capability_set_override`.
+    ///
+    /// Default: empty (no restriction — key can use all capabilities the agent config grants).
+    #[serde(default)]
+    pub capability_ceiling: Vec<Capability>,
 }
 
 /// Info extracted after validating an API key.
@@ -74,6 +83,11 @@ pub struct ApiKeyInfo {
     pub scopes: HashSet<Scope>,
     /// HMAC secret (hex), if the key requires request signing.
     pub hmac_secret: Option<String>,
+    /// Pre-built capability ceiling (Sprint 89 — Phase I).
+    ///
+    /// Derived from `ApiKeyRecord.capability_ceiling` at validation time.
+    /// Empty `CapabilitySet` means "no restriction".
+    pub capability_ceiling: CapabilitySet,
 }
 
 impl ApiKeyInfo {
@@ -164,6 +178,7 @@ impl ApiKeyStore {
             created_at: now_epoch(),
             expires_at,
             hmac_secret,
+            capability_ceiling: vec![],
         };
 
         {
@@ -179,6 +194,34 @@ impl ApiKeyStore {
             "",
         );
 
+        Ok((raw_key, record))
+    }
+
+    /// Create a new API key with an explicit capability ceiling.
+    ///
+    /// The ceiling is stored in the record and enforced by the gateway on every
+    /// request authenticated with this key.
+    pub fn create_with_ceiling(
+        &self,
+        org_id: &str,
+        user_id: &str,
+        scopes: HashSet<Scope>,
+        expires_at: Option<u64>,
+        capability_ceiling: Vec<Capability>,
+    ) -> anyhow::Result<(String, ApiKeyRecord)> {
+        let (raw_key, mut record) =
+            self.create_with_hmac(org_id, user_id, scopes, expires_at, false)?;
+        record.capability_ceiling = capability_ceiling.clone();
+        // Re-persist the updated record (replace the last entry).
+        {
+            let mut keys = self.keys.write().expect("api key store lock");
+            if let Some(last) = keys.last_mut() {
+                if last.key_id == record.key_id {
+                    last.capability_ceiling = capability_ceiling;
+                }
+            }
+            self.flush(&keys)?;
+        }
         Ok((raw_key, record))
     }
 
@@ -203,6 +246,7 @@ impl ApiKeyStore {
                 user_id: record.user_id.clone(),
                 scopes: record.scopes.clone(),
                 hmac_secret: record.hmac_secret.clone(),
+                capability_ceiling: CapabilitySet::new(record.capability_ceiling.clone(), vec![]),
             })
         })
     }
@@ -501,5 +545,78 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn api_key_with_empty_ceiling_has_no_restriction() {
+        let store = ApiKeyStore::new();
+        let scopes: HashSet<Scope> = [Scope::RunsWrite].into();
+        let (raw_key, record) = store.create("org-1", "user-1", scopes, None).unwrap();
+        assert!(record.capability_ceiling.is_empty());
+
+        let info = store.validate(&raw_key).expect("key should be valid");
+        assert!(
+            info.capability_ceiling.is_empty(),
+            "empty ceiling = no restriction"
+        );
+    }
+
+    #[test]
+    fn api_key_with_ceiling_is_propagated_through_validate() {
+        use agentzero_core::security::capability::Capability;
+        let store = ApiKeyStore::new();
+        let scopes: HashSet<Scope> = [Scope::RunsWrite].into();
+        let ceiling = vec![Capability::Tool {
+            name: "web_search".to_string(),
+        }];
+        let (raw_key, record) = store
+            .create_with_ceiling("org-1", "user-1", scopes, None, ceiling.clone())
+            .unwrap();
+
+        assert_eq!(record.capability_ceiling.len(), 1);
+
+        let info = store.validate(&raw_key).expect("key should be valid");
+        assert!(!info.capability_ceiling.is_empty());
+        assert!(info.capability_ceiling.allows_tool("web_search"));
+        assert!(!info.capability_ceiling.allows_tool("shell"));
+    }
+
+    #[test]
+    fn api_key_ceiling_serializes_roundtrip() {
+        use agentzero_core::security::capability::Capability;
+        let record = ApiKeyRecord {
+            key_id: "azk_test".into(),
+            key_hash: "abc".into(),
+            org_id: "org-1".into(),
+            user_id: "u-1".into(),
+            scopes: HashSet::new(),
+            created_at: 0,
+            expires_at: None,
+            hmac_secret: None,
+            capability_ceiling: vec![Capability::Tool {
+                name: "mcp__*".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&record).expect("serialize");
+        let back: ApiKeyRecord = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.capability_ceiling.len(), 1);
+    }
+
+    #[test]
+    fn api_key_ceiling_defaults_to_empty_on_old_records() {
+        // Simulates loading an old record that has no capability_ceiling field.
+        let json = r#"{
+            "key_id": "azk_old",
+            "key_hash": "xyz",
+            "org_id": "org-2",
+            "user_id": "u-2",
+            "scopes": [],
+            "created_at": 0
+        }"#;
+        let record: ApiKeyRecord = serde_json::from_str(json).expect("deserialize old record");
+        assert!(
+            record.capability_ceiling.is_empty(),
+            "old records default to empty ceiling"
+        );
     }
 }
