@@ -459,26 +459,26 @@ for _ in 0..collect_count {
 
 ## Acceptance Criteria
 
-- [ ] WASM plugins filtered by `capability_set` when `capability_set` is non-empty
+- [x] WASM plugins filtered by `capability_set` when `capability_set` is non-empty
       (same `allows_tool` predicate as MCP Phase F)
-- [ ] Agent with `capability_set = {}` (empty) sees all WASM plugins (backward compat)
-- [ ] `ApiKeyRecord.capability_ceiling: Vec<Capability>` field exists;
+- [x] Agent with `capability_set = {}` (empty) sees all WASM plugins (backward compat)
+- [x] `ApiKeyRecord.capability_ceiling: Vec<Capability>` field exists;
       `#[serde(default)]`; round-trips through the encrypted JSON store
-- [ ] `ApiKeyInfo.capability_ceiling: CapabilitySet` field exists; converted from
+- [x] `ApiKeyInfo.capability_ceiling: CapabilitySet` field exists; converted from
       record at `validate()` time
-- [ ] `AuthIdentity.capability_ceiling: CapabilitySet` populated from `ApiKeyInfo`;
+- [x] `AuthIdentity.capability_ceiling: CapabilitySet` populated from `ApiKeyInfo`;
       empty for bearer/paired tokens
-- [ ] `build_agent_request` accepts `capability_override: CapabilitySet` and uses
+- [x] `build_agent_request` accepts `capability_override: CapabilitySet` and uses
       it as `capability_set_override` (not `CapabilitySet::default()`)
-- [ ] `v1_chat_completions_stream` accepts and forwards `capability_override`
-- [ ] `api_chat` captures `identity` and passes `identity.capability_ceiling`
-- [ ] `v1_chat_completions` (streaming + non-streaming paths) captures `identity`
+- [x] `v1_chat_completions_stream` accepts and forwards `capability_override`
+- [x] `api_chat` captures `identity` and passes `identity.capability_ceiling`
+- [x] `v1_chat_completions` (streaming + non-streaming paths) captures `identity`
       and passes `identity.capability_ceiling`
-- [ ] `async_submit` (all modes: followup, collect, interrupt, steer) captures
+- [x] `async_submit` (all modes: followup, collect, interrupt, steer) captures
       `identity` and passes ceiling to every `build_agent_request` call
-- [ ] `cargo fmt --all` -- 0 violations
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` -- 0 warnings
-- [ ] `cargo test --workspace` -- all tests pass
+- [x] `cargo fmt --all` -- 0 violations
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` -- 0 warnings
+- [x] `cargo test --workspace` -- all tests pass
 
 ---
 
