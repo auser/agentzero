@@ -1,4 +1,4 @@
-# Plan 48: Capability Enforcement Wire-Through
+# Plan 48: Capability Enforcement Wire-Through ✅ SPRINT 87 COMPLETE
 
 ## Context
 
@@ -167,7 +167,7 @@ directory name so parallel tests can never collide on the same nanosecond timest
 
 ---
 
-## Phase B: `DelegateConfig` Capability Field + Intersection (HIGH)
+## Phase B: `DelegateConfig` Capability Field + Intersection (HIGH) ✅ COMPLETE
 
 **Estimated effort:** 1 day
 
@@ -270,7 +270,7 @@ fn build_delegate_agents_agent_subset_of_root() {
 
 ---
 
-## Phase C: Swarm Node Capability Propagation (HIGH)
+## Phase C: Swarm Node Capability Propagation (HIGH) ✅ COMPLETE
 
 **Estimated effort:** 1.5 days
 
@@ -380,7 +380,7 @@ proptest! {
 
 ---
 
-## Phase D: Gossip Relay Test Stabilisation (LOW)
+## Phase D: Gossip Relay Test Stabilisation (LOW) ✅ COMPLETE
 
 **Estimated effort:** 0.5 days
 
@@ -447,7 +447,7 @@ succession. All runs must pass.
 
 ---
 
-## Phase E: `TursoAutopilotStore` Optional Backend (LOW)
+## Phase E: `TursoAutopilotStore` Optional Backend (LOW) ✅ COMPLETE
 
 **Estimated effort:** 1 day
 
@@ -558,22 +558,22 @@ time is tight without affecting the security posture.
 
 ## Acceptance Criteria
 
-- [ ] `DynamicToolDef::creator_capability_set: Option<CapabilitySet>` field exists; existing JSON records with no such key deserialise to `None` without error
-- [ ] `DynamicToolRegistry::register()` accepts and stores a creator capability set
-- [ ] `ToolEvolver::maybe_fix()` and `maybe_improve()` produce evolved tools that carry the original's `creator_capability_set` unchanged
-- [ ] `ToolSecurityPolicy::allows_dynamic_tool()` denies a caller whose capability set does not satisfy the tool's `creator_capability_set`
-- [ ] `DelegateConfig::capability_set: CapabilitySet` field exists; `Default` impl produces `CapabilitySet::default()`
-- [ ] `build_delegate_agents()` accepts `root_cap_set` parameter and populates each `DelegateConfig::capability_set` with `root ∩ per_agent`
-- [ ] A delegate agent configured with `[[capabilities]]` narrower than the root can only perform actions within that narrower set
-- [ ] `RunAgentRequest::capability_set_override: CapabilitySet` field exists; default is `CapabilitySet::default()` (is_empty → no override)
-- [ ] `build_runtime_execution()` replaces `policy.capability_set` with `req.capability_set_override` when the override is non-empty
-- [ ] Swarm node `RunAgentRequest`s are constructed with `capability_set_override = root ∩ node`; property test confirms node never exceeds root
-- [ ] `two_node_gossip_relay` uses ephemeral ports; passes 3× in succession
-- [ ] `TursoAutopilotStore` compiles under `--features memory-turso`; 3 round-trip tests pass against in-memory libsql
-- [ ] Default build (no `memory-turso`) is unaffected — `cargo build` clean
-- [ ] `cargo fmt --all` — 0 violations
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
-- [ ] `cargo test --workspace` — all tests pass (Sprint 86 baseline + new Phase A/B/C/D/E tests)
+- [x] `DynamicToolDef::creator_capability_set: Option<CapabilitySet>` field exists; existing JSON records with no such key deserialise to `None` without error
+- [x] `DynamicToolRegistry::register()` accepts and stores a creator capability set
+- [x] `ToolEvolver::maybe_fix()` and `maybe_improve()` produce evolved tools that carry the original's `creator_capability_set` unchanged
+- [x] `ToolSecurityPolicy::allows_dynamic_tool()` denies a caller whose capability set does not satisfy the tool's `creator_capability_set`
+- [x] `DelegateConfig::capability_set: CapabilitySet` field exists; `Default` impl produces `CapabilitySet::default()`
+- [x] `build_delegate_agents()` accepts `root_cap_set` parameter and populates each `DelegateConfig::capability_set` with `root ∩ per_agent`
+- [x] A delegate agent configured with `[[capabilities]]` narrower than the root can only perform actions within that narrower set
+- [x] `RunAgentRequest::capability_set_override: CapabilitySet` field exists; default is `CapabilitySet::default()` (is_empty → no override)
+- [x] `build_runtime_execution()` replaces `policy.capability_set` with `req.capability_set_override` when the override is non-empty
+- [x] Swarm node `RunAgentRequest`s are constructed with `capability_set_override = root ∩ node`; property test confirms node never exceeds root
+- [x] `two_node_gossip_relay` uses ephemeral ports; passes 3× in succession
+- [x] `TursoAutopilotStore` compiles under `--features memory-turso`; 3 round-trip tests pass against in-memory libsql
+- [x] Default build (no `memory-turso`) is unaffected — `cargo build` clean
+- [x] `cargo fmt --all` — 0 violations
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
+- [x] `cargo test --workspace` — all tests pass (Sprint 86 baseline + new Phase A/B/C/D/E tests)
 
 ---
 
