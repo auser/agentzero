@@ -1,12 +1,13 @@
-//! `TursoAutopilotStore` — libSQL/Turso backend for the autopilot store.
+//! `TursoAutopilotStore` — dispatching autopilot store.
 //!
-//! Gated behind the `memory-turso` feature flag. Uses the same SQL schema
-//! as `SqliteAutopilotStore` (WAL mode, 5 tables) so the stores are
-//! interchangeable.
+//! Routes to `SqliteAutopilotStore` for local/in-memory paths and to
+//! `RemoteTursoInner` for remote Turso/libSQL endpoints.
+//!
+//! Gated behind the `memory-turso` feature flag.
 
 #![cfg(feature = "memory-turso")]
 
-use crate::store::AutopilotStore;
+use crate::store::{AutopilotStore, SqliteAutopilotStore};
 use crate::types::{
     AutopilotEvent, Mission, MissionStatus, MissionStep, Priority, Proposal, ProposalStatus,
     ProposalType,
@@ -17,28 +18,24 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Cloud-replicable autopilot store backed by Turso/libSQL.
-///
-/// Requires the `memory-turso` feature flag. The `url` parameter may be:
-/// - `"path/to/local.db"` — pure local SQLite via libSQL driver
-/// - `"libsql://..."` — Turso remote URL (requires auth_token)
-pub struct TursoAutopilotStore {
+// ── Inner: remote libsql-backed store ─────────────────────────────────────────
+
+/// Internal store that talks to a remote Turso/libSQL endpoint.
+/// Only constructed when `url` is a remote libsql URL or `auth_token` is non-empty.
+struct RemoteTursoInner {
     conn: Arc<Mutex<Connection>>,
 }
 
-impl std::fmt::Debug for TursoAutopilotStore {
+impl std::fmt::Debug for RemoteTursoInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TursoAutopilotStore")
+        f.debug_struct("RemoteTursoInner")
             .field("conn", &"<libsql::Connection>")
             .finish()
     }
 }
 
-impl TursoAutopilotStore {
-    /// Open a Turso/libSQL database at the given URL.
-    ///
-    /// For local-only use, pass the file path as `url` and `auth_token = ""`.
-    pub async fn open(url: &str, auth_token: &str) -> anyhow::Result<Self> {
+impl RemoteTursoInner {
+    async fn open(url: &str, auth_token: &str) -> anyhow::Result<Self> {
         let db = if auth_token.is_empty() {
             Builder::new_local(url).build().await?
         } else {
@@ -47,22 +44,11 @@ impl TursoAutopilotStore {
                 .await?
         };
         let conn = db.connect()?;
-        let store = Self {
+        let inner = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
-        store.run_migrations().await?;
-        Ok(store)
-    }
-
-    /// Open an in-memory database (for tests only).
-    pub async fn in_memory() -> anyhow::Result<Self> {
-        let db = Builder::new_local(":memory:").build().await?;
-        let conn = db.connect()?;
-        let store = Self {
-            conn: Arc::new(Mutex::new(conn)),
-        };
-        store.run_migrations().await?;
-        Ok(store)
+        inner.run_migrations().await?;
+        Ok(inner)
     }
 
     async fn run_migrations(&self) -> anyhow::Result<()> {
@@ -127,7 +113,7 @@ impl TursoAutopilotStore {
 }
 
 #[async_trait]
-impl AutopilotStore for TursoAutopilotStore {
+impl AutopilotStore for RemoteTursoInner {
     // ── Proposals ──
 
     async fn insert_proposal(&self, proposal: &Proposal) -> anyhow::Result<()> {
@@ -467,7 +453,170 @@ impl AutopilotStore for TursoAutopilotStore {
     }
 }
 
+// ── Public facade ─────────────────────────────────────────────────────────────
+
+/// Dispatching autopilot store.
+///
+/// - Local / in-memory paths → delegates to `SqliteAutopilotStore` (rusqlite).
+/// - Remote (`libsql://` or `https://`, or non-empty `auth_token`) →
+///   delegates to `RemoteTursoInner` (libsql).
+pub enum TursoAutopilotStore {
+    Local(SqliteAutopilotStore),
+    Remote(RemoteTursoInner),
+}
+
+impl std::fmt::Debug for TursoAutopilotStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local(s) => f
+                .debug_tuple("TursoAutopilotStore::Local")
+                .field(s)
+                .finish(),
+            Self::Remote(_) => f
+                .debug_struct("TursoAutopilotStore::Remote")
+                .field("conn", &"<libsql::Connection>")
+                .finish(),
+        }
+    }
+}
+
+impl TursoAutopilotStore {
+    /// Open a store at the given URL.
+    ///
+    /// - Local file paths use `SqliteAutopilotStore` (rusqlite).
+    /// - Remote URLs (`libsql://`, `https://`) or non-empty `auth_token` use
+    ///   `RemoteTursoInner` (libsql).
+    pub async fn open(url: &str, auth_token: &str) -> anyhow::Result<Self> {
+        if !auth_token.is_empty() || url.starts_with("libsql://") || url.starts_with("https://") {
+            Ok(Self::Remote(RemoteTursoInner::open(url, auth_token).await?))
+        } else {
+            Ok(Self::Local(SqliteAutopilotStore::open(
+                std::path::Path::new(url),
+            )?))
+        }
+    }
+
+    /// In-memory store for tests — backed by rusqlite, no threading conflict.
+    #[cfg(test)]
+    pub async fn in_memory() -> anyhow::Result<Self> {
+        Ok(Self::Local(SqliteAutopilotStore::in_memory()?))
+    }
+}
+
+#[async_trait]
+impl AutopilotStore for TursoAutopilotStore {
+    async fn insert_proposal(&self, proposal: &Proposal) -> anyhow::Result<()> {
+        match self {
+            Self::Local(s) => s.insert_proposal(proposal).await,
+            Self::Remote(s) => s.insert_proposal(proposal).await,
+        }
+    }
+
+    async fn update_proposal_status(
+        &self,
+        proposal_id: &str,
+        status: ProposalStatus,
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::Local(s) => s.update_proposal_status(proposal_id, status).await,
+            Self::Remote(s) => s.update_proposal_status(proposal_id, status).await,
+        }
+    }
+
+    async fn list_proposals(
+        &self,
+        status_filter: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> anyhow::Result<Vec<Proposal>> {
+        match self {
+            Self::Local(s) => s.list_proposals(status_filter, limit, offset).await,
+            Self::Remote(s) => s.list_proposals(status_filter, limit, offset).await,
+        }
+    }
+
+    async fn insert_mission(&self, mission: &Mission) -> anyhow::Result<()> {
+        match self {
+            Self::Local(s) => s.insert_mission(mission).await,
+            Self::Remote(s) => s.insert_mission(mission).await,
+        }
+    }
+
+    async fn update_mission_status(
+        &self,
+        mission_id: &str,
+        status: MissionStatus,
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::Local(s) => s.update_mission_status(mission_id, status).await,
+            Self::Remote(s) => s.update_mission_status(mission_id, status).await,
+        }
+    }
+
+    async fn heartbeat_mission(&self, mission_id: &str) -> anyhow::Result<()> {
+        match self {
+            Self::Local(s) => s.heartbeat_mission(mission_id).await,
+            Self::Remote(s) => s.heartbeat_mission(mission_id).await,
+        }
+    }
+
+    async fn query_stale_missions(&self, threshold_minutes: u32) -> anyhow::Result<Vec<Mission>> {
+        match self {
+            Self::Local(s) => s.query_stale_missions(threshold_minutes).await,
+            Self::Remote(s) => s.query_stale_missions(threshold_minutes).await,
+        }
+    }
+
+    async fn list_missions(
+        &self,
+        status_filter: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> anyhow::Result<Vec<Mission>> {
+        match self {
+            Self::Local(s) => s.list_missions(status_filter, limit, offset).await,
+            Self::Remote(s) => s.list_missions(status_filter, limit, offset).await,
+        }
+    }
+
+    async fn get_mission(&self, mission_id: &str) -> anyhow::Result<Option<Mission>> {
+        match self {
+            Self::Local(s) => s.get_mission(mission_id).await,
+            Self::Remote(s) => s.get_mission(mission_id).await,
+        }
+    }
+
+    async fn get_daily_spend(&self) -> anyhow::Result<u64> {
+        match self {
+            Self::Local(s) => s.get_daily_spend().await,
+            Self::Remote(s) => s.get_daily_spend().await,
+        }
+    }
+
+    async fn get_concurrent_mission_count(&self) -> anyhow::Result<usize> {
+        match self {
+            Self::Local(s) => s.get_concurrent_mission_count().await,
+            Self::Remote(s) => s.get_concurrent_mission_count().await,
+        }
+    }
+
+    async fn insert_event(&self, event: &AutopilotEvent) -> anyhow::Result<()> {
+        match self {
+            Self::Local(s) => s.insert_event(event).await,
+            Self::Remote(s) => s.insert_event(event).await,
+        }
+    }
+
+    async fn upsert_content(&self, content: &Value) -> anyhow::Result<()> {
+        match self {
+            Self::Local(s) => s.upsert_content(content).await,
+            Self::Remote(s) => s.upsert_content(content).await,
+        }
+    }
+}
+
 // ── Row helpers ───────────────────────────────────────────────────────────────
+// Used only by RemoteTursoInner — parse libsql rows into domain types.
 
 fn row_to_proposal(row: &libsql::Row) -> anyhow::Result<Proposal> {
     let id: String = row.get(0)?;
