@@ -589,6 +589,24 @@ pub struct MemoryConfig {
     pub sqlite_path: String,
     /// Connection pool size. 1 = no pool (Mutex-based), >1 = r2d2 pool.
     pub pool_size: u32,
+    /// Turso/libSQL remote URL for cloud-sync autopilot storage (Sprint 87 — Phase E).
+    ///
+    /// Only consulted when the `memory-turso` feature is enabled.
+    /// When non-empty and the feature is active, `build_autopilot_store` will
+    /// connect to the specified Turso/libSQL endpoint instead of the local
+    /// SQLite file. Leave empty (the default) to keep using SQLite.
+    ///
+    /// Examples:
+    ///   `libsql://my-db.turso.io`   — remote Turso database
+    ///   `/tmp/autopilot.db`         — local file via libsql driver
+    #[serde(default)]
+    pub turso_url: String,
+    /// Auth token for remote Turso databases.
+    ///
+    /// Leave `None` (the default) for local file paths; required for
+    /// `libsql://` and `https://` endpoints.
+    #[serde(default)]
+    pub turso_auth_token: Option<String>,
 }
 
 impl Default for MemoryConfig {
@@ -597,6 +615,8 @@ impl Default for MemoryConfig {
             backend: "sqlite".to_string(),
             sqlite_path: default_sqlite_path(),
             pool_size: 1,
+            turso_url: String::new(),
+            turso_auth_token: None,
         }
     }
 }
