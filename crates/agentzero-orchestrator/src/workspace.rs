@@ -240,7 +240,7 @@ pub fn detect_conflicts(agent_diffs: &[(String, Vec<FileDiff>)]) -> Vec<Conflict
     }
 
     // Sort by severity (high first).
-    conflicts.sort_by(|a, b| b.severity.cmp(&a.severity));
+    conflicts.sort_by_key(|b| std::cmp::Reverse(b.severity));
     conflicts
 }
 
