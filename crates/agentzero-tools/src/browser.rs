@@ -307,10 +307,8 @@ impl Tool for BrowserTool {
             | BrowserAction::Hover { selector } => {
                 Self::validate_selector(selector)?;
             }
-            BrowserAction::ExecuteJs { ref script } => {
-                if script.trim().is_empty() {
-                    return Err(anyhow!("script must not be empty"));
-                }
+            BrowserAction::ExecuteJs { ref script } if script.trim().is_empty() => {
+                return Err(anyhow!("script must not be empty"));
             }
             _ => {}
         }
