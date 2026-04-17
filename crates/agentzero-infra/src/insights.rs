@@ -176,7 +176,7 @@ pub fn generate_report(data_dir: &Path) -> anyhow::Result<InsightsReport> {
             occurrences: count,
         })
         .collect();
-    failure_patterns.sort_by(|a, b| b.occurrences.cmp(&a.occurrences));
+    failure_patterns.sort_by_key(|b| std::cmp::Reverse(b.occurrences));
     failure_patterns.truncate(10);
 
     let runs_for_avg = total_runs.max(1) as u64;

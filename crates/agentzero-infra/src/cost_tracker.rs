@@ -133,8 +133,10 @@ impl CostTracker {
 
         let daily = self.today_usage();
         let daily_limit = usd_to_microdollars(config.daily_limit_usd);
-        if daily_limit > 0 {
-            let pct = (daily * 100) / daily_limit;
+        if let Some(pct) = daily
+            .checked_mul(100)
+            .and_then(|value| value.checked_div(daily_limit))
+        {
             if pct >= threshold {
                 return Some(format!(
                     "daily cost at {}% of limit (${:.4} / ${:.2})",
@@ -147,8 +149,10 @@ impl CostTracker {
 
         let monthly = self.month_usage();
         let monthly_limit = usd_to_microdollars(config.monthly_limit_usd);
-        if monthly_limit > 0 {
-            let pct = (monthly * 100) / monthly_limit;
+        if let Some(pct) = monthly
+            .checked_mul(100)
+            .and_then(|value| value.checked_div(monthly_limit))
+        {
             if pct >= threshold {
                 return Some(format!(
                     "monthly cost at {}% of limit (${:.4} / ${:.2})",

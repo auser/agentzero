@@ -374,7 +374,7 @@ impl RecipeStore {
                 });
             }
         }
-        gaps.sort_by(|a, b| b.failure_count.cmp(&a.failure_count));
+        gaps.sort_by_key(|b| std::cmp::Reverse(b.failure_count));
         gaps
     }
 

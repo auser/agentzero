@@ -105,7 +105,7 @@ fn format_model_stats(r: &insights::InsightsReport) -> String {
     }
     let mut lines = vec!["## Model Effectiveness".to_string()];
     let mut models: Vec<_> = r.model_stats.iter().collect();
-    models.sort_by(|a, b| b.1.runs.cmp(&a.1.runs));
+    models.sort_by_key(|b| std::cmp::Reverse(b.1.runs));
     for (name, s) in models {
         let cost_usd = s.total_cost_microdollars as f64 / 1_000_000.0;
         lines.push(format!(
@@ -127,7 +127,7 @@ fn format_tool_stats(r: &insights::InsightsReport) -> String {
     }
     let mut lines = vec!["## Tool Usage Heatmap".to_string()];
     let mut tools: Vec<_> = r.tool_stats.iter().collect();
-    tools.sort_by(|a, b| b.1.total_uses.cmp(&a.1.total_uses));
+    tools.sort_by_key(|b| std::cmp::Reverse(b.1.total_uses));
     for (name, s) in tools {
         lines.push(format!(
             "- **{}**: {} uses ({:.0}% success, {} failures)",
