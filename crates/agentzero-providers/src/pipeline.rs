@@ -598,18 +598,14 @@ impl PromptCacheProvider {
             match msg {
                 ConversationMessage::User {
                     ref mut content, ..
-                } => {
-                    if !content.ends_with("\n[cache:ephemeral]") {
-                        content.push_str("\n[cache:ephemeral]");
-                    }
+                } if !content.ends_with("\n[cache:ephemeral]") => {
+                    content.push_str("\n[cache:ephemeral]");
                 }
                 ConversationMessage::Assistant {
                     content: Some(ref mut c),
                     ..
-                } => {
-                    if !c.ends_with("\n[cache:ephemeral]") {
-                        c.push_str("\n[cache:ephemeral]");
-                    }
+                } if !c.ends_with("\n[cache:ephemeral]") => {
+                    c.push_str("\n[cache:ephemeral]");
                 }
                 _ => {}
             }

@@ -489,9 +489,10 @@ impl CandleProvider {
 
         let mut output = String::new();
         let mut output_tokens = 0u64;
-        let mut pos = tokens.len();
+        let start_pos = tokens.len();
+        let end_pos = start_pos + max_tokens as usize;
 
-        for _ in 0..max_tokens {
+        for pos in start_pos..end_pos {
             if Some(next_token) == eos_token || decoder.is_finished() {
                 break;
             }
@@ -512,7 +513,6 @@ impl CandleProvider {
             let masked = decoder.mask_logits(&logits, &loaded.device)?;
             next_token = logits_processor.sample(&masked)?;
             decoder.advance(next_token);
-            pos += 1;
         }
 
         Ok((output, input_tokens, output_tokens))

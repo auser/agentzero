@@ -88,9 +88,10 @@ impl GenerationLoop {
         let mut next_token = llm.feed_prompt(prompt_tokens)?;
         let mut output = String::new();
         let mut output_tokens = 0u64;
-        let mut pos = prompt_tokens.len();
+        let start_pos = prompt_tokens.len();
+        let end_pos = start_pos + self.max_tokens as usize;
 
-        for _ in 0..self.max_tokens {
+        for pos in start_pos..end_pos {
             if llm.is_eos(next_token) {
                 break;
             }
@@ -128,7 +129,6 @@ impl GenerationLoop {
             }
 
             next_token = llm.step(next_token, pos)?;
-            pos += 1;
         }
 
         if let Some(tx) = sender {
