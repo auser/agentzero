@@ -245,7 +245,7 @@ impl PrivacyKeyRing {
         if keypairs.is_empty() {
             anyhow::bail!("cannot restore keyring from empty keypair list");
         }
-        keypairs.sort_by(|a, b| b.epoch.cmp(&a.epoch));
+        keypairs.sort_by_key(|b| std::cmp::Reverse(b.epoch));
         let current = keypairs.remove(0);
         let previous = keypairs.into_iter().next();
 
