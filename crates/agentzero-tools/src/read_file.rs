@@ -145,6 +145,18 @@ impl Tool for ReadFileTool {
     async fn execute(&self, input: &str, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let safe_path = self.resolve_safe(input, &ctx.workspace_root)?;
 
+        // Phase L: FileRead capability enforcement.
+        if !ctx.capability_set.is_empty()
+            && !ctx
+                .capability_set
+                .allows_file_read(std::path::Path::new(input.trim()))
+        {
+            return Err(anyhow!(
+                "capability denied: FileRead does not permit '{}'",
+                input.trim()
+            ));
+        }
+
         // B7: Hard-link guard — refuse files with multiple hard links.
         crate::autonomy::AutonomyPolicy::check_hard_links(&safe_path.to_string_lossy())?;
 
@@ -408,5 +420,65 @@ mod tests {
 
         let _ = fs::remove_dir_all(allowed_root);
         let _ = fs::remove_dir_all(outside_root);
+    }
+
+    #[tokio::test]
+    async fn read_file_denied_by_capability_set() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+
+        let dir = temp_dir();
+        std::fs::write(dir.join("secret.txt"), b"top secret").unwrap();
+
+        let policy = ReadFilePolicy::default_for_root(dir.clone());
+        let tool = ReadFileTool::new(policy);
+
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        ctx.capability_set = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "web_search".into(),
+            }],
+            vec![],
+        );
+
+        let result = tool.execute("secret.txt", &ctx).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("capability denied"), "unexpected error: {msg}");
+    }
+
+    #[tokio::test]
+    async fn read_file_allowed_by_capability_set() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+
+        let dir = temp_dir();
+        std::fs::write(dir.join("hello.txt"), b"hello world").unwrap();
+
+        let policy = ReadFilePolicy::default_for_root(dir.clone());
+        let tool = ReadFileTool::new(policy);
+
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        ctx.capability_set = CapabilitySet::new(
+            vec![Capability::FileRead {
+                glob: "*.txt".into(),
+            }],
+            vec![],
+        );
+
+        let result = tool.execute("hello.txt", &ctx).await;
+        assert!(result.is_ok(), "expected ok but got: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn read_file_empty_capability_set_allows_all() {
+        // Empty capability_set = legacy config -> no capability check applied
+        let dir = temp_dir();
+        std::fs::write(dir.join("data.txt"), b"some data").unwrap();
+
+        let policy = ReadFilePolicy::default_for_root(dir.clone());
+        let tool = ReadFileTool::new(policy);
+
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        let result = tool.execute("data.txt", &ctx).await;
+        assert!(result.is_ok(), "expected ok but got: {:?}", result);
     }
 }

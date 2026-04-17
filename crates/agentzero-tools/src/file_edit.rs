@@ -104,6 +104,18 @@ impl Tool for FileEditTool {
 
         let dest = self.resolve_path(&request.path, &ctx.workspace_root)?;
 
+        // Phase L: FileWrite capability enforcement.
+        if !ctx.capability_set.is_empty()
+            && !ctx
+                .capability_set
+                .allows_file_write(std::path::Path::new(&request.path))
+        {
+            return Err(anyhow!(
+                "capability denied: FileWrite does not permit '{}'",
+                request.path
+            ));
+        }
+
         // B7: Hard-link guard.
         crate::autonomy::AutonomyPolicy::check_hard_links(&dest.to_string_lossy())?;
 
@@ -310,5 +322,77 @@ mod tests {
             .expect_err("empty edits should fail");
         assert!(err.to_string().contains("edits array must not be empty"));
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn file_edit_denied_by_capability_set() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+
+        let dir = temp_dir();
+        std::fs::write(dir.join("sample.txt"), "hello world").unwrap();
+
+        let tool = FileEditTool::new(dir.to_path_buf(), 256 * 1024);
+
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        // Non-empty capability set with no FileWrite grant -> denied
+        ctx.capability_set = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "web_search".into(),
+            }],
+            vec![],
+        );
+
+        let input = serde_json::json!({
+            "path": "sample.txt",
+            "edits": [{"old_text": "hello", "new_text": "goodbye"}]
+        })
+        .to_string();
+        let result = tool.execute(&input, &ctx).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("capability denied"), "unexpected error: {msg}");
+    }
+
+    #[tokio::test]
+    async fn file_edit_allowed_by_capability_set() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+
+        let dir = temp_dir();
+        std::fs::write(dir.join("sample.txt"), "hello world").unwrap();
+
+        let tool = FileEditTool::new(dir.to_path_buf(), 256 * 1024);
+
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        ctx.capability_set = CapabilitySet::new(
+            vec![Capability::FileWrite {
+                glob: "*.txt".into(),
+            }],
+            vec![],
+        );
+
+        let input = serde_json::json!({
+            "path": "sample.txt",
+            "edits": [{"old_text": "hello", "new_text": "goodbye"}]
+        })
+        .to_string();
+        let result = tool.execute(&input, &ctx).await;
+        assert!(result.is_ok(), "expected ok but got: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn file_edit_empty_capability_set_allows_all() {
+        let dir = temp_dir();
+        std::fs::write(dir.join("sample.txt"), "hello world").unwrap();
+
+        let tool = FileEditTool::new(dir.to_path_buf(), 256 * 1024);
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        let input = serde_json::json!({
+            "path": "sample.txt",
+            "edits": [{"old_text": "hello", "new_text": "goodbye"}]
+        })
+        .to_string();
+        let result = tool.execute(&input, &ctx).await;
+        assert!(result.is_ok(), "expected ok but got: {:?}", result);
     }
 }

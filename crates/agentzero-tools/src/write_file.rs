@@ -120,6 +120,18 @@ impl Tool for WriteFileTool {
         let request = Self::parse_input(input)?;
         let destination = self.resolve_destination(&request.path, &ctx.workspace_root)?;
 
+        // Phase L: FileWrite capability enforcement.
+        if !ctx.capability_set.is_empty()
+            && !ctx
+                .capability_set
+                .allows_file_write(std::path::Path::new(&request.path))
+        {
+            return Err(anyhow!(
+                "capability denied: FileWrite does not permit '{}'",
+                request.path
+            ));
+        }
+
         // B7: Hard-link guard — refuse overwriting multiply-linked files.
         crate::autonomy::AutonomyPolicy::check_hard_links(&destination.to_string_lossy())?;
 
@@ -382,5 +394,62 @@ mod tests {
             .to_string()
             .contains("content is too large"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn write_file_denied_by_capability_set() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+
+        let dir = temp_dir();
+        let policy = WriteFilePolicy::default_for_root(dir.clone());
+        let tool = WriteFileTool::new(policy);
+
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        // Non-empty capability set with no FileWrite grant -> denied
+        ctx.capability_set = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "web_search".into(),
+            }],
+            vec![],
+        );
+
+        let input = serde_json::json!({"path": "out.txt", "content": "hello"}).to_string();
+        let result = tool.execute(&input, &ctx).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("capability denied"), "unexpected error: {msg}");
+    }
+
+    #[tokio::test]
+    async fn write_file_allowed_by_capability_set() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+
+        let dir = temp_dir();
+        let policy = WriteFilePolicy::default_for_root(dir.clone());
+        let tool = WriteFileTool::new(policy);
+
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        ctx.capability_set = CapabilitySet::new(
+            vec![Capability::FileWrite {
+                glob: "*.txt".into(),
+            }],
+            vec![],
+        );
+
+        let input = serde_json::json!({"path": "out.txt", "content": "hello"}).to_string();
+        let result = tool.execute(&input, &ctx).await;
+        assert!(result.is_ok(), "expected ok but got: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn write_file_empty_capability_set_allows_all() {
+        let dir = temp_dir();
+        let policy = WriteFilePolicy::default_for_root(dir.clone());
+        let tool = WriteFileTool::new(policy);
+
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        let input = serde_json::json!({"path": "out.txt", "content": "hello"}).to_string();
+        let result = tool.execute(&input, &ctx).await;
+        assert!(result.is_ok(), "expected ok but got: {:?}", result);
     }
 }

@@ -355,6 +355,18 @@ impl Tool for ApplyPatchTool {
         for pf in &patch_files {
             let dest = Self::resolve_path(&pf.path, &ctx.workspace_root, &allowed_root)?;
 
+            // Phase L: FileWrite capability enforcement.
+            if !ctx.capability_set.is_empty()
+                && !ctx
+                    .capability_set
+                    .allows_file_write(std::path::Path::new(&pf.path))
+            {
+                return Err(anyhow!(
+                    "capability denied: FileWrite does not permit '{}'",
+                    pf.path
+                ));
+            }
+
             // B7: Hard-link guard.
             if dest.exists() {
                 crate::autonomy::AutonomyPolicy::check_hard_links(&dest.to_string_lossy())?;
@@ -597,5 +609,71 @@ mod tests {
             .unwrap()
             .contains("TWO"));
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn apply_patch_denied_by_capability_set() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+
+        let dir = temp_dir();
+        std::fs::write(dir.join("src.txt"), "hello world\n").unwrap();
+
+        let tool = ApplyPatchTool;
+
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        // Non-empty capability set with no FileWrite grant -> denied
+        ctx.capability_set = CapabilitySet::new(
+            vec![Capability::Tool {
+                name: "web_search".into(),
+            }],
+            vec![],
+        );
+
+        let patch = serde_json::json!({
+            "patch": "*** Begin Patch\n*** Update File: src.txt\n@@\n-hello world\n+hello capability\n*** End Patch"
+        }).to_string();
+        let result = tool.execute(&patch, &ctx).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("capability denied"), "unexpected error: {msg}");
+    }
+
+    #[tokio::test]
+    async fn apply_patch_allowed_by_capability_set() {
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
+
+        let dir = temp_dir();
+        std::fs::write(dir.join("src.txt"), "hello world\n").unwrap();
+
+        let tool = ApplyPatchTool;
+
+        let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
+        ctx.capability_set = CapabilitySet::new(
+            vec![Capability::FileWrite {
+                glob: "*.txt".into(),
+            }],
+            vec![],
+        );
+
+        let patch = serde_json::json!({
+            "patch": "*** Begin Patch\n*** Update File: src.txt\n@@\n-hello world\n+hello capability\n*** End Patch"
+        }).to_string();
+        let result = tool.execute(&patch, &ctx).await;
+        assert!(result.is_ok(), "expected ok but got: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn apply_patch_empty_capability_set_allows_all() {
+        let dir = temp_dir();
+        std::fs::write(dir.join("src.txt"), "hello world\n").unwrap();
+
+        let tool = ApplyPatchTool;
+        let ctx = ToolContext::new(dir.to_string_lossy().to_string());
+
+        let patch = serde_json::json!({
+            "patch": "*** Begin Patch\n*** Update File: src.txt\n@@\n-hello world\n+hello world updated\n*** End Patch"
+        }).to_string();
+        let result = tool.execute(&patch, &ctx).await;
+        assert!(result.is_ok(), "expected ok but got: {:?}", result);
     }
 }
