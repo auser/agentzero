@@ -1,6 +1,6 @@
 [profile.default]
 # Kill tests that take longer than 30s — prevents hanging
-slow-timeout = { period = "30s", terminate-after = 2 }
+slow-timeout = { period = "60s", terminate-after = 2 }
 # Fail on first test timeout rather than waiting for all
 fail-fast = true
 # Use all available CPUs

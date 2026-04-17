@@ -1182,9 +1182,9 @@ mod tests {
         // Child should only get web_search, even if its config would allow more.
         let parent_cap_set = CapabilitySet::new(
             vec![Capability::Delegate {
-                max_capabilities: vec![
-                    Capability::Tool { name: "web_search".to_string() },
-                ],
+                max_capabilities: vec![Capability::Tool {
+                    name: "web_search".to_string(),
+                }],
             }],
             vec![],
         );
@@ -1197,16 +1197,20 @@ mod tests {
 
     #[test]
     fn build_child_ctx_propagates_capability_set() {
-        use agentzero_core::security::capability::{Capability, CapabilitySet};
         use agentzero_core::delegation::DelegateConfig;
+        use agentzero_core::security::capability::{Capability, CapabilitySet};
         use agentzero_core::ToolContext;
 
         let cap = CapabilitySet::new(
-            vec![Capability::Tool { name: "web_search".to_string() }],
+            vec![Capability::Tool {
+                name: "web_search".to_string(),
+            }],
             vec![],
         );
-        let mut config = DelegateConfig::default();
-        config.capability_set = cap.clone();
+        let config = DelegateConfig {
+            capability_set: cap.clone(),
+            ..Default::default()
+        };
 
         let parent_ctx = ToolContext::new("/tmp".to_string());
         let child_ctx = super::build_child_ctx(&parent_ctx, &config, "test-agent");
@@ -1214,5 +1218,4 @@ mod tests {
         assert!(child_ctx.capability_set.allows_tool("web_search"));
         assert!(!child_ctx.capability_set.allows_tool("shell"));
     }
-
 }

@@ -1032,7 +1032,7 @@ pub async fn run_agent_with_runtime(
     ctx.max_cost_microdollars = execution.max_cost_microdollars;
     ctx.source_channel = execution.source_channel.clone();
     ctx.sender_id = execution.sender_id.clone();
-        ctx.capability_set = execution.capability_set.clone();
+    ctx.capability_set = execution.capability_set.clone();
 
     // Transcribe [AUDIO:path] markers before the message reaches the LLM.
     let goal_summary = message.clone();

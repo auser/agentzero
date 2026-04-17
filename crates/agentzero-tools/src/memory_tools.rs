@@ -163,7 +163,7 @@ impl Tool for MemoryRecallTool {
         let ns = req.namespace.as_deref().unwrap_or(DEFAULT_NAMESPACE);
 
         // Phase J — Sprint 90: enforce memory namespace scope from capability set.
-        if !ctx.capability_set.is_empty() && !ctx.capability_set.allows_memory(&ns) {
+        if !ctx.capability_set.is_empty() && !ctx.capability_set.allows_memory(ns) {
             return Err(anyhow::anyhow!(
                 "memory access denied: capability set does not grant access to namespace '{ns}'"
             ));
@@ -434,7 +434,9 @@ mod tests {
         let dir = temp_dir();
         let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
         ctx.capability_set = CapabilitySet::new(
-            vec![Capability::Tool { name: "memory_store".to_string() }],
+            vec![Capability::Tool {
+                name: "memory_store".to_string(),
+            }],
             vec![],
         );
         // capability_set has no Memory grant → access denied
@@ -452,17 +454,25 @@ mod tests {
         let dir = temp_dir();
         let mut ctx = ToolContext::new(dir.to_string_lossy().to_string());
         ctx.capability_set = CapabilitySet::new(
-            vec![Capability::Memory { scope: Some("agent_a".to_string()) }],
+            vec![Capability::Memory {
+                scope: Some("agent_a".to_string()),
+            }],
             vec![],
         );
         // Allowed in "agent_a" namespace
         MemoryStoreTool
-            .execute(r#"{"key": "k", "value": "v", "namespace": "agent_a"}"#, &ctx)
+            .execute(
+                r#"{"key": "k", "value": "v", "namespace": "agent_a"}"#,
+                &ctx,
+            )
             .await
             .expect("scoped access should succeed");
         // Denied in "agent_b" namespace
         let err = MemoryStoreTool
-            .execute(r#"{"key": "k", "value": "v", "namespace": "agent_b"}"#, &ctx)
+            .execute(
+                r#"{"key": "k", "value": "v", "namespace": "agent_b"}"#,
+                &ctx,
+            )
             .await
             .expect_err("should deny wrong namespace");
         assert!(err.to_string().contains("memory access denied"), "{err}");
@@ -475,10 +485,12 @@ mod tests {
         let dir = temp_dir();
         let ctx = ToolContext::new(dir.to_string_lossy().to_string());
         MemoryStoreTool
-            .execute(r#"{"key": "k", "value": "v", "namespace": "anything"}"#, &ctx)
+            .execute(
+                r#"{"key": "k", "value": "v", "namespace": "anything"}"#,
+                &ctx,
+            )
             .await
             .expect("empty cap set should allow all namespaces");
         std::fs::remove_dir_all(dir).ok();
     }
-
 }

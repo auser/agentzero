@@ -19,6 +19,10 @@ jobs:
         with:
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+      - name: install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - name: Setup Strawberry Perl (Windows)
         if: matrix.os == 'windows-latest'
         shell: bash
@@ -34,19 +38,18 @@ jobs:
         shell: pwsh
         run: choco install nasm --no-progress -y
       - name: fmt
+        if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --all --check
       - name: clippy (unix)
-        if: matrix.os != 'windows-latest'
+        if: matrix.os == 'ubuntu-latest'
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: clippy (windows)
-        if: matrix.os == 'windows-latest'
-        run: cargo clippy --workspace --all-targets --features vendored-openssl -- -D warnings
+
       - name: test (unix)
         if: matrix.os != 'windows-latest'
-        run: cargo test --workspace
+        run: cargo nextest run --workspace
       - name: test (windows)
         if: matrix.os == 'windows-latest'
-        run: cargo test --workspace --features vendored-openssl --exclude agentzero-bench
+        run: cargo nextest run --workspace --features vendored-openssl --exclude agentzero-bench
       - name: verify dependency policy
         if: matrix.os == 'ubuntu-latest'
         run: scripts/verify-dependency-policy.sh

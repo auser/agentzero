@@ -60,6 +60,7 @@ fn static_execution(response: &str) -> RuntimeExecution {
         embedding_provider: None,
         trajectory_recorder: None,
         model_name: String::new(),
+        capability_set: Default::default(),
     }
 }
 
@@ -93,6 +94,7 @@ fn streaming_execution(response: &str) -> RuntimeExecution {
         embedding_provider: None,
         trajectory_recorder: None,
         model_name: String::new(),
+        capability_set: Default::default(),
     }
 }
 
@@ -203,6 +205,7 @@ async fn run_agent_once_records_audit_events() {
         embedding_provider: None,
         trajectory_recorder: None,
         model_name: String::new(),
+        capability_set: Default::default(),
     };
 
     let output = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "test".to_string())
@@ -244,6 +247,7 @@ async fn run_agent_once_provider_error_propagates() {
         embedding_provider: None,
         trajectory_recorder: None,
         model_name: String::new(),
+        capability_set: Default::default(),
     };
 
     let err = run_agent_with_runtime(execution, PathBuf::from("/tmp"), "hello".to_string())
@@ -458,6 +462,7 @@ async fn full_loop_agent_with_tool_call_round_trip() {
         embedding_provider: None,
         trajectory_recorder: None,
         model_name: String::new(),
+        capability_set: Default::default(),
     };
 
     let output = run_agent_with_runtime(

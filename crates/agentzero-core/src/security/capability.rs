@@ -322,7 +322,6 @@ impl CapabilitySet {
         CapabilitySet::new(caps, vec![])
     }
 
-
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     /// Check whether `self` covers (allows) the given capability.
@@ -1154,10 +1153,7 @@ mod tests {
 
     #[test]
     fn allows_memory_full_scope_permits_all() {
-        let s = CapabilitySet::new(
-            vec![Capability::Memory { scope: None }],
-            vec![],
-        );
+        let s = CapabilitySet::new(vec![Capability::Memory { scope: None }], vec![]);
         assert!(s.allows_memory("default"));
         assert!(s.allows_memory("private"));
     }
@@ -1165,7 +1161,9 @@ mod tests {
     #[test]
     fn allows_memory_scoped_permits_only_own_namespace() {
         let s = CapabilitySet::new(
-            vec![Capability::Memory { scope: Some("agent_a".to_string()) }],
+            vec![Capability::Memory {
+                scope: Some("agent_a".to_string()),
+            }],
             vec![],
         );
         assert!(s.allows_memory("agent_a"));
@@ -1177,7 +1175,9 @@ mod tests {
     fn allows_memory_no_memory_cap_in_nonempty_set_denies() {
         // A non-empty capability set without any Memory grant should deny memory access.
         let s = CapabilitySet::new(
-            vec![Capability::Tool { name: "web_search".to_string() }],
+            vec![Capability::Tool {
+                name: "web_search".to_string(),
+            }],
             vec![],
         );
         assert!(!s.allows_memory("default"));
@@ -1186,7 +1186,9 @@ mod tests {
     #[test]
     fn delegate_ceiling_empty_when_no_delegate_cap() {
         let s = CapabilitySet::new(
-            vec![Capability::Tool { name: "web_search".to_string() }],
+            vec![Capability::Tool {
+                name: "web_search".to_string(),
+            }],
             vec![],
         );
         assert!(s.delegate_ceiling().is_empty());
@@ -1197,7 +1199,9 @@ mod tests {
         let s = CapabilitySet::new(
             vec![Capability::Delegate {
                 max_capabilities: vec![
-                    Capability::Tool { name: "web_search".to_string() },
+                    Capability::Tool {
+                        name: "web_search".to_string(),
+                    },
                     Capability::Memory { scope: None },
                 ],
             }],
