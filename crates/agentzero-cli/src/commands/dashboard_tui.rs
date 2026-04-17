@@ -686,15 +686,15 @@ pub async fn run_dashboard_tui(host: &str, port: u16) -> anyhow::Result<()> {
                         state.active_tab = state.active_tab.prev();
                         state.scroll_offset = 0;
                     }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if state.active_tab == DashboardTab::Events {
-                            state.scroll_offset = state.scroll_offset.saturating_add(1);
-                        }
+                    KeyCode::Down | KeyCode::Char('j')
+                        if state.active_tab == DashboardTab::Events =>
+                    {
+                        state.scroll_offset = state.scroll_offset.saturating_add(1);
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if state.active_tab == DashboardTab::Events {
-                            state.scroll_offset = state.scroll_offset.saturating_sub(1);
-                        }
+                    KeyCode::Up | KeyCode::Char('k')
+                        if state.active_tab == DashboardTab::Events =>
+                    {
+                        state.scroll_offset = state.scroll_offset.saturating_sub(1);
                     }
                     _ => {}
                 }
