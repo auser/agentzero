@@ -636,37 +636,35 @@ pub fn validate_graph(graph: &GraphModel) -> Vec<ValidationError> {
     // Check for nodes with missing required fields
     for node in &graph.nodes {
         match node.type_id.as_str() {
-            "agent" => {
+            "agent"
                 if node
                     .data
                     .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
-                    .is_empty()
-                {
-                    errors.push(ValidationError {
-                        node_id: Some(node.id.clone()),
-                        field: Some("name".to_string()),
-                        message: "Agent name is required".to_string(),
-                        severity: Severity::Error,
-                    });
-                }
+                    .is_empty() =>
+            {
+                errors.push(ValidationError {
+                    node_id: Some(node.id.clone()),
+                    field: Some("name".to_string()),
+                    message: "Agent name is required".to_string(),
+                    severity: Severity::Error,
+                });
             }
-            "model_route" => {
+            "model_route"
                 if node
                     .data
                     .get("hint")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
-                    .is_empty()
-                {
-                    errors.push(ValidationError {
-                        node_id: Some(node.id.clone()),
-                        field: Some("hint".to_string()),
-                        message: "Model route hint is required".to_string(),
-                        severity: Severity::Error,
-                    });
-                }
+                    .is_empty() =>
+            {
+                errors.push(ValidationError {
+                    node_id: Some(node.id.clone()),
+                    field: Some("hint".to_string()),
+                    message: "Model route hint is required".to_string(),
+                    severity: Severity::Error,
+                });
             }
             _ => {}
         }
