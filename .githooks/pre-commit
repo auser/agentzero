@@ -15,6 +15,12 @@
 
 set -e
 
+if command -v sccache >/dev/null 2>&1; then
+    export RUSTC_WRAPPER=sccache
+    export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-10G}"
+    echo "Using sccache for compilation caching"
+fi
+
 echo "Running pre-commit checks..."
 
 # ── Formatting ────────────────────────────────────────────────────────────────
@@ -93,17 +99,18 @@ if [ -n "$TEST_SCOPE" ] || [ "$WORKSPACE_MANIFEST_CHANGED" = true ]; then
     if [ "$WORKSPACE_MANIFEST_CHANGED" = true ] && [ -z "$TEST_SCOPE" ]; then
         TEST_SCOPE="--workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk"
     fi
-    echo "Running tests (pre-built)..."
+    TEST_KINDS="--lib --bins"
+    echo "Running unit tests only (pre-built)..."
     if command -v cargo-nextest &>/dev/null; then
         # shellcheck disable=SC2086
-        if ! cargo nextest run --no-fail-fast --no-tests=pass $TEST_SCOPE; then
+        if ! cargo nextest run --no-fail-fast --no-tests=pass $TEST_KINDS $TEST_SCOPE; then
             echo ""
             echo "Tests failed."
             exit 1
         fi
     else
         # shellcheck disable=SC2086
-        if ! cargo test $TEST_SCOPE; then
+        if ! cargo test $TEST_KINDS $TEST_SCOPE; then
             echo ""
             echo "Tests failed."
             exit 1
