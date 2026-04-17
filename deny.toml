@@ -10,6 +10,10 @@ ignore = [
     # Condition requires custom logger accessing rand::rng() during reseed —
     # not applicable to our usage. Tracked for eventual migration to rand 0.9+.
     "RUSTSEC-2026-0097",
+    # rustls-webpki name constraints advisories (transitive via libsql/ureq).
+    # Awaiting upstream rustls-webpki >=0.103.12 in those deps.
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
     #
     # Transitive unmaintained/unsound deps are already filtered by the
     # `unmaintained = "workspace"` / `unsound = "workspace"` settings above,
