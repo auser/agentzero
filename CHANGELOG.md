@@ -7,6 +7,60 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.13.0] - 2026-04-19
+
+### Added
+- Sprint 86 — capability-based security phase 1, threat model, docs — Phase 0: Close Sprint 85 — update threat model with 5 new attack surfaces
+- Sprint 87 Phase A — DynamicToolDef capability bounding — - Add creator_capability_set: Option<CapabilitySet> to DynamicToolDef
+- Add optional Turso/libSQL backend (memory-turso feature)
+- Sprint 87 Phase E3 — MemoryConfig turso fields + build_autopilot_store factory
+- Sprint 88 — MCP session scoping + A2A max_capabilities (Plan 49)
+- Sprint 89 — WASM capability filtering + API key capability ceiling (Plan 50) — Phase H — WASM plugin capability integration:
+- Sprint 90 — memory scope isolation + delegate max_capabilities ceiling (Plan 51) — Phase J — Memory Scope Isolation:
+- Sprint 91 — file tool capability enforcement (Plan 52)
+- Automatic tool-creation fallback on tool-not-found — When the LLM requests a tool that doesn't exist and enable_tool_fallback
+
+### Fixed
+- Resolve CI, Docker, and release workflow failures — - Add explicit rng.gen::<u8>() type annotations to fix Windows clippy
+- Resolve Docker and Windows CI failures — - Remove hardcoded storage-encrypted from gateway's Cargo.toml so
+- Gate codegen tests behind wasm-plugins, remove stale advisory ignore — - Add #[cfg(feature = "wasm-plugins")] to check_toolchain_passes test
+- Restore cargo audit ignore for RUSTSEC-2026-0049 — rustls-webpki 0.102.8 is still in the dep tree via libsql → rustls 0.22.
+- Install wasm32-wasip1 in CI, clean up stale deny.toml ignores — - Add wasm32-wasip1 target to checks and coverage jobs so codegen tests
+- Resolve CI failures and document binary size budget — - deny.toml: restore RUSTSEC-2026-0097 ignore for rand 0.8.5 (direct
+- Three remaining CI failures — - daily_driver.rs: guard daily_driver_full_lifecycle with #[cfg(unix)] —
+- Skip daily_driver test file entirely on non-unix — Replace per-function #[cfg(unix)] with a file-level #![cfg(unix)].
+- Use YAML single-quoted scalars in security_policy Windows tests — Windows temp dir paths contain backslashes (C:\Users\...) which the YAML
+- Normalize SDK path to forward slashes in generated Cargo.toml — On Windows, sdk.display() produces paths like D:\a\...\agentzero-plugin-sdk.
+- Dispatch TursoAutopilotStore locally via SqliteAutopilotStore to avoid libsql threading conflict in test binary
+- Address clippy unnecessary sort warning
+- Resolve clippy warnings in providers
+- Resolve clippy match guard warning
+- Address clippy warnings in infra insights
+- Resolve clippy sort warning in orchestrator
+- Resolve clippy match guard in dashboard
+- Resolve clippy match guard in config ui
+
+### Changed
+- Cut dev build time via dep opt-level and debug settings — Root cause of slow 'just test':
+- Optimize pre-commit hook for fast iteration — The old hook ran clippy --all-targets + unit tests on every commit,
+
+### Changed
+- Add Plan 48 — capability enforcement wire-through (Sprint 87)
+- Mark Plan 48 / Sprint 87 fully complete — all acceptance criteria met
+- Mark Plan 50 / Sprint 89 fully complete — all acceptance criteria met
+- Add Plan 51 / Sprint 90 — memory scope isolation + delegate ceiling (COMPLETE)
+
+### Changed
+- Fix Node.js 20 deprecation annotations — - docker/setup-buildx-action v3 → v4 (node24; also fixes the transitive
+- Fix last Node.js 20 annotation — own Trivy DB cache with actions/cache@v5 — trivy-action@0.35.0 (latest) pins actions/cache@v4.2.4 (Node.js 20)
+- Add memory-turso check to CI matrix
+- Speed up tests and fix security audits
+- Limit pre-commit tests and enable sccache
+- Ignore new rustls-webpki advisories
+
+### Wip
+- Finalize sprint-87 capability & swarm wiring + gossip/test fixes
+
 ## [0.12.0] - 2026-04-14
 
 ### Added
