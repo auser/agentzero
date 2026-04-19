@@ -1,0 +1,101 @@
+{
+  "gguf_registry": [
+    { "id": "qwen2.5-coder-0.5b", "hf_repo": "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF", "gguf_file": "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" },
+    { "id": "qwen2.5-coder-1.5b", "hf_repo": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", "gguf_file": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" },
+    { "id": "qwen2.5-coder-3b",   "hf_repo": "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",   "gguf_file": "qwen2.5-coder-3b-instruct-q4_k_m.gguf" },
+    { "id": "qwen2.5-coder-7b",   "hf_repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",   "gguf_file": "qwen2.5-coder-7b-instruct-q4_k_m.gguf" },
+    { "id": "qwen2.5-coder-14b",  "hf_repo": "Qwen/Qwen2.5-Coder-14B-Instruct-GGUF",  "gguf_file": "qwen2.5-coder-14b-instruct-q4_k_m.gguf" },
+    { "id": "qwen2.5-coder-32b",  "hf_repo": "Qwen/Qwen2.5-Coder-32B-Instruct-GGUF",  "gguf_file": "qwen2.5-coder-32b-instruct-q4_k_m.gguf" },
+
+    { "id": "qwen2.5-7b",  "hf_repo": "Qwen/Qwen2.5-7B-Instruct-GGUF",  "gguf_file": "qwen2.5-7b-instruct-q4_k_m.gguf" },
+    { "id": "qwen2.5-14b", "hf_repo": "Qwen/Qwen2.5-14B-Instruct-GGUF", "gguf_file": "qwen2.5-14b-instruct-q4_k_m.gguf" },
+    { "id": "qwen2.5-32b", "hf_repo": "Qwen/Qwen2.5-32B-Instruct-GGUF", "gguf_file": "qwen2.5-32b-instruct-q4_k_m.gguf" },
+
+    { "id": "qwen3-0.6b",    "hf_repo": "Qwen/Qwen3-0.6B-GGUF",    "gguf_file": "qwen3-0.6b-q4_k_m.gguf" },
+    { "id": "qwen3-1.7b",    "hf_repo": "Qwen/Qwen3-1.7B-GGUF",    "gguf_file": "qwen3-1.7b-q4_k_m.gguf" },
+    { "id": "qwen3-4b",      "hf_repo": "Qwen/Qwen3-4B-GGUF",      "gguf_file": "qwen3-4b-q4_k_m.gguf" },
+    { "id": "qwen3-8b",      "hf_repo": "Qwen/Qwen3-8B-GGUF",      "gguf_file": "qwen3-8b-q4_k_m.gguf" },
+    { "id": "qwen3-14b",     "hf_repo": "Qwen/Qwen3-14B-GGUF",     "gguf_file": "qwen3-14b-q4_k_m.gguf" },
+    { "id": "qwen3-30b-a3b", "hf_repo": "Qwen/Qwen3-30B-A3B-GGUF", "gguf_file": "qwen3-30b-a3b-q4_k_m.gguf" },
+    { "id": "qwen3-32b",     "hf_repo": "Qwen/Qwen3-32B-GGUF",     "gguf_file": "qwen3-32b-q4_k_m.gguf" },
+
+    { "id": "qwq-32b", "hf_repo": "Qwen/QwQ-32B-GGUF", "gguf_file": "qwq-32b-q4_k_m.gguf" }
+  ],
+
+  "providers": {
+    "openrouter": [
+      { "id": "anthropic/claude-3.5-sonnet", "is_default": true,  "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 8192 },
+      { "id": "openai/gpt-4o-mini",          "is_default": false, "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 16384 },
+      { "id": "google/gemini-1.5-pro",       "is_default": false, "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 8192 }
+    ],
+
+    "openai": [
+      { "id": "gpt-4o-mini",  "is_default": true,  "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 16384 },
+      { "id": "gpt-4.1-mini", "is_default": false, "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 32768 },
+      { "id": "gpt-4.1",      "is_default": false, "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 32768 }
+    ],
+
+    "anthropic": [
+      { "id": "claude-sonnet-4-20250514", "is_default": true,  "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 8192 },
+      { "id": "claude-haiku-4-20250414",  "is_default": false, "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 8192 },
+      { "id": "claude-opus-4-20250514",   "is_default": false, "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 8192 }
+    ],
+
+    "gemini": [
+      { "id": "gemini-1.5-flash",     "is_default": true,  "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 8192 },
+      { "id": "gemini-1.5-pro",       "is_default": false, "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 8192 },
+      { "id": "gemini-2.0-flash-exp", "is_default": false, "vision": true, "tool_use": true, "streaming": true, "max_output_tokens": 8192 }
+    ],
+
+    "local_gguf": [
+      { "id": "qwen2.5-coder-0.5b", "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 1024 },
+      { "id": "qwen2.5-coder-1.5b", "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 1024 },
+      { "id": "qwen2.5-coder-3b",   "is_default": true,  "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 2048 },
+      { "id": "qwen2.5-coder-7b",   "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 4096 },
+      { "id": "qwen2.5-coder-14b",  "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 4096 },
+      { "id": "qwen2.5-coder-32b",  "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 8192 },
+
+      { "id": "qwen2.5-7b",  "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 4096 },
+      { "id": "qwen2.5-14b", "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 4096 },
+      { "id": "qwen2.5-32b", "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 8192 },
+
+      { "id": "qwen3-0.6b",    "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 1024 },
+      { "id": "qwen3-1.7b",    "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 1024 },
+      { "id": "qwen3-4b",      "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 2048 },
+      { "id": "qwen3-8b",      "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 4096 },
+      { "id": "qwen3-14b",     "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 4096 },
+      { "id": "qwen3-30b-a3b", "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 4096 },
+      { "id": "qwen3-32b",     "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 8192 },
+
+      { "id": "qwq-32b", "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 8192 }
+    ],
+
+    "ollama": [
+      { "id": "llama3.1:8b",         "is_default": true,  "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "mistral:7b",          "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+
+      { "id": "qwen2.5-coder:0.5b",  "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen2.5-coder:1.5b",  "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen2.5-coder:3b",    "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen2.5-coder:7b",    "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen2.5-coder:14b",   "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen2.5-coder:32b",   "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+
+      { "id": "qwen2.5:7b",          "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen2.5:14b",         "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen2.5:32b",         "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen2.5:72b",         "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+
+      { "id": "qwen3:0.6b",          "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen3:1.7b",          "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen3:4b",            "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen3:8b",            "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen3:14b",           "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen3:30b-a3b",       "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen3:32b",           "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+      { "id": "qwen3:235b-a22b",     "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 },
+
+      { "id": "qwq:32b",             "is_default": false, "vision": false, "tool_use": true, "streaming": true, "max_output_tokens": 0 }
+    ]
+  }
+}

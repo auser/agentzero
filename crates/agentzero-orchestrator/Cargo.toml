@@ -12,6 +12,7 @@ default = []
 lanes = []
 
 [dependencies]
+agentzero-autopilot = { workspace = true }
 agentzero-channels = { workspace = true }
 agentzero-config = { workspace = true }
 agentzero-core = { workspace = true }

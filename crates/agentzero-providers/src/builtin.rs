@@ -211,6 +211,9 @@ impl BuiltinProvider {
             && std::path::Path::new(&self.model_name).exists()
         {
             PathBuf::from(&self.model_name)
+        } else if let Some(entry) = model_manager::resolve_model(&self.model_name) {
+            // Known model ID from the GGUF registry (e.g. "qwen2.5-coder-7b")
+            model_manager::ensure_model(&entry.hf_repo, &entry.gguf_file)?
         } else {
             // Try as HF repo/file: "org/repo/file.gguf"
             let parts: Vec<&str> = self.model_name.splitn(3, '/').collect();

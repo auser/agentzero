@@ -310,7 +310,12 @@ impl CandleProvider {
             return Ok(PathBuf::from(&self.config.model));
         }
 
-        // Otherwise download from HF Hub
+        // Check GGUF registry for short model IDs (e.g. "qwen2.5-coder-7b")
+        if let Some(entry) = model_manager::resolve_model(&self.config.model) {
+            return model_manager::ensure_model(&entry.hf_repo, &entry.gguf_file);
+        }
+
+        // Otherwise download from HF Hub using config values
         model_manager::ensure_model(&self.config.model, &self.config.filename)
     }
 

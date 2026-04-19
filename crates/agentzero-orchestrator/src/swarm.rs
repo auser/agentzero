@@ -335,6 +335,35 @@ pub async fn build_swarm_with_presence(
         });
     }
 
+    // Wire the cron execution loop — polls CronStore for due tasks and
+    // publishes events to the bus. Uses the same `.agentzero/` data dir.
+    let cron_data_dir = workspace_root.join(".agentzero");
+    if let Ok(cron_store) = agentzero_tools::cron_store::CronStore::new(&cron_data_dir) {
+        tracing::info!("cron executor enabled");
+        coord = coord.with_cron_store(std::sync::Arc::new(cron_store));
+    }
+
+    // Wire the trigger evaluation loop — subscribes to bus events and
+    // evaluates trigger rules from config.
+    if !config.autopilot.triggers.is_empty() {
+        let trigger_rules: Vec<agentzero_autopilot::config::TriggerRuleConfig> = config
+            .autopilot
+            .triggers
+            .iter()
+            .map(|t| agentzero_autopilot::config::TriggerRuleConfig {
+                name: t.name.clone(),
+                condition: convert_trigger_condition(&t.condition),
+                action: convert_trigger_action(&t.action),
+                cooldown_secs: t.cooldown_secs,
+                enabled: t.enabled,
+            })
+            .collect();
+        let engine = std::sync::Arc::new(agentzero_autopilot::TriggerEngine::new());
+        engine.load_from_config(&trigger_rules).await;
+        tracing::info!(rules = trigger_rules.len(), "trigger engine enabled");
+        coord = coord.with_trigger_engine(engine);
+    }
+
     // Build a shared memory store so all swarm agents use one connection
     // instead of each opening their own SQLite file handle.
     let shared_memory: Arc<dyn agentzero_core::MemoryStore> = match build_memory_store(config_path)
@@ -508,6 +537,53 @@ pub async fn build_swarm_with_presence(
     }
 
     Ok(Some((coord, shutdown_tx)))
+}
+
+// ─── Config → Autopilot type converters ────────────────────────────────────
+
+fn convert_trigger_condition(
+    cond: &agentzero_config::AutopilotTriggerCondition,
+) -> agentzero_autopilot::types::TriggerCondition {
+    use agentzero_config::AutopilotTriggerCondition as Src;
+    match cond {
+        Src::EventMatch { event_type } => {
+            agentzero_autopilot::types::TriggerCondition::EventMatch {
+                event_type: event_type.clone(),
+            }
+        }
+        Src::Cron { schedule } => agentzero_autopilot::types::TriggerCondition::Cron {
+            schedule: schedule.clone(),
+        },
+        Src::MetricThreshold { metric, threshold } => {
+            agentzero_autopilot::types::TriggerCondition::MetricThreshold {
+                metric: metric.clone(),
+                threshold: *threshold,
+            }
+        }
+    }
+}
+
+fn convert_trigger_action(
+    action: &agentzero_config::AutopilotTriggerAction,
+) -> agentzero_autopilot::types::TriggerAction {
+    use agentzero_config::AutopilotTriggerAction as Src;
+    match action {
+        Src::ProposeTask { agent, prompt } => {
+            agentzero_autopilot::types::TriggerAction::ProposeTask {
+                agent: agent.clone(),
+                prompt: prompt.clone(),
+            }
+        }
+        Src::NotifyAgent { agent, message } => {
+            agentzero_autopilot::types::TriggerAction::NotifyAgent {
+                agent: agent.clone(),
+                message: message.clone(),
+            }
+        }
+        Src::RunPipeline { pipeline } => agentzero_autopilot::types::TriggerAction::RunPipeline {
+            pipeline: pipeline.clone(),
+        },
+    }
 }
 
 // ─── A2A endpoint registration ──────────────────────────────────────────────

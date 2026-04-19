@@ -169,6 +169,29 @@ fn run_models_set(ctx: &CommandContext, model: &str) -> anyhow::Result<()> {
         anyhow::bail!("Model name cannot be empty");
     }
 
+    // When the current provider is a local GGUF provider, resolve the short
+    // model ID to its HF repo + filename and update [local] config too.
+    #[cfg(any(feature = "local-model", feature = "candle"))]
+    {
+        let config = load(&ctx.config_path).ok();
+        let provider_kind = config
+            .as_ref()
+            .map(|c| c.provider.kind.as_str())
+            .unwrap_or("");
+        if matches!(provider_kind, "builtin" | "candle" | "local" | "embedded") {
+            if let Some(entry) = agentzero_providers::model_manager::resolve_model(trimmed) {
+                upsert_provider_model_in_toml(&ctx.config_path, trimmed)?;
+                upsert_local_model_in_toml(&ctx.config_path, &entry.hf_repo, &entry.gguf_file)?;
+                println!();
+                println!("  Default model set to '{trimmed}'.");
+                println!("  HF repo:   {}", entry.hf_repo);
+                println!("  GGUF file: {}", entry.gguf_file);
+                println!();
+                return Ok(());
+            }
+        }
+    }
+
     upsert_provider_model_in_toml(&ctx.config_path, trimmed)?;
 
     println!();
@@ -404,6 +427,38 @@ fn upsert_provider_model_in_toml(path: &Path, model: &str) -> anyhow::Result<()>
     Ok(())
 }
 
+/// Update the `[local]` section of the TOML config with HF repo and GGUF filename.
+#[cfg(any(feature = "local-model", feature = "candle"))]
+fn upsert_local_model_in_toml(path: &Path, hf_repo: &str, gguf_file: &str) -> anyhow::Result<()> {
+    let mut root = if path.exists() {
+        let raw = fs::read_to_string(path)
+            .with_context(|| format!("failed to read config at {}", path.display()))?;
+        raw.parse::<Value>()
+            .with_context(|| format!("failed to parse config at {}", path.display()))?
+    } else {
+        Value::Table(Map::new())
+    };
+
+    let root_table = root
+        .as_table_mut()
+        .ok_or_else(|| anyhow!("config root must be a table"))?;
+    let local_entry = root_table
+        .entry("local")
+        .or_insert_with(|| Value::Table(Map::new()));
+    let local_table = local_entry
+        .as_table_mut()
+        .ok_or_else(|| anyhow!("config `local` section must be a table"))?;
+    local_table.insert("model".to_string(), Value::String(hf_repo.to_string()));
+    local_table.insert("filename".to_string(), Value::String(gguf_file.to_string()));
+
+    let serialized = toml::to_string_pretty(&root)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, serialized).with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
 fn now_epoch_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -475,6 +530,8 @@ async fn run_models_pull(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(feature = "local-model", feature = "candle"))]
+    use super::upsert_local_model_in_toml;
     use super::{
         cache_live_models_for_provider, humanize_age, load_any_cached_models_for_provider,
         load_cached_models_for_provider, upsert_provider_model_in_toml, CachedModelCatalog,
@@ -575,6 +632,34 @@ model = "old-model"
         let err = upsert_provider_model_in_toml(&config_path, "gpt-4.1")
             .expect_err("invalid toml should fail");
         assert!(err.to_string().contains("failed to parse config"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(any(feature = "local-model", feature = "candle"))]
+    #[test]
+    fn upsert_local_model_updates_config_success_path() {
+        let dir = temp_dir();
+        let config_path = dir.join("agentzero.toml");
+        fs::write(
+            &config_path,
+            r#"[provider]
+kind = "builtin"
+model = "qwen2.5-coder-3b"
+"#,
+        )
+        .expect("seed config should be written");
+
+        upsert_local_model_in_toml(
+            &config_path,
+            "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+            "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+        )
+        .expect("upsert should succeed");
+
+        let updated = fs::read_to_string(&config_path).expect("config should be readable");
+        assert!(updated.contains("Qwen/Qwen2.5-Coder-7B-Instruct-GGUF"));
+        assert!(updated.contains("qwen2.5-coder-7b-instruct-q4_k_m.gguf"));
 
         let _ = fs::remove_dir_all(dir);
     }

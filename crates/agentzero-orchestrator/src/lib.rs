@@ -8,6 +8,7 @@ pub mod agent_router;
 pub mod agent_store;
 pub mod block_stream;
 pub mod coordinator;
+pub mod cron_executor;
 pub mod fanout;
 pub mod goal_planner;
 pub mod gossip;
@@ -22,6 +23,7 @@ pub mod swarm;
 pub mod swarm_context;
 pub mod swarm_supervisor;
 pub mod template_store;
+pub mod trigger_loop;
 pub mod workflow_executor;
 pub mod workflow_store;
 pub mod workspace;
@@ -30,6 +32,7 @@ pub use agent_router::{AgentDescriptor, AgentRouter};
 pub use agent_store::{AgentChannelConfig, AgentRecord, AgentStatus, AgentStore, AgentUpdate};
 pub use block_stream::{Block, BlockAccumulator};
 pub use coordinator::{Coordinator, ErrorStrategy, TaskMessage, TaskResult};
+pub use cron_executor::{run_cron_executor, CronExecutorConfig};
 pub use fanout::{execute_fanout, FanOutResult, FanOutStep};
 pub use goal_planner::{
     parse_planner_response, GoalPlanner, PlannedNode, PlannedWorkflow, GOAL_PLANNER_PROMPT,
@@ -52,6 +55,7 @@ pub use swarm_supervisor::{
     SwarmSupervisor,
 };
 pub use template_store::{TemplateRecord, TemplateStore, TemplateUpdate};
+pub use trigger_loop::run_trigger_loop;
 pub use workflow_executor::{
     compile as compile_workflow, execute_with_updates as execute_workflow_streaming, ExecutionPlan,
     ExecutionStep, NodeStatus, NodeType, StatusUpdate, StepDispatcher, WorkflowRun,

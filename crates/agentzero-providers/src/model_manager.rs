@@ -4,10 +4,12 @@
 //! shows a progress bar during the first download.
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result};
 use hf_hub::api::sync::ApiBuilder;
 use indicatif::{ProgressBar, ProgressStyle};
+use serde::Deserialize;
 use tracing::{debug, info};
 
 /// Default HuggingFace repo for the built-in coding model.
@@ -18,6 +20,38 @@ pub const DEFAULT_GGUF_FILE: &str = "qwen2.5-coder-3b-instruct-q4_k_m.gguf";
 
 /// Default model identifier shown in CLI and logs.
 pub const DEFAULT_BUILTIN_MODEL: &str = "qwen2.5-coder-3b";
+
+/// Embedded model catalog JSON (shared with `models.rs`).
+const CATALOG_JSON: &str = include_str!("../data/model_catalog.json");
+
+/// Maps a short model ID to a HuggingFace repo and GGUF filename.
+#[derive(Debug, Deserialize)]
+pub struct GgufModelEntry {
+    pub id: String,
+    pub hf_repo: String,
+    pub gguf_file: String,
+}
+
+#[derive(Deserialize)]
+struct CatalogFragment {
+    gguf_registry: Vec<GgufModelEntry>,
+}
+
+static GGUF_REGISTRY: LazyLock<Vec<GgufModelEntry>> = LazyLock::new(|| {
+    let catalog: CatalogFragment =
+        serde_json::from_str(CATALOG_JSON).expect("embedded model_catalog.json is valid");
+    catalog.gguf_registry
+});
+
+/// Look up a GGUF model by its short ID.
+pub fn resolve_model(id: &str) -> Option<&'static GgufModelEntry> {
+    GGUF_REGISTRY.iter().find(|e| e.id == id)
+}
+
+/// Return the full GGUF registry (lazily parsed from embedded JSON).
+pub fn gguf_registry() -> &'static [GgufModelEntry] {
+    &GGUF_REGISTRY
+}
 
 /// Returns the models cache directory (`~/.agentzero/models/`).
 pub fn models_dir() -> Result<PathBuf> {
@@ -152,5 +186,44 @@ mod tests {
         assert!(!DEFAULT_HF_REPO.is_empty());
         assert!(DEFAULT_GGUF_FILE.ends_with(".gguf"));
         assert!(!DEFAULT_BUILTIN_MODEL.is_empty());
+    }
+
+    #[test]
+    fn resolve_model_finds_known_model() {
+        let entry = resolve_model("qwen2.5-coder-7b").expect("should find qwen2.5-coder-7b");
+        assert_eq!(entry.hf_repo, "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF");
+        assert!(entry.gguf_file.ends_with(".gguf"));
+    }
+
+    #[test]
+    fn resolve_model_returns_none_for_unknown() {
+        assert!(resolve_model("nonexistent-model").is_none());
+    }
+
+    #[test]
+    fn resolve_model_default_matches_constants() {
+        let entry =
+            resolve_model(DEFAULT_BUILTIN_MODEL).expect("default model should be in registry");
+        assert_eq!(entry.hf_repo, DEFAULT_HF_REPO);
+        assert_eq!(entry.gguf_file, DEFAULT_GGUF_FILE);
+    }
+
+    #[test]
+    fn registry_has_no_duplicate_ids() {
+        let registry = gguf_registry();
+        let mut seen = std::collections::HashSet::new();
+        for entry in registry {
+            assert!(
+                seen.insert(&entry.id),
+                "duplicate registry entry: {}",
+                entry.id
+            );
+        }
+    }
+
+    #[test]
+    fn registry_parses_from_embedded_json() {
+        let registry = gguf_registry();
+        assert!(!registry.is_empty(), "registry should not be empty");
     }
 }

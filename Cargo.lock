@@ -359,6 +359,7 @@ dependencies = [
 name = "agentzero-orchestrator"
 version = "0.13.0"
 dependencies = [
+ "agentzero-autopilot",
  "agentzero-channels",
  "agentzero-config",
  "agentzero-core",

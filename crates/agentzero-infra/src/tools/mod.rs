@@ -41,8 +41,7 @@ pub use agentzero_tools::{
 // ── Extended tier re-exports ─────────────────────────────────────────
 #[cfg(feature = "tools-extended")]
 pub use agentzero_tools::{
-    A2aTool, AgentsIpcTool, CliDiscoveryTool, CodeInterpreterTool, CronAddTool, CronListTool,
-    CronPauseTool, CronRemoveTool, CronResumeTool, CronUpdateTool, DiscordSearchTool,
+    A2aTool, AgentsIpcTool, CliDiscoveryTool, CodeInterpreterTool, DiscordSearchTool,
     GitOperationsTool, HttpRequestTool, ModelRoutingConfigTool, ProxyConfigTool, ScheduleTool,
     SopAdvanceTool, SopApproveTool, SopExecuteTool, SopListTool, SopStatusTool, UrlValidationTool,
     WebFetchTool, WebSearchTool,
@@ -145,12 +144,8 @@ fn default_tools_inner(
         }
 
         if policy.enable_cron {
-            tools.push(Box::new(CronAddTool));
-            tools.push(Box::new(CronListTool));
-            tools.push(Box::new(CronRemoveTool));
-            tools.push(Box::new(CronUpdateTool));
-            tools.push(Box::new(CronPauseTool));
-            tools.push(Box::new(CronResumeTool));
+            // Unified schedule tool handles all cron operations (create, list,
+            // update, remove, pause, resume, parse) with natural language support.
             tools.push(Box::new(ScheduleTool));
         }
 

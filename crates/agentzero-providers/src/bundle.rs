@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::io::Read;
 #[cfg(feature = "bundles")]
 use std::path::Path;
+#[cfg(feature = "bundles")]
 use std::path::PathBuf;
 
 #[cfg(feature = "bundles")]
@@ -431,12 +432,14 @@ pub fn verify_signature(
 // Helpers
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)] // Used by tests; planned for production bundle validation.
 fn hex_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     format!("{:x}", hasher.finalize())
 }
 
+#[allow(dead_code)] // Used by tests; planned for production bundle creation.
 fn guess_role(filename: &str) -> String {
     let lower = filename.to_lowercase();
     if lower.ends_with(".gguf")

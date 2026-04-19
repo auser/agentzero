@@ -12,11 +12,15 @@
 //! channel and publishing results back on the event bus.
 
 use crate::agent_router::{AgentDescriptor, AgentRouter};
+use crate::cron_executor::{run_cron_executor, CronExecutorConfig};
 use crate::presence::PresenceStore;
+use crate::trigger_loop::run_trigger_loop;
+use agentzero_autopilot::TriggerEngine;
 use agentzero_channels::{ChannelMessage, ChannelRegistry, SendMessage};
 use agentzero_config::PipelineConfig;
 use agentzero_core::event_bus::{is_boundary_compatible, topic_matches, Event, EventBus};
 use agentzero_core::{Agent, AnnounceMessage, JobStatus, RunId, ToolContext};
+use agentzero_tools::cron_store::CronStore;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -106,6 +110,12 @@ pub struct Coordinator {
     /// Agent IDs that were registered from the swarm config (not the store).
     /// Store sync must not deregister these.
     config_agent_ids: std::collections::HashSet<String>,
+    /// Optional cron store for scheduled task execution.
+    cron_store: Option<Arc<CronStore>>,
+    /// Cron executor configuration.
+    cron_config: CronExecutorConfig,
+    /// Optional trigger engine for reactive event-driven automation.
+    trigger_engine: Option<Arc<TriggerEngine>>,
 }
 
 /// Configuration for periodic agent store synchronization.
@@ -137,6 +147,9 @@ impl Coordinator {
             store_sync: None,
             shared_memory: None,
             config_agent_ids: std::collections::HashSet::new(),
+            cron_store: None,
+            cron_config: CronExecutorConfig::default(),
+            trigger_engine: None,
         }
     }
 
@@ -163,6 +176,31 @@ impl Coordinator {
     /// Mark agent IDs as config-originated so store sync won't remove them.
     pub fn with_config_agent_ids(mut self, ids: std::collections::HashSet<String>) -> Self {
         self.config_agent_ids = ids;
+        self
+    }
+
+    /// Enable the cron execution loop with the given store and optional config.
+    ///
+    /// When set, the coordinator will poll the `CronStore` for due tasks
+    /// and publish `cron.task.fire` events to the event bus.
+    pub fn with_cron_store(mut self, store: Arc<CronStore>) -> Self {
+        self.cron_store = Some(store);
+        self
+    }
+
+    /// Enable the trigger evaluation loop with the given engine.
+    ///
+    /// When set, the coordinator subscribes to the event bus and evaluates
+    /// every event against the trigger rules. Matching actions are published
+    /// back to the bus as `trigger.*` events.
+    pub fn with_trigger_engine(mut self, engine: Arc<TriggerEngine>) -> Self {
+        self.trigger_engine = Some(engine);
+        self
+    }
+
+    /// Override the default cron executor configuration.
+    pub fn with_cron_config(mut self, config: CronExecutorConfig) -> Self {
+        self.cron_config = config;
         self
     }
 
@@ -484,11 +522,38 @@ impl Coordinator {
             None
         };
 
+        // Optional: cron execution loop.
+        let cron_loop = if let Some(ref cron_store) = coord.cron_store {
+            let store = Arc::clone(cron_store);
+            let bus = coord.bus.clone();
+            let config = coord.cron_config.clone();
+            let s5 = shutdown.clone();
+            Some(tokio::spawn(async move {
+                run_cron_executor(store, bus, config, s5).await;
+            }))
+        } else {
+            None
+        };
+
+        // Optional: trigger evaluation loop.
+        let trigger_handle = if let Some(ref engine) = coord.trigger_engine {
+            let engine = Arc::clone(engine);
+            let bus = coord.bus.clone();
+            let s6 = shutdown.clone();
+            Some(tokio::spawn(async move {
+                run_trigger_loop(engine, bus, s6).await;
+            }))
+        } else {
+            None
+        };
+
         // Keep abort handles so we can cancel all loops on shutdown.
         let abort_ingestion = ingestion.abort_handle();
         let abort_router = router_loop.abort_handle();
         let abort_response = response_loop.abort_handle();
         let abort_sync = sync_loop.as_ref().map(|h| h.abort_handle());
+        let abort_cron = cron_loop.as_ref().map(|h| h.abort_handle());
+        let abort_trigger = trigger_handle.as_ref().map(|h| h.abort_handle());
 
         // Wait for shutdown signal or any loop to exit.
         tokio::select! {
@@ -507,6 +572,12 @@ impl Coordinator {
             r = async { match sync_loop { Some(h) => h.await, None => std::future::pending().await } } => {
                 if let Err(e) = r { tracing::error!(error = %e, "store sync loop panicked"); }
             }
+            r = async { match cron_loop { Some(h) => h.await, None => std::future::pending().await } } => {
+                if let Err(e) = r { tracing::error!(error = %e, "cron executor loop panicked"); }
+            }
+            r = async { match trigger_handle { Some(h) => h.await, None => std::future::pending().await } } => {
+                if let Err(e) = r { tracing::error!(error = %e, "trigger evaluation loop panicked"); }
+            }
         }
 
         // Graceful shutdown: give in-flight tasks time to complete.
@@ -521,6 +592,12 @@ impl Coordinator {
         abort_router.abort();
         abort_response.abort();
         if let Some(h) = abort_sync {
+            h.abort();
+        }
+        if let Some(h) = abort_cron {
+            h.abort();
+        }
+        if let Some(h) = abort_trigger {
             h.abort();
         }
 
@@ -837,6 +914,113 @@ impl Coordinator {
             }
             // Skip pipeline step events (internal observability, handled by executor).
             if event.topic.starts_with("pipeline.") {
+                continue;
+            }
+
+            // Handle cron.task.fire events: dispatch the command to an agent via the router.
+            if event.topic == "cron.task.fire" {
+                if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) {
+                    let command = payload["command"].as_str().unwrap_or_default().to_string();
+                    let task_id = payload["task_id"].as_str().unwrap_or("unknown");
+                    if !command.is_empty() {
+                        tracing::info!(task_id = %task_id, command = %command, "dispatching cron task");
+                        let descriptors = self.agent_descriptors().await;
+                        let routed = match self.router.route(&command, &descriptors).await {
+                            Ok(Some(agent_id)) => {
+                                let agents = self.agents.read().await;
+                                if let Some(worker) = agents.get(&agent_id) {
+                                    let cron_event = Event::new(
+                                        format!("cron.dispatch.{task_id}"),
+                                        "cron-executor",
+                                        &command,
+                                    );
+                                    let _ = worker
+                                        .task_tx
+                                        .send(TaskMessage {
+                                            event: cron_event,
+                                            correlation_id: format!("cron-{task_id}"),
+                                            result_tx: None,
+                                            cancelled: Arc::new(
+                                                std::sync::atomic::AtomicBool::new(false),
+                                            ),
+                                        })
+                                        .await;
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            _ => false,
+                        };
+                        if !routed {
+                            // Fallback: send to first available agent.
+                            let agents = self.agents.read().await;
+                            if let Some((id, worker)) = agents.iter().next() {
+                                tracing::info!(
+                                    agent = %id,
+                                    "cron task routed to fallback agent"
+                                );
+                                let cron_event = Event::new(
+                                    format!("cron.dispatch.{task_id}"),
+                                    "cron-executor",
+                                    &command,
+                                );
+                                let _ = worker
+                                    .task_tx
+                                    .send(TaskMessage {
+                                        event: cron_event,
+                                        correlation_id: format!("cron-{task_id}"),
+                                        result_tx: None,
+                                        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(
+                                            false,
+                                        )),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Handle trigger action events: dispatch to the named agent.
+            if event.topic.starts_with("trigger.") {
+                if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) {
+                    let agent_id = payload["agent"].as_str().unwrap_or_default().to_string();
+                    let prompt = payload["prompt"]
+                        .as_str()
+                        .or_else(|| payload["message"].as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    if !agent_id.is_empty() && !prompt.is_empty() {
+                        let agents = self.agents.read().await;
+                        if let Some(worker) = agents.get(&agent_id) {
+                            tracing::info!(
+                                agent = %agent_id,
+                                rule_id = %payload["rule_id"].as_str().unwrap_or("?"),
+                                "dispatching trigger action to agent"
+                            );
+                            let trigger_event = Event::new(&event.topic, "trigger-engine", &prompt);
+                            let _ = worker
+                                .task_tx
+                                .send(TaskMessage {
+                                    event: trigger_event,
+                                    correlation_id: format!(
+                                        "trigger-{}",
+                                        payload["rule_id"].as_str().unwrap_or("unknown")
+                                    ),
+                                    result_tx: None,
+                                    cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                                })
+                                .await;
+                        } else {
+                            tracing::warn!(
+                                agent = %agent_id,
+                                "trigger target agent not found"
+                            );
+                        }
+                    }
+                }
                 continue;
             }
 

@@ -100,6 +100,18 @@ impl CronStore {
         Ok(())
     }
 
+    /// Mark a task as having just run, updating its `last_run_epoch_seconds`.
+    pub fn mark_last_run(&self, id: &str, epoch_secs: u64) -> anyhow::Result<()> {
+        let mut tasks = self.list()?;
+        let task = tasks
+            .iter_mut()
+            .find(|task| task.id == id)
+            .with_context(|| format!("task `{id}` not found"))?;
+        task.last_run_epoch_seconds = Some(epoch_secs);
+        self.store.save(&tasks)?;
+        Ok(())
+    }
+
     fn set_enabled(&self, id: &str, enabled: bool) -> anyhow::Result<CronTask> {
         let mut tasks = self.list()?;
         let task = tasks

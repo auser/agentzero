@@ -1,25 +1,46 @@
+use std::sync::LazyLock;
+
+use serde::Deserialize;
+
 use crate::find_provider;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Embedded model catalog JSON, compiled into the binary.
+const CATALOG_JSON: &str = include_str!("../data/model_catalog.json");
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ModelDescriptor {
-    pub id: &'static str,
+    pub id: String,
+    #[serde(default)]
     pub is_default: bool,
+    #[serde(flatten)]
     pub capabilities: ModelCapabilities,
 }
 
 /// Capability flags for a model. Used by the agent loop to skip unsupported
 /// features (e.g. don't send tool definitions to models that don't support
 /// tool_use) and by `models status` to display what each model can do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct ModelCapabilities {
     /// Model supports vision / image content blocks.
+    #[serde(default)]
     pub vision: bool,
     /// Model supports tool use (function calling).
+    #[serde(default = "default_true")]
     pub tool_use: bool,
     /// Model supports streaming responses.
+    #[serde(default = "default_true")]
     pub streaming: bool,
     /// Maximum output tokens (0 = unknown / use provider default).
+    #[serde(default)]
     pub max_output_tokens: u32,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for ModelCapabilities {
@@ -34,7 +55,7 @@ impl Default for ModelCapabilities {
 }
 
 impl ModelCapabilities {
-    const fn full(max_output_tokens: u32) -> Self {
+    pub const fn full(max_output_tokens: u32) -> Self {
         Self {
             vision: true,
             tool_use: true,
@@ -43,7 +64,7 @@ impl ModelCapabilities {
         }
     }
 
-    const fn local() -> Self {
+    pub const fn local() -> Self {
         Self {
             vision: false,
             tool_use: true,
@@ -53,131 +74,48 @@ impl ModelCapabilities {
     }
 }
 
-const OPENROUTER_MODELS: &[ModelDescriptor] = &[
-    ModelDescriptor {
-        id: "anthropic/claude-3.5-sonnet",
-        is_default: true,
-        capabilities: ModelCapabilities::full(8192),
-    },
-    ModelDescriptor {
-        id: "openai/gpt-4o-mini",
-        is_default: false,
-        capabilities: ModelCapabilities::full(16384),
-    },
-    ModelDescriptor {
-        id: "google/gemini-1.5-pro",
-        is_default: false,
-        capabilities: ModelCapabilities::full(8192),
-    },
-];
+// ---------------------------------------------------------------------------
+// Parsed catalog (lazily initialized from embedded JSON)
+// ---------------------------------------------------------------------------
 
-const OPENAI_MODELS: &[ModelDescriptor] = &[
-    ModelDescriptor {
-        id: "gpt-4o-mini",
-        is_default: true,
-        capabilities: ModelCapabilities::full(16384),
-    },
-    ModelDescriptor {
-        id: "gpt-4.1-mini",
-        is_default: false,
-        capabilities: ModelCapabilities::full(32768),
-    },
-    ModelDescriptor {
-        id: "gpt-4.1",
-        is_default: false,
-        capabilities: ModelCapabilities::full(32768),
-    },
-];
+#[derive(Deserialize)]
+struct ProviderModels {
+    openrouter: Vec<ModelDescriptor>,
+    openai: Vec<ModelDescriptor>,
+    anthropic: Vec<ModelDescriptor>,
+    gemini: Vec<ModelDescriptor>,
+    local_gguf: Vec<ModelDescriptor>,
+    ollama: Vec<ModelDescriptor>,
+}
 
-const ANTHROPIC_MODELS: &[ModelDescriptor] = &[
-    ModelDescriptor {
-        id: "claude-sonnet-4-20250514",
-        is_default: true,
-        capabilities: ModelCapabilities::full(8192),
-    },
-    ModelDescriptor {
-        id: "claude-haiku-4-20250414",
-        is_default: false,
-        capabilities: ModelCapabilities::full(8192),
-    },
-    ModelDescriptor {
-        id: "claude-opus-4-20250514",
-        is_default: false,
-        capabilities: ModelCapabilities::full(8192),
-    },
-];
+#[derive(Deserialize)]
+struct Catalog {
+    providers: ProviderModels,
+}
 
-const GEMINI_MODELS: &[ModelDescriptor] = &[
-    ModelDescriptor {
-        id: "gemini-1.5-flash",
-        is_default: true,
-        capabilities: ModelCapabilities::full(8192),
-    },
-    ModelDescriptor {
-        id: "gemini-1.5-pro",
-        is_default: false,
-        capabilities: ModelCapabilities::full(8192),
-    },
-    ModelDescriptor {
-        id: "gemini-2.0-flash-exp",
-        is_default: false,
-        capabilities: ModelCapabilities::full(8192),
-    },
-];
+static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
+    serde_json::from_str(CATALOG_JSON).expect("embedded model_catalog.json is valid")
+});
 
-const CANDLE_MODELS: &[ModelDescriptor] = &[ModelDescriptor {
-    id: "qwen2.5-coder-3b",
-    is_default: true,
-    capabilities: ModelCapabilities {
-        vision: false,
-        tool_use: true,
-        streaming: true,
-        max_output_tokens: 2048,
-    },
-}];
-
-const BUILTIN_MODELS: &[ModelDescriptor] = &[ModelDescriptor {
-    id: "qwen2.5-coder-3b",
-    is_default: true,
-    capabilities: ModelCapabilities {
-        vision: false,
-        tool_use: true,
-        streaming: true,
-        max_output_tokens: 2048,
-    },
-}];
-
-const OLLAMA_MODELS: &[ModelDescriptor] = &[
-    ModelDescriptor {
-        id: "llama3.1:8b",
-        is_default: true,
-        capabilities: ModelCapabilities::local(),
-    },
-    ModelDescriptor {
-        id: "qwen2.5:7b",
-        is_default: false,
-        capabilities: ModelCapabilities::local(),
-    },
-    ModelDescriptor {
-        id: "mistral:7b",
-        is_default: false,
-        capabilities: ModelCapabilities::local(),
-    },
-];
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 pub fn find_models_for_provider(
     provider_or_alias: &str,
 ) -> Option<(&'static str, &'static [ModelDescriptor])> {
     let provider = find_provider(provider_or_alias)?;
-    let models = match provider.id {
-        "openrouter" => OPENROUTER_MODELS,
-        "openai" | "openai-codex" | "copilot" => OPENAI_MODELS,
-        "anthropic" => ANTHROPIC_MODELS,
-        "gemini" => GEMINI_MODELS,
-        "candle" => CANDLE_MODELS,
-        "builtin" => BUILTIN_MODELS,
-        "ollama" | "llamacpp" | "lmstudio" | "vllm" | "sglang" | "osaurus" => OLLAMA_MODELS,
-        _ => OPENROUTER_MODELS,
+    let catalog = &*CATALOG;
+    let models: &[ModelDescriptor] = match provider.id {
+        "openrouter" => &catalog.providers.openrouter,
+        "openai" | "openai-codex" | "copilot" => &catalog.providers.openai,
+        "anthropic" => &catalog.providers.anthropic,
+        "gemini" => &catalog.providers.gemini,
+        "candle" | "builtin" => &catalog.providers.local_gguf,
+        "ollama" | "llamacpp" | "lmstudio" | "vllm" | "sglang" | "osaurus" => {
+            &catalog.providers.ollama
+        }
+        _ => &catalog.providers.openrouter,
     };
     Some((provider.id, models))
 }
@@ -275,6 +213,37 @@ mod tests {
     }
 
     #[test]
+    fn builtin_models_have_tool_use_and_no_vision() {
+        let (_, models) = find_models_for_provider("builtin").expect("builtin should resolve");
+        assert!(models.len() > 1, "builtin should have multiple models");
+        for model in models {
+            assert!(
+                !model.capabilities.vision,
+                "{} should not have vision",
+                model.id
+            );
+            assert!(
+                model.capabilities.tool_use,
+                "{} should have tool_use",
+                model.id
+            );
+        }
+    }
+
+    #[cfg(any(feature = "local-model", feature = "candle"))]
+    #[test]
+    fn every_builtin_model_has_gguf_registry_entry() {
+        let (_, models) = find_models_for_provider("builtin").expect("builtin should resolve");
+        for model in models {
+            assert!(
+                crate::model_manager::resolve_model(&model.id).is_some(),
+                "builtin model '{}' missing from GGUF registry",
+                model.id
+            );
+        }
+    }
+
+    #[test]
     fn model_capabilities_returns_some_for_known_model() {
         let caps =
             model_capabilities("anthropic", "claude-sonnet-4-20250514").expect("should find");
@@ -342,5 +311,11 @@ mod tests {
         let fp1 = provider_config_fingerprint("openai", "https://api.openai.com", "gpt-4o-mini");
         let fp2 = provider_config_fingerprint("openai", "https://api.openai.com", "gpt-4o-mini");
         assert_eq!(fp1, fp2);
+    }
+
+    #[test]
+    fn catalog_json_parses_successfully() {
+        // Force initialization of the lazy catalog
+        let _ = find_models_for_provider("openai");
     }
 }
