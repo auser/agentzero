@@ -54,6 +54,10 @@ test-verbose:
 bench:
     cargo bench --workspace
 
+# Quick compilation check (no lints, no tests — ~5-15s)
+check:
+    cargo check --workspace
+
 # Run clippy lints
 lint:
     cargo clippy -- -D warnings

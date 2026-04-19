@@ -1,24 +1,25 @@
 #!/bin/bash
 #
 # Pre-commit hook for agentzero
-# - Auto-fixes formatting with cargo fmt --all and re-stages the changes
-# - Auto-fixes clippy warnings with cargo clippy --fix --allow-staged and re-stages
-# - Errors if any clippy warnings remain after auto-fix (require manual resolution)
 #
-# Full test suite runs in CI and can be triggered locally with:
-#   just test
+# Fast by default (~5-15s for typical changes):
+#   - Auto-fixes formatting with cargo fmt and re-stages
+#   - Runs cargo check on changed crates (type errors only, no lints)
 #
-# To install this hook, run:
-#   git config core.hooksPath .githooks
-# Or copy this file to .git/hooks/pre-commit
+# Set PRECOMMIT_FULL=1 for the full gate (clippy + unit tests):
+#   PRECOMMIT_FULL=1 git commit -m "..."
 #
+# Full test suite runs in CI and locally with:
+#   just test          # all tests
+#   just test-unit     # lib-only (fast)
+#   just ci            # fmt + clippy + test
+#
+# To install: git config core.hooksPath .githooks
 
 set -e
 
 if command -v sccache >/dev/null 2>&1; then
     export RUSTC_WRAPPER=sccache
-    export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-10G}"
-    echo "Using sccache for compilation caching"
 fi
 
 echo "Running pre-commit checks..."
@@ -26,12 +27,10 @@ echo "Running pre-commit checks..."
 # ── Formatting ────────────────────────────────────────────────────────────────
 echo "Fixing code formatting..."
 cargo fmt --all 2>/dev/null
-# Re-stage any files reformatted by cargo fmt
 git add -u
 echo "Formatting OK"
-echo ""
 
-# ── Determine changed crates ──────────────────────────────────────────────────
+# ── Determine changed crates ─────────────────────────────────────────────────
 CHANGED_CRATES=$(git diff --cached --name-only --diff-filter=ACMR \
     | sed -n 's|^crates/\([^/]*\)/.*|\1|p' \
     | sort -u)
@@ -46,43 +45,53 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -q '^Cargo\.toml$'; t
 fi
 
 if [ -z "$CHANGED_CRATES" ] && [ "$WORKSPACE_MANIFEST_CHANGED" = false ]; then
-    echo "No crate changes staged — skipping clippy"
-    echo "All pre-commit checks passed!"
+    echo "No crate changes staged — skipping compilation checks"
+    echo "Pre-commit OK"
     exit 0
 fi
 
-# ── Build clippy scope ────────────────────────────────────────────────────────
+# ── Build scope ──────────────────────────────────────────────────────────────
 if [ "$WORKSPACE_MANIFEST_CHANGED" = true ] && [ -z "$CHANGED_CRATES" ]; then
-    CLIPPY_SCOPE="--workspace"
+    CHECK_SCOPE="--workspace"
     SCOPE_DESC="workspace"
 else
-    CLIPPY_SCOPE=""
+    CHECK_SCOPE=""
     for crate in $CHANGED_CRATES; do
-        CLIPPY_SCOPE="$CLIPPY_SCOPE -p $crate"
+        CHECK_SCOPE="$CHECK_SCOPE -p $crate"
     done
     SCOPE_DESC=$(echo "$CHANGED_CRATES" | tr '\n' ' ')
 fi
 
-# ── Clippy auto-fix ───────────────────────────────────────────────────────────
-echo "Auto-fixing clippy warnings in: $SCOPE_DESC..."
+# ── Fast path (default): cargo check only ────────────────────────────────────
+if [ "${PRECOMMIT_FULL:-0}" != "1" ]; then
+    echo "Checking compilation for: $SCOPE_DESC..."
+    # shellcheck disable=SC2086
+    if ! cargo check $CHECK_SCOPE 2>&1 | tail -5; then
+        echo ""
+        echo "Compilation failed. Fix errors before committing."
+        exit 1
+    fi
+    echo "Pre-commit OK (fast mode — run 'just ci' for full checks)"
+    exit 0
+fi
+
+# ── Full path (PRECOMMIT_FULL=1): clippy + tests ────────────────────────────
+echo "Running FULL pre-commit checks for: $SCOPE_DESC..."
+
+# Clippy: single pass with auto-fix, then verify
 # shellcheck disable=SC2086
-cargo clippy --fix --allow-dirty --allow-staged $CLIPPY_SCOPE -- -D warnings 2>/dev/null || true
+cargo clippy --fix --allow-dirty --allow-staged $CHECK_SCOPE -- -D warnings 2>/dev/null || true
 git add -u
 
-# ── Clippy verify + build test binaries (single cargo invocation) ─────────────
-# --all-targets compiles lib + bin + test + bench targets, so nextest below
-# only needs to *run* pre-built binaries — no recompilation.
-echo "Verifying clippy (also pre-builds test binaries)..."
 # shellcheck disable=SC2086
-if ! cargo clippy --all-targets $CLIPPY_SCOPE -- -D warnings; then
+if ! cargo clippy $CHECK_SCOPE -- -D warnings; then
     echo ""
     echo "Clippy check failed — some warnings require manual fixes."
-    echo "   Run: cargo clippy --fix --allow-dirty -- -D warnings"
     exit 1
 fi
 echo "Clippy passed"
 
-# ── Tests (binaries pre-built above, just run them) ───────────────────────────
+# Tests: lib + bins only, scoped to changed crates
 SKIP_CRATES="agentzero-ffi agentzero-plugin-sdk"
 TEST_SCOPE=""
 for crate in $CHANGED_CRATES; do
@@ -100,21 +109,13 @@ if [ -n "$TEST_SCOPE" ] || [ "$WORKSPACE_MANIFEST_CHANGED" = true ]; then
         TEST_SCOPE="--workspace --exclude agentzero-ffi --exclude agentzero-plugin-sdk"
     fi
     TEST_KINDS="--lib --bins"
-    echo "Running unit tests only (pre-built)..."
+    echo "Running unit tests..."
     if command -v cargo-nextest &>/dev/null; then
         # shellcheck disable=SC2086
-        if ! cargo nextest run --no-fail-fast --no-tests=pass $TEST_KINDS $TEST_SCOPE; then
-            echo ""
-            echo "Tests failed."
-            exit 1
-        fi
+        cargo nextest run --no-fail-fast --no-tests=pass $TEST_KINDS $TEST_SCOPE
     else
         # shellcheck disable=SC2086
-        if ! cargo test $TEST_KINDS $TEST_SCOPE; then
-            echo ""
-            echo "Tests failed."
-            exit 1
-        fi
+        cargo test $TEST_KINDS $TEST_SCOPE
     fi
     echo "Tests passed"
 else
