@@ -73,6 +73,7 @@ impl FallbackProvider {
 
     /// Record a fallback metric.
     fn record_fallback(from: &str, to: &str) {
+        #[cfg(feature = "metrics")]
         metrics::counter!("provider_fallback_total", "from" => from.to_string(), "to" => to.to_string())
             .increment(1);
         info!(from = from, to = to, "provider fallback triggered");

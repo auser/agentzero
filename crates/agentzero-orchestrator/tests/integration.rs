@@ -1092,6 +1092,7 @@ async fn merge_wait_any_returns_first_result() {
 
 // ─── Lane Tests ─────────────────────────────────────────────────────────────
 
+#[cfg(feature = "lanes")]
 #[tokio::test]
 async fn lane_sub_agent_tracks_depth_and_parent() {
     // Create a SubAgent lane with parent_run_id and depth=2 → verify both are stored.

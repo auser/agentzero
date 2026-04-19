@@ -7,6 +7,10 @@ license.workspace = true
 description = "Multi-agent coordination, swarm, and pipeline management for AgentZero"
 repository.workspace = true
 
+[features]
+default = []
+lanes = []
+
 [dependencies]
 agentzero-channels = { workspace = true }
 agentzero-config = { workspace = true }

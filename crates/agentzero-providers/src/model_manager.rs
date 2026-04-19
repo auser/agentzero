@@ -109,6 +109,7 @@ pub fn ensure_default_model() -> Result<PathBuf> {
 /// Extracts the bundle into `~/.agentzero/models/{model_id}/{version}/` and
 /// returns the path to the first file with role `"model"`. If no model-role
 /// file is found, returns the first file in the bundle.
+#[cfg(feature = "bundles")]
 pub fn load_from_bundle(bundle_path: &std::path::Path) -> Result<PathBuf> {
     let bundle = crate::bundle::load_bundle(bundle_path)
         .with_context(|| format!("failed to load bundle: {}", bundle_path.display()))?;

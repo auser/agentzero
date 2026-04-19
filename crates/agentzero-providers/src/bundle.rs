@@ -7,13 +7,19 @@
 //! The format mirrors the plugin package format (tar-based, manifest-driven,
 //! optional Ed25519 signature) so the same tooling patterns apply.
 
+#[cfg(feature = "bundles")]
 use std::collections::HashMap;
+#[cfg(feature = "bundles")]
 use std::io::Read;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "bundles")]
+use std::path::Path;
+use std::path::PathBuf;
 
+#[cfg(feature = "bundles")]
 use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(feature = "bundles")]
 use tracing::{debug, info};
 
 /// Current bundle format version. Bumped when the manifest schema changes
@@ -30,7 +36,7 @@ pub const BUNDLE_EXTENSION: &str = "azb";
 /// without `local-model` or `candle` features.
 pub fn models_dir() -> anyhow::Result<std::path::PathBuf> {
     let home =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+        home::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
     Ok(home.join(".agentzero").join("models"))
 }
 
@@ -121,10 +127,11 @@ impl BundleManifest {
 }
 
 // ---------------------------------------------------------------------------
-// Bundle creation
+// Bundle creation (requires `bundles` feature for tar+zstd)
 // ---------------------------------------------------------------------------
 
 /// Create a `.azb` bundle from a directory of model files.
+#[cfg(feature = "bundles")]
 ///
 /// Scans `source_dir` for files, builds a manifest, and writes a tar+zstd
 /// archive to `output_path`. Returns the manifest for optional signing.
@@ -230,16 +237,18 @@ pub fn create_bundle(
 }
 
 // ---------------------------------------------------------------------------
-// Bundle loading
+// Bundle loading (requires `bundles` feature for tar+zstd)
 // ---------------------------------------------------------------------------
 
 /// A loaded bundle — manifest + file contents in memory.
+#[cfg(feature = "bundles")]
 #[derive(Debug)]
 pub struct AzBundle {
     pub manifest: BundleManifest,
     pub files: HashMap<String, Vec<u8>>,
 }
 
+#[cfg(feature = "bundles")]
 /// Load and validate a `.azb` bundle from disk.
 ///
 /// Decompresses zstd, extracts the tar archive, validates the manifest, and
@@ -308,6 +317,7 @@ pub fn load_bundle(path: &Path) -> anyhow::Result<AzBundle> {
     Ok(AzBundle { manifest, files })
 }
 
+#[cfg(feature = "bundles")]
 /// Extract a loaded bundle's files to a directory on disk.
 pub fn extract_bundle(bundle: &AzBundle, target_dir: &Path) -> anyhow::Result<PathBuf> {
     let dest = target_dir
@@ -513,6 +523,7 @@ mod tests {
         sample_manifest().validate().expect("should be valid");
     }
 
+    #[cfg(feature = "bundles")]
     #[test]
     fn create_and_load_roundtrip() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -554,6 +565,7 @@ mod tests {
         assert_eq!(loaded.files["model.gguf"], model_data);
     }
 
+    #[cfg(feature = "bundles")]
     #[test]
     fn load_rejects_tampered_checksum() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -575,6 +587,7 @@ mod tests {
         assert_eq!(loaded.files["model.gguf"], b"original");
     }
 
+    #[cfg(feature = "bundles")]
     #[test]
     fn extract_bundle_creates_directory_structure() {
         let tmp = tempfile::tempdir().expect("tempdir");

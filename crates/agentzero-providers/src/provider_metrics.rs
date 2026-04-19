@@ -2,7 +2,12 @@
 //!
 //! Uses the `metrics` crate for lazy metric registration. Metrics are only
 //! emitted when a Prometheus recorder is installed (by the gateway).
+//!
+//! When the `metrics` feature is disabled, all functions are no-ops — call
+//! sites in `anthropic.rs`, `openai.rs`, and `pipeline.rs` compile
+//! unconditionally without any `#[cfg]` noise.
 
+#[cfg(feature = "metrics")]
 use metrics::{counter, histogram};
 
 /// Metric name constants.
@@ -12,6 +17,7 @@ pub const PROVIDER_ERRORS_TOTAL: &str = "agentzero_provider_errors_total";
 pub const PROVIDER_TOKENS_TOTAL: &str = "agentzero_provider_tokens_total";
 
 /// Record a successful provider request.
+#[cfg(feature = "metrics")]
 pub fn record_provider_success(provider: &str, model: &str, duration_secs: f64) {
     let labels = [
         ("provider", provider.to_string()),
@@ -30,6 +36,7 @@ pub fn record_provider_success(provider: &str, model: &str, duration_secs: f64) 
 }
 
 /// Record a failed provider request.
+#[cfg(feature = "metrics")]
 pub fn record_provider_error(provider: &str, model: &str, error_type: &str, duration_secs: f64) {
     let labels = [
         ("provider", provider.to_string()),
@@ -57,6 +64,7 @@ pub fn record_provider_error(provider: &str, model: &str, error_type: &str, dura
 }
 
 /// Record token usage from a provider response.
+#[cfg(feature = "metrics")]
 pub fn record_token_usage(provider: &str, model: &str, input_tokens: u32, output_tokens: u32) {
     if input_tokens > 0 {
         counter!(
@@ -82,13 +90,32 @@ pub fn record_token_usage(provider: &str, model: &str, input_tokens: u32, output
     }
 }
 
+// ── No-op stubs when `metrics` feature is disabled ───────────────────────────
+
+#[cfg(not(feature = "metrics"))]
+#[inline(always)]
+pub fn record_provider_success(_provider: &str, _model: &str, _duration_secs: f64) {}
+
+#[cfg(not(feature = "metrics"))]
+#[inline(always)]
+pub fn record_provider_error(
+    _provider: &str,
+    _model: &str,
+    _error_type: &str,
+    _duration_secs: f64,
+) {
+}
+
+#[cfg(not(feature = "metrics"))]
+#[inline(always)]
+pub fn record_token_usage(_provider: &str, _model: &str, _input_tokens: u32, _output_tokens: u32) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn record_success_does_not_panic_without_recorder() {
-        // Metrics macros are no-ops when no recorder is installed.
         record_provider_success("anthropic", "claude-sonnet-4-6", 0.5);
     }
 

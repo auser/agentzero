@@ -50,6 +50,7 @@ impl PrivacyFirstProvider {
                 let clean = sanitized.unwrap_or_else(|| text.to_string());
                 tracing::info!(reason = %reason, "PII redacted from outbound prompt");
                 self.redactions.fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "metrics")]
                 metrics::counter!("agentzero_pii_redactions_total").increment(1);
                 clean
             }

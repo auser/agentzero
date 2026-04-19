@@ -9,13 +9,14 @@ repository.workspace = true
 
 [features]
 default = []
+hardware-detect = ["dep:sysinfo"]
 privacy = ["dep:snow", "dep:x25519-dalek", "dep:crypto_box", "dep:base64"]
 
 [dependencies]
 anyhow.workspace = true
 glob.workspace = true
 async-trait.workspace = true
-dirs = "5"
+home.workspace = true
 futures-util.workspace = true
 hmac = "0.12"
 regex.workspace = true
@@ -24,7 +25,7 @@ sha2.workspace = true
 base64 = { version = "0.22", optional = true }
 crypto_box = { workspace = true, optional = true }
 snow = { workspace = true, optional = true }
-sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+sysinfo = { version = "0.32", default-features = false, features = ["system"], optional = true }
 x25519-dalek = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

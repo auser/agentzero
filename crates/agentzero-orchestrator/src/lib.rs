@@ -12,6 +12,7 @@ pub mod fanout;
 pub mod goal_planner;
 pub mod gossip;
 pub mod job_store;
+#[cfg(feature = "lanes")]
 pub mod lanes;
 pub mod loop_detection;
 pub mod presence;
@@ -35,6 +36,7 @@ pub use goal_planner::{
 };
 pub use gossip::{GossipConfig, GossipEventBus};
 pub use job_store::{EventKind, EventLog, JobRecord, JobStore, RunEvent};
+#[cfg(feature = "lanes")]
 pub use lanes::{LaneConfig, LaneManager, LaneReceivers, WorkItem, WorkResult};
 pub use loop_detection::{LoopDetectionConfig, ToolLoopDetector};
 pub use presence::{PresenceRecord, PresenceStatus, PresenceStore};

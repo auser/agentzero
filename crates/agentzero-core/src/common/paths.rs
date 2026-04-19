@@ -12,7 +12,7 @@ pub fn data_dir_for_home(home_dir: &Path) -> PathBuf {
 }
 
 pub fn default_data_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| data_dir_for_home(&home))
+    home::home_dir().map(|home| data_dir_for_home(&home))
 }
 
 pub fn default_config_path() -> Option<PathBuf> {
