@@ -48,5 +48,5 @@ ui/.vite/
 conversation-report.md
 debate-verdict.md
 **/.gitignore
-!.gitignore
+!/.gitignore
 .hypergrep/
