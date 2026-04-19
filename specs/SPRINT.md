@@ -3191,11 +3191,11 @@ Deferred from Sprint 85 Phase B. Provides cloud sync for autopilot data via Turs
 
 ---
 
-## Research: Flow-Like Architecture Analysis (Plan 53)
+## Research: Workflow Platform Competitive Analysis (Plan 53)
 
-**Goal:** Comprehensive analysis of [flow-like.com](https://flow-like.com/) (TM9657/flow-like) — a production Rust workflow platform — to identify patterns, architectures, and design decisions applicable to AgentZero's workflow system and event bus.
+**Goal:** Comprehensive analysis of a production Rust workflow platform (TM9657) to identify patterns, architectures, and design decisions applicable to AgentZero's workflow system and event bus.
 
-**Plan:** `specs/plans/53-flow-like-analysis.md`
+**Plan:** `specs/plans/53-workflow-platform-competitive-analysis.md`
 
 **Status:** COMPLETE (research only, no implementation)
 
