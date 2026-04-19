@@ -370,6 +370,9 @@ pub struct ToolSecurityPolicy {
     pub enable_a2a_tool: bool,
     /// Enable dynamic tool creation at runtime (tool_create tool).
     pub enable_dynamic_tools: bool,
+    /// Enable automatic tool-creation fallback: when the LLM requests a tool
+    /// that doesn't exist, the system automatically creates it on the fly.
+    pub enable_tool_fallback: bool,
 }
 
 impl ToolSecurityPolicy {
@@ -524,6 +527,7 @@ impl ToolSecurityPolicy {
             wasm_dev_plugin_dir: None,
             enable_a2a_tool: false,
             enable_dynamic_tools: false,
+            enable_tool_fallback: false,
         }
     }
 }

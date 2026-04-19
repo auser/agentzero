@@ -1,10 +1,8 @@
 [profile.default]
-# Kill tests that take longer than 30s — prevents hanging
+# Moderate parallelism — less contention, faster overall
+test-threads = 8
 slow-timeout = { period = "60s", terminate-after = 2 }
-# Fail on first test timeout rather than waiting for all
 fail-fast = true
-# Use all available CPUs
-test-threads = "num-cpus"
 
 [profile.default.junit]
 path = "target/nextest/default/junit.xml"
@@ -18,6 +16,12 @@ fail-fast = false
 [[profile.default.overrides]]
 filter = "test(ollama)"
 threads-required = "num-cpus"
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# E2E channel tests use mock servers + polling — allow 1 retry
+[[profile.default.overrides]]
+filter = "binary(e2e_channels)"
+retries = 1
 slow-timeout = { period = "60s", terminate-after = 2 }
 
 # Git worktree tests: serialized to avoid .git/index race under parallel nextest

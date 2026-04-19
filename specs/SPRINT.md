@@ -3191,6 +3191,30 @@ Deferred from Sprint 85 Phase B. Provides cloud sync for autopilot data via Turs
 
 ---
 
+## Research: Flow-Like Architecture Analysis (Plan 53)
+
+**Goal:** Comprehensive analysis of [flow-like.com](https://flow-like.com/) (TM9657/flow-like) — a production Rust workflow platform — to identify patterns, architectures, and design decisions applicable to AgentZero's workflow system and event bus.
+
+**Plan:** `specs/plans/53-flow-like-analysis.md`
+
+**Status:** COMPLETE (research only, no implementation)
+
+**Key Findings:**
+
+1. **32 borrowable patterns identified** across event ingress, scheduling, WASM security, human-in-the-loop, deployment, observability, and more
+2. **Sink pattern for event bus** — unified `SinkTrait` abstraction over all trigger sources (HTTP, cron, MQTT, webhooks, file watch, etc.) with persistent registration and platform routing (Local/Remote/Hybrid)
+3. **4 disconnected AgentZero subsystems found** — LaneManager (cron lane), TriggerEngine (autopilot), Autopilot missions/proposals, and WASM cron plugins are all built but not wired into the runtime
+4. **No cron execution loop exists** — tasks are stored but nothing fires them
+5. **Top priority borrowable items:** TriggerSource trait, BufferedInterComHandler (DashMap event bus), feature-gated heavy tools, structured human-in-the-loop interactions, scheduler backend abstraction
+
+**Action Items (pre-borrowing):**
+- Wire existing `CronStore` → polling loop → event bus → execution
+- Connect `TriggerEngine` to event bus subscribers
+- Activate `LaneManager` in coordinator startup
+- Consolidate duplicate schedule.rs + cron_tools.rs + WASM cron plugins
+
+---
+
 ## Backlog
 
 ### TUI Dashboard Enhancement (MEDIUM)

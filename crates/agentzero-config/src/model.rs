@@ -679,6 +679,10 @@ pub struct AgentSettings {
     /// Enable dynamic tool creation at runtime (tool_create tool).
     #[serde(default)]
     pub enable_dynamic_tools: Option<bool>,
+    /// Enable automatic tool-creation fallback: when the LLM requests a tool
+    /// that doesn't exist, the system automatically creates it on the fly.
+    #[serde(default)]
+    pub enable_tool_fallback: Option<bool>,
 }
 
 fn default_tool_timeout_ms() -> u64 {
@@ -711,6 +715,7 @@ impl Default for AgentSettings {
             enable_domain_tools: false,
             enable_self_config: false,
             enable_dynamic_tools: None,
+            enable_tool_fallback: None,
         }
     }
 }

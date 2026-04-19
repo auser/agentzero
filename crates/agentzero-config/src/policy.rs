@@ -191,6 +191,7 @@ pub fn load_tool_security_policy(
         wasm_dev_plugin_dir: config.security.plugin.dev_plugin_dir.map(PathBuf::from),
         enable_a2a_tool: config.a2a.enabled,
         enable_dynamic_tools: config.agent.enable_dynamic_tools.unwrap_or(false),
+        enable_tool_fallback: config.agent.enable_tool_fallback.unwrap_or(false),
     };
 
     // Privacy enforcement: "private" and "local_only" modes disable outbound

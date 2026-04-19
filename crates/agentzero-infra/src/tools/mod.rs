@@ -14,6 +14,7 @@ pub mod shim_server;
 mod skill_manage;
 pub mod tier_stub;
 pub mod tool_create;
+pub mod tool_fallback;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_bridge;
 

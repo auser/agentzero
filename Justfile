@@ -28,15 +28,15 @@ docs-lint:
 
 # -- Test ─────────────────────────────────────────
 
-# Run tests (compile with progress, then run)
+# Run tests — uses cargo test (single process per binary, fast locally)
 test:
-    cargo nextest run --workspace --exclude agentzero-plugin-sdk
+    cargo test --workspace --exclude agentzero-plugin-sdk
 
 # Run only library unit tests — skips integration test binaries and the
 # expensive gateway/infra compilation they pull in.  ~3-5× faster than
 # `just test` for quick edit→verify cycles.
 test-unit:
-    cargo nextest run --workspace --exclude agentzero-plugin-sdk -E 'kind(lib)'
+    cargo test --workspace --exclude agentzero-plugin-sdk --lib
 
 # Remove stale incremental compilation state.
 # Run this when target/ has grown unwieldy (check with: du -sh target/debug/).
@@ -48,7 +48,7 @@ clean-incremental:
 
 # Run tests with verbose output
 test-verbose:
-    cargo nextest run --workspace --exclude agentzero-plugin-sdk --no-capture
+    cargo test --workspace --exclude agentzero-plugin-sdk -- --nocapture
 
 # Run benchmarks
 bench:
@@ -241,11 +241,11 @@ release-auto:
     set -euo pipefail
     echo "==> Preparing automatic release"
     # 1. Quality gates — fmt, clippy (fix+verify in one pass), test
-    #    clippy --all-targets pre-builds test binaries so nextest skips compilation.
+    #    cargo test (not nextest) — single process per binary, much faster locally.
     cargo fmt --all
     cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings 2>/dev/null || true
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo nextest run --workspace --exclude agentzero-plugin-sdk --no-tests=pass
+    cargo test --workspace --exclude agentzero-plugin-sdk
     # 2. Determine next version from conventional commits
     NEXT_VERSION=$(git-cliff --bumped-version | sed 's/^v//')
     echo "==> Auto-detected next version: $NEXT_VERSION"
@@ -283,7 +283,7 @@ release VERSION:
     cargo fmt --all
     cargo clippy --fix --allow-dirty --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo nextest run --workspace --exclude agentzero-plugin-sdk
+    cargo test --workspace --exclude agentzero-plugin-sdk
     # 3. Commit the version bump + any fmt/clippy fixes + updated Cargo.lock
     if ! git diff --quiet; then
         git add -u

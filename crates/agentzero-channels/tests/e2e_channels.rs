@@ -572,12 +572,13 @@ mod mattermost {
         let server = MockServer::start().await;
 
         // create_at must be > last_post_time in the listener (now_epoch_secs * 1000).
-        // Use a large offset to avoid race between test setup and listener start.
+        // Use a large offset so the post is always "in the future" even when
+        // nextest parallelism delays task scheduling by tens of seconds.
         let future_ts = (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system time")
             .as_millis() as u64)
-            + 30_000;
+            + 300_000;
 
         // Mock posts endpoint
         Mock::given(method("GET"))
@@ -619,7 +620,7 @@ mod mattermost {
             let _ = ch_clone.listen(tx).await;
         });
 
-        let received = tokio::time::timeout(std::time::Duration::from_secs(15), rx.recv())
+        let received = tokio::time::timeout(std::time::Duration::from_secs(30), rx.recv())
             .await
             .expect("should receive within timeout")
             .expect("should receive a message");

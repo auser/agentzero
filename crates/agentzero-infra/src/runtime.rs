@@ -102,6 +102,8 @@ pub struct RuntimeExecution {
     pub task_manager: Option<std::sync::Arc<agentzero_tools::TaskManager>>,
     /// Optional tool evolver for auto-fixing/improving dynamic tools.
     pub tool_evolver: Option<std::sync::Arc<crate::tool_evolver::ToolEvolver>>,
+    /// Optional tool-creation fallback for automatic tool generation on not-found.
+    pub tool_fallback: Option<std::sync::Arc<crate::tools::tool_fallback::DynamicToolFallback>>,
     /// Optional recipe store for recording tool usage patterns.
     pub recipe_store: Option<std::sync::Arc<std::sync::Mutex<crate::tool_recipes::RecipeStore>>>,
     /// Optional pattern capture for AUTO-LEARN (novel tool combo detection).
@@ -478,6 +480,34 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         None
     };
 
+    // Build tool-creation fallback for automatic tool generation on not-found.
+    let tool_fallback = if tool_policy.enable_tool_fallback && tool_policy.enable_dynamic_tools {
+        if let Some(ref registry) = dynamic_registry {
+            let provider_for_fallback: std::sync::Arc<dyn agentzero_core::Provider> =
+                std::sync::Arc::from(agentzero_providers::build_provider_with_transport(
+                    &config.provider.kind,
+                    config.provider.base_url.clone(),
+                    key_for_dynamic_tools.clone(),
+                    config.provider.model.clone(),
+                    transport_config.clone(),
+                ));
+            let audit_for_fallback = shared_audit_sink
+                .as_ref()
+                .map(|s| std::sync::Arc::clone(s) as std::sync::Arc<dyn AuditSink>);
+            Some(std::sync::Arc::new(
+                crate::tools::tool_fallback::DynamicToolFallback::new(
+                    std::sync::Arc::clone(registry),
+                    provider_for_fallback,
+                    audit_for_fallback,
+                ),
+            ))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Build recipe store for tool catalog learning.
     let recipe_store = {
         let data_dir = req.workspace_root.join(".agentzero");
@@ -658,6 +688,7 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
         dynamic_registry: dynamic_registry.clone(),
         task_manager: None,
         tool_evolver,
+        tool_fallback,
         recipe_store: recipe_store.clone(),
         pattern_capture: match (&dynamic_registry, &recipe_store) {
             (Some(reg), Some(store)) => Some(std::sync::Arc::new(
@@ -935,6 +966,9 @@ pub fn run_agent_streaming(
         if let Some(registry) = execution.dynamic_registry {
             agent = agent.with_tool_source(registry);
         }
+        if let Some(fallback) = execution.tool_fallback {
+            agent = agent.with_tool_fallback(fallback);
+        }
 
         let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
         ctx.privacy_boundary = privacy_boundary;
@@ -1024,6 +1058,9 @@ pub async fn run_agent_with_runtime(
     }
     if let Some(ref registry) = dynamic_registry {
         agent = agent.with_tool_source(registry.clone());
+    }
+    if let Some(ref fallback) = execution.tool_fallback {
+        agent = agent.with_tool_fallback(fallback.clone());
     }
 
     let mut ctx = ToolContext::new(workspace_root.to_string_lossy().to_string());
@@ -1955,6 +1992,7 @@ mod tests {
             dynamic_registry: None,
             task_manager: None,
             tool_evolver: None,
+            tool_fallback: None,
             recipe_store: None,
             pattern_capture: None,
             embedding_provider: None,

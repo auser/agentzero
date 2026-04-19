@@ -350,6 +350,33 @@ pub trait ToolSource: Send + Sync {
     fn additional_tools(&self) -> Vec<Box<dyn Tool>>;
 }
 
+/// Trait for automatic tool creation when a requested tool is not found.
+///
+/// When the LLM requests a tool that doesn't exist in the agent's tool set,
+/// the agent delegates to this fallback to attempt creating the tool on the
+/// fly. The created tool is executed immediately with the original input and
+/// persisted for future use.
+///
+/// Implementations MUST handle their own loop protection (e.g., tracking
+/// creation attempts per tool name per session).
+#[async_trait::async_trait]
+pub trait ToolFallback: Send + Sync {
+    /// Attempt to create a tool matching the requested name.
+    ///
+    /// - `tool_name`: the name the LLM requested
+    /// - `tool_input`: the JSON input the LLM provided (useful as a hint for
+    ///   what the tool should do)
+    ///
+    /// Returns `Ok(tool)` with a ready-to-execute [`Box<dyn Tool>`], or `Err`
+    /// if creation failed or was refused (e.g., loop protection, codegen
+    /// disabled, max attempts exceeded).
+    async fn create_tool(
+        &self,
+        tool_name: &str,
+        tool_input: &serde_json::Value,
+    ) -> anyhow::Result<Box<dyn Tool>>;
+}
+
 pub struct Agent {
     config: AgentConfig,
     provider: Box<dyn Provider>,
@@ -361,6 +388,7 @@ pub struct Agent {
     loop_detection_config: Option<LoopDetectionConfig>,
     tool_selector: Option<Box<dyn ToolSelector>>,
     extra_tool_source: Option<Arc<dyn ToolSource>>,
+    tool_fallback: Option<Arc<dyn ToolFallback>>,
 }
 
 impl Agent {
@@ -381,6 +409,7 @@ impl Agent {
             loop_detection_config: None,
             tool_selector: None,
             extra_tool_source: None,
+            tool_fallback: None,
         }
     }
 
@@ -416,6 +445,16 @@ impl Agent {
     /// newly registered tools (e.g. from [`DynamicToolRegistry`]).
     pub fn with_tool_source(mut self, source: Arc<dyn ToolSource>) -> Self {
         self.extra_tool_source = Some(source);
+        self
+    }
+
+    /// Attach a tool-creation fallback for automatic tool generation.
+    ///
+    /// When the LLM requests a tool that doesn't exist, the agent will
+    /// delegate to this fallback to attempt creating it on the fly.
+    /// The created tool is executed immediately with the original input.
+    pub fn with_tool_fallback(mut self, fallback: Arc<dyn ToolFallback>) -> Self {
+        self.tool_fallback = Some(fallback);
         self
     }
 
@@ -793,6 +832,77 @@ impl Agent {
             .await?;
         }
         Ok(result)
+    }
+
+    /// Attempt to create a missing tool via the fallback, execute it, and
+    /// return the result. Returns `None` if no fallback is configured or
+    /// creation failed (caller should fall through to the original error).
+    async fn try_fallback_create_and_execute(
+        &self,
+        tool_name: &str,
+        tool_input: &serde_json::Value,
+        tool_input_str: &str,
+        ctx: &ToolContext,
+        request_id: &str,
+        iteration: usize,
+    ) -> Option<Result<crate::types::ToolResult, AgentError>> {
+        let fallback = self.tool_fallback.as_ref()?;
+
+        self.audit(
+            "tool_fallback_attempt",
+            json!({
+                "request_id": request_id,
+                "iteration": iteration,
+                "tool_name": tool_name,
+            }),
+        )
+        .await;
+
+        match fallback.create_tool(tool_name, tool_input).await {
+            Ok(tool) => {
+                self.audit(
+                    "tool_fallback_created",
+                    json!({
+                        "request_id": request_id,
+                        "iteration": iteration,
+                        "tool_name": tool_name,
+                        "created_tool_name": tool.name(),
+                    }),
+                )
+                .await;
+
+                // Execute immediately with the original input.
+                let result = self
+                    .execute_tool(
+                        &*tool,
+                        tool_name,
+                        tool_input_str,
+                        ctx,
+                        request_id,
+                        iteration,
+                    )
+                    .await;
+                Some(result)
+            }
+            Err(e) => {
+                self.audit(
+                    "tool_fallback_failed",
+                    json!({
+                        "request_id": request_id,
+                        "iteration": iteration,
+                        "tool_name": tool_name,
+                        "error": e.to_string(),
+                    }),
+                )
+                .await;
+                warn!(
+                    tool_name = %tool_name,
+                    error = %e,
+                    "tool fallback creation failed"
+                );
+                None
+            }
+        }
     }
 
     /// Summarize older conversation entries if summarization is enabled and
@@ -1515,10 +1625,12 @@ impl Agent {
             let mut tool_results: Vec<ToolResultMessage> = Vec::new();
 
             if use_parallel {
+                let fallback_ref = self.tool_fallback.clone();
                 let futs: Vec<_> = tool_calls
                     .iter()
                     .map(|tc| {
                         let tool = self.tools.iter().find(|t| t.name() == tc.name);
+                        let fallback_ref = fallback_ref.clone();
                         async move {
                             match tool {
                                 Some(tool) => {
@@ -1557,15 +1669,49 @@ impl Agent {
                                         ),
                                     }
                                 }
-                                None => (
-                                    tc.name.clone(),
-                                    String::new(),
-                                    ToolResultMessage {
-                                        tool_use_id: tc.id.clone(),
-                                        content: format!("Tool '{}' not found", tc.name),
-                                        is_error: true,
-                                    },
-                                ),
+                                None => {
+                                    // Attempt automatic tool creation via fallback.
+                                    if let Some(ref fallback) = fallback_ref {
+                                        if let Ok(created_tool) =
+                                            fallback.create_tool(&tc.name, &tc.input).await
+                                        {
+                                            let input_str = tc.input.to_string();
+                                            match created_tool.execute(&input_str, ctx).await {
+                                                Ok(result) => {
+                                                    return (
+                                                        tc.name.clone(),
+                                                        input_str,
+                                                        ToolResultMessage {
+                                                            tool_use_id: tc.id.clone(),
+                                                            content: result.output,
+                                                            is_error: false,
+                                                        },
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    return (
+                                                        tc.name.clone(),
+                                                        input_str,
+                                                        ToolResultMessage {
+                                                            tool_use_id: tc.id.clone(),
+                                                            content: format!("Error: {e}"),
+                                                            is_error: true,
+                                                        },
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                    (
+                                        tc.name.clone(),
+                                        String::new(),
+                                        ToolResultMessage {
+                                            tool_use_id: tc.id.clone(),
+                                            content: format!("Tool '{}' not found", tc.name),
+                                            is_error: true,
+                                        },
+                                    )
+                                }
                             }
                         }
                     })
@@ -1650,28 +1796,61 @@ impl Agent {
                             }
                         }
                         None => {
-                            self.audit(
-                                "tool_not_found",
-                                json!({
-                                    "request_id": request_id,
-                                    "iteration": iteration,
-                                    "tool_name": tc.name,
-                                }),
-                            )
-                            .await;
-                            failure_streak += 1;
-                            ToolResultMessage {
-                                tool_use_id: tc.id.clone(),
-                                content: format!(
-                                    "Tool '{}' not found. Available tools: {}",
-                                    tc.name,
-                                    tool_definitions
-                                        .iter()
-                                        .map(|d| d.name.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                ),
-                                is_error: true,
+                            // Attempt automatic tool creation via fallback.
+                            let input_str = tc.input.to_string();
+                            if let Some(fallback_result) = self
+                                .try_fallback_create_and_execute(
+                                    &tc.name, &tc.input, &input_str, ctx, request_id, iteration,
+                                )
+                                .await
+                            {
+                                match fallback_result {
+                                    Ok(result) => {
+                                        failure_streak = 0;
+                                        tool_history.push((
+                                            tc.name.clone(),
+                                            input_str,
+                                            result.output.clone(),
+                                        ));
+                                        ToolResultMessage {
+                                            tool_use_id: tc.id.clone(),
+                                            content: result.output,
+                                            is_error: false,
+                                        }
+                                    }
+                                    Err(e) => {
+                                        failure_streak += 1;
+                                        ToolResultMessage {
+                                            tool_use_id: tc.id.clone(),
+                                            content: format!("Error: {e}"),
+                                            is_error: true,
+                                        }
+                                    }
+                                }
+                            } else {
+                                self.audit(
+                                    "tool_not_found",
+                                    json!({
+                                        "request_id": request_id,
+                                        "iteration": iteration,
+                                        "tool_name": tc.name,
+                                    }),
+                                )
+                                .await;
+                                failure_streak += 1;
+                                ToolResultMessage {
+                                    tool_use_id: tc.id.clone(),
+                                    content: format!(
+                                        "Tool '{}' not found. Available tools: {}",
+                                        tc.name,
+                                        tool_definitions
+                                            .iter()
+                                            .map(|d| d.name.as_str())
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    ),
+                                    is_error: true,
+                                }
                             }
                         }
                     };
@@ -2100,20 +2279,55 @@ impl Agent {
                 .any(|(name, _)| self.config.gated_tools.contains(*name));
             if calls.len() > 1 && self.config.parallel_tools && !has_gated {
                 let mut resolved: Vec<(&str, &str, &dyn Tool)> = Vec::new();
+                let mut unresolved: Vec<(&str, &str)> = Vec::new();
                 for &(name, input) in &calls {
                     let tool = self.tools.iter().find(|t| t.name() == name);
                     match tool {
                         Some(t) => resolved.push((name, input, &**t)),
                         None => {
-                            self.audit(
-                                "tool_not_found",
-                                json!({"request_id": request_id, "iteration": iteration, "tool_name": name}),
-                            )
-                            .await;
+                            unresolved.push((name, input));
                         }
                     }
                 }
-                if resolved.is_empty() {
+
+                // Attempt fallback creation for unresolved tools.
+                let mut fallback_outputs: Vec<String> = Vec::new();
+                for &(name, input) in &unresolved {
+                    let input_val = serde_json::Value::String(input.to_string());
+                    if let Some(fallback_result) = self
+                        .try_fallback_create_and_execute(
+                            name, &input_val, input, ctx, request_id, iteration,
+                        )
+                        .await
+                    {
+                        match fallback_result {
+                            Ok(result) => {
+                                tool_history.push((
+                                    name.to_string(),
+                                    input.to_string(),
+                                    result.output.clone(),
+                                ));
+                                fallback_outputs
+                                    .push(format!("Tool output from {name}: {}", result.output));
+                            }
+                            Err(_) => {
+                                self.audit(
+                                    "tool_not_found",
+                                    json!({"request_id": request_id, "iteration": iteration, "tool_name": name}),
+                                )
+                                .await;
+                            }
+                        }
+                    } else {
+                        self.audit(
+                            "tool_not_found",
+                            json!({"request_id": request_id, "iteration": iteration, "tool_name": name}),
+                        )
+                        .await;
+                    }
+                }
+
+                if resolved.is_empty() && fallback_outputs.is_empty() {
                     break;
                 }
 
@@ -2145,6 +2359,7 @@ impl Agent {
                         }
                     }
                 }
+                output_parts.extend(fallback_outputs);
                 prompt = output_parts.join("\n");
                 continue;
             }
@@ -2253,11 +2468,39 @@ impl Agent {
                 continue;
             }
 
-            self.audit(
-                "tool_not_found",
-                json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
-            )
-            .await;
+            // Attempt automatic tool creation via fallback.
+            let input_val = serde_json::Value::String(tool_input.to_string());
+            if let Some(fallback_result) = self
+                .try_fallback_create_and_execute(
+                    tool_name, &input_val, tool_input, ctx, request_id, iteration,
+                )
+                .await
+            {
+                match fallback_result {
+                    Ok(result) => {
+                        tool_history.push((
+                            tool_name.to_string(),
+                            tool_input.to_string(),
+                            result.output.clone(),
+                        ));
+                        if result.output.starts_with("tool:") {
+                            prompt = result.output;
+                        } else {
+                            prompt = format!("Tool output from {tool_name}: {}", result.output);
+                        }
+                        continue;
+                    }
+                    Err(_) => {
+                        // Fallback created the tool but execution failed; break.
+                    }
+                }
+            } else {
+                self.audit(
+                    "tool_not_found",
+                    json!({"request_id": request_id, "iteration": iteration, "tool_name": tool_name}),
+                )
+                .await;
+            }
             break;
         }
 

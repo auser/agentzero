@@ -31,7 +31,7 @@ pub mod validation;
 /// instead of adding a separate `tracing` dependency.
 pub use tracing;
 
-pub use agent::{Agent, ToolSource};
+pub use agent::{Agent, ToolFallback, ToolSource};
 pub use event_bus::{
     Event, EventBus, EventFilter, EventSubscriber, FileBackedBus, InMemoryBus, PublishResult,
     TypedSubscriber, TypedTopic,
