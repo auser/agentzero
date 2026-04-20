@@ -8,7 +8,7 @@ description = "Agent orchestration, runtime execution, and tool wiring for Agent
 repository.workspace = true
 
 [features]
-default = ["memory-sqlite", "document-tools", "tools-full"]
+default = ["memory-sqlite", "document-tools", "tools-full", "connectors"]
 tools-core = ["agentzero-tools/tools-core"]
 tools-extended = ["tools-core", "agentzero-tools/tools-extended"]
 tools-full = ["tools-extended", "nl-evolving", "agentzero-tools/tools-full"]
@@ -25,6 +25,7 @@ candle = ["agentzero-providers/candle", "agentzero-core/hardware-detect"]
 candle-metal = ["agentzero-providers/candle-metal"]
 candle-cuda = ["agentzero-providers/candle-cuda"]
 rag = ["agentzero-tools/rag"]
+connectors = ["dep:agentzero-connectors", "agentzero-tools/connectors"]
 
 [dependencies]
 anyhow.workspace = true
@@ -36,6 +37,7 @@ agentzero-macros = { workspace = true }
 agentzero-tools = { workspace = true }
 agentzero-storage = { workspace = true }
 agentzero-autopilot = { workspace = true, optional = true }
+agentzero-connectors = { workspace = true, optional = true }
 agentzero-plugins = { workspace = true, features = ["wasm-runtime"], optional = true }
 agentzero-providers = { workspace = true }
 dashmap = { workspace = true }

@@ -73,6 +73,20 @@ pub struct AgentZeroConfig {
     /// ```
     #[serde(default)]
     pub capabilities: Vec<Capability>,
+    /// Data source connectors for linking external APIs, databases, and files.
+    ///
+    /// ```toml
+    /// [[connectors]]
+    /// name = "shopify"
+    /// type = "rest_api"
+    /// base_url = "https://mystore.myshopify.com/admin/api/2024-01"
+    /// [connectors.auth]
+    /// type = "header"
+    /// key = "X-Shopify-Access-Token"
+    /// value_env = "SHOPIFY_TOKEN"
+    /// ```
+    #[serde(default)]
+    pub connectors: Vec<agentzero_connectors::ConnectorConfig>,
 }
 
 impl AgentZeroConfig {

@@ -1,0 +1,33 @@
+[package]
+name = "agentzero-connectors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Data source connector framework for AgentZero — schema discovery, field mapping, and sync"
+repository.workspace = true
+
+[features]
+default = ["connector-rest", "connector-database", "connector-file"]
+connector-rest = ["dep:reqwest"]
+connector-database = []
+connector-file = []
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+agentzero-auth = { workspace = true }
+agentzero-core = { workspace = true }
+agentzero-storage = { workspace = true }
+base64 = "0.22"
+reqwest = { workspace = true, optional = true }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

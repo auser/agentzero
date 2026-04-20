@@ -180,6 +180,7 @@ dependencies = [
 name = "agentzero-config"
 version = "0.14.0"
 dependencies = [
+ "agentzero-connectors",
  "agentzero-core",
  "agentzero-tools",
  "anyhow",
@@ -213,6 +214,27 @@ dependencies = [
  "toml 0.8.23",
  "tower 0.5.3",
  "tracing",
+]
+
+[[package]]
+name = "agentzero-connectors"
+version = "0.14.0"
+dependencies = [
+ "agentzero-auth",
+ "agentzero-core",
+ "agentzero-storage",
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -298,6 +320,7 @@ dependencies = [
  "agentzero-auth",
  "agentzero-autopilot",
  "agentzero-config",
+ "agentzero-connectors",
  "agentzero-core",
  "agentzero-macros",
  "agentzero-orchestrator",
@@ -495,6 +518,7 @@ dependencies = [
 name = "agentzero-tools"
 version = "0.14.0"
 dependencies = [
+ "agentzero-connectors",
  "agentzero-core",
  "agentzero-macros",
  "agentzero-providers",
@@ -516,6 +540,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "url",
+ "uuid",
  "zip 2.4.2",
 ]
 

@@ -1,8 +1,8 @@
 use crate::a2a::{a2a_agents, a2a_rpc, a2a_stream, agent_card};
 use crate::handlers::{
     agent_stats, agents_list, api_chat, api_fallback, async_submit, cancel_workflow_run,
-    create_agent, create_cron, create_template, create_workflow, dashboard, delete_agent,
-    delete_cron, delete_template, delete_workflow, emergency_stop, execute_workflow,
+    connector_webhook, create_agent, create_cron, create_template, create_workflow, dashboard,
+    delete_agent, delete_cron, delete_template, delete_workflow, emergency_stop, execute_workflow,
     export_dynamic_tool_bundle, export_workflow, forget_memory, get_agent, get_config,
     get_template, get_tools, get_workflow, get_workflow_run, health, health_live, health_ready,
     import_dynamic_tool_bundle, import_workflow, job_cancel, job_events, job_list, job_result,
@@ -101,6 +101,10 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         )
         .route("/v1/topology", get(topology))
         .route("/v1/hooks/:channel/:agent_id", post(webhook_with_agent))
+        .route(
+            "/v1/connector-webhook/:connector/:entity",
+            post(connector_webhook),
+        )
         .route("/v1/estop", post(emergency_stop))
         .route("/v1/runtime/codegen-disable", post(runtime_codegen_disable))
         .route("/v1/runtime/codegen-enable", post(runtime_codegen_enable))

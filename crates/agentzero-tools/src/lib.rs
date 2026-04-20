@@ -113,7 +113,10 @@ pub fn tool_tier(name: &str) -> ToolTier {
         | "docx_read"
         | "html_extract"
         | "a2a"
-        | "chunk_document" => ToolTier::Extended,
+        | "chunk_document"
+        | "connector_discover"
+        | "data_link"
+        | "data_sync" => ToolTier::Extended,
 
         // --- Full tier: everything else ---
         _ => ToolTier::Full,
@@ -203,6 +206,14 @@ pub mod hardware_tools;
 pub mod pushover;
 #[cfg(feature = "tools-full")]
 pub mod wasm_tools;
+
+// ── Connector modules (connectors feature) ──────────────────────────
+#[cfg(feature = "connectors")]
+pub mod connector_discover;
+#[cfg(feature = "connectors")]
+pub mod data_link;
+#[cfg(feature = "connectors")]
+pub mod data_sync;
 
 // ── RAG modules (rag feature) ────────────────────────────────────────
 #[cfg(feature = "rag")]
@@ -312,6 +323,14 @@ pub use pushover::PushoverTool;
 #[cfg(feature = "tools-full")]
 pub use wasm_tools::{WasmModuleTool, WasmToolExecTool};
 
+// ── Connector re-exports ────────────────────────────────────────────
+#[cfg(feature = "connectors")]
+pub use connector_discover::ConnectorDiscoverTool;
+#[cfg(feature = "connectors")]
+pub use data_link::DataLinkTool;
+#[cfg(feature = "connectors")]
+pub use data_sync::DataSyncTool;
+
 /// MCP server definition for the tool security policy.
 ///
 /// Kept in `agentzero-tools` to avoid a circular dependency with `agentzero-config`.
@@ -411,6 +430,7 @@ impl ToolSecurityPolicy {
             t if t.starts_with("wasm") => self.enable_wasm_plugins,
             "a2a" => self.enable_a2a_tool,
             "tool_create" => self.enable_dynamic_tools,
+            "connector_discover" | "data_link" | "data_sync" => self.enable_dynamic_tools,
             "write_file" => self.enable_write_file,
             t if t.starts_with("mcp") => self.enable_mcp,
             // Unknown tools default to denied unless the caller's registration
@@ -586,6 +606,9 @@ pub const EXTENDED_TOOL_NAMES: &[&str] = &[
     "docx_read",
     "html_extract",
     "a2a",
+    "connector_discover",
+    "data_link",
+    "data_sync",
 ];
 
 /// All known full-tier tool names (not including core or extended).

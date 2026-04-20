@@ -3231,4 +3231,112 @@ Upgrade the Ratatui CLI dashboard with live data from gateway APIs. Tab-based na
 
 ---
 
+---
+
+## Sprint 88: AI-Native Data Source Connectors
+
+**Goal:** Add the ability to connect arbitrary data sources (REST APIs, databases, files) to each other with AI-assisted schema discovery and field mapping. The agent discovers what data a source exposes, proposes how to link it to another source, and orchestrates syncs — all via natural language.
+
+**Baseline:** Sprint 87 in progress. `DynamicToolDef` + `DynamicToolStrategy` system supports Shell, HTTP, LLM, Composite, and Codegen strategies with quality tracking, evolution, and persistence.
+
+**Plan:** `specs/plans/54-ai-native-data-connectors.md`
+
+---
+
+### Phase A: Connector Types & Registry — new crate `agentzero-connectors` (HIGH)
+
+Create the core data model and a registry that generates `DynamicToolDef` entries from connector configuration.
+
+- [ ] **Core types** (`crates/agentzero-connectors/src/lib.rs`) — `ConnectorManifest`, `ConnectorType`, `AuthConfig`, `EntitySchema`, `FieldDef`, `FieldType`, `ConnectorCaps`, `DataLink`, `DataEndpoint`, `FieldMapping`, `SyncMode`
+- [ ] **ConnectorTemplate trait** (`crates/agentzero-connectors/src/templates/mod.rs`) — `manifest()`, `generate_tools()`, `discover_schema()` methods
+- [ ] **ConnectorRegistry** (`crates/agentzero-connectors/src/registry.rs`) — loads manifests from config, generates `DynamicToolDef` entries, stores `DataLink` definitions in encrypted JSON store
+- [ ] **REST API template** (`crates/agentzero-connectors/src/templates/rest_api.rs`) — generic REST connector with optional OpenAPI spec discovery
+- [ ] **Database template** (`crates/agentzero-connectors/src/templates/database.rs`) — Postgres/SQLite via connection string, schema discovery from `information_schema` / `sqlite_master`
+- [ ] **File template** (`crates/agentzero-connectors/src/templates/file.rs`) — CSV/JSON/JSONL import/export, schema inferred from headers/first record
+
+### Phase B: Agent-Facing Tools (HIGH)
+
+Three tools that let the AI agent manage connectors and data links during conversation.
+
+- [ ] **`connector_discover` tool** (`crates/agentzero-tools/src/connector_discover.rs`) — introspects a configured connector, returns entity schemas as structured JSON
+- [ ] **`data_link` tool** (`crates/agentzero-tools/src/data_link.rs`) — CRUD operations on DataLink; `auto_map: true` returns both schemas for LLM-assisted field mapping
+- [ ] **`data_sync` tool** (`crates/agentzero-tools/src/data_sync.rs`) — executes a link: reads from source, applies field mappings + transforms, writes to target; returns sync summary
+
+### Phase C: Config & Runtime Wiring (HIGH)
+
+- [ ] **Config model** (`crates/agentzero-config/src/model.rs`) — add `ConnectorConfig` struct and `connectors: Vec<ConnectorConfig>` to `AgentZeroConfig`
+- [ ] **Runtime integration** (`crates/agentzero-infra/src/runtime.rs`) — on startup, `ConnectorRegistry` loads configured connectors; generated `DynamicToolDef`s registered in `DynamicToolRegistry`; 3 agent-facing tools added to tool set
+- [ ] **Tool registration** (`crates/agentzero-infra/src/tools/mod.rs`) — register connector tools in tool builder
+- [ ] **Workspace** (`Cargo.toml`) — add `agentzero-connectors` member; add dependency in `agentzero-infra` and `agentzero-tools`
+
+### Phase D: Workflow Integration (MEDIUM)
+
+- [ ] **DataSource/DataSink node types** (`crates/agentzero-orchestrator/src/workflow_executor.rs`) — add `DataSource` and `DataSink` variants to `NodeType` enum; compile to tool calls against generated connector tools
+- [ ] **Scheduled sync** — `DataLink` with `SyncMode::Scheduled { cron }` registers a cron job in existing `cron_executor`
+
+### Phase E: Event-Driven Sync (LOW)
+
+- [ ] **Webhook registration** — connectors with `subscribe` capability register webhook handlers in gateway
+- [ ] **Event publishing** — incoming webhooks publish to `connector:{name}:{entity}:changed` topic on `EventBus`
+- [ ] **Event-driven links** — `DataLink` with `SyncMode::EventDriven` subscribes and triggers `data_sync`
+
+### Cross-Cutting: Security & Reliability (throughout all phases)
+
+- [ ] **Encryption at rest** — all DataLink definitions, cached data, and schema manifests stored in `agentzero-storage` encrypted JSON store (AES-256-GCM). Credentials via `value_env` env vars, OAuth tokens via `agentzero-auth`
+- [ ] **PII safety** — `connector_discover` returns schema metadata only (never sample data). `data_sync` moves data mechanically without LLM in the data path. Privacy boundary enforcement inherited from `ToolContext`
+- [ ] **Rate limiting & pagination** — REST API template supports cursor/offset/link-header pagination, respects 429 + Retry-After, configurable `max_requests_per_second`, exponential backoff with jitter
+- [ ] **OAuth token refresh** — reuse `agentzero-auth` OAuth2 flow. Auto-refresh on 401 (single retry). API key rotation handled externally via env vars
+- [ ] **Schema drift detection** — `connector_discover` compares live schema vs stored manifest, returns `drift_warnings` for broken mappings. `data_sync` pre-flight validates mapped fields exist
+- [ ] **Sync idempotency & recovery** — upsert by primary key, sync cursor persisted per DataLink, transactional batch writes for DB targets, dead letter collection for failed records
+
+---
+
+## Sprint 89: Dependency Reduction — Lighter Build, Fewer Crates, Smaller Binary
+
+**Goal:** Systematically reduce the dependency footprint from 606 unique crates to ~200-250 by removing heavy deps that can be replaced with lighter alternatives or hand-rolled implementations. Target: 26MB → ~18-20MB binary, faster compile times, reduced supply chain surface.
+
+**Baseline:** Sprint 88 in progress. 606 unique crates, 26MB release binary, 27 duplicate version splits.
+
+**Plan:** `specs/plans/55-dependency-reduction.md`
+
+---
+
+### Phase 0: Free Wins (no code changes)
+
+- [ ] **Release profile optimization** — Add `lto = "thin"`, `strip = true`, `codegen-units = 1` to `[profile.release]`
+- [ ] **Dead dependency removal** — Run `cargo +nightly udeps`, remove unused deps from all Cargo.toml files
+- [ ] **Version dedup** — Align split versions: rand (0.8/0.9/0.10), getrandom (0.2/0.3/0.4), hashbrown (0.14/0.15/0.16), thiserror (1.x/2.x), chacha20 (0.9/0.10), zip (2.x/7.x), indicatif (0.17/0.18), base64 (0.13/0.22), console (0.15/0.16)
+- [ ] **Tokio feature slimming** — Split workspace tokio features: default `rt, macros, sync, time`; binary crates add `rt-multi-thread, fs, process, signal, net, io-util, io-std`
+
+### Phase 1: Easy Replacements (low risk, low maintenance)
+
+- [ ] **Remove `config` crate** (~25 deps) — Replace with direct `toml::from_str` + env var overlay in `loader.rs`. Single call site.
+- [ ] **Remove `scraper`** (~50 deps) — Hand-roll HTML text extractor with basic CSS selector subset in `html_extract.rs`. ~200 lines.
+- [ ] **Remove `tower-http`** (~30 deps) — Inline 3 middlewares: gzip compression via `flate2`, body limit via Content-Length check, timeout via `tokio::time::timeout`
+- [ ] **Remove `rust-embed`** (~35 deps) — Replace with build script generating `include_bytes!` table + ~30-line content-type matcher
+- [ ] **Remove `metrics` + `metrics-exporter-prometheus`** (~40 deps) — Hand-roll ~150-line Prometheus text exporter with `AtomicU64` counters
+- [ ] **Remove `dashmap`** (~20 deps) — Replace with `std::sync::RwLock<HashMap>` in 6 files (rate limiter, gateway state, noise handshake)
+
+### Phase 2: Bigger Swaps
+
+- [ ] **Replace `reqwest`** (~150 deps) — Evaluate `ureq` (~15 deps) with `spawn_blocking`, or hand-roll on `hyper` (already in tree via axum)
+- [ ] **Remove `inquire`** (~20 deps) — Replace with `crossterm` raw input or basic `stdin.read_line` prompts
+- [ ] **Evaluate `ratatui`** (~55 deps) — Already feature-gated; assess if TUI feature is used, consider removing or replacing with raw ANSI
+
+### Phase 3: Crypto Consolidation
+
+- [ ] **Remove `snow`** (~40 deps) — Inline Noise_XX handshake on existing `x25519-dalek` + `chacha20poly1305` primitives. Test against Noise protocol test vectors.
+- [ ] **Remove `crypto_box`** (~20 deps) — Inline x25519 → shared secret → ChaCha20Poly1305 AEAD. ~50 lines.
+- [ ] **Evaluate `ring`** as single crypto dep — Could replace ed25519-dalek + x25519-dalek + chacha20poly1305 with one crate
+
+### Cross-Cutting: Verification (after each change)
+
+- [ ] `cargo build --release` compiles cleanly
+- [ ] `cargo tree --prefix none | sort -u | wc -l` tracks dep count reduction
+- [ ] `ls -lh target/release/agentzero` tracks binary size reduction
+- [ ] `cargo clippy -- -D warnings` — zero warnings
+- [ ] Full test suite passes
+
+---
+
 *Items requiring external dependencies (iOS/Xcode, Redis/NATS, Firecracker/mvmd, multi-node clusters, cargo-bloat, UPX) moved to `specs/BACKLOG-EXTERNAL.md`. AgentZero stays standalone.*

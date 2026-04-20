@@ -122,6 +122,59 @@ fn validate_agent_exists(state: &GatewayState, agent_id: &str) -> Result<(), Gat
     })
 }
 
+/// POST /v1/connector-webhook/:connector/:entity — publish a connector event to the EventBus.
+///
+/// External systems (e.g. Shopify, Stripe) call this endpoint when data changes.
+/// The payload is published as a `connector:{connector}:{entity}:changed` event,
+/// which triggers any data links configured with `SyncMode::EventDriven`.
+pub(crate) async fn connector_webhook(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path((connector, entity)): Path<(String, String)>,
+    AppJson(payload): AppJson<WebhookPayload>,
+) -> Result<Json<WebhookResponse>, GatewayError> {
+    authorize_with_scope(&state, &headers, false, &Scope::RunsWrite)?;
+
+    if !is_valid_channel_name(&connector) || !is_valid_channel_name(&entity) {
+        return Err(GatewayError::BadRequest {
+            message: "invalid connector or entity name".to_string(),
+        });
+    }
+
+    let topic = format!("connector:{connector}:{entity}:changed");
+    let payload_str = serde_json::to_string(&payload.inner).unwrap_or_default();
+
+    if let Some(ref event_bus) = state.event_bus {
+        let event = agentzero_core::Event::new(&topic, "connector-webhook", &payload_str);
+        match event_bus.publish(event).await {
+            Ok(_) => {
+                tracing::info!(
+                    connector = %connector,
+                    entity = %entity,
+                    topic = %topic,
+                    "published connector webhook event"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    connector = %connector,
+                    entity = %entity,
+                    error = %e,
+                    "failed to publish connector webhook event"
+                );
+            }
+        }
+    } else {
+        tracing::warn!("connector webhook received but no event bus configured");
+    }
+
+    Ok(Json(WebhookResponse {
+        accepted: true,
+        channel: connector,
+        detail: format!("published to topic: {topic}"),
+    }))
+}
+
 pub(crate) async fn legacy_webhook(
     State(state): State<GatewayState>,
     headers: HeaderMap,

@@ -8,8 +8,9 @@ description = "Tool implementations for AgentZero agents"
 repository.workspace = true
 
 [features]
-default = ["tools-full", "document-tools"]
+default = ["tools-full", "document-tools", "connectors"]
 tools-core = []
+connectors = ["dep:agentzero-connectors"]
 tools-extended = ["tools-core"]
 tools-full = ["tools-extended"]
 document-tools = ["dep:scraper", "dep:zip"]
@@ -18,6 +19,7 @@ rag = ["dep:text-splitter"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+agentzero-connectors = { workspace = true, optional = true }
 agentzero-core = { workspace = true }
 agentzero-macros = { workspace = true }
 agentzero-providers = { workspace = true }
@@ -28,6 +30,7 @@ regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+uuid.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true

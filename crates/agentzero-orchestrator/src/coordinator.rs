@@ -983,6 +983,34 @@ impl Coordinator {
                 continue;
             }
 
+            // Handle connector webhook events: dispatch data_sync to an agent.
+            // Events published by the gateway's connector-webhook endpoint have
+            // topic format: `connector:{connector}:{entity}:changed`.
+            if event.topic.starts_with("connector:") && event.topic.ends_with(":changed") {
+                let command = format!(
+                    "A connector data change event was received on topic '{}'. \
+                     Check if any data links are configured for this source and run data_sync if so.",
+                    event.topic
+                );
+                tracing::info!(topic = %event.topic, "dispatching connector event to agent");
+
+                // Route to the first available agent (connector events are not agent-specific).
+                let agents = self.agents.read().await;
+                if let Some((_id, worker)) = agents.iter().next() {
+                    let connector_event = Event::new(&event.topic, "connector-webhook", &command);
+                    let _ = worker
+                        .task_tx
+                        .send(TaskMessage {
+                            event: connector_event,
+                            correlation_id: format!("connector-{}", event.id),
+                            result_tx: None,
+                            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                        })
+                        .await;
+                }
+                continue;
+            }
+
             // Handle trigger action events: dispatch to the named agent.
             if event.topic.starts_with("trigger.") {
                 if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) {

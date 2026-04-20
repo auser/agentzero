@@ -36,6 +36,10 @@ pub enum NodeType {
     HttpRequest,
     /// Constant node — outputs a hardcoded value. Resolved at compile time.
     Constant,
+    /// Data source node — reads records from a connector entity.
+    DataSource,
+    /// Data sink node — writes records to a connector entity.
+    DataSink,
 }
 
 impl NodeType {
@@ -55,6 +59,8 @@ impl NodeType {
             "provider" => Some(Self::Provider),
             "role" => Some(Self::Role),
             "constant" => Some(Self::Constant),
+            "data_source" => Some(Self::DataSource),
+            "data_sink" => Some(Self::DataSink),
             _ => None,
         }
     }
@@ -985,6 +991,52 @@ async fn dispatch_step(
             ports.insert("value".to_string(), serde_json::Value::String(value));
             Ok(StepOutput { port_values: ports })
         }
+        NodeType::DataSource => {
+            // Discover schema and metadata for a connector entity.
+            // In a workflow, DataSource acts as a trigger/source that provides
+            // schema information to downstream Agent or Tool nodes.
+            let connector = step
+                .metadata
+                .get("connector")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+
+            let tool_input = serde_json::json!({
+                "connector": connector,
+            });
+            let result = dispatcher
+                .run_tool("connector_discover", &tool_input)
+                .await?;
+            let mut ports = HashMap::new();
+            ports.insert("schema".to_string(), serde_json::Value::String(result));
+            // Pass through any trigger input (e.g. from a webhook event).
+            if !input.is_empty() {
+                ports.insert(
+                    "trigger".to_string(),
+                    serde_json::Value::String(input.to_string()),
+                );
+            }
+            Ok(StepOutput { port_values: ports })
+        }
+        NodeType::DataSink => {
+            // Execute a data sync for a pre-configured data link.
+            // Requires a `link_id` in the node metadata pointing to an
+            // existing DataLink that defines source, target, and field mappings.
+            let link_id = step
+                .metadata
+                .get("link_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+
+            let tool_input = serde_json::json!({
+                "link_id": link_id,
+                "dry_run": false,
+            });
+            let result = dispatcher.run_tool("data_sync", &tool_input).await?;
+            let mut ports = HashMap::new();
+            ports.insert("result".to_string(), serde_json::Value::String(result));
+            Ok(StepOutput { port_values: ports })
+        }
         NodeType::Provider | NodeType::Role => {
             // Config nodes should never be in the execution plan.
             anyhow::bail!(
@@ -1671,6 +1723,112 @@ mod tests {
             elapsed < Duration::from_millis(120),
             "expected parallel execution under 120ms, took {:?}",
             elapsed
+        );
+    }
+
+    fn data_source_node(id: &str, connector: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "data": {
+                "name": format!("source_{connector}"),
+                "nodeType": "data_source",
+                "metadata": { "connector": connector }
+            }
+        })
+    }
+
+    fn data_sink_node(id: &str, link_id: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "data": {
+                "name": "sync",
+                "nodeType": "data_sink",
+                "metadata": { "link_id": link_id }
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn execute_data_source_node() {
+        let nodes = vec![data_source_node("ds1", "shopify")];
+        let edges: Vec<serde_json::Value> = vec![];
+        let plan = compile("wf-ds", &nodes, &edges).expect("compile");
+
+        let run = super::execute(&plan, "trigger", Arc::new(MockDispatcher))
+            .await
+            .expect("execute");
+
+        assert_eq!(
+            run.node_statuses.get("ds1"),
+            Some(&super::NodeStatus::Completed)
+        );
+        let output = run
+            .outputs
+            .get(&("ds1".to_string(), "schema".to_string()))
+            .expect("schema output");
+        let output_str = output.as_str().unwrap_or("");
+        // MockDispatcher returns "tool:connector_discover result for ..."
+        assert!(
+            output_str.contains("connector_discover"),
+            "should dispatch to connector_discover: {output_str}"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_data_sink_node() {
+        let nodes = vec![data_sink_node("dk1", "link-abc")];
+        let edges: Vec<serde_json::Value> = vec![];
+        let plan = compile("wf-dk", &nodes, &edges).expect("compile");
+
+        let run = super::execute(&plan, "records", Arc::new(MockDispatcher))
+            .await
+            .expect("execute");
+
+        assert_eq!(
+            run.node_statuses.get("dk1"),
+            Some(&super::NodeStatus::Completed)
+        );
+        let output = run
+            .outputs
+            .get(&("dk1".to_string(), "result".to_string()))
+            .expect("result output");
+        let output_str = output.as_str().unwrap_or("");
+        // MockDispatcher returns "tool:data_sync result for ..."
+        assert!(
+            output_str.contains("data_sync"),
+            "should dispatch to data_sync: {output_str}"
+        );
+        assert!(
+            output_str.contains("link-abc"),
+            "should include link_id: {output_str}"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_data_source_to_sink_pipeline() {
+        let nodes = vec![
+            data_source_node("ds1", "shopify"),
+            data_sink_node("dk1", "link-123"),
+        ];
+        let edges = vec![json!({
+            "source": "ds1",
+            "target": "dk1",
+            "sourceHandle": "schema",
+            "targetHandle": "input"
+        })];
+        let plan = compile("wf-pipeline", &nodes, &edges).expect("compile");
+
+        let run = super::execute(&plan, "start", Arc::new(MockDispatcher))
+            .await
+            .expect("execute");
+
+        assert_eq!(
+            run.node_statuses.get("ds1"),
+            Some(&super::NodeStatus::Completed)
+        );
+        assert_eq!(
+            run.node_statuses.get("dk1"),
+            Some(&super::NodeStatus::Completed)
         );
     }
 }

@@ -390,6 +390,43 @@ pub async fn build_runtime_execution(req: RunAgentRequest) -> anyhow::Result<Run
     // Append any extra tools (e.g. FFI-registered tools).
     tools.extend(req.extra_tools);
 
+    // ── Connector tools ────────────────────────────────────────────────
+    // When connectors are configured and dynamic tools are enabled,
+    // create a shared ConnectorRegistry and register the connector tools.
+    #[cfg(feature = "connectors")]
+    if tool_policy.enable_dynamic_tools && !config.connectors.is_empty() {
+        let data_dir = req.workspace_root.join(".agentzero");
+        let mut connector_registry =
+            agentzero_connectors::registry::ConnectorRegistry::with_persistence(&data_dir)
+                .unwrap_or_else(|e| {
+                    tracing::warn!("connector persistence unavailable: {e}");
+                    agentzero_connectors::registry::ConnectorRegistry::new()
+                });
+        connector_registry.load_configs(config.connectors.clone());
+
+        let shared_registry = std::sync::Arc::new(tokio::sync::RwLock::new(connector_registry));
+
+        tools.push(Box::new(agentzero_tools::ConnectorDiscoverTool::new(
+            std::sync::Arc::clone(&shared_registry),
+        )));
+        tools.push(Box::new(agentzero_tools::DataLinkTool::new(
+            std::sync::Arc::clone(&shared_registry),
+        )));
+        tools.push(Box::new(agentzero_tools::DataSyncTool::new(
+            std::sync::Arc::clone(&shared_registry),
+        )));
+
+        tracing::info!(
+            count = config.connectors.len(),
+            "registered connector tools"
+        );
+
+        // Spawn event-driven sync listeners if any links use EventDriven mode.
+        // This requires an event_bus, which may not be available at tool-build time.
+        // The listeners are spawned lazily when the event_bus is first available
+        // in the ToolContext during agent execution — see data_sync tool.
+    }
+
     // Pre-build a shared audit sink for codegen lifecycle events. The same
     // Arc is later moved into the RuntimeExecution output (as a Box) so only
     // one sink instance exists per agent session.
