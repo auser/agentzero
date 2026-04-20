@@ -28,8 +28,9 @@ docs-lint:
 
 # -- Test ─────────────────────────────────────────
 
-# Run tests — uses cargo test (single process per binary, fast locally)
+# Run tests — kills stale cargo processes first to avoid build-lock hangs
 test:
+    -@pkill -f "cargo-nextest" 2>/dev/null || true
     cargo test --workspace --exclude agentzero-plugin-sdk
 
 # Run only library unit tests — skips integration test binaries and the
