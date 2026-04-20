@@ -122,17 +122,34 @@ pub(crate) struct TranscriptEntry {
 // Structured error type
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum GatewayError {
+    #[error("authentication required")]
     AuthRequired,
+    #[error("authentication failed")]
     AuthFailed,
+    #[error("insufficient scope: requires {scope}")]
     InsufficientScope { scope: String },
+    #[error("not found: {resource}")]
     NotFound { resource: String },
+    #[error("agent runtime not configured")]
     AgentUnavailable,
+    #[error("agent execution failed: {message}")]
     AgentExecutionFailed { message: String },
+    #[error("rate limit exceeded")]
     RateLimited,
+    #[error("request body too large")]
     PayloadTooLarge,
+    #[error("{message}")]
     BadRequest { message: String },
+}
+
+impl From<serde_json::Error> for GatewayError {
+    fn from(err: serde_json::Error) -> Self {
+        Self::BadRequest {
+            message: format!("invalid JSON: {err}"),
+        }
+    }
 }
 
 impl GatewayError {
@@ -163,22 +180,6 @@ impl GatewayError {
             Self::BadRequest { .. } => StatusCode::BAD_REQUEST,
         }
     }
-
-    fn message(&self) -> String {
-        match self {
-            Self::AuthRequired => "authentication required".to_string(),
-            Self::AuthFailed => "authentication failed".to_string(),
-            Self::InsufficientScope { scope } => {
-                format!("insufficient scope: requires {scope}")
-            }
-            Self::NotFound { resource } => format!("not found: {resource}"),
-            Self::AgentUnavailable => "agent runtime not configured".to_string(),
-            Self::AgentExecutionFailed { message } => format!("agent execution failed: {message}"),
-            Self::RateLimited => "rate limit exceeded".to_string(),
-            Self::PayloadTooLarge => "request body too large".to_string(),
-            Self::BadRequest { message } => message.clone(),
-        }
-    }
 }
 
 impl IntoResponse for GatewayError {
@@ -188,7 +189,7 @@ impl IntoResponse for GatewayError {
         let body = json!({
             "error": {
                 "type": self.error_type(),
-                "message": self.message(),
+                "message": self.to_string(),
             }
         });
         (status, Json(body)).into_response()

@@ -202,29 +202,56 @@ impl RateLimiter {
 }
 
 // ---------------------------------------------------------------------------
-// Request size limit middleware
+// Security headers middleware
 // ---------------------------------------------------------------------------
 
-/// Middleware that rejects requests with a `content-length` exceeding the limit.
-pub async fn request_size_limit(request: Request<Body>, next: Next, max_bytes: usize) -> Response {
-    if let Some(content_length) = request
-        .headers()
-        .get(header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<usize>().ok())
-    {
-        if content_length > max_bytes {
-            return (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                format!(
-                    "request body too large ({} bytes, max {})",
-                    content_length, max_bytes
-                ),
-            )
-                .into_response();
-        }
+/// Middleware that adds standard security headers to all responses.
+///
+/// Headers set:
+/// - `X-Content-Type-Options: nosniff` — prevent MIME-type sniffing
+/// - `X-Frame-Options: DENY` — clickjacking protection
+/// - `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` — XSS defense
+/// - `Referrer-Policy: strict-origin-when-cross-origin` — limit referrer leakage
+pub async fn security_headers(request: Request<Body>, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        "x-content-type-options",
+        "nosniff".parse().expect("valid header value"),
+    );
+    headers.insert(
+        "x-frame-options",
+        "DENY".parse().expect("valid header value"),
+    );
+    headers.insert(
+        "content-security-policy",
+        "default-src 'none'; frame-ancestors 'none'"
+            .parse()
+            .expect("valid header value"),
+    );
+    headers.insert(
+        "referrer-policy",
+        "strict-origin-when-cross-origin"
+            .parse()
+            .expect("valid header value"),
+    );
+    response
+}
+
+// ---------------------------------------------------------------------------
+// Request timeout middleware
+// ---------------------------------------------------------------------------
+
+/// Middleware that enforces a request-level timeout. Returns 408 if exceeded.
+pub async fn request_timeout(
+    request: Request<Body>,
+    next: Next,
+    timeout: std::time::Duration,
+) -> Response {
+    match tokio::time::timeout(timeout, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => (StatusCode::REQUEST_TIMEOUT, "request timed out").into_response(),
     }
-    next.run(request).await
 }
 
 // ---------------------------------------------------------------------------

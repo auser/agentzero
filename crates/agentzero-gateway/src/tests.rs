@@ -5108,3 +5108,250 @@ mod executor_tests {
         assert_eq!(run.node_statuses.get("a3"), Some(&NodeStatus::Skipped));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Bulletproof Rust Web compliance tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn security_headers_present_on_all_responses() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/health")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+
+    assert_eq!(
+        response
+            .headers()
+            .get("x-content-type-options")
+            .map(|v| v.to_str().unwrap()),
+        Some("nosniff"),
+        "X-Content-Type-Options header missing or wrong"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("x-frame-options")
+            .map(|v| v.to_str().unwrap()),
+        Some("DENY"),
+        "X-Frame-Options header missing or wrong"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("content-security-policy")
+            .map(|v| v.to_str().unwrap()),
+        Some("default-src 'none'; frame-ancestors 'none'"),
+        "Content-Security-Policy header missing or wrong"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("referrer-policy")
+            .map(|v| v.to_str().unwrap()),
+        Some("strict-origin-when-cross-origin"),
+        "Referrer-Policy header missing or wrong"
+    );
+}
+
+#[tokio::test]
+async fn correlation_id_generated_when_not_provided() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/health")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .expect("X-Request-Id should be present")
+        .to_str()
+        .expect("should be valid string");
+
+    // Generated IDs are UUID v4 format.
+    assert_eq!(request_id.len(), 36, "should be a UUID");
+    assert_eq!(
+        request_id.chars().filter(|c| *c == '-').count(),
+        4,
+        "should have UUID dashes"
+    );
+}
+
+#[tokio::test]
+async fn correlation_id_propagated_when_provided() {
+    let app = build_router(GatewayState::test_with_bearer(None), &default_config());
+    let request = Request::builder()
+        .method("GET")
+        .uri("/health")
+        .header("x-request-id", "custom-trace-123")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+
+    assert_eq!(
+        response
+            .headers()
+            .get("x-request-id")
+            .map(|v| v.to_str().unwrap()),
+        Some("custom-trace-123"),
+        "should propagate the provided X-Request-Id"
+    );
+}
+
+#[tokio::test]
+async fn auth_rejection_returns_structured_json_error() {
+    let app = build_router(
+        GatewayState::test_with_bearer(Some("secret")),
+        &default_config(),
+    );
+    // Use an auth-protected endpoint (not /health which is public).
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/ping")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"message":"test"}"#))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("error should be JSON");
+    assert_eq!(json["error"]["type"], "auth_required");
+    assert!(
+        json["error"]["message"].is_string(),
+        "error message should be a string"
+    );
+}
+
+#[tokio::test]
+async fn malformed_json_returns_structured_bad_request() {
+    // Send invalid JSON to a handler that uses AppJson — should get structured
+    // GatewayError format, not axum's default plain-text 422.
+    let state = GatewayState::test_with_bearer(None);
+    state.paired_tokens.lock().unwrap().clear();
+    let app = build_router(state, &default_config());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/webhook/cli")
+        .header("content-type", "application/json")
+        .body(Body::from("{ this is not valid json }"))
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should collect")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("error should be JSON");
+    assert_eq!(json["error"]["type"], "bad_request");
+    assert!(
+        json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid request body"),
+        "error message should describe the parsing failure"
+    );
+}
+
+#[tokio::test]
+async fn unmatched_route_returns_404_not_auth_error() {
+    // The guide says: auth should NOT leak whether a route exists.
+    // An unmatched path should get 404, not 401.
+    let app = build_router(
+        GatewayState::test_with_bearer(Some("secret")),
+        &default_config(),
+    );
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/this-route-does-not-exist")
+        .body(Body::empty())
+        .expect("request should build");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("response should be returned");
+
+    // Since auth is per-handler (not a global layer), unmatched routes hit
+    // axum's default 404 fallback without going through auth at all.
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn rate_limit_includes_standard_headers() {
+    let config = MiddlewareConfig {
+        rate_limit_max: 1,
+        rate_limit_window_secs: 60,
+        ..Default::default()
+    };
+    let app = build_router(GatewayState::test_with_bearer(None), &config);
+
+    // First request succeeds and has rate limit headers.
+    let req = Request::builder()
+        .method("GET")
+        .uri("/health")
+        .body(Body::empty())
+        .expect("request should build");
+    let resp = app.clone().oneshot(req).await.expect("should respond");
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        resp.headers().get("x-ratelimit-limit").is_some(),
+        "should have X-RateLimit-Limit"
+    );
+    assert!(
+        resp.headers().get("x-ratelimit-remaining").is_some(),
+        "should have X-RateLimit-Remaining"
+    );
+    assert!(
+        resp.headers().get("x-ratelimit-reset").is_some(),
+        "should have X-RateLimit-Reset"
+    );
+
+    // Second request is rate limited and includes Retry-After.
+    let req = Request::builder()
+        .method("GET")
+        .uri("/health")
+        .body(Body::empty())
+        .expect("request should build");
+    let resp = app.oneshot(req).await.expect("should respond");
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        resp.headers().get("retry-after").is_some(),
+        "429 should have Retry-After header"
+    );
+}

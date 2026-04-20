@@ -10,6 +10,7 @@ pub mod api_keys;
 mod audit;
 mod auth;
 mod banner;
+mod extractors;
 pub mod gateway_channel;
 mod gateway_metrics;
 mod handlers;
@@ -46,6 +47,7 @@ use tokio::sync::watch;
 use banner::print_gateway_banner;
 use middleware::MiddlewareConfig;
 use router::build_router;
+use tokio_util::sync::CancellationToken;
 
 // Re-export `MiddlewareConfig` so callers configuring `GatewayRunOptions`
 // (which holds a `middleware: MiddlewareConfig` field) can construct one
@@ -336,7 +338,7 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
     // Simple mode: just set `mode = "private"` and everything works.
     // Complex mode: fine-tune noise, sealed_envelopes, key_rotation sections.
     #[cfg(feature = "privacy")]
-    let _rotation_handle = {
+    let rotation_handle = {
         let config_privacy_mode = full_config.as_ref().map(|c| c.privacy.mode.clone());
         // Use the config's privacy mode if set (and not default "off"),
         // otherwise fall back to the options override (e.g. agentzero-lite
@@ -593,11 +595,34 @@ pub async fn run(host: &str, port: u16, options: GatewayRunOptions) -> anyhow::R
         .map(|c| c.swarm.shutdown_grace_ms)
         .unwrap_or(5_000);
 
-    // Start either a TLS or plain-TCP listener based on configuration.
-    serve_gateway(addr, app, tls_config, pairing_code.as_deref(), grace_ms).await?;
+    // Root cancellation token — cancelled on SIGTERM/SIGINT. Background tasks
+    // receive child tokens so cancelling the root cascades to all subsystems.
+    let shutdown_token = CancellationToken::new();
 
-    // Abort swarm coordinator on gateway shutdown.
+    // Start either a TLS or plain-TCP listener based on configuration.
+    serve_gateway(
+        addr,
+        app,
+        tls_config,
+        pairing_code.as_deref(),
+        grace_ms,
+        shutdown_token.clone(),
+    )
+    .await?;
+
+    // Ordered teardown: cancel the root token to signal all subsystems, then
+    // drain in reverse dependency order (background tasks before stores).
+    shutdown_token.cancel();
+
+    // 1. Stop the swarm coordinator (depends on channels, agents).
     if let Some(handle) = swarm_handle {
+        handle.abort();
+        let _ = handle.await;
+    }
+
+    // 2. Stop key rotation (depends on keyring store).
+    #[cfg(feature = "privacy")]
+    if let Some(handle) = rotation_handle {
         handle.abort();
         let _ = handle.await;
     }
@@ -613,16 +638,17 @@ async fn serve_gateway(
     tls_config: Option<agentzero_config::TlsConfig>,
     pairing_code: Option<&str>,
     grace_ms: u64,
+    shutdown_token: CancellationToken,
 ) -> anyhow::Result<()> {
     match tls_config {
         #[cfg(feature = "tls")]
-        Some(tls) => serve_tls(addr, app, tls, pairing_code, grace_ms).await,
+        Some(tls) => serve_tls(addr, app, tls, pairing_code, grace_ms, shutdown_token).await,
         #[cfg(not(feature = "tls"))]
         Some(_) => anyhow::bail!(
             "TLS is configured in gateway.tls but the `tls` feature is not enabled. \
              Rebuild with `--features tls` to enable TLS support."
         ),
-        None => serve_plain(addr, app, pairing_code, grace_ms).await,
+        None => serve_plain(addr, app, pairing_code, grace_ms, shutdown_token).await,
     }
 }
 
@@ -632,6 +658,7 @@ async fn serve_plain(
     app: axum::Router,
     pairing_code: Option<&str>,
     grace_ms: u64,
+    shutdown_token: CancellationToken,
 ) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -642,7 +669,14 @@ async fn serve_plain(
 
     tracing::info!(address = %addr, tls = false, "gateway listening");
 
-    let server = axum::serve(listener, app).with_graceful_shutdown(middleware::shutdown_signal());
+    let token = shutdown_token.clone();
+    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        // Wait for either the cancellation token (programmatic) or OS signal.
+        tokio::select! {
+            () = token.cancelled() => {}
+            () = middleware::shutdown_signal() => {}
+        }
+    });
 
     tokio::select! {
         result = server.into_future() => {
@@ -672,6 +706,7 @@ async fn serve_tls(
     tls: agentzero_config::TlsConfig,
     pairing_code: Option<&str>,
     grace_ms: u64,
+    shutdown_token: CancellationToken,
 ) -> anyhow::Result<()> {
     use axum_server::tls_rustls::RustlsConfig;
 
@@ -696,13 +731,16 @@ async fn serve_tls(
     let server = axum_server::bind_rustls(addr, rustls_config).serve(app.into_make_service());
 
     // axum-server doesn't have the same `with_graceful_shutdown` API as axum::serve.
-    // Use a `tokio::select!` with the shutdown signal.
+    // Use a `tokio::select!` with the shutdown signal or cancellation token.
     tokio::select! {
         result = server => {
             result.context("TLS gateway server failed")?;
         }
         () = async {
-            middleware::shutdown_signal().await;
+            tokio::select! {
+                () = shutdown_token.cancelled() => {}
+                () = middleware::shutdown_signal() => {}
+            }
             tracing::info!("forcing exit in {grace_ms}ms (press Ctrl+C again to exit immediately)");
             tokio::select! {
                 () = tokio::time::sleep(Duration::from_millis(grace_ms)) => {

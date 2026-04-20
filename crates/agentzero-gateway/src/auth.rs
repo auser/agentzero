@@ -1,6 +1,7 @@
 use crate::api_keys::{ApiKeyInfo, Scope};
 use crate::state::GatewayState;
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
+use secrecy::ExposeSecret;
 use std::collections::HashSet;
 use subtle::ConstantTimeEq;
 
@@ -186,8 +187,8 @@ fn token_in_state(state: &GatewayState, token: &str) -> bool {
     // Bearer tokens (env var) never expire.
     if state
         .bearer_token
-        .as_deref()
-        .is_some_and(|expected| ct_eq(expected.as_str(), token))
+        .as_ref()
+        .is_some_and(|expected| ct_eq(expected.expose_secret(), token))
     {
         return true;
     }

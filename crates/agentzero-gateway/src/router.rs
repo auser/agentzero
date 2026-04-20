@@ -24,6 +24,9 @@ use axum::{
 };
 use std::sync::Arc;
 
+/// Default request timeout for non-streaming routes (30 seconds).
+const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Router {
     let max_bytes = config.max_body_bytes;
     let limiter = Arc::new(
@@ -32,7 +35,23 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
     );
     let cors_origins = config.cors_allowed_origins.clone();
 
-    let mut router = Router::new()
+    // Streaming/long-lived routes — excluded from the request timeout layer.
+    let streaming_routes = Router::new()
+        .route("/ws/chat", get(ws_chat))
+        .route("/ws/runs/:run_id", get(ws_run_subscribe))
+        .route("/v1/runs/:run_id/stream", get(sse_run_stream))
+        .route("/v1/runs/:run_id/events", get(job_events))
+        .route("/v1/events", get(sse_events))
+        .route(
+            "/v1/workflows/runs/:run_id/stream",
+            get(stream_workflow_run),
+        )
+        .route("/v1/chat/completions", post(v1_chat_completions))
+        .route("/a2a/stream", post(a2a_stream));
+
+    // Standard routes — these get the request timeout layer.
+    let timeout = DEFAULT_REQUEST_TIMEOUT;
+    let standard_routes = Router::new()
         .route("/", get(dashboard))
         .route("/health", get(health))
         .route("/health/ready", get(health_ready))
@@ -43,14 +62,11 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/ping", post(ping))
         .route("/v1/webhook/:channel", post(webhook))
         .route("/api/chat", post(api_chat))
-        .route("/v1/chat/completions", post(v1_chat_completions))
         .route("/v1/models", get(v1_models))
         .route("/v1/runs", post(async_submit).get(job_list))
         .route("/v1/runs/:run_id", get(job_status).delete(job_cancel))
         .route("/v1/runs/:run_id/result", get(job_result))
-        .route("/v1/runs/:run_id/events", get(job_events))
         .route("/v1/runs/:run_id/transcript", get(job_transcript))
-        .route("/v1/runs/:run_id/stream", get(sse_run_stream))
         .route("/v1/agents", get(agents_list).post(create_agent))
         .route(
             "/v1/agents/:agent_id",
@@ -65,10 +81,6 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route(
             "/v1/workflows/runs/:run_id/resume",
             post(resume_workflow_run),
-        )
-        .route(
-            "/v1/workflows/runs/:run_id/stream",
-            get(stream_workflow_run),
         )
         .route(
             "/v1/workflows/:id",
@@ -89,7 +101,6 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         )
         .route("/v1/topology", get(topology))
         .route("/v1/hooks/:channel/:agent_id", post(webhook_with_agent))
-        .route("/v1/events", get(sse_events))
         .route("/v1/estop", post(emergency_stop))
         .route("/v1/runtime/codegen-disable", post(runtime_codegen_disable))
         .route("/v1/runtime/codegen-enable", post(runtime_codegen_enable))
@@ -106,7 +117,6 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/mcp/message", post(mcp_message))
         .route("/.well-known/agent.json", get(agent_card))
         .route("/a2a", post(a2a_rpc))
-        .route("/a2a/stream", post(a2a_stream))
         .route("/a2a/agents", get(a2a_agents))
         .route("/v1/config", get(get_config).put(update_config))
         .route("/v1/cron", get(list_cron).post(create_cron))
@@ -117,9 +127,15 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         .route("/v1/approvals", get(list_approvals))
         .route("/v1/openapi.json", get(openapi_spec))
         .route("/docs", get(api_docs_handler))
-        .route("/ws/chat", get(ws_chat))
-        .route("/ws/runs/:run_id", get(ws_run_subscribe))
-        .route("/api/*path", get(api_fallback));
+        .route("/api/*path", get(api_fallback))
+        .layer(from_fn(
+            move |req: Request<Body>, next: axum::middleware::Next| async move {
+                middleware::request_timeout(req, next, timeout).await
+            },
+        ));
+
+    // Merge both route groups.
+    let mut router = Router::new().merge(streaming_routes).merge(standard_routes);
 
     // Noise Protocol handshake and transport routes (privacy feature).
     #[cfg(feature = "privacy")]
@@ -165,18 +181,20 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
         router = router.fallback(static_handler);
     }
 
-    // Correlation ID middleware (outermost — propagates or generates X-Request-Id).
-    router = router.layer(from_fn(middleware::correlation_id));
+    // -----------------------------------------------------------------------
+    // Middleware stack — applied inside-out, so the LAST `.layer()` call is
+    // the OUTERMOST layer (first to see requests, last to see responses).
+    //
+    // Request order (outermost → innermost):
+    //   Compression → Correlation ID → Metrics → Security Headers → HSTS →
+    //   CORS → Rate Limit → Body Limit
+    //
+    // The body limit uses tower-http's RequestBodyLimitLayer which wraps the
+    // body stream itself, preventing chunked-encoding bypass.
+    // -----------------------------------------------------------------------
 
-    // Request metrics middleware (records all requests).
-    router = router.layer(from_fn(middleware::request_metrics));
-
-    // Request size limit middleware.
-    router = router.layer(from_fn(
-        move |req: Request<Body>, next: axum::middleware::Next| async move {
-            middleware::request_size_limit(req, next, max_bytes).await
-        },
-    ));
+    // (innermost) Body size limit — wraps the body stream, not just Content-Length.
+    router = router.layer(tower_http::limit::RequestBodyLimitLayer::new(max_bytes));
 
     // Rate limiting middleware (only if configured).
     if config.rate_limit_max > 0 {
@@ -203,6 +221,20 @@ pub(crate) fn build_router(state: GatewayState, config: &MiddlewareConfig) -> Ro
     if config.tls_enabled {
         router = router.layer(from_fn(middleware::hsts_middleware));
     }
+
+    // Security headers (unconditional — X-Content-Type-Options, X-Frame-Options,
+    // Content-Security-Policy, Referrer-Policy).
+    router = router.layer(from_fn(middleware::security_headers));
+
+    // Request metrics (records method, path, status, latency).
+    router = router.layer(from_fn(middleware::request_metrics));
+
+    // Correlation ID (propagate or generate X-Request-Id). Outermost so that
+    // all downstream layers can reference the request ID in tracing spans.
+    router = router.layer(from_fn(middleware::correlation_id));
+
+    // (outermost) Response compression — gzip/deflate based on Accept-Encoding.
+    router = router.layer(tower_http::compression::CompressionLayer::new());
 
     router.with_state(state)
 }

@@ -8,6 +8,7 @@ use agentzero_core::{EventBus, MemoryStore};
 use agentzero_orchestrator::{
     AgentStore, JobStore, NodeStatus, PresenceStore, TemplateStore, WorkflowStore,
 };
+use secrecy::SecretString;
 
 /// Type alias for the gate resume sender map to avoid clippy type_complexity.
 pub(crate) type GateSenderMap =
@@ -42,7 +43,7 @@ use tokio::sync::watch;
 #[derive(Clone)]
 pub(crate) struct GatewayState {
     pub(crate) service_name: Arc<String>,
-    pub(crate) bearer_token: Option<Arc<String>>,
+    pub(crate) bearer_token: Option<SecretString>,
     pub(crate) channels: Arc<ChannelRegistry>,
     pub(crate) pairing_code: Option<Arc<String>>,
     pub(crate) paired_tokens: Arc<Mutex<HashSet<String>>>,
@@ -50,7 +51,7 @@ pub(crate) struct GatewayState {
     pub(crate) paired_token_timestamps: Arc<Mutex<HashMap<String, u64>>>,
     /// Session TTL for paired tokens in seconds. `None` = no expiry.
     pub(crate) session_ttl_secs: Option<u64>,
-    pub(crate) otp_secret: Arc<String>,
+    pub(crate) otp_secret: SecretString,
     pub(crate) token_store_path: Option<Arc<PathBuf>>,
     pub(crate) perplexity_filter: Arc<PerplexityFilterSettings>,
     /// Pairing code creation timestamp (for TTL-based expiry).
@@ -140,14 +141,15 @@ impl GatewayState {
             service_name: Arc::new("agentzero-gateway".to_string()),
             bearer_token: std::env::var("AGENTZERO_GATEWAY_BEARER_TOKEN")
                 .ok()
-                .map(|token| Arc::new(token.trim().to_string()))
-                .filter(|token| !token.is_empty()),
+                .map(|token| token.trim().to_string())
+                .filter(|token| !token.is_empty())
+                .map(SecretString::from),
             channels: Arc::new(ChannelRegistry::with_builtin_handlers()),
             pairing_code: pairing_code.map(Arc::new),
             paired_tokens: Arc::new(Mutex::new(paired_tokens)),
             paired_token_timestamps: Arc::new(Mutex::new(HashMap::new())),
             session_ttl_secs: None,
-            otp_secret: Arc::new(otp_secret),
+            otp_secret: SecretString::from(otp_secret),
             token_store_path: token_store_path.map(Arc::new),
             perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
             pairing_created_at: Instant::now(),
@@ -348,6 +350,40 @@ impl GatewayState {
         Some(code)
     }
 
+    /// Get the job store or return `AgentUnavailable`.
+    pub(crate) fn require_job_store(&self) -> Result<&Arc<JobStore>, crate::models::GatewayError> {
+        self.job_store
+            .as_ref()
+            .ok_or(crate::models::GatewayError::AgentUnavailable)
+    }
+
+    /// Get the agent store or return `AgentUnavailable`.
+    pub(crate) fn require_agent_store(
+        &self,
+    ) -> Result<&Arc<AgentStore>, crate::models::GatewayError> {
+        self.agent_store
+            .as_ref()
+            .ok_or(crate::models::GatewayError::AgentUnavailable)
+    }
+
+    /// Get the workflow store or return `AgentUnavailable`.
+    pub(crate) fn require_workflow_store(
+        &self,
+    ) -> Result<&Arc<WorkflowStore>, crate::models::GatewayError> {
+        self.workflow_store
+            .as_ref()
+            .ok_or(crate::models::GatewayError::AgentUnavailable)
+    }
+
+    /// Get the template store or return `AgentUnavailable`.
+    pub(crate) fn require_template_store(
+        &self,
+    ) -> Result<&Arc<TemplateStore>, crate::models::GatewayError> {
+        self.template_store
+            .as_ref()
+            .ok_or(crate::models::GatewayError::AgentUnavailable)
+    }
+
     pub(crate) fn with_perplexity_filter(mut self, settings: PerplexityFilterSettings) -> Self {
         self.perplexity_filter = Arc::new(settings);
         self
@@ -414,13 +450,13 @@ impl GatewayState {
     pub(crate) fn test_with_bearer(token: Option<&str>) -> Self {
         Self {
             service_name: Arc::new("agentzero-gateway".to_string()),
-            bearer_token: token.map(|value| Arc::new(value.to_string())),
+            bearer_token: token.map(|value| SecretString::from(value.to_string())),
             channels: Arc::new(ChannelRegistry::with_builtin_handlers()),
             pairing_code: Some(Arc::new("406823".to_string())),
             paired_tokens: Arc::new(Mutex::new(HashSet::new())),
             paired_token_timestamps: Arc::new(Mutex::new(HashMap::new())),
             session_ttl_secs: None,
-            otp_secret: Arc::new("OTPSECRET".to_string()),
+            otp_secret: SecretString::from("OTPSECRET".to_string()),
             token_store_path: None,
             perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
             pairing_created_at: Instant::now(),
@@ -473,7 +509,7 @@ impl GatewayState {
             paired_tokens: Arc::new(Mutex::new(paired_tokens)),
             paired_token_timestamps: Arc::new(Mutex::new(HashMap::new())),
             session_ttl_secs: None,
-            otp_secret: Arc::new("OTPSECRET".to_string()),
+            otp_secret: SecretString::from("OTPSECRET".to_string()),
             token_store_path: None,
             perplexity_filter: Arc::new(PerplexityFilterSettings::default()),
             pairing_created_at: Instant::now(),
