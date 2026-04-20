@@ -7,6 +7,29 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 
+## [0.14.0] - 2026-04-20
+
+### Added
+- Cron execution loop — polls CronStore for due tasks and dispatches them to agents via the event bus. 13 unit tests.
+- Trigger evaluation loop — subscribes to all bus events, evaluates against TriggerEngine rules, publishes trigger actions. 2 unit tests.
+- Coordinator wiring for cron and trigger loops — `with_cron_store()`, `with_trigger_engine()` builder methods
+- Cron task fire handling — routes `cron.task.fire` events to the best agent via AI router with fallback
+- Trigger action handling — dispatches `trigger.*` events to named target agents
+- Qwen model variants (Qwen2.5-Coder, Qwen2.5, Qwen3, QwQ-32B) with JSON-based model catalog
+- GGUF registry mapping short model IDs to HuggingFace repos for auto-download
+- Gateway handler module split and axum best practices audit
+
+### Changed
+- Consolidated 6 individual cron tools (cron_add, cron_list, cron_remove, cron_update, cron_pause, cron_resume) into unified `schedule` tool with natural language support
+- Moved hardcoded model arrays to embedded JSON data file (`data/model_catalog.json`)
+- Leaner crate builds with feature gates and lighter dependencies
+- CronStore gains `mark_last_run()` for execution tracking
+- Re-exported `AutopilotTriggerConfig`, `AutopilotTriggerCondition`, `AutopilotTriggerAction` from config crate
+
+### Removed
+- Duplicate WASM cron plugins (`plugins/agentzero-plugin-cron/`) — functionality consolidated into core ScheduleTool
+- Cron plugin integration tests (all were `#[ignore]`, required pre-built WASM binaries)
+
 ## [0.13.0] - 2026-04-19
 
 ### Added
