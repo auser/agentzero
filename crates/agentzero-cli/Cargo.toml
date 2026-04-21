@@ -58,7 +58,7 @@ agentzero-storage = { workspace = true }
 agentzero-tools = { workspace = true }
 agentzero-config-ui = { workspace = true, optional = true }
 base64 = "0.22"
-console = { version = "0.15", optional = true }
+console = { version = "0.16", optional = true }
 crossterm = { version = "0.28", optional = true }
 futures-util.workspace = true
 inquire = { version = "0.8", optional = true }

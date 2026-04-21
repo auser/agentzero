@@ -1,7 +1,6 @@
 use crate::model::AgentZeroConfig;
 use agentzero_core::common::local_providers::local_provider_meta;
 use anyhow::{anyhow, Context};
-use config::{Config, Environment, File};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -27,20 +26,22 @@ pub fn load(path: &Path) -> anyhow::Result<AgentZeroConfig> {
         }
     });
 
-    let settings = Config::builder()
-        .add_source(File::from(path.to_path_buf()).required(false))
-        .add_source(
-            Environment::with_prefix("AGENTZERO")
-                .separator("__")
-                .list_separator(",")
-                .try_parsing(true),
-        )
-        .build()
-        .context("failed to build layered config")?;
+    // Layer 1: TOML config file (optional — missing file yields defaults).
+    let mut table: toml::Table = if path.exists() {
+        let content = std::fs::read_to_string(path).context("failed to read config file")?;
+        toml::from_str(&content).context("failed to parse config TOML")?
+    } else {
+        toml::Table::new()
+    };
 
-    let parsed: AgentZeroConfig = settings
-        .try_deserialize()
-        .context("failed to deserialize config into typed model")?;
+    // Layer 2: Environment variables with AGENTZERO__ prefix.
+    // AGENTZERO__PROVIDER__KIND=anthropic → provider.kind = "anthropic"
+    overlay_env_vars(&mut table, "AGENTZERO", "__");
+
+    // Deserialize the merged table into the typed config.
+    let serialized = toml::to_string(&table).context("failed to serialize merged config")?;
+    let parsed: AgentZeroConfig =
+        toml::from_str(&serialized).context("failed to deserialize config into typed model")?;
     let config = apply_dotenv_overrides(parsed, &dotenv_overrides)?;
     let mut config = apply_legacy_env_overrides(config)?;
     normalize_base_url(&mut config);
@@ -271,6 +272,74 @@ fn resolve_local_provider_defaults(config: &mut AgentZeroConfig) {
             _ => return,
         };
         config.provider.base_url = default_url.to_string();
+    }
+}
+
+/// Overlay environment variables into a TOML table.
+///
+/// Variables matching `{prefix}{sep}*` are split on `{sep}` to form a nested
+/// key path. Values are try-parsed as bool/integer/float; comma-separated
+/// values become TOML arrays. This replicates the `config` crate's
+/// `Environment::with_prefix().separator().list_separator().try_parsing()`
+/// behavior.
+fn overlay_env_vars(table: &mut toml::Table, prefix: &str, sep: &str) {
+    let full_prefix = format!("{prefix}{sep}");
+    for (key, value) in std::env::vars() {
+        if !key.starts_with(&full_prefix) {
+            continue;
+        }
+        let remainder = &key[full_prefix.len()..];
+        let parts: Vec<&str> = remainder.split(sep).collect();
+        if parts.is_empty() || parts.iter().any(|p| p.is_empty()) {
+            continue;
+        }
+
+        let toml_value = parse_env_value(&value);
+        set_nested(table, &parts, toml_value);
+    }
+}
+
+/// Try to parse an env var value as bool, integer, float, or comma-separated
+/// list. Falls back to a plain string.
+fn parse_env_value(value: &str) -> toml::Value {
+    // Bool
+    match value {
+        "true" | "TRUE" | "True" => return toml::Value::Boolean(true),
+        "false" | "FALSE" | "False" => return toml::Value::Boolean(false),
+        _ => {}
+    }
+    // Integer
+    if let Ok(n) = value.parse::<i64>() {
+        return toml::Value::Integer(n);
+    }
+    // Float
+    if let Ok(f) = value.parse::<f64>() {
+        return toml::Value::Float(f);
+    }
+    // Comma-separated list
+    if value.contains(',') {
+        let items: Vec<toml::Value> = value
+            .split(',')
+            .map(|s| toml::Value::String(s.trim().to_string()))
+            .collect();
+        return toml::Value::Array(items);
+    }
+    toml::Value::String(value.to_string())
+}
+
+/// Set a value at a nested key path in a TOML table, creating intermediate
+/// tables as needed. Keys are lowercased to match TOML conventions.
+fn set_nested(table: &mut toml::Table, parts: &[&str], value: toml::Value) {
+    if parts.len() == 1 {
+        table.insert(parts[0].to_lowercase(), value);
+        return;
+    }
+    let key = parts[0].to_lowercase();
+    let sub = table
+        .entry(&key)
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    if let toml::Value::Table(sub_table) = sub {
+        set_nested(sub_table, &parts[1..], value);
     }
 }
 
