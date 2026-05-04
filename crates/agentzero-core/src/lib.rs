@@ -6,6 +6,7 @@
 //! handles, trust boundaries, redaction results, and action kinds.
 
 mod action;
+pub mod crypto;
 mod id;
 mod redaction;
 mod routing;

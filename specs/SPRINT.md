@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 9 COMPLETE**
+**Status: PHASE 10 COMPLETE**
 
 ## Tasks
 
@@ -100,11 +100,24 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] WASM config: memory limits, fuel-based time limits, no ambient filesystem.
 - [x] Stub types when `wasm` feature is disabled (compiles without wasmtime).
 
-## Not Yet
+### Phase 10: OpenAI-Compatible Provider + Encryption at Rest
+- [x] OpenAI-compatible provider (llama.cpp, vLLM, LM Studio, LocalAI, text-gen-webui).
+- [x] `--provider` flag: ollama, llama-cpp, vllm, lm-studio.
+- [x] `--url` flag for custom server endpoints.
+- [x] Provider dispatches to Ollama API or OpenAI `/v1/chat/completions` API.
+- [x] Tool calling works with both providers.
+- [x] AES-256-GCM encryption with Argon2id key derivation.
+- [x] `encrypt`/`decrypt` for raw bytes, strings, and files.
+- [x] Base64 encoding for string transport.
+- [x] 8 crypto tests (roundtrip, wrong passphrase, uniqueness, file ops).
+- [x] 6 openai-compat tests (config variants, classification routing).
 
-- [ ] MVM runtime.
+## Not Yet (deferred)
+
+- [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
 - [ ] ACP adapter.
-- [ ] Package installer.
+- [ ] Package installer (`agentzero install <skill>`).
+- [ ] Resume past sessions (`agentzero chat --resume <id>`).
 - [ ] Gateway.
 - [ ] MCP bridge.
 - [ ] Swarms.

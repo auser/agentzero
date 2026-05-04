@@ -19,6 +19,12 @@ pub enum Command {
         /// Stream tokens as they arrive.
         #[arg(long)]
         stream: bool,
+        /// Provider: ollama, llama-cpp, vllm, lm-studio (default: ollama).
+        #[arg(long, short, default_value = "ollama")]
+        provider: String,
+        /// Server URL override (e.g. http://localhost:8080).
+        #[arg(long)]
+        url: Option<String>,
     },
     /// Run a skill or tool by name.
     Run {
@@ -77,7 +83,9 @@ pub async fn run(command: Command) -> i32 {
             local,
             model,
             stream,
-        } => cmd_chat(local, &model, stream).await,
+            provider,
+            url,
+        } => cmd_chat(local, &model, stream, &provider, url.as_deref()).await,
         Command::Run { name } => cmd_run(&name),
         Command::History => cmd_history(),
         Command::Doctor => cmd_doctor(),
@@ -158,10 +166,16 @@ fn cmd_init(private: bool) -> i32 {
     0
 }
 
-async fn cmd_chat(local: bool, model: &str, stream: bool) -> i32 {
+async fn cmd_chat(
+    local: bool,
+    model: &str,
+    stream: bool,
+    provider_name: &str,
+    url_override: Option<&str>,
+) -> i32 {
     use agentzero::session::{
-        ChatMessage, ModelProvider, OllamaConfig, OllamaProvider, Session, SessionConfig,
-        SessionMode, ToolExecutor,
+        ChatMessage, ModelProvider, OllamaConfig, OllamaProvider, OpenAICompatConfig,
+        OpenAICompatProvider, Session, SessionConfig, SessionMode, ToolExecutor,
     };
     use std::io::{self, BufRead, Write};
 
@@ -233,25 +247,111 @@ async fn cmd_chat(local: bool, model: &str, stream: bool) -> i32 {
     };
     println!("Session: {}", session.id());
 
-    // Check Ollama
-    let config = OllamaConfig {
-        model: model.to_string(),
-        ..OllamaConfig::default()
-    };
-    let provider = OllamaProvider::new(config);
-    println!("Model: {} ({})", provider.model_name(), provider.name());
+    // Set up provider
+    enum Provider {
+        Ollama(OllamaProvider),
+        OpenAICompat(OpenAICompatProvider),
+    }
 
-    match provider.health_check().await {
-        Ok(true) => println!("Ollama: connected"),
-        Ok(false) => {
-            eprintln!("Ollama responded but may not be healthy. Continuing anyway.");
+    impl Provider {
+        fn model_name(&self) -> &str {
+            match self {
+                Self::Ollama(p) => p.model_name(),
+                Self::OpenAICompat(p) => p.model_name(),
+            }
         }
-        Err(e) => {
-            eprintln!("error: cannot connect to Ollama at http://localhost:11434");
-            eprintln!("  {e}");
-            eprintln!();
-            eprintln!("Make sure Ollama is running: `ollama serve`");
+
+        async fn chat_with_tools(
+            &self,
+            messages: &[ChatMessage],
+            tools: Option<&[agentzero::session::ToolDefinition]>,
+        ) -> Result<agentzero::session::ChatResult, agentzero::session::ModelProviderError>
+        {
+            match self {
+                Self::Ollama(p) => p.chat_with_tools(messages, tools).await,
+                Self::OpenAICompat(p) => p.chat_with_tools(messages, tools).await,
+            }
+        }
+
+        async fn chat_streaming<F: FnMut(&str)>(
+            &self,
+            messages: &[ChatMessage],
+            on_token: F,
+        ) -> Result<String, agentzero::session::ModelProviderError> {
+            match self {
+                Self::Ollama(p) => p.chat_streaming(messages, on_token).await,
+                Self::OpenAICompat(_) => {
+                    // OpenAI-compat streaming not implemented yet, fall back to non-streaming
+                    let result = self.chat_with_tools(messages, None).await?;
+                    Ok(result.content)
+                }
+            }
+        }
+    }
+
+    let provider = match provider_name {
+        "ollama" => {
+            let config = OllamaConfig {
+                model: model.to_string(),
+                base_url: url_override.unwrap_or("http://localhost:11434").to_string(),
+            };
+            Provider::Ollama(OllamaProvider::new(config))
+        }
+        "llama-cpp" | "llama.cpp" | "llamacpp" => {
+            let mut config = OpenAICompatConfig::llama_cpp();
+            config.model = model.to_string();
+            if let Some(url) = url_override {
+                config.base_url = url.to_string();
+            }
+            Provider::OpenAICompat(OpenAICompatProvider::new(config))
+        }
+        "vllm" => {
+            let mut config = OpenAICompatConfig::vllm();
+            config.model = model.to_string();
+            if let Some(url) = url_override {
+                config.base_url = url.to_string();
+            }
+            Provider::OpenAICompat(OpenAICompatProvider::new(config))
+        }
+        "lm-studio" | "lmstudio" => {
+            let mut config = OpenAICompatConfig::lm_studio();
+            config.model = model.to_string();
+            if let Some(url) = url_override {
+                config.base_url = url.to_string();
+            }
+            Provider::OpenAICompat(OpenAICompatProvider::new(config))
+        }
+        other => {
+            eprintln!("unknown provider: {other}");
+            eprintln!("available: ollama, llama-cpp, vllm, lm-studio");
             return 1;
+        }
+    };
+
+    // Display provider info and health check
+    match &provider {
+        Provider::Ollama(p) => {
+            println!("Model: {} ({})", p.model_name(), p.name());
+            match p.health_check().await {
+                Ok(true) => println!("Ollama: connected"),
+                Ok(false) => eprintln!("Ollama: responded but may not be healthy"),
+                Err(e) => {
+                    eprintln!("error: cannot connect to Ollama: {e}");
+                    eprintln!("Make sure Ollama is running: `ollama serve`");
+                    return 1;
+                }
+            }
+        }
+        Provider::OpenAICompat(p) => {
+            println!("Model: {} ({})", p.model_name(), p.server_type());
+            match p.health_check().await {
+                Ok(true) => println!("{}: connected", p.server_type()),
+                Ok(false) => eprintln!("{}: responded but may not be healthy", p.server_type()),
+                Err(e) => {
+                    eprintln!("error: cannot connect to {}: {e}", p.server_type());
+                    return 1;
+                }
+            }
         }
     }
 
