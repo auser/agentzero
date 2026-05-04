@@ -180,6 +180,52 @@ impl ToolExecutor {
         })
     }
 
+    /// Execute a shell command (requires policy approval).
+    pub fn shell_command(&self, command: &str) -> Result<ToolResult, ToolExecutorError> {
+        let execution_id = ExecutionId::new();
+        let tool_id = ToolId::from_string("shell");
+
+        debug!(
+            tool = "shell",
+            command = command,
+            "checking policy for shell command"
+        );
+
+        let decision = self.check_policy(Capability::ShellCommand, DataClassification::Private);
+        if !decision.is_allowed() {
+            return match decision {
+                PolicyDecision::RequiresApproval { reason } => Err(ToolExecutorError::Denied(
+                    format!("shell command requires approval: {reason}"),
+                )),
+                _ => Err(ToolExecutorError::Denied(format!(
+                    "shell command denied: {decision:?}"
+                ))),
+            };
+        }
+
+        info!(tool = "shell", command = command, "executing shell command");
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .output()
+            .map_err(|e| ToolExecutorError::Failed(format!("failed to execute: {e}")))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let combined = if stderr.is_empty() {
+            stdout
+        } else {
+            format!("{stdout}\nSTDERR:\n{stderr}")
+        };
+
+        Ok(ToolResult {
+            tool_id,
+            execution_id,
+            success: output.status.success(),
+            output: combined,
+        })
+    }
+
     fn check_policy(
         &self,
         capability: Capability,

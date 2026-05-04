@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 6 COMPLETE**
+**Status: PHASE 7 COMPLETE**
 
 ## Tasks
 
@@ -72,6 +72,16 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] Interactive chat loop (`agentzero chat --local` with Ollama backend).
 - [x] Policy loaded from project config at chat startup.
 - [x] System prompt, conversation history, `/quit` command.
+
+### Phase 7: Tool Use, Streaming, Shell Approval
+- [x] Ollama tool calling (model sends tool_calls, session executes them).
+- [x] Tool definitions for read/list/search/shell sent to Ollama.
+- [x] Multi-round tool loop (up to 5 rounds of tool calls per user message).
+- [x] Shell command execution with user approval prompt (y/n).
+- [x] Streaming chat support (`chat_streaming` with token-by-token callback).
+- [x] Tool results truncated to 2KB to avoid context overflow.
+- [x] Session wired into chat with policy-controlled tool executor.
+- [x] Audit events emitted for each tool call during chat.
 
 ## Not Yet
 

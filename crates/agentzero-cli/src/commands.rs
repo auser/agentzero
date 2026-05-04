@@ -146,14 +146,17 @@ fn cmd_init(private: bool) -> i32 {
 }
 
 async fn cmd_chat(local: bool) -> i32 {
-    use agentzero::session::{ChatMessage, ModelProvider, OllamaConfig, OllamaProvider};
+    use agentzero::session::{
+        ChatMessage, ModelProvider, OllamaConfig, OllamaProvider, Session, SessionConfig,
+        SessionMode, ToolExecutor,
+    };
     use std::io::{self, BufRead, Write};
 
     let mode = if local { "local-only" } else { "default" };
     println!("AgentZero Chat ({mode})");
     println!("======================");
 
-    // Try to load policy from .agentzero/policy.yml
+    // Load policy
     let cwd = std::env::current_dir().unwrap_or_default();
     let policy_path = cwd.join(".agentzero/policy.yml");
     let policy = if policy_path.exists() {
@@ -176,9 +179,35 @@ async fn cmd_chat(local: bool) -> i32 {
         agentzero::policy::PolicyEngine::deny_by_default()
     };
 
-    let _ = policy; // Will wire into session once interactive tool use is added
+    // Create session with tool executor
+    let tool_policy = if policy_path.exists() {
+        agentzero::policy::load_policy_file(&policy_path)
+            .map(agentzero::policy::PolicyEngine::with_rules)
+            .unwrap_or_else(|_| agentzero::policy::PolicyEngine::deny_by_default())
+    } else {
+        agentzero::policy::PolicyEngine::deny_by_default()
+    };
+    let tool_executor =
+        ToolExecutor::new(tool_policy).with_project_root(cwd.to_string_lossy().to_string());
 
-    // Check Ollama availability
+    let session_config = SessionConfig {
+        mode: if local {
+            SessionMode::LocalOnly
+        } else {
+            SessionMode::LocalPreferred
+        },
+        project_root: Some(cwd.to_string_lossy().to_string()),
+    };
+    let session = match Session::new(session_config, policy) {
+        Ok(s) => s.with_tool_executor(tool_executor),
+        Err(e) => {
+            eprintln!("error: failed to create session: {e}");
+            return 1;
+        }
+    };
+    println!("Session: {}", session.id());
+
+    // Check Ollama
     let config = OllamaConfig::default();
     let provider = OllamaProvider::new(config);
     println!("Model: {} ({})", provider.model_name(), provider.name());
@@ -197,21 +226,24 @@ async fn cmd_chat(local: bool) -> i32 {
         }
     }
 
+    let tools = OllamaProvider::agentzero_tool_definitions();
+    println!(
+        "Tools: {} available (read, list, search, shell)",
+        tools.len()
+    );
     println!();
     println!("Type your message and press Enter. Type /quit to exit.");
     println!();
 
     let stdin = io::stdin();
-    let mut messages: Vec<ChatMessage> = vec![ChatMessage {
-        role: "system".into(),
-        content: concat!(
-            "You are AgentZero, a secure AI agent assistant. ",
-            "You help users with their local development projects. ",
-            "You are running in local-only mode — all inference happens on this machine. ",
-            "Be concise and helpful."
-        )
-        .into(),
-    }];
+    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(concat!(
+        "You are AgentZero, a secure AI agent assistant. ",
+        "You help users with their local development projects. ",
+        "You are running in local-only mode — all inference happens on this machine. ",
+        "You have access to tools: read (read files), list (list directories), ",
+        "search (search file contents), and shell (run shell commands, requires approval). ",
+        "Use tools when the user asks about their project. Be concise and helpful."
+    ))];
 
     loop {
         print!("you> ");
@@ -219,7 +251,7 @@ async fn cmd_chat(local: bool) -> i32 {
 
         let mut input = String::new();
         match stdin.lock().read_line(&mut input) {
-            Ok(0) => break, // EOF
+            Ok(0) => break,
             Ok(_) => {}
             Err(e) => {
                 eprintln!("error reading input: {e}");
@@ -236,25 +268,85 @@ async fn cmd_chat(local: bool) -> i32 {
             break;
         }
 
-        messages.push(ChatMessage {
-            role: "user".into(),
-            content: input.to_string(),
-        });
+        messages.push(ChatMessage::user(input));
 
-        match provider.chat(&messages).await {
-            Ok(response) => {
-                println!();
-                println!("agentzero> {response}");
-                println!();
+        // Chat with tool calling loop
+        let max_tool_rounds = 5;
+        for round in 0..=max_tool_rounds {
+            let result = match provider.chat_with_tools(&messages, Some(&tools)).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    messages.pop();
+                    break;
+                }
+            };
+
+            if result.has_tool_calls() && round < max_tool_rounds {
+                // Add assistant message with tool calls
                 messages.push(ChatMessage {
                     role: "assistant".into(),
-                    content: response,
+                    content: result.content.clone(),
+                    tool_calls: Some(result.tool_calls.clone()),
                 });
-            }
-            Err(e) => {
-                eprintln!("error: {e}");
-                // Remove the failed user message so context stays clean
-                messages.pop();
+
+                // Execute each tool call
+                for tc in &result.tool_calls {
+                    let tool_name = &tc.function.name;
+                    let tool_args = &tc.function.arguments;
+
+                    // Shell commands need user approval
+                    if tool_name == "shell" {
+                        let cmd = tool_args
+                            .get("command")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("(unknown)");
+                        print!("  [APPROVE shell: `{cmd}`?] (y/n) ");
+                        io::stdout().flush().ok();
+                        let mut answer = String::new();
+                        stdin.lock().read_line(&mut answer).ok();
+                        if !answer.trim().eq_ignore_ascii_case("y") {
+                            println!("  [DENIED by user]");
+                            messages.push(ChatMessage::tool(
+                                "Shell command denied by user. Do not retry without asking.",
+                            ));
+                            continue;
+                        }
+                    }
+
+                    print!("  [tool: {tool_name}] ");
+                    io::stdout().flush().ok();
+
+                    match session.execute_tool(tool_name, tool_args) {
+                        Ok(output) => {
+                            let truncated = if output.len() > 2000 {
+                                format!(
+                                    "{}...\n[truncated, {} bytes total]",
+                                    &output[..2000],
+                                    output.len()
+                                )
+                            } else {
+                                output
+                            };
+                            println!("ok ({} bytes)", truncated.len());
+                            messages.push(ChatMessage::tool(truncated));
+                        }
+                        Err(e) => {
+                            println!("error: {e}");
+                            messages.push(ChatMessage::tool(format!("Error: {e}")));
+                        }
+                    }
+                }
+                // Loop back to get the model's response after tool results
+            } else {
+                // No tool calls — print the response
+                if !result.content.is_empty() {
+                    println!();
+                    println!("agentzero> {}", result.content);
+                    println!();
+                }
+                messages.push(ChatMessage::assistant(&result.content));
+                break;
             }
         }
     }
