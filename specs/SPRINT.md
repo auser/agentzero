@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 11 COMPLETE**
+**Status: PHASE 12 COMPLETE**
 
 ## Tasks
 
@@ -121,6 +121,15 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] `agentzero install <path>` copies skill directory into `skills/`.
 - [x] Validates SKILL.md presence, detects runtime, avoids duplicate installs.
 - [x] 3 encrypted audit tests + 3 CLI parse tests.
+
+### Phase 12: Pipeline Hardening
+- [x] Redaction engine wired into session: `prepare_for_model()` scans content for PII/secrets.
+- [x] `AllowWithRedaction` policy decisions now actually redact before sending to remote providers.
+- [x] Comprehensive audit events: session start, session end, model calls (local/remote/denied/redacted), tool executions.
+- [x] Every policy decision emitted as an audit event with reason and redaction list.
+- [x] `session.end()` emits session_end lifecycle event.
+- [x] `init --private` creates complete `.agentzero/` structure: policy.yml, settings.toml, models.json, audit/, sessions/, prompts/, skills/, vault/.
+- [x] 4 new session tests: prepare_for_model (local pass-through), redact PII, redact secrets, session end.
 
 ## Not Yet (deferred)
 

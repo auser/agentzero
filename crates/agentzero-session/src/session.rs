@@ -1,6 +1,7 @@
 use agentzero_audit::{AuditLogger, AuditSink, InMemorySink};
 use agentzero_core::{
-    AuditEvent, Capability, DataClassification, PolicyDecision, RuntimeTier, SessionId,
+    AuditEvent, Capability, DataClassification, ExecutionId, PolicyDecision, RedactionResult,
+    RuntimeTier, SessionId,
 };
 use agentzero_policy::PolicyEngine;
 use agentzero_tracing::{info, warn};
@@ -61,23 +62,24 @@ impl Session {
         let id = SessionId::new();
         info!(session_id = %id, mode = ?config.mode, "creating new session");
 
-        let mut tool_executor = ToolExecutor::new(PolicyEngine::with_rules(
-            // Session creates its own tool executor policy — clone the rules
-            // For now, use deny-by-default; the caller should configure this
-            vec![],
-        ));
+        let mut tool_executor = ToolExecutor::new(PolicyEngine::with_rules(vec![]));
 
         if let Some(ref root) = config.project_root {
             tool_executor = tool_executor.with_project_root(root.clone());
         }
 
-        Ok(Self {
+        let session = Self {
             id,
             mode: config.mode,
             policy,
             tool_executor,
             audit_sink: Box::new(InMemorySink::new()),
-        })
+        };
+
+        // Audit: session start
+        session.emit_lifecycle_event("session_start", "session created")?;
+
+        Ok(session)
     }
 
     /// Create a session with a file-backed audit logger.
@@ -112,6 +114,107 @@ impl Session {
         }
     }
 
+    /// Check policy and redact content before sending to a model provider.
+    ///
+    /// Returns the (possibly redacted) content and the list of redactions applied.
+    /// Returns Err if the content is denied for this provider.
+    pub fn prepare_for_model(
+        &self,
+        content: &str,
+        classification: DataClassification,
+        provider: &dyn ModelProvider,
+    ) -> Result<(String, Vec<String>), SessionError> {
+        // Local providers accept everything
+        if provider.location() == ModelLocation::Local {
+            self.emit_audit(
+                "model_call_local",
+                Capability::ModelCall,
+                classification,
+                PolicyDecision::Allow,
+                "local provider — no redaction needed",
+                &[],
+            )?;
+            return Ok((content.to_string(), vec![]));
+        }
+
+        // Remote providers: check policy
+        let decision = self.check_policy(Capability::ModelCall, classification);
+
+        match decision.clone() {
+            PolicyDecision::Allow => {
+                self.emit_audit(
+                    "model_call_remote",
+                    Capability::ModelCall,
+                    classification,
+                    PolicyDecision::Allow,
+                    "remote model call allowed by policy",
+                    &[],
+                )?;
+                Ok((content.to_string(), vec![]))
+            }
+            PolicyDecision::AllowWithRedaction { reason } => {
+                info!(
+                    session_id = %self.id,
+                    reason = %reason,
+                    "redacting content before remote model call"
+                );
+
+                let redacted = self.redact_content(content);
+                let redaction_labels: Vec<String> = redacted
+                    .redactions
+                    .iter()
+                    .map(|r| format!("{:?}@{}:{}", r.classification, r.start, r.end))
+                    .collect();
+
+                self.emit_audit(
+                    "model_call_remote_redacted",
+                    Capability::ModelCall,
+                    classification,
+                    PolicyDecision::AllowWithRedaction {
+                        reason: reason.clone(),
+                    },
+                    "content redacted before remote model call",
+                    &redaction_labels,
+                )?;
+
+                Ok((redacted.apply(content), redaction_labels))
+            }
+            PolicyDecision::Deny { reason } => {
+                warn!(
+                    session_id = %self.id,
+                    reason = %reason,
+                    "remote model call denied"
+                );
+                self.emit_audit(
+                    "model_call_denied",
+                    Capability::ModelCall,
+                    classification,
+                    PolicyDecision::Deny {
+                        reason: reason.clone(),
+                    },
+                    &reason,
+                    &[],
+                )?;
+                Err(SessionError::Failed(format!("model call denied: {reason}")))
+            }
+            PolicyDecision::RequiresApproval { reason } => {
+                self.emit_audit(
+                    "model_call_requires_approval",
+                    Capability::ModelCall,
+                    classification,
+                    PolicyDecision::RequiresApproval {
+                        reason: reason.clone(),
+                    },
+                    &reason,
+                    &[],
+                )?;
+                Err(SessionError::Failed(format!(
+                    "model call requires approval: {reason}"
+                )))
+            }
+        }
+    }
+
     /// Execute a tool by name with the given arguments.
     pub fn execute_tool(
         &self,
@@ -119,6 +222,13 @@ impl Session {
         args: &serde_json::Value,
     ) -> Result<String, SessionError> {
         info!(session_id = %self.id, tool = tool_name, "executing tool");
+
+        let capability = match tool_name {
+            "read" | "list" | "search" => Capability::FileRead,
+            "write" | "propose_edit" => Capability::FileWrite,
+            "shell" => Capability::ShellCommand,
+            _ => Capability::FileRead,
+        };
 
         let result =
             match tool_name {
@@ -191,25 +301,15 @@ impl Session {
                 }
             };
 
-        // Emit audit event
-        let event = AuditEvent {
-            execution_id: result.execution_id.clone(),
-            session_id: self.id.clone(),
-            timestamp: chrono::Utc::now(),
-            action: format!("tool:{tool_name}"),
-            capability: Capability::FileRead,
-            classification: DataClassification::Private,
-            decision: PolicyDecision::Allow,
-            reason: format!("tool {tool_name} executed successfully"),
-            runtime: RuntimeTier::HostReadonly,
-            skill_id: None,
-            tool_id: Some(result.tool_id),
-            redactions_applied: vec![],
-            approval_scope: None,
-        };
-        self.audit_sink
-            .record(&event)
-            .map_err(SessionError::AuditFailed)?;
+        // Audit: tool execution
+        self.emit_audit(
+            &format!("tool:{tool_name}"),
+            capability,
+            DataClassification::Private,
+            PolicyDecision::Allow,
+            &format!("tool {tool_name} executed successfully"),
+            &[],
+        )?;
 
         Ok(result.output)
     }
@@ -227,6 +327,93 @@ impl Session {
             context: format!("session:{}", self.id),
         };
         self.policy.evaluate(&request)
+    }
+
+    /// Signal session end and emit audit event.
+    pub fn end(&self) -> Result<(), SessionError> {
+        self.emit_lifecycle_event("session_end", "session ended by user")
+    }
+
+    /// Scan content for sensitive patterns and return redaction result.
+    fn redact_content(&self, content: &str) -> RedactionResult {
+        let mut redactions = Vec::new();
+        let lower = content.to_lowercase();
+
+        // Simple pattern-based redaction for common PII/secret patterns
+        let patterns: &[(&str, DataClassification)] = &[
+            ("@gmail.com", DataClassification::Pii),
+            ("@yahoo.com", DataClassification::Pii),
+            ("@hotmail.com", DataClassification::Pii),
+            ("@outlook.com", DataClassification::Pii),
+            ("ghp_", DataClassification::Secret),
+            ("gho_", DataClassification::Secret),
+            ("sk-", DataClassification::Secret),
+            ("AKIA", DataClassification::Secret),
+        ];
+
+        for (pattern, classification) in patterns {
+            let pattern_lower = pattern.to_lowercase();
+            let mut search_from = 0;
+            while let Some(pos) = lower[search_from..].find(&pattern_lower) {
+                let abs_pos = search_from + pos;
+                // Find word boundary (extend to whitespace or end)
+                let end = content[abs_pos..]
+                    .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
+                    .map_or(content.len(), |e| abs_pos + e);
+
+                let idx = redactions.len();
+                redactions.push(agentzero_core::Redaction {
+                    start: abs_pos,
+                    end,
+                    classification: *classification,
+                    placeholder: agentzero_core::placeholder_for(*classification, idx),
+                });
+                search_from = end;
+            }
+        }
+
+        redactions.sort_by_key(|r| r.start);
+        RedactionResult { redactions }
+    }
+
+    fn emit_lifecycle_event(&self, action: &str, reason: &str) -> Result<(), SessionError> {
+        self.emit_audit(
+            action,
+            Capability::SkillLoad, // neutral capability for lifecycle
+            DataClassification::Private,
+            PolicyDecision::Allow,
+            reason,
+            &[],
+        )
+    }
+
+    fn emit_audit(
+        &self,
+        action: &str,
+        capability: Capability,
+        classification: DataClassification,
+        decision: PolicyDecision,
+        reason: &str,
+        redactions: &[String],
+    ) -> Result<(), SessionError> {
+        let event = AuditEvent {
+            execution_id: ExecutionId::new(),
+            session_id: self.id.clone(),
+            timestamp: chrono::Utc::now(),
+            action: action.to_string(),
+            capability,
+            classification,
+            decision,
+            reason: reason.to_string(),
+            runtime: RuntimeTier::HostReadonly,
+            skill_id: None,
+            tool_id: None,
+            redactions_applied: redactions.to_vec(),
+            approval_scope: None,
+        };
+        self.audit_sink
+            .record(&event)
+            .map_err(SessionError::AuditFailed)
     }
 }
 
@@ -326,5 +513,51 @@ mod tests {
             PolicyDecision::RequiresApproval { .. } => {}
             other => panic!("expected RequiresApproval, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn prepare_for_local_model_passes_everything() {
+        let session = Session::new(SessionConfig::default(), PolicyEngine::deny_by_default())
+            .expect("should create");
+        let local = LocalStubProvider;
+        let result = session.prepare_for_model(
+            "secret AKIA1234567890123456",
+            DataClassification::Secret,
+            &local,
+        );
+        assert!(result.is_ok());
+        let (content, redactions) = result.expect("should succeed");
+        // Local provider: no redaction
+        assert!(content.contains("AKIA"));
+        assert!(redactions.is_empty());
+    }
+
+    #[test]
+    fn redact_content_finds_pii() {
+        let session = Session::new(SessionConfig::default(), PolicyEngine::deny_by_default())
+            .expect("should create");
+        let result = session.redact_content("contact me at user@gmail.com please");
+        assert!(!result.is_clean());
+        let redacted = result.apply("contact me at user@gmail.com please");
+        assert!(!redacted.contains("@gmail.com"));
+        assert!(redacted.contains("[PII_"));
+    }
+
+    #[test]
+    fn redact_content_finds_secrets() {
+        let session = Session::new(SessionConfig::default(), PolicyEngine::deny_by_default())
+            .expect("should create");
+        let result = session.redact_content("token is ghp_ABCDabcd1234567890abcdef1234567890");
+        assert!(!result.is_clean());
+        let redacted = result.apply("token is ghp_ABCDabcd1234567890abcdef1234567890");
+        assert!(!redacted.contains("ghp_"));
+        assert!(redacted.contains("[SECRET_"));
+    }
+
+    #[test]
+    fn session_end_emits_event() {
+        let session = Session::new(SessionConfig::default(), PolicyEngine::deny_by_default())
+            .expect("should create");
+        assert!(session.end().is_ok());
     }
 }

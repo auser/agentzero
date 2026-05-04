@@ -146,12 +146,59 @@ fn cmd_init(private: bool) -> i32 {
         return 1;
     }
 
-    let dirs = ["audit", "sessions"];
+    let dirs = ["audit", "sessions", "prompts", "skills", "vault"];
     for sub in &dirs {
         if let Err(e) = std::fs::create_dir_all(az_dir.join(sub)) {
             eprintln!("error: failed to create .agentzero/{sub}: {e}");
             return 1;
         }
+    }
+
+    // Write settings.toml
+    let settings = concat!(
+        "# AgentZero Settings\n",
+        "[general]\n",
+        "# default_provider = \"ollama\"\n",
+        "# default_model = \"llama3.2\"\n",
+        "\n",
+        "[audit]\n",
+        "enabled = true\n",
+        "# encrypt = false\n",
+        "\n",
+        "[session]\n",
+        "# max_tool_rounds = 5\n",
+        "# max_output_bytes = 2000\n",
+    );
+    if let Err(e) = std::fs::write(az_dir.join("settings.toml"), settings) {
+        eprintln!("error: failed to write settings.toml: {e}");
+        return 1;
+    }
+
+    // Write models.json
+    let models = serde_json::json!({
+        "providers": [
+            {
+                "name": "ollama",
+                "type": "ollama",
+                "url": "http://localhost:11434",
+                "default_model": "llama3.2",
+                "is_local": true
+            },
+            {
+                "name": "llama-cpp",
+                "type": "openai-compatible",
+                "url": "http://localhost:8080",
+                "default_model": "default",
+                "is_local": true
+            }
+        ]
+    });
+    if let Err(e) = std::fs::write(
+        az_dir.join("models.json"),
+        serde_json::to_string_pretty(&models).expect("models should serialize"),
+    ) {
+        eprintln!("error: failed to write models.json: {e}");
+        return 1;
     }
 
     // Write default policy (TOML format)
@@ -184,10 +231,15 @@ fn cmd_init(private: bool) -> i32 {
 
     let mode = if private { "private" } else { "default" };
     println!("Initialized AgentZero project ({mode} mode)");
-    println!("  {}", az_dir.display());
-    println!("  {}/policy.yml", az_dir.display());
-    println!("  {}/audit/", az_dir.display());
-    println!("  {}/sessions/", az_dir.display());
+    println!("  {}/", az_dir.display());
+    println!("  ├── policy.yml");
+    println!("  ├── settings.toml");
+    println!("  ├── models.json");
+    println!("  ├── audit/");
+    println!("  ├── sessions/");
+    println!("  ├── prompts/");
+    println!("  ├── skills/");
+    println!("  └── vault/");
     0
 }
 
