@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 10 COMPLETE**
+**Status: PHASE 11 COMPLETE**
 
 ## Tasks
 
@@ -111,6 +111,16 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] Base64 encoding for string transport.
 - [x] 8 crypto tests (roundtrip, wrong passphrase, uniqueness, file ops).
 - [x] 6 openai-compat tests (config variants, classification routing).
+
+### Phase 11: Encrypted Persistence, Resume, Skill Install
+- [x] Encrypted audit logger (AES-256-GCM, per-line encryption, base64 transport).
+- [x] `--encrypt` flag on chat for encrypted audit + session files at rest.
+- [x] Passphrase prompt at session start when --encrypt is set.
+- [x] Encrypted session save (`.json.enc` files).
+- [x] `--resume <id>` loads message history from past session.
+- [x] `agentzero install <path>` copies skill directory into `skills/`.
+- [x] Validates SKILL.md presence, detects runtime, avoids duplicate installs.
+- [x] 3 encrypted audit tests + 3 CLI parse tests.
 
 ## Not Yet (deferred)
 

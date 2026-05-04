@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 agentzero-core = { workspace = true }
+agentzero-tracing = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

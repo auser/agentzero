@@ -3,6 +3,7 @@
 //! Every meaningful action emits a structured audit event (ADR 0003).
 //! Raw secrets must never appear in audit logs.
 
+mod encrypted;
 mod sink;
 
 use std::io::Write;
@@ -11,6 +12,7 @@ use std::path::{Path, PathBuf};
 use agentzero_core::AuditEvent;
 use thiserror::Error;
 
+pub use encrypted::EncryptedAuditLogger;
 pub use sink::{AuditSink, InMemorySink};
 
 #[derive(Debug, Error)]

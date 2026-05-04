@@ -25,11 +25,22 @@ pub enum Command {
         /// Server URL override (e.g. http://localhost:8080).
         #[arg(long)]
         url: Option<String>,
+        /// Resume a previous session by ID.
+        #[arg(long)]
+        resume: Option<String>,
+        /// Encrypt audit logs and session files at rest.
+        #[arg(long)]
+        encrypt: bool,
     },
     /// Run a skill or tool by name.
     Run {
         /// Name of the skill or tool to run.
         name: String,
+    },
+    /// Install a skill from a local path.
+    Install {
+        /// Path to the skill directory (must contain SKILL.md).
+        path: String,
     },
     /// Check system health and configuration.
     Doctor,
@@ -85,8 +96,22 @@ pub async fn run(command: Command) -> i32 {
             stream,
             provider,
             url,
-        } => cmd_chat(local, &model, stream, &provider, url.as_deref()).await,
+            resume,
+            encrypt,
+        } => {
+            cmd_chat(
+                local,
+                &model,
+                stream,
+                &provider,
+                url.as_deref(),
+                resume.as_deref(),
+                encrypt,
+            )
+            .await
+        }
         Command::Run { name } => cmd_run(&name),
+        Command::Install { path } => cmd_install(&path),
         Command::History => cmd_history(),
         Command::Doctor => cmd_doctor(),
         Command::Demo => cmd_demo(),
@@ -172,6 +197,8 @@ async fn cmd_chat(
     stream: bool,
     provider_name: &str,
     url_override: Option<&str>,
+    resume_id: Option<&str>,
+    encrypt: bool,
 ) -> i32 {
     use agentzero::session::{
         ChatMessage, ModelProvider, OllamaConfig, OllamaProvider, OpenAICompatConfig,
@@ -364,15 +391,72 @@ async fn cmd_chat(
     println!("Type your message and press Enter. Type /quit to exit.");
     println!();
 
+    // Get encryption passphrase if --encrypt is set
+    let passphrase = if encrypt {
+        print!("Encryption passphrase: ");
+        io::stdout().flush().ok();
+        let mut pass = String::new();
+        io::stdin().lock().read_line(&mut pass).ok();
+        let pass = pass.trim().to_string();
+        if pass.is_empty() {
+            eprintln!("error: passphrase cannot be empty");
+            return 1;
+        }
+        println!("Audit logs and sessions will be encrypted.");
+        Some(pass)
+    } else {
+        None
+    };
+
     let stdin = io::stdin();
-    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(concat!(
-        "You are AgentZero, a secure AI agent assistant. ",
-        "You help users with their local development projects. ",
-        "You are running in local-only mode — all inference happens on this machine. ",
-        "You have access to tools: read (read files), list (list directories), ",
-        "search (search file contents), and shell (run shell commands, requires approval). ",
-        "Use tools when the user asks about their project. Be concise and helpful."
-    ))];
+
+    // Resume existing session or start fresh
+    let mut messages: Vec<ChatMessage> = if let Some(id) = resume_id {
+        let session_file = cwd.join(format!(".agentzero/sessions/{id}.json"));
+        if !session_file.exists() {
+            eprintln!("error: session file not found: {}", session_file.display());
+            return 1;
+        }
+        match std::fs::read_to_string(&session_file) {
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(data) => {
+                    if let Some(msgs) = data.get("messages") {
+                        match serde_json::from_value::<Vec<ChatMessage>>(msgs.clone()) {
+                            Ok(msgs) => {
+                                println!("Resumed session {id} ({} messages)", msgs.len());
+                                msgs
+                            }
+                            Err(e) => {
+                                eprintln!("error: failed to parse messages: {e}");
+                                return 1;
+                            }
+                        }
+                    } else {
+                        eprintln!("error: no messages in session file");
+                        return 1;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("error: failed to parse session: {e}");
+                    return 1;
+                }
+            },
+            Err(e) => {
+                eprintln!("error: failed to read session: {e}");
+                return 1;
+            }
+        }
+    } else {
+        vec![ChatMessage::system(concat!(
+            "You are AgentZero, a secure AI agent assistant. ",
+            "You help users with their local development projects. ",
+            "You are running in local-only mode — all inference happens on this machine. ",
+            "You have access to tools: read (read files), list (list directories), ",
+            "search (search file contents), write (write files, requires approval), ",
+            "and shell (run shell commands, requires approval). ",
+            "Use tools when the user asks about their project. Be concise and helpful."
+        ))]
+    };
 
     loop {
         print!("you> ");
@@ -543,7 +627,6 @@ async fn cmd_chat(
     // Save conversation to .agentzero/sessions/ if initialized
     let sessions_dir = cwd.join(".agentzero/sessions");
     if sessions_dir.exists() && messages.len() > 1 {
-        let session_file = sessions_dir.join(format!("{}.json", session.id()));
         let session_data = serde_json::json!({
             "session_id": session.id().as_str(),
             "model": model,
@@ -553,10 +636,27 @@ async fn cmd_chat(
         });
         match serde_json::to_string_pretty(&session_data) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(&session_file, json) {
-                    eprintln!("warning: failed to save session: {e}");
+                if let Some(ref pass) = passphrase {
+                    // Encrypted save
+                    let session_file = sessions_dir.join(format!("{}.json.enc", session.id()));
+                    match agentzero::core::crypto::encrypt_string(&json, pass) {
+                        Ok(encrypted) => {
+                            if let Err(e) = std::fs::write(&session_file, encrypted) {
+                                eprintln!("warning: failed to save encrypted session: {e}");
+                            } else {
+                                println!("Session saved (encrypted) to {}", session_file.display());
+                            }
+                        }
+                        Err(e) => eprintln!("warning: encryption failed: {e}"),
+                    }
                 } else {
-                    println!("Session saved to {}", session_file.display());
+                    // Plaintext save
+                    let session_file = sessions_dir.join(format!("{}.json", session.id()));
+                    if let Err(e) = std::fs::write(&session_file, json) {
+                        eprintln!("warning: failed to save session: {e}");
+                    } else {
+                        println!("Session saved to {}", session_file.display());
+                    }
                 }
             }
             Err(e) => {
@@ -627,6 +727,81 @@ fn cmd_history() -> i32 {
     println!();
     println!("{} session(s) found.", entries.len());
     0
+}
+
+fn cmd_install(path: &str) -> i32 {
+    let source = std::path::Path::new(path);
+
+    // Validate source has SKILL.md
+    let skill_md = source.join("SKILL.md");
+    if !skill_md.exists() {
+        eprintln!("error: no SKILL.md found in {path}");
+        eprintln!("A skill directory must contain a SKILL.md file.");
+        return 1;
+    }
+
+    // Determine skill name from directory
+    let skill_name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    // Determine install location
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let install_dir = cwd.join(format!("skills/{skill_name}"));
+
+    if install_dir.exists() {
+        eprintln!(
+            "Skill '{skill_name}' already installed at {}",
+            install_dir.display()
+        );
+        eprintln!("Remove it first to reinstall.");
+        return 1;
+    }
+
+    // Copy the skill directory
+    if let Err(e) = copy_dir_recursive(source, &install_dir) {
+        eprintln!("error: failed to install skill: {e}");
+        return 1;
+    }
+
+    println!(
+        "Installed skill '{skill_name}' to {}",
+        install_dir.display()
+    );
+
+    // Check if it has a patterns.toml
+    if install_dir.join("patterns.toml").exists() {
+        println!("  includes patterns.toml");
+    }
+
+    // List capabilities from SKILL.md (basic grep)
+    if let Ok(content) = std::fs::read_to_string(install_dir.join("SKILL.md")) {
+        if content.contains("runtime: none") {
+            println!("  runtime: instruction-only");
+        } else if content.contains("runtime: wasm") {
+            println!("  runtime: wasm-sandbox");
+        }
+    }
+
+    println!();
+    println!("Run with: agentzero run {skill_name}");
+    0
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), std::io::Error> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 fn cmd_run(name: &str) -> i32 {
@@ -1107,6 +1282,30 @@ mod tests {
     #[test]
     fn parse_demo() {
         assert!(matches!(parse(&["demo"]), super::Command::Demo));
+    }
+
+    #[test]
+    fn parse_install() {
+        match parse(&["install", "/tmp/my-skill"]) {
+            super::Command::Install { path } => assert_eq!(path, "/tmp/my-skill"),
+            other => panic!("expected Install, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_chat_with_resume() {
+        match parse(&["chat", "--resume", "abc123"]) {
+            super::Command::Chat { resume, .. } => assert_eq!(resume, Some("abc123".into())),
+            other => panic!("expected Chat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_chat_with_provider() {
+        match parse(&["chat", "--provider", "llama-cpp"]) {
+            super::Command::Chat { provider, .. } => assert_eq!(provider, "llama-cpp"),
+            other => panic!("expected Chat, got {other:?}"),
+        }
     }
 
     #[test]

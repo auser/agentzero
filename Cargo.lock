@@ -65,6 +65,7 @@ name = "agentzero-audit"
 version = "0.1.0"
 dependencies = [
  "agentzero-core",
+ "agentzero-tracing",
  "chrono",
  "serde",
  "serde_json",
