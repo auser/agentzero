@@ -1,0 +1,17 @@
+[package]
+name = "agentzero-mcp"
+version = "0.1.0"
+description = "MCP (Model Context Protocol) server for AgentZero — exposes tools to any MCP client"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agentzero-core = { workspace = true }
+agentzero-policy = { workspace = true }
+agentzero-session = { workspace = true }
+agentzero-tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }

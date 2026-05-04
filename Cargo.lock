@@ -53,6 +53,7 @@ dependencies = [
  "agentzero-acp",
  "agentzero-audit",
  "agentzero-core",
+ "agentzero-mcp",
  "agentzero-policy",
  "agentzero-sandbox",
  "agentzero-session",
@@ -109,6 +110,20 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "uuid",
+]
+
+[[package]]
+name = "agentzero-mcp"
+version = "0.1.0"
+dependencies = [
+ "agentzero-core",
+ "agentzero-policy",
+ "agentzero-session",
+ "agentzero-tracing",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

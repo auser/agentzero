@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 14 COMPLETE**
+**Status: PHASE 15 COMPLETE**
 
 ## Tasks
 
@@ -150,11 +150,22 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] Improved `doctor`: shows installed skills, vault secrets count, session count, provider list.
 - [x] Doctor loads and reports policy rules, settings, and ACP availability.
 
+### Phase 15: MCP Server
+- [x] MCP server crate (`agentzero-mcp`) implementing Model Context Protocol.
+- [x] JSON-RPC 2.0 over stdio transport (newline-delimited).
+- [x] `agentzero mcp` starts server — any MCP client can connect.
+- [x] `initialize` returns server info + capabilities.
+- [x] `tools/list` returns 5 tools with proper JSON schemas.
+- [x] `tools/call` executes tools through AgentZero session with policy enforcement.
+- [x] read_file, list_directory, search_files, write_file, run_command tools.
+- [x] Policy loaded from .agentzero/policy.yml at startup.
+- [x] Tool execution goes through full session audit trail.
+- [x] 13 MCP tests (protocol, server handlers, tool execution).
+
 ## Not Yet (deferred)
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
-- [ ] Wire ACP chat/tool_call to session engine (protocol ready, handlers are stubs).
-- [ ] MCP bridge.
+- [ ] Wire ACP chat/tool_call to session engine.
 - [ ] Remote package registry.
 
 ## Notes

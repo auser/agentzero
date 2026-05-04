@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     ".",
     "crates/agentzero-acp",
+    "crates/agentzero-mcp",
     "crates/agentzero-audit",
     "crates/agentzero-cli",
     "crates/agentzero-core",
@@ -26,6 +27,7 @@ repository.workspace = true
 [dependencies]
 agentzero-acp = { workspace = true }
 agentzero-audit = { workspace = true }
+agentzero-mcp = { workspace = true }
 agentzero-core = { workspace = true }
 agentzero-policy = { workspace = true }
 agentzero-sandbox = { workspace = true }
@@ -42,6 +44,7 @@ repository = "https://github.com/auser/agentzero"
 [workspace.dependencies]
 agentzero = { path = "." }
 agentzero-acp = { path = "crates/agentzero-acp" }
+agentzero-mcp = { path = "crates/agentzero-mcp" }
 agentzero-audit = { path = "crates/agentzero-audit" }
 agentzero-core = { path = "crates/agentzero-core" }
 agentzero-policy = { path = "crates/agentzero-policy" }

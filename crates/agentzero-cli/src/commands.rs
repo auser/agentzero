@@ -44,6 +44,8 @@ pub enum Command {
     },
     /// Start the ACP server for editor integrations.
     Serve,
+    /// Start the MCP server (tools for Claude Code, Cursor, etc.).
+    Mcp,
     /// Check system health and configuration.
     Doctor,
     /// Run a minimal safe demo using core types.
@@ -137,6 +139,7 @@ pub async fn run(command: Command) -> i32 {
         Command::Install { path } => cmd_install(&path),
         Command::History => cmd_history(),
         Command::Serve => cmd_serve().await,
+        Command::Mcp => cmd_mcp().await,
         Command::Doctor => cmd_doctor(),
         Command::Demo => cmd_demo(),
         Command::Policy { action } => match action {
@@ -275,6 +278,42 @@ async fn cmd_serve() -> i32 {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("ACP server error: {e}");
+            1
+        }
+    }
+}
+
+async fn cmd_mcp() -> i32 {
+    use agentzero::mcp::{McpServer, McpServerConfig};
+
+    // Load policy if available
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let policy_path = cwd.join(".agentzero/policy.yml");
+    let policy = if policy_path.exists() {
+        agentzero::policy::load_policy_file(&policy_path)
+            .map(agentzero::policy::PolicyEngine::with_rules)
+            .unwrap_or_else(|_| agentzero::policy::PolicyEngine::deny_by_default())
+    } else {
+        agentzero::policy::PolicyEngine::deny_by_default()
+    };
+
+    let config = McpServerConfig {
+        project_root: Some(cwd.to_string_lossy().to_string()),
+        policy,
+    };
+
+    let server = match McpServer::new(config) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: failed to start MCP server: {e}");
+            return 1;
+        }
+    };
+
+    match server.run().await {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("MCP server error: {e}");
             1
         }
     }
