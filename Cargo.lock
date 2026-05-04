@@ -50,6 +50,7 @@ dependencies = [
 name = "agentzero"
 version = "0.1.0"
 dependencies = [
+ "agentzero-acp",
  "agentzero-audit",
  "agentzero-core",
  "agentzero-policy",
@@ -58,6 +59,18 @@ dependencies = [
  "agentzero-skills",
  "agentzero-tools",
  "agentzero-tracing",
+]
+
+[[package]]
+name = "agentzero-acp"
+version = "0.1.0"
+dependencies = [
+ "agentzero-core",
+ "agentzero-tracing",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

@@ -10,9 +10,10 @@ pub mod crypto;
 mod id;
 mod redaction;
 mod routing;
-mod secret;
+pub mod secret;
 mod trust;
 mod types;
+pub mod vault;
 
 pub use action::ActionKind;
 pub use id::{AgentId, ExecutionId, SessionId, SkillId, ToolId};

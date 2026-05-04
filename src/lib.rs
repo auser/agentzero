@@ -14,6 +14,7 @@
 //! use agentzero::tracing::info;
 //! ```
 
+pub use agentzero_acp as acp;
 pub use agentzero_audit as audit;
 pub use agentzero_core as core;
 pub use agentzero_policy as policy;

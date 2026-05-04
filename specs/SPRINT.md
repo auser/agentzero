@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 12 COMPLETE**
+**Status: PHASE 13 COMPLETE**
 
 ## Tasks
 
@@ -130,6 +130,18 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] `session.end()` emits session_end lifecycle event.
 - [x] `init --private` creates complete `.agentzero/` structure: policy.yml, settings.toml, models.json, audit/, sessions/, prompts/, skills/, vault/.
 - [x] 4 new session tests: prepare_for_model (local pass-through), redact PII, redact secrets, session end.
+
+### Phase 13: Secret Vault, Content Provenance, Skill Discovery, ACP
+- [x] Encrypted secret vault (`vault add/get/remove/list`), AES-256-GCM per-secret encryption.
+- [x] `agentzero vault add github token` stores encrypted in `.agentzero/vault/github/token.enc`.
+- [x] `resolve_for_execution()` — only path where raw secret material is exposed.
+- [x] Content provenance: tool output wrapped with `[UNTRUSTED TOOL OUTPUT]` markers per ADR 0008.
+- [x] Discoverable skill runner: `agentzero run <name>` scans `skills/` for installed skills.
+- [x] Installed skills with `patterns.toml` run the scanner automatically.
+- [x] ACP adapter crate (`agentzero-acp`) — JSON-RPC over stdio protocol.
+- [x] ACP methods: initialize, chat, tool_call, session_info, list_tools, shutdown.
+- [x] ACP server reads NDJSON from stdin, dispatches, writes responses to stdout.
+- [x] 7 vault tests + 7 ACP tests + 4 protocol tests.
 
 ## Not Yet (deferred)
 
