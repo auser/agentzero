@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "crates/agentzero-audit",
+    "crates/agentzero-cli",
+    "crates/agentzero-core",
+    "crates/agentzero-policy",
+    "crates/agentzero-sandbox",
+    "crates/agentzero-skills",
+    "crates/agentzero-tools",
+]
+
+[package]
+name = "agentzero"
+version = "0.1.0"
+description = "AgentZero: secure AI agent runtime — facade crate re-exporting all sub-crates"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agentzero-core = { workspace = true }
+agentzero-audit = { workspace = true }
+agentzero-policy = { workspace = true }
+agentzero-sandbox = { workspace = true }
+agentzero-skills = { workspace = true }
+agentzero-tools = { workspace = true }
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/auser/agentzero"
+
+[workspace.dependencies]
+agentzero = { path = "." }
+agentzero-core = { path = "crates/agentzero-core" }
+agentzero-audit = { path = "crates/agentzero-audit" }
+agentzero-policy = { path = "crates/agentzero-policy" }
+agentzero-sandbox = { path = "crates/agentzero-sandbox" }
+agentzero-skills = { path = "crates/agentzero-skills" }
+agentzero-tools = { path = "crates/agentzero-tools" }
+
+# External dependencies
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }

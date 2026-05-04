@@ -1,0 +1,11 @@
+/target/
+.agentzero/audit/*.jsonl
+.agentzero/sessions/
+.agentzero/vault/
+.env
+*.pem
+*.key
+.DS_Store
+specs/scratch.md
+.claude
+

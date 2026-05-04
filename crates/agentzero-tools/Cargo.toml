@@ -1,0 +1,13 @@
+[package]
+name = "agentzero-tools"
+version = "0.1.0"
+description = "Tool registry and built-in tools for AgentZero"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agentzero-core = { workspace = true }
+agentzero-policy = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

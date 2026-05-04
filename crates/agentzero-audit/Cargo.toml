@@ -1,0 +1,14 @@
+[package]
+name = "agentzero-audit"
+version = "0.1.0"
+description = "Audit event logging for AgentZero"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agentzero-core = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

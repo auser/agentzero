@@ -1,0 +1,14 @@
+[package]
+name = "agentzero-core"
+version = "0.1.0"
+description = "Core types and domain contracts for the AgentZero secure agent runtime"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }

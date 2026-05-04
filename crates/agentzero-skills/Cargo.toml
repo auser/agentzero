@@ -1,0 +1,15 @@
+[package]
+name = "agentzero-skills"
+version = "0.1.0"
+description = "Skill package manifest and loading contracts for AgentZero"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agentzero-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

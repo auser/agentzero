@@ -1,0 +1,12 @@
+[package]
+name = "agentzero-policy"
+version = "0.1.0"
+description = "Policy evaluation engine for AgentZero"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agentzero-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
