@@ -1,8 +1,9 @@
 //! Sandbox profile and execution contracts for AgentZero.
 //!
 //! Defines execution constraints per ADR 0006 (runtime isolation tiers).
-//! No actual process execution happens here — this crate models the
-//! contracts that sandbox implementations must satisfy.
+//! Includes WASM sandbox runtime (behind `wasm` feature flag).
+
+pub mod wasm;
 
 use agentzero_core::{Capability, ExecutionId, RuntimeTier};
 use serde::{Deserialize, Serialize};

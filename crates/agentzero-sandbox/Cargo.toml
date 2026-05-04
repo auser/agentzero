@@ -6,10 +6,16 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+wasm = ["wasmtime"]
+
 [dependencies]
 agentzero-core = { workspace = true }
+agentzero-tracing = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+wasmtime = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

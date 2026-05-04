@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 8 COMPLETE**
+**Status: PHASE 9 COMPLETE**
 
 ## Tasks
 
@@ -92,10 +92,17 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] `default-members` in workspace so `cargo run` defaults to CLI binary.
 - [x] 5 tool definitions (read, list, search, write, shell).
 
+### Phase 9: Persistence, History, WASM Skeleton
+- [x] Audit logging to `.agentzero/audit/` during chat sessions.
+- [x] Conversation persistence — saves chat history to `.agentzero/sessions/<id>.json`.
+- [x] `agentzero history` command lists past sessions with metadata.
+- [x] WASM sandbox engine (`wasmtime`-backed, behind `wasm` feature flag).
+- [x] WASM config: memory limits, fuel-based time limits, no ambient filesystem.
+- [x] Stub types when `wasm` feature is disabled (compiles without wasmtime).
+
 ## Not Yet
 
 - [ ] MVM runtime.
-- [ ] WASM runtime.
 - [ ] ACP adapter.
 - [ ] Package installer.
 - [ ] Gateway.

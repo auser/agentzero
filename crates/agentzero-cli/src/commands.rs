@@ -39,6 +39,8 @@ pub enum Command {
         #[command(subcommand)]
         action: AuditAction,
     },
+    /// List past chat sessions.
+    History,
     /// Manage secret vault handles.
     Vault {
         #[command(subcommand)]
@@ -77,6 +79,7 @@ pub async fn run(command: Command) -> i32 {
             stream,
         } => cmd_chat(local, &model, stream).await,
         Command::Run { name } => cmd_run(&name),
+        Command::History => cmd_history(),
         Command::Doctor => cmd_doctor(),
         Command::Demo => cmd_demo(),
         Command::Policy { action } => match action {
@@ -214,6 +217,19 @@ async fn cmd_chat(local: bool, model: &str, stream: bool) -> i32 {
             eprintln!("error: failed to create session: {e}");
             return 1;
         }
+    };
+    // Wire audit to disk if project is initialized
+    let audit_dir = cwd.join(".agentzero/audit");
+    let session = if audit_dir.exists() {
+        match session.with_audit_dir(&audit_dir) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("warning: failed to set up audit logging: {e}");
+                return 1;
+            }
+        }
+    } else {
+        session
     };
     println!("Session: {}", session.id());
 
@@ -424,6 +440,92 @@ async fn cmd_chat(local: bool, model: &str, stream: bool) -> i32 {
         }
     }
 
+    // Save conversation to .agentzero/sessions/ if initialized
+    let sessions_dir = cwd.join(".agentzero/sessions");
+    if sessions_dir.exists() && messages.len() > 1 {
+        let session_file = sessions_dir.join(format!("{}.json", session.id()));
+        let session_data = serde_json::json!({
+            "session_id": session.id().as_str(),
+            "model": model,
+            "mode": mode,
+            "message_count": messages.len(),
+            "messages": messages,
+        });
+        match serde_json::to_string_pretty(&session_data) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&session_file, json) {
+                    eprintln!("warning: failed to save session: {e}");
+                } else {
+                    println!("Session saved to {}", session_file.display());
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: failed to serialize session: {e}");
+            }
+        }
+    }
+
+    0
+}
+
+fn cmd_history() -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let sessions_dir = cwd.join(".agentzero/sessions");
+
+    if !sessions_dir.exists() {
+        println!("No sessions directory. Run `agentzero init` first.");
+        return 1;
+    }
+
+    let mut entries: Vec<_> = match std::fs::read_dir(&sessions_dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+            .collect(),
+        Err(e) => {
+            eprintln!("error: failed to read sessions directory: {e}");
+            return 1;
+        }
+    };
+
+    if entries.is_empty() {
+        println!("No past sessions found.");
+        return 0;
+    }
+
+    // Sort by modification time, most recent first
+    entries.sort_by(|a, b| {
+        let a_time = a.metadata().and_then(|m| m.modified()).ok();
+        let b_time = b.metadata().and_then(|m| m.modified()).ok();
+        b_time.cmp(&a_time)
+    });
+
+    println!("Past sessions:");
+    println!();
+    for entry in &entries {
+        let path = entry.path();
+        let session_id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
+
+        // Try to read session metadata
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
+                let model = data.get("model").and_then(|v| v.as_str()).unwrap_or("?");
+                let msg_count = data
+                    .get("message_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let mode = data.get("mode").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("  {session_id}  model={model}  messages={msg_count}  mode={mode}");
+                continue;
+            }
+        }
+        println!("  {session_id}");
+    }
+    println!();
+    println!("{} session(s) found.", entries.len());
     0
 }
 
@@ -895,6 +997,11 @@ mod tests {
     #[test]
     fn parse_doctor() {
         assert!(matches!(parse(&["doctor"]), super::Command::Doctor));
+    }
+
+    #[test]
+    fn parse_history() {
+        assert!(matches!(parse(&["history"]), super::Command::History));
     }
 
     #[test]
