@@ -1,0 +1,18 @@
+[package]
+name = "agentzero-session"
+version = "0.1.0"
+description = "Session engine for AgentZero — orchestrates model calls, tool invocation, and policy enforcement"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agentzero-core = { workspace = true }
+agentzero-audit = { workspace = true }
+agentzero-policy = { workspace = true }
+agentzero-tools = { workspace = true }
+agentzero-tracing = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "agentzero-tracing"
+version = "0.1.0"
+description = "Centralized tracing and logging for AgentZero"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

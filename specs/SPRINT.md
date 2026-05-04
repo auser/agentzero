@@ -44,13 +44,22 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] Approval scope model.
 - [x] `agentzero demo` exercises all security primitives end-to-end.
 
-### Phase 4: Minimal Session Engine (next)
-- [ ] Local-only session mode.
-- [ ] Model provider abstraction.
-- [ ] Supervised tool invocation.
-- [ ] Read/list/search tools.
-- [ ] Proposed edit output.
-- [ ] Shell approval flow.
+### Phase 4: Minimal Session Engine
+- [x] Local-only session mode (`SessionMode::LocalOnly`).
+- [x] Model provider abstraction (`ModelProvider` trait, `LocalStubProvider`).
+- [x] Supervised tool invocation (`ToolExecutor` with policy checks + path validation).
+- [x] Read/list/search tools (real filesystem operations).
+- [x] Proposed edit output (`propose_edit` tool — output only, no writes).
+- [x] Shell approval flow (policy-based `RequiresApproval` for shell commands).
+- [x] Centralized tracing crate (`agentzero-tracing` wrapping `tracing` + `tracing-subscriber`).
+- [x] Session engine (`agentzero-session` — ties model/tools/policy/audit together).
+
+### Phase 5: First Demo (next)
+- [ ] Built-in `repo-security-audit` skill integration.
+- [ ] Run against this repository.
+- [ ] Produce `.agentzero/audit/<session>.jsonl`.
+- [ ] Produce human-readable audit report.
+- [ ] Add malicious fixture tests.
 
 ## Not Yet
 

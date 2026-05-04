@@ -7,8 +7,10 @@ members = [
     "crates/agentzero-core",
     "crates/agentzero-policy",
     "crates/agentzero-sandbox",
+    "crates/agentzero-session",
     "crates/agentzero-skills",
     "crates/agentzero-tools",
+    "crates/agentzero-tracing",
 ]
 
 [package]
@@ -20,12 +22,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-agentzero-core = { workspace = true }
 agentzero-audit = { workspace = true }
+agentzero-core = { workspace = true }
 agentzero-policy = { workspace = true }
 agentzero-sandbox = { workspace = true }
+agentzero-session = { workspace = true }
 agentzero-skills = { workspace = true }
 agentzero-tools = { workspace = true }
+agentzero-tracing = { workspace = true }
 
 [workspace.package]
 edition = "2021"
@@ -34,12 +38,14 @@ repository = "https://github.com/auser/agentzero"
 
 [workspace.dependencies]
 agentzero = { path = "." }
-agentzero-core = { path = "crates/agentzero-core" }
 agentzero-audit = { path = "crates/agentzero-audit" }
+agentzero-core = { path = "crates/agentzero-core" }
 agentzero-policy = { path = "crates/agentzero-policy" }
 agentzero-sandbox = { path = "crates/agentzero-sandbox" }
+agentzero-session = { path = "crates/agentzero-session" }
 agentzero-skills = { path = "crates/agentzero-skills" }
 agentzero-tools = { path = "crates/agentzero-tools" }
+agentzero-tracing = { path = "crates/agentzero-tracing" }
 
 # External dependencies
 chrono = { version = "0.4", features = ["serde"] }
@@ -48,4 +54,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4"] }
