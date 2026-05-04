@@ -7,6 +7,8 @@ pub mod context;
 pub mod ollama;
 pub mod openai_compat;
 mod provider;
+pub mod retry;
+pub mod router;
 mod session;
 mod tool_exec;
 
