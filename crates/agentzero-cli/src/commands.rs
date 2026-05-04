@@ -320,6 +320,19 @@ async fn cmd_mcp() -> i32 {
 }
 
 /// Load settings from .agentzero/settings.toml and return (provider, model) defaults.
+fn default_system_prompt() -> String {
+    concat!(
+        "You are AgentZero, a secure AI agent assistant. ",
+        "You help users with their local development projects. ",
+        "You are running in local-only mode — all inference happens on this machine. ",
+        "You have access to tools: read (read files), list (list directories), ",
+        "search (search file contents), write (write files, requires approval), ",
+        "and shell (run shell commands, requires approval). ",
+        "Use tools when the user asks about their project. Be concise and helpful."
+    )
+    .to_string()
+}
+
 fn load_settings() -> (Option<String>, Option<String>) {
     let cwd = std::env::current_dir().unwrap_or_default();
     let settings_path = cwd.join(".agentzero/settings.toml");
@@ -615,15 +628,22 @@ async fn cmd_chat(
             }
         }
     } else {
-        vec![ChatMessage::system(concat!(
-            "You are AgentZero, a secure AI agent assistant. ",
-            "You help users with their local development projects. ",
-            "You are running in local-only mode — all inference happens on this machine. ",
-            "You have access to tools: read (read files), list (list directories), ",
-            "search (search file contents), write (write files, requires approval), ",
-            "and shell (run shell commands, requires approval). ",
-            "Use tools when the user asks about their project. Be concise and helpful."
-        ))]
+        // Load custom system prompt from .agentzero/prompts/system.md if available
+        let system_prompt = {
+            let prompt_path = cwd.join(".agentzero/prompts/system.md");
+            if prompt_path.exists() {
+                match std::fs::read_to_string(&prompt_path) {
+                    Ok(content) => {
+                        println!("System prompt loaded from .agentzero/prompts/system.md");
+                        content
+                    }
+                    Err(_) => default_system_prompt(),
+                }
+            } else {
+                default_system_prompt()
+            }
+        };
+        vec![ChatMessage::system(&system_prompt)]
     };
 
     loop {
@@ -665,6 +685,18 @@ async fn cmd_chat(
         }
 
         messages.push(ChatMessage::user(input));
+
+        // Compact context if needed
+        let compact_config = agentzero::session::context::ContextConfig::default();
+        if agentzero::session::context::needs_compaction(&messages, &compact_config) {
+            let before = messages.len();
+            messages = agentzero::session::context::compact(&messages, &compact_config);
+            println!(
+                "  [context compacted: {} → {} messages]",
+                before,
+                messages.len()
+            );
+        }
 
         // Chat with tool calling loop
         let max_tool_rounds = 5;
@@ -1010,7 +1042,76 @@ fn cmd_vault(action: VaultAction) -> i32 {
     }
 }
 
+fn cmd_install_git(url: &str) -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_default();
+
+    // Derive skill name from URL
+    let skill_name = url
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .rsplit('/')
+        .next()
+        .unwrap_or("unknown");
+
+    let install_dir = cwd.join(format!("skills/{skill_name}"));
+    if install_dir.exists() {
+        eprintln!(
+            "Skill '{skill_name}' already installed at {}",
+            install_dir.display()
+        );
+        return 1;
+    }
+
+    println!("Cloning {url} → skills/{skill_name}/");
+
+    let output = std::process::Command::new("git")
+        .args(["clone", "--depth", "1", url, &install_dir.to_string_lossy()])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                eprintln!("error: git clone failed: {stderr}");
+                return 1;
+            }
+        }
+        Err(e) => {
+            eprintln!("error: failed to run git: {e}");
+            eprintln!("Make sure git is installed.");
+            return 1;
+        }
+    }
+
+    // Remove .git directory (we don't need history for installed skills)
+    let git_dir = install_dir.join(".git");
+    if git_dir.exists() {
+        std::fs::remove_dir_all(&git_dir).ok();
+    }
+
+    // Validate SKILL.md
+    if !install_dir.join("SKILL.md").exists() {
+        eprintln!("warning: no SKILL.md found in cloned repository");
+        eprintln!("The skill may not be valid. Keeping it installed anyway.");
+    } else {
+        println!("Installed skill '{skill_name}' from {url}");
+    }
+
+    if install_dir.join("patterns.toml").exists() {
+        println!("  includes patterns.toml");
+    }
+
+    println!();
+    println!("Run with: agentzero run {skill_name}");
+    0
+}
+
 fn cmd_install(path: &str) -> i32 {
+    // Check if it's a git URL
+    if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("git@") {
+        return cmd_install_git(path);
+    }
+
     let source = std::path::Path::new(path);
 
     // Validate source has SKILL.md

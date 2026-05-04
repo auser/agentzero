@@ -67,6 +67,8 @@ name = "agentzero-acp"
 version = "0.1.0"
 dependencies = [
  "agentzero-core",
+ "agentzero-policy",
+ "agentzero-session",
  "agentzero-tracing",
  "serde",
  "serde_json",

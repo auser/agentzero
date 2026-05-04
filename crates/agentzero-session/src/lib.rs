@@ -3,6 +3,7 @@
 //! Orchestrates model calls, tool invocation, and policy enforcement
 //! within a single supervised session (ADR 0001).
 
+pub mod context;
 pub mod ollama;
 pub mod openai_compat;
 mod provider;

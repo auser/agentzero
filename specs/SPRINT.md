@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 15 COMPLETE**
+**Status: PHASE 16 COMPLETE**
 
 ## Tasks
 
@@ -162,11 +162,21 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] Tool execution goes through full session audit trail.
 - [x] 13 MCP tests (protocol, server handlers, tool execution).
 
+### Phase 16: Tier 3 — ACP Wiring, Context Compaction, Prompts, Git Install
+- [x] ACP server wired to real session engine (tool_call executes tools with policy).
+- [x] ACP session_info returns real session ID.
+- [x] Context compaction: auto-summarizes older messages when conversation exceeds limits.
+- [x] Preserves system message + recent N messages, summarizes middle.
+- [x] Prompt templates: loads system prompt from `.agentzero/prompts/system.md`.
+- [x] Falls back to built-in default prompt when no custom prompt exists.
+- [x] Git-based skill install: `agentzero install https://github.com/user/skill`.
+- [x] Clones with `--depth 1`, removes `.git`, validates SKILL.md.
+- [x] 6 context compaction tests + 4 ACP tool execution tests.
+
 ## Not Yet (deferred)
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
-- [ ] Wire ACP chat/tool_call to session engine.
-- [ ] Remote package registry.
+- [ ] Remote package registry (authenticated, with lockfile verification).
 
 ## Notes
 
