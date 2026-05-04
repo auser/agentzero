@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 3 COMPLETE**
+**Status: PHASE 6 COMPLETE**
 
 ## Tasks
 
@@ -62,6 +62,16 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] Report written to `.agentzero/audit/` when project is initialized.
 - [x] Malicious fixture tests (secrets, PII, prompt injection, package scripts, sensitive files).
 - [x] 12 scanner tests + 3 report tests covering all finding categories.
+
+### Phase 6: Policy Loading, Model Provider, Chat Loop
+- [x] Policy YAML/TOML loader (`load_policy_file` parses `.agentzero/policy.yml` into rules).
+- [x] `init --private` writes valid TOML policy files.
+- [x] `policy status` loads and displays active rules.
+- [x] Ollama model provider (`OllamaProvider` — local HTTP client for Ollama REST API).
+- [x] Health check, chat completion, configurable model/endpoint.
+- [x] Interactive chat loop (`agentzero chat --local` with Ollama backend).
+- [x] Policy loaded from project config at chat startup.
+- [x] System prompt, conversation history, `/quit` command.
 
 ## Not Yet
 

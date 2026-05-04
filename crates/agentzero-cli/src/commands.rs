@@ -65,7 +65,7 @@ pub enum VaultAction {
 pub async fn run(command: Command) -> i32 {
     match command {
         Command::Init { private } => cmd_init(private),
-        Command::Chat { local } => cmd_chat(local),
+        Command::Chat { local } => cmd_chat(local).await,
         Command::Run { name } => cmd_run(&name),
         Command::Doctor => cmd_doctor(),
         Command::Demo => cmd_demo(),
@@ -108,26 +108,26 @@ fn cmd_init(private: bool) -> i32 {
         }
     }
 
-    // Write default policy
+    // Write default policy (TOML format)
     let policy_content = if private {
         concat!(
             "# AgentZero Policy (private-by-default)\n",
-            "version: 1\n",
-            "default_classification: private\n",
-            "model_routing: local_only\n",
-            "shell_commands: require_approval\n",
-            "file_write: require_approval\n",
-            "network: deny\n",
+            "version = 1\n",
+            "default_classification = \"private\"\n",
+            "model_routing = \"local_only\"\n",
+            "shell_commands = \"require_approval\"\n",
+            "file_write = \"require_approval\"\n",
+            "network = \"deny\"\n",
         )
     } else {
         concat!(
             "# AgentZero Policy (default)\n",
-            "version: 1\n",
-            "default_classification: private\n",
-            "model_routing: local_preferred\n",
-            "shell_commands: require_approval\n",
-            "file_write: require_approval\n",
-            "network: require_approval\n",
+            "version = 1\n",
+            "default_classification = \"private\"\n",
+            "model_routing = \"local_preferred\"\n",
+            "shell_commands = \"require_approval\"\n",
+            "file_write = \"require_approval\"\n",
+            "network = \"require_approval\"\n",
         )
     };
 
@@ -145,11 +145,121 @@ fn cmd_init(private: bool) -> i32 {
     0
 }
 
-fn cmd_chat(local: bool) -> i32 {
+async fn cmd_chat(local: bool) -> i32 {
+    use agentzero::session::{ChatMessage, ModelProvider, OllamaConfig, OllamaProvider};
+    use std::io::{self, BufRead, Write};
+
     let mode = if local { "local-only" } else { "default" };
-    eprintln!("agentzero chat ({mode} mode): session engine not yet implemented");
-    eprintln!("Next: implement Phase 4 (minimal session engine)");
-    1
+    println!("AgentZero Chat ({mode})");
+    println!("======================");
+
+    // Try to load policy from .agentzero/policy.yml
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let policy_path = cwd.join(".agentzero/policy.yml");
+    let policy = if policy_path.exists() {
+        match agentzero::policy::load_policy_file(&policy_path) {
+            Ok(rules) => {
+                println!(
+                    "Policy loaded: {} rules from {}",
+                    rules.len(),
+                    policy_path.display()
+                );
+                agentzero::policy::PolicyEngine::with_rules(rules)
+            }
+            Err(e) => {
+                eprintln!("warning: failed to load policy: {e}");
+                agentzero::policy::PolicyEngine::deny_by_default()
+            }
+        }
+    } else {
+        println!("No policy file found. Using deny-by-default.");
+        agentzero::policy::PolicyEngine::deny_by_default()
+    };
+
+    let _ = policy; // Will wire into session once interactive tool use is added
+
+    // Check Ollama availability
+    let config = OllamaConfig::default();
+    let provider = OllamaProvider::new(config);
+    println!("Model: {} ({})", provider.model_name(), provider.name());
+
+    match provider.health_check().await {
+        Ok(true) => println!("Ollama: connected"),
+        Ok(false) => {
+            eprintln!("Ollama responded but may not be healthy. Continuing anyway.");
+        }
+        Err(e) => {
+            eprintln!("error: cannot connect to Ollama at http://localhost:11434");
+            eprintln!("  {e}");
+            eprintln!();
+            eprintln!("Make sure Ollama is running: `ollama serve`");
+            return 1;
+        }
+    }
+
+    println!();
+    println!("Type your message and press Enter. Type /quit to exit.");
+    println!();
+
+    let stdin = io::stdin();
+    let mut messages: Vec<ChatMessage> = vec![ChatMessage {
+        role: "system".into(),
+        content: concat!(
+            "You are AgentZero, a secure AI agent assistant. ",
+            "You help users with their local development projects. ",
+            "You are running in local-only mode — all inference happens on this machine. ",
+            "Be concise and helpful."
+        )
+        .into(),
+    }];
+
+    loop {
+        print!("you> ");
+        io::stdout().flush().ok();
+
+        let mut input = String::new();
+        match stdin.lock().read_line(&mut input) {
+            Ok(0) => break, // EOF
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("error reading input: {e}");
+                break;
+            }
+        }
+
+        let input = input.trim();
+        if input.is_empty() {
+            continue;
+        }
+        if input == "/quit" || input == "/exit" || input == "/q" {
+            println!("Goodbye.");
+            break;
+        }
+
+        messages.push(ChatMessage {
+            role: "user".into(),
+            content: input.to_string(),
+        });
+
+        match provider.chat(&messages).await {
+            Ok(response) => {
+                println!();
+                println!("agentzero> {response}");
+                println!();
+                messages.push(ChatMessage {
+                    role: "assistant".into(),
+                    content: response,
+                });
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                // Remove the failed user message so context stays clean
+                messages.pop();
+            }
+        }
+    }
+
+    0
 }
 
 fn cmd_run(name: &str) -> i32 {

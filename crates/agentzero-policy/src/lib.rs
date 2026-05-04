@@ -3,12 +3,14 @@
 //! Every meaningful action passes through policy evaluation before execution.
 //! Unknown permissions fail closed as denied (ADR 0003).
 
+mod loader;
 mod rules;
 
 use agentzero_core::{
     Capability, DataClassification, ModelRoutingDecision, PolicyDecision, RuntimeTier,
 };
 
+pub use loader::load_policy_file;
 pub use rules::PolicyRule;
 
 /// A policy request submitted for evaluation.

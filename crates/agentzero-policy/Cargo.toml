@@ -8,5 +8,7 @@ repository.workspace = true
 
 [dependencies]
 agentzero-core = { workspace = true }
+agentzero-tracing = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+toml = { workspace = true }
