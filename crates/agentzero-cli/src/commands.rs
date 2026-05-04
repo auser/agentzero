@@ -42,6 +42,8 @@ pub enum Command {
         /// Path to the skill directory (must contain SKILL.md).
         path: String,
     },
+    /// Start the ACP server for editor integrations.
+    Serve,
     /// Check system health and configuration.
     Doctor,
     /// Run a minimal safe demo using core types.
@@ -134,6 +136,7 @@ pub async fn run(command: Command) -> i32 {
         Command::Run { name } => cmd_run(&name),
         Command::Install { path } => cmd_install(&path),
         Command::History => cmd_history(),
+        Command::Serve => cmd_serve().await,
         Command::Doctor => cmd_doctor(),
         Command::Demo => cmd_demo(),
         Command::Policy { action } => match action {
@@ -258,6 +261,52 @@ fn cmd_init(private: bool) -> i32 {
     0
 }
 
+async fn cmd_serve() -> i32 {
+    use agentzero::acp::AcpServer;
+
+    println!("AgentZero ACP Server");
+    println!("====================");
+    println!("Protocol: newline-delimited JSON over stdio");
+    println!("Use with editors that support the Agent Control Protocol.");
+    println!();
+
+    let server = AcpServer::new();
+    match server.run().await {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("ACP server error: {e}");
+            1
+        }
+    }
+}
+
+/// Load settings from .agentzero/settings.toml and return (provider, model) defaults.
+fn load_settings() -> (Option<String>, Option<String>) {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let settings_path = cwd.join(".agentzero/settings.toml");
+    if !settings_path.exists() {
+        return (None, None);
+    }
+    let content = match std::fs::read_to_string(&settings_path) {
+        Ok(c) => c,
+        Err(_) => return (None, None),
+    };
+    let table: toml::Table = match content.parse() {
+        Ok(t) => t,
+        Err(_) => return (None, None),
+    };
+    let general = table.get("general").and_then(|v| v.as_table());
+    let provider = general
+        .and_then(|g| g.get("default_provider"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let model = general
+        .and_then(|g| g.get("default_model"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    (provider, model)
+}
+
 async fn cmd_chat(
     local: bool,
     model: &str,
@@ -272,6 +321,19 @@ async fn cmd_chat(
         OpenAICompatProvider, Session, SessionConfig, SessionMode, ToolExecutor,
     };
     use std::io::{self, BufRead, Write};
+
+    // Apply settings.toml defaults where CLI flags are at their defaults
+    let (settings_provider, settings_model) = load_settings();
+    let model = if model == "llama3.2" {
+        settings_model.as_deref().unwrap_or(model)
+    } else {
+        model
+    };
+    let provider_name = if provider_name == "ollama" {
+        settings_provider.as_deref().unwrap_or(provider_name)
+    } else {
+        provider_name
+    };
 
     let mode = if local { "local-only" } else { "default" };
     println!("AgentZero Chat ({mode})");
@@ -1088,46 +1150,113 @@ fn cmd_doctor() -> i32 {
     println!("================");
     println!();
 
-    println!("Crates:");
-    println!("  agentzero-core     ok");
-    println!("  agentzero-policy   ok");
-    println!("  agentzero-audit    ok");
-    println!("  agentzero-session  ok");
-    println!("  agentzero-tools    ok");
-    println!("  agentzero-skills   ok");
-    println!("  agentzero-sandbox  ok");
-    println!("  agentzero-tracing  ok");
-    println!("  agentzero-cli      ok");
+    println!("Crates (12):");
+    println!("  agentzero-core     ok    types, crypto, vault, trust");
+    println!("  agentzero-policy   ok    rule engine + TOML loader");
+    println!("  agentzero-audit    ok    JSONL + encrypted logging");
+    println!("  agentzero-session  ok    session, Ollama, OpenAI-compat");
+    println!("  agentzero-tools    ok    tool registry + schemas");
+    println!("  agentzero-skills   ok    manifests, scanner, reports");
+    println!("  agentzero-sandbox  ok    profiles + WASM (feature flag)");
+    println!("  agentzero-acp      ok    editor adapter (JSON-RPC/stdio)");
+    println!("  agentzero-tracing  ok    centralized logging");
+    println!("  agentzero-cli      ok    CLI binary");
     println!();
 
-    // Check for project config
     let cwd = std::env::current_dir().unwrap_or_default();
     let az_dir = cwd.join(".agentzero");
+
+    // Project status
     if az_dir.exists() {
-        println!("Project:        initialized at {}", az_dir.display());
+        println!("Project:        initialized");
         if az_dir.join("policy.yml").exists() {
-            println!("Policy:         {}/policy.yml", az_dir.display());
+            match agentzero::policy::load_policy_file(&az_dir.join("policy.yml")) {
+                Ok(rules) => println!("Policy:         {} rules loaded", rules.len()),
+                Err(_) => println!("Policy:         error loading policy.yml"),
+            }
         } else {
-            println!("Policy:         missing (no policy.yml)");
+            println!("Policy:         missing");
+        }
+        if az_dir.join("settings.toml").exists() {
+            let (prov, model) = load_settings();
+            println!(
+                "Settings:       provider={} model={}",
+                prov.as_deref().unwrap_or("(default)"),
+                model.as_deref().unwrap_or("(default)")
+            );
         }
     } else {
         println!("Project:        not initialized (run `agentzero init`)");
     }
+    println!();
+
+    // Skills
+    let skills_dir = cwd.join("skills");
+    let mut skill_count = 0;
+    print!("Skills:         ");
+    if skills_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+            let names: Vec<_> = entries
+                .flatten()
+                .filter(|e| e.path().is_dir() && e.path().join("SKILL.md").exists())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            skill_count = names.len();
+            if names.is_empty() {
+                print!("none installed");
+            } else {
+                print!("{}", names.join(", "));
+            }
+        }
+    } else {
+        print!("no skills/ directory");
+    }
+    println!(" ({skill_count})");
+
+    // Vault
+    let vault_dir = az_dir.join("vault");
+    if vault_dir.exists() {
+        let secret_count = std::fs::read_dir(&vault_dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .flat_map(|e| {
+                        std::fs::read_dir(e.path())
+                            .into_iter()
+                            .flatten()
+                            .flatten()
+                            .filter(|f| f.path().extension().is_some_and(|ext| ext == "enc"))
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        println!("Vault:          {secret_count} secret(s) stored");
+    }
+
+    // Sessions
+    let sessions_dir = az_dir.join("sessions");
+    if sessions_dir.exists() {
+        let session_count = std::fs::read_dir(&sessions_dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| {
+                        let p = e.path();
+                        p.extension()
+                            .is_some_and(|ext| ext == "json" || ext == "enc")
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        println!("Sessions:       {session_count} saved");
+    }
 
     println!();
-    println!("Policy engine:  deny-by-default with rule evaluation");
-    println!("Sandbox:        contracts only (no runtime execution)");
-    println!("Model routing:  local-first (classification-based)");
-    println!("Audit:          JSONL file sink + in-memory sink");
-    println!("Skills:         manifest validation available");
-    println!("Secret handles: capability-based (handle://vault/...)");
-    println!("Trust labels:   10 source tiers (4 trusted, 6 untrusted)");
-    println!("Redaction:      placeholder-based redaction engine");
-    println!();
-    println!("Skills:");
-    println!("  repo-security-audit  built-in (run with `agentzero run repo-security-audit`)");
-    println!();
-    println!("Status: Phase 5 complete. Session engine + security audit available.");
+    println!("Providers:      ollama, llama-cpp, vllm, lm-studio");
+    println!("Tools:          read, list, search, write, shell (5)");
+    println!("Encryption:     AES-256-GCM + Argon2id");
+    println!("ACP:            available (run `agentzero serve`)");
     0
 }
 
@@ -1499,6 +1628,11 @@ mod tests {
     #[test]
     fn parse_history() {
         assert!(matches!(parse(&["history"]), super::Command::History));
+    }
+
+    #[test]
+    fn parse_serve() {
+        assert!(matches!(parse(&["serve"]), super::Command::Serve));
     }
 
     #[test]

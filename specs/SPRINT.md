@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 13 COMPLETE**
+**Status: PHASE 14 COMPLETE**
 
 ## Tasks
 
@@ -143,16 +143,19 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] ACP server reads NDJSON from stdin, dispatches, writes responses to stdout.
 - [x] 7 vault tests + 7 ACP tests + 4 protocol tests.
 
+### Phase 14: ACP Serve, Settings Loading, Improved Doctor
+- [x] `agentzero serve` starts ACP server on stdio for editor integrations.
+- [x] `settings.toml` loading: default_provider and default_model from project config.
+- [x] Settings override CLI defaults when flags are at default values.
+- [x] Improved `doctor`: shows installed skills, vault secrets count, session count, provider list.
+- [x] Doctor loads and reports policy rules, settings, and ACP availability.
+
 ## Not Yet (deferred)
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
-- [ ] ACP adapter.
-- [ ] Package installer (`agentzero install <skill>`).
-- [ ] Resume past sessions (`agentzero chat --resume <id>`).
-- [ ] Gateway.
+- [ ] Wire ACP chat/tool_call to session engine (protocol ready, handlers are stubs).
 - [ ] MCP bridge.
-- [ ] Swarms.
-- [ ] SDKs.
+- [ ] Remote package registry.
 
 ## Notes
 
