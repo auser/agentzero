@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 7 COMPLETE**
+**Status: PHASE 8 COMPLETE**
 
 ## Tasks
 
@@ -82,6 +82,15 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] Tool results truncated to 2KB to avoid context overflow.
 - [x] Session wired into chat with policy-controlled tool executor.
 - [x] Audit events emitted for each tool call during chat.
+
+### Phase 8: CLI Polish, File Write Tool, Streaming, Bin Setup
+- [x] `--model` flag for `agentzero chat` (e.g. `--model codellama`).
+- [x] `--stream` flag for token-by-token output in chat.
+- [x] File write tool with user approval prompt (y/n before writing).
+- [x] `/tools` slash command shows available tools during chat.
+- [x] `/session` slash command shows session info.
+- [x] `default-members` in workspace so `cargo run` defaults to CLI binary.
+- [x] 5 tool definitions (read, list, search, write, shell).
 
 ## Not Yet
 

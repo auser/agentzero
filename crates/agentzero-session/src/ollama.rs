@@ -406,6 +406,27 @@ impl OllamaProvider {
             ToolDefinition {
                 tool_type: "function".into(),
                 function: ToolFunctionDef {
+                    name: "write".into(),
+                    description: "Write content to a file (requires user approval)".into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Path to the file to write"
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Content to write to the file"
+                            }
+                        },
+                        "required": ["path", "content"]
+                    }),
+                },
+            },
+            ToolDefinition {
+                tool_type: "function".into(),
+                function: ToolFunctionDef {
                     name: "shell".into(),
                     description: "Execute a shell command (requires user approval)".into(),
                     parameters: serde_json::json!({
@@ -474,11 +495,12 @@ mod tests {
     #[test]
     fn tool_definitions_are_valid() {
         let tools = OllamaProvider::agentzero_tool_definitions();
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), 5);
         assert_eq!(tools[0].function.name, "read");
         assert_eq!(tools[1].function.name, "list");
         assert_eq!(tools[2].function.name, "search");
-        assert_eq!(tools[3].function.name, "shell");
+        assert_eq!(tools[3].function.name, "write");
+        assert_eq!(tools[4].function.name, "shell");
     }
 
     #[test]

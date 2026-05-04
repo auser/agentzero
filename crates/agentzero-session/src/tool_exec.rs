@@ -180,6 +180,50 @@ impl ToolExecutor {
         })
     }
 
+    /// Write content to a file (requires policy approval).
+    pub fn write_file(&self, path: &str, content: &str) -> Result<ToolResult, ToolExecutorError> {
+        let execution_id = ExecutionId::new();
+        let tool_id = ToolId::from_string("write");
+
+        debug!(
+            tool = "write",
+            path = path,
+            "checking policy for file write"
+        );
+
+        let decision = self.check_policy(Capability::FileWrite, DataClassification::Private);
+        if !decision.is_allowed() {
+            return match decision {
+                PolicyDecision::RequiresApproval { reason } => Err(ToolExecutorError::Denied(
+                    format!("file write requires approval: {reason}"),
+                )),
+                _ => Err(ToolExecutorError::Denied(format!(
+                    "file write denied: {decision:?}"
+                ))),
+            };
+        }
+
+        self.validate_path(path)?;
+
+        info!(
+            tool = "write",
+            path = path,
+            bytes = content.len(),
+            "writing file"
+        );
+        match std::fs::write(path, content) {
+            Ok(()) => Ok(ToolResult {
+                tool_id,
+                execution_id,
+                success: true,
+                output: format!("wrote {} bytes to {path}", content.len()),
+            }),
+            Err(e) => Err(ToolExecutorError::Failed(format!(
+                "failed to write {path}: {e}"
+            ))),
+        }
+    }
+
     /// Execute a shell command (requires policy approval).
     pub fn shell_command(&self, command: &str) -> Result<ToolResult, ToolExecutorError> {
         let execution_id = ExecutionId::new();

@@ -12,6 +12,7 @@ members = [
     "crates/agentzero-tools",
     "crates/agentzero-tracing",
 ]
+default-members = ["crates/agentzero-cli"]
 
 [package]
 name = "agentzero"

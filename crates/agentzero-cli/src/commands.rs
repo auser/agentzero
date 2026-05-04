@@ -13,6 +13,12 @@ pub enum Command {
         /// Use local models only (no remote calls).
         #[arg(long)]
         local: bool,
+        /// Model to use (default: llama3.2).
+        #[arg(long, short, default_value = "llama3.2")]
+        model: String,
+        /// Stream tokens as they arrive.
+        #[arg(long)]
+        stream: bool,
     },
     /// Run a skill or tool by name.
     Run {
@@ -65,7 +71,11 @@ pub enum VaultAction {
 pub async fn run(command: Command) -> i32 {
     match command {
         Command::Init { private } => cmd_init(private),
-        Command::Chat { local } => cmd_chat(local).await,
+        Command::Chat {
+            local,
+            model,
+            stream,
+        } => cmd_chat(local, &model, stream).await,
         Command::Run { name } => cmd_run(&name),
         Command::Doctor => cmd_doctor(),
         Command::Demo => cmd_demo(),
@@ -145,7 +155,7 @@ fn cmd_init(private: bool) -> i32 {
     0
 }
 
-async fn cmd_chat(local: bool) -> i32 {
+async fn cmd_chat(local: bool, model: &str, stream: bool) -> i32 {
     use agentzero::session::{
         ChatMessage, ModelProvider, OllamaConfig, OllamaProvider, Session, SessionConfig,
         SessionMode, ToolExecutor,
@@ -208,7 +218,10 @@ async fn cmd_chat(local: bool) -> i32 {
     println!("Session: {}", session.id());
 
     // Check Ollama
-    let config = OllamaConfig::default();
+    let config = OllamaConfig {
+        model: model.to_string(),
+        ..OllamaConfig::default()
+    };
     let provider = OllamaProvider::new(config);
     println!("Model: {} ({})", provider.model_name(), provider.name());
 
@@ -228,7 +241,7 @@ async fn cmd_chat(local: bool) -> i32 {
 
     let tools = OllamaProvider::agentzero_tool_definitions();
     println!(
-        "Tools: {} available (read, list, search, shell)",
+        "Tools: {} available (read, list, search, write, shell)",
         tools.len()
     );
     println!();
@@ -267,6 +280,21 @@ async fn cmd_chat(local: bool) -> i32 {
             println!("Goodbye.");
             break;
         }
+        if input == "/tools" {
+            println!("Available tools:");
+            for t in &tools {
+                println!("  {} — {}", t.function.name, t.function.description);
+            }
+            println!();
+            continue;
+        }
+        if input == "/session" {
+            println!("Session: {}", session.id());
+            println!("Mode: {mode}");
+            println!("Model: {}", provider.model_name());
+            println!();
+            continue;
+        }
 
         messages.push(ChatMessage::user(input));
 
@@ -295,7 +323,28 @@ async fn cmd_chat(local: bool) -> i32 {
                     let tool_name = &tc.function.name;
                     let tool_args = &tc.function.arguments;
 
-                    // Shell commands need user approval
+                    // Dangerous tools need user approval
+                    if tool_name == "write" {
+                        let path = tool_args
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("(unknown)");
+                        let content_len = tool_args
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .map_or(0, |s| s.len());
+                        print!("  [APPROVE write: `{path}` ({content_len} bytes)?] (y/n) ");
+                        io::stdout().flush().ok();
+                        let mut answer = String::new();
+                        stdin.lock().read_line(&mut answer).ok();
+                        if !answer.trim().eq_ignore_ascii_case("y") {
+                            println!("  [DENIED by user]");
+                            messages.push(ChatMessage::tool(
+                                "File write denied by user. Do not retry without asking.",
+                            ));
+                            continue;
+                        }
+                    }
                     if tool_name == "shell" {
                         let cmd = tool_args
                             .get("command")
@@ -338,6 +387,30 @@ async fn cmd_chat(local: bool) -> i32 {
                     }
                 }
                 // Loop back to get the model's response after tool results
+            } else if stream && round == 0 {
+                // No tool calls on first round — re-request with streaming
+                // Remove the non-streaming response, stream it instead
+                println!();
+                print!("agentzero> ");
+                io::stdout().flush().ok();
+                match provider
+                    .chat_streaming(&messages, |token| {
+                        print!("{token}");
+                        io::stdout().flush().ok();
+                    })
+                    .await
+                {
+                    Ok(full_response) => {
+                        println!();
+                        println!();
+                        messages.push(ChatMessage::assistant(&full_response));
+                    }
+                    Err(e) => {
+                        eprintln!("\nerror during streaming: {e}");
+                        messages.pop();
+                    }
+                }
+                break;
             } else {
                 // No tool calls — print the response
                 if !result.content.is_empty() {
@@ -798,7 +871,7 @@ mod tests {
     #[test]
     fn parse_chat() {
         match parse(&["chat"]) {
-            super::Command::Chat { local } => assert!(!local),
+            super::Command::Chat { local, .. } => assert!(!local),
             other => panic!("expected Chat, got {other:?}"),
         }
     }
@@ -806,7 +879,7 @@ mod tests {
     #[test]
     fn parse_chat_local() {
         match parse(&["chat", "--local"]) {
-            super::Command::Chat { local } => assert!(local),
+            super::Command::Chat { local, .. } => assert!(local),
             other => panic!("expected Chat --local, got {other:?}"),
         }
     }

@@ -120,62 +120,76 @@ impl Session {
     ) -> Result<String, SessionError> {
         info!(session_id = %self.id, tool = tool_name, "executing tool");
 
-        let result = match tool_name {
-            "read" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| SessionError::Failed("read: missing 'path' argument".into()))?;
-                self.tool_executor
-                    .read_file(path)
-                    .map_err(|e| SessionError::Failed(e.to_string()))?
-            }
-            "list" => {
-                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-                self.tool_executor
-                    .list_dir(path)
-                    .map_err(|e| SessionError::Failed(e.to_string()))?
-            }
-            "search" => {
-                let pattern = args
-                    .get("pattern")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        SessionError::Failed("search: missing 'pattern' argument".into())
+        let result =
+            match tool_name {
+                "read" => {
+                    let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                        SessionError::Failed("read: missing 'path' argument".into())
                     })?;
-                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-                self.tool_executor
-                    .search_files(path, pattern)
-                    .map_err(|e| SessionError::Failed(e.to_string()))?
-            }
-            "propose_edit" => {
-                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
-                    SessionError::Failed("propose_edit: missing 'path' argument".into())
-                })?;
-                let description = args
-                    .get("description")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("(no description)");
-                self.tool_executor
-                    .propose_edit(path, description)
-                    .map_err(|e| SessionError::Failed(e.to_string()))?
-            }
-            "shell" => {
-                let command = args
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        SessionError::Failed("shell: missing 'command' argument".into())
+                    self.tool_executor
+                        .read_file(path)
+                        .map_err(|e| SessionError::Failed(e.to_string()))?
+                }
+                "list" => {
+                    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+                    self.tool_executor
+                        .list_dir(path)
+                        .map_err(|e| SessionError::Failed(e.to_string()))?
+                }
+                "search" => {
+                    let pattern =
+                        args.get("pattern")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                SessionError::Failed("search: missing 'pattern' argument".into())
+                            })?;
+                    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+                    self.tool_executor
+                        .search_files(path, pattern)
+                        .map_err(|e| SessionError::Failed(e.to_string()))?
+                }
+                "propose_edit" => {
+                    let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                        SessionError::Failed("propose_edit: missing 'path' argument".into())
                     })?;
-                self.tool_executor
-                    .shell_command(command)
-                    .map_err(|e| SessionError::Failed(e.to_string()))?
-            }
-            other => {
-                warn!(session_id = %self.id, tool = other, "unknown tool");
-                return Err(SessionError::Failed(format!("unknown tool: {other}")));
-            }
-        };
+                    let description = args
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no description)");
+                    self.tool_executor
+                        .propose_edit(path, description)
+                        .map_err(|e| SessionError::Failed(e.to_string()))?
+                }
+                "write" => {
+                    let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                        SessionError::Failed("write: missing 'path' argument".into())
+                    })?;
+                    let content =
+                        args.get("content")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                SessionError::Failed("write: missing 'content' argument".into())
+                            })?;
+                    self.tool_executor
+                        .write_file(path, content)
+                        .map_err(|e| SessionError::Failed(e.to_string()))?
+                }
+                "shell" => {
+                    let command =
+                        args.get("command")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                SessionError::Failed("shell: missing 'command' argument".into())
+                            })?;
+                    self.tool_executor
+                        .shell_command(command)
+                        .map_err(|e| SessionError::Failed(e.to_string()))?
+                }
+                other => {
+                    warn!(session_id = %self.id, tool = other, "unknown tool");
+                    return Err(SessionError::Failed(format!("unknown tool: {other}")));
+                }
+            };
 
         // Emit audit event
         let event = AuditEvent {
