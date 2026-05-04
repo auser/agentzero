@@ -153,9 +153,60 @@ fn cmd_chat(local: bool) -> i32 {
 }
 
 fn cmd_run(name: &str) -> i32 {
-    eprintln!("agentzero run {name}: skill execution not yet implemented");
-    eprintln!("Next: implement Phase 5 (first demo with repo-security-audit)");
-    1
+    match name {
+        "repo-security-audit" => cmd_run_security_audit(),
+        other => {
+            eprintln!("unknown skill: {other}");
+            eprintln!("Available skills: repo-security-audit");
+            1
+        }
+    }
+}
+
+fn cmd_run_security_audit() -> i32 {
+    use agentzero::skills::{report, scanner};
+
+    let cwd = match std::env::current_dir() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+
+    let project_name = cwd
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    println!("Running repo-security-audit on: {}", cwd.display());
+    println!();
+
+    let results = scanner::scan_directory(&cwd);
+    let report_text = report::generate_report(&results, project_name);
+
+    println!("{report_text}");
+
+    // Write audit report to .agentzero/audit/ if initialized
+    let audit_dir = cwd.join(".agentzero/audit");
+    if audit_dir.exists() {
+        let report_path = audit_dir.join("security-audit-report.md");
+        match std::fs::write(&report_path, &report_text) {
+            Ok(()) => {
+                println!("Report written to: {}", report_path.display());
+            }
+            Err(e) => {
+                eprintln!("warning: failed to write report: {e}");
+            }
+        }
+    }
+
+    if results.findings.is_empty() {
+        0
+    } else {
+        // Non-zero exit for CI integration when findings exist
+        1
+    }
 }
 
 fn cmd_doctor() -> i32 {
@@ -167,9 +218,11 @@ fn cmd_doctor() -> i32 {
     println!("  agentzero-core     ok");
     println!("  agentzero-policy   ok");
     println!("  agentzero-audit    ok");
+    println!("  agentzero-session  ok");
     println!("  agentzero-tools    ok");
     println!("  agentzero-skills   ok");
     println!("  agentzero-sandbox  ok");
+    println!("  agentzero-tracing  ok");
     println!("  agentzero-cli      ok");
     println!();
 
@@ -197,7 +250,10 @@ fn cmd_doctor() -> i32 {
     println!("Trust labels:   10 source tiers (4 trusted, 6 untrusted)");
     println!("Redaction:      placeholder-based redaction engine");
     println!();
-    println!("Status: Phase 2/3 complete. No runtime execution yet.");
+    println!("Skills:");
+    println!("  repo-security-audit  built-in (run with `agentzero run repo-security-audit`)");
+    println!();
+    println!("Status: Phase 5 complete. Session engine + security audit available.");
     0
 }
 

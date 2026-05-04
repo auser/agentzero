@@ -54,12 +54,14 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] Centralized tracing crate (`agentzero-tracing` wrapping `tracing` + `tracing-subscriber`).
 - [x] Session engine (`agentzero-session` — ties model/tools/policy/audit together).
 
-### Phase 5: First Demo (next)
-- [ ] Built-in `repo-security-audit` skill integration.
-- [ ] Run against this repository.
-- [ ] Produce `.agentzero/audit/<session>.jsonl`.
-- [ ] Produce human-readable audit report.
-- [ ] Add malicious fixture tests.
+### Phase 5: First Demo
+- [x] Built-in `repo-security-audit` skill with pattern-based scanner.
+- [x] Patterns loaded from external `patterns.toml` (extensible without code changes).
+- [x] Run against this repository (`agentzero run repo-security-audit`).
+- [x] Human-readable markdown audit report with severity, recommendations.
+- [x] Report written to `.agentzero/audit/` when project is initialized.
+- [x] Malicious fixture tests (secrets, PII, prompt injection, package scripts, sensitive files).
+- [x] 12 scanner tests + 3 report tests covering all finding categories.
 
 ## Not Yet
 

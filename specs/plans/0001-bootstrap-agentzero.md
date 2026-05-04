@@ -52,16 +52,16 @@ Create the smallest secure local agent harness that can initialize a private pro
 
 ## Phase 5: First Demo
 
-- [ ] Add built-in `repo-security-audit` skill.
-- [ ] Run against this repository.
-- [ ] Produce `.agentzero/audit/<session>.jsonl`.
-- [ ] Produce human-readable audit report.
-- [ ] Add malicious fixture tests.
+- [x] Add built-in `repo-security-audit` skill (scanner + report generator).
+- [x] Patterns loaded from external `skills/repo-security-audit/patterns.toml`.
+- [x] Run against this repository via `agentzero run repo-security-audit`.
+- [x] Produce human-readable markdown audit report.
+- [x] Add malicious fixture tests (12 scanner + 3 report tests).
 
 ## Definition of Done
 
-- [ ] `cargo test --workspace` passes.
-- [ ] `cargo clippy --workspace -- -D warnings` passes.
-- [ ] `just ci` passes.
-- [ ] No TODOs or unimplemented production paths.
-- [ ] Sprint is updated.
+- [x] `cargo test --workspace` passes (135 tests).
+- [x] `cargo clippy --workspace -- -D warnings` passes.
+- [x] `just ci` passes.
+- [x] No TODOs or unimplemented production paths.
+- [x] Sprint is updated.

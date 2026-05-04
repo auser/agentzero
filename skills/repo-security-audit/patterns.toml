@@ -1,0 +1,158 @@
+# Security scanner patterns for repo-security-audit skill.
+# Add new patterns here without modifying source code.
+
+[[secrets]]
+pattern = "password="
+description = "Hardcoded password assignment"
+severity = "high"
+
+[[secrets]]
+pattern = "password:"
+description = "Password in config"
+severity = "high"
+
+[[secrets]]
+pattern = "api_key="
+description = "Hardcoded API key"
+severity = "high"
+
+[[secrets]]
+pattern = "api_key:"
+description = "API key in config"
+severity = "high"
+
+[[secrets]]
+pattern = "secret_key="
+description = "Hardcoded secret key"
+severity = "high"
+
+[[secrets]]
+pattern = "access_token="
+description = "Hardcoded access token"
+severity = "high"
+
+[[secrets]]
+pattern = "Authorization: Bearer "
+description = "Hardcoded bearer token"
+severity = "high"
+
+[[secrets]]
+pattern = "AKIA"
+description = "Possible AWS access key"
+severity = "critical"
+min_line_length = 20
+
+[[secrets]]
+pattern = "ghp_"
+description = "Possible GitHub personal access token"
+severity = "critical"
+
+[[secrets]]
+pattern = "gho_"
+description = "Possible GitHub OAuth token"
+severity = "critical"
+
+[[secrets]]
+pattern = "ghs_"
+description = "Possible GitHub server token"
+severity = "critical"
+
+[[secrets]]
+pattern = "-----BEGIN"
+description = "Private key detected"
+severity = "critical"
+also_contains = "PRIVATE KEY-----"
+
+[[pii]]
+pattern = "@gmail.com"
+description = "Email address (Gmail)"
+severity = "warning"
+
+[[pii]]
+pattern = "@yahoo.com"
+description = "Email address (Yahoo)"
+severity = "warning"
+
+[[pii]]
+pattern = "@hotmail.com"
+description = "Email address (Hotmail)"
+severity = "warning"
+
+[[pii]]
+pattern = "@outlook.com"
+description = "Email address (Outlook)"
+severity = "warning"
+
+[[pii]]
+pattern = "SSN:"
+description = "Social Security Number reference"
+severity = "warning"
+
+[[pii]]
+pattern = "social security"
+description = "Social Security reference"
+severity = "warning"
+case_insensitive = true
+
+[[pii]]
+pattern = "date of birth"
+description = "Date of birth reference"
+severity = "warning"
+case_insensitive = true
+
+[[injection]]
+pattern = "ignore previous instructions"
+description = "Prompt injection attempt"
+severity = "high"
+case_insensitive = true
+
+[[injection]]
+pattern = "ignore all previous"
+description = "Prompt injection attempt"
+severity = "high"
+case_insensitive = true
+
+[[injection]]
+pattern = "disregard your instructions"
+description = "Prompt injection attempt"
+severity = "high"
+case_insensitive = true
+
+[[injection]]
+pattern = "you are now"
+description = "Role override attempt"
+severity = "high"
+case_insensitive = true
+
+[[injection]]
+pattern = "new instructions:"
+description = "Instruction override attempt"
+severity = "high"
+case_insensitive = true
+
+[[injection]]
+pattern = "system prompt:"
+description = "System prompt leak attempt"
+severity = "high"
+case_insensitive = true
+
+[[injection]]
+pattern = "IGNORE THE ABOVE"
+description = "Prompt injection (caps)"
+severity = "high"
+
+[sensitive_files]
+names = [
+    ".env",
+    ".env.local",
+    ".env.production",
+    "credentials.json",
+    "service-account.json",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+]
+extensions = ["pem", "key", "p12", "pfx", "jks"]
+
+[skip]
+directories = [".git", "target", "node_modules"]

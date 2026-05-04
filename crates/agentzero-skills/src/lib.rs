@@ -4,6 +4,9 @@
 //! metadata, required capabilities, runtime requirements, and version.
 //! Skill execution is permissioned and auditable.
 
+pub mod report;
+pub mod scanner;
+
 use agentzero_core::{Capability, RuntimeTier, SkillId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
