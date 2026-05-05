@@ -438,8 +438,9 @@ impl Session {
                             agentzero_skills::SkillPackageRef::Local { path } => {
                                 format!("{path}/run.sh")
                             }
-                            agentzero_skills::SkillPackageRef::Registry { name, .. } => {
-                                format!("skills/{name}/run.sh")
+                            agentzero_skills::SkillPackageRef::GitHub { repo, .. }
+                            | agentzero_skills::SkillPackageRef::Registry { name: repo, .. } => {
+                                format!("skills/{repo}/run.sh")
                             }
                         })
                         .unwrap_or_else(|| format!("skills/{}/run.sh", manifest.name))

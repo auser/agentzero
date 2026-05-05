@@ -37,10 +37,22 @@ pub enum Command {
         /// Name of the skill or tool to run.
         name: String,
     },
-    /// Install a skill from a local path.
+    /// Install a skill from a local path, GitHub owner/repo, or git URL.
     Install {
-        /// Path to the skill directory (must contain SKILL.md).
+        /// Skill source: local path, owner/repo, or git URL.
+        source: String,
+    },
+    /// Package and publish a skill to a GitHub release.
+    Publish {
+        /// Path to the skill directory (default: current directory).
+        #[arg(default_value = ".")]
         path: String,
+        /// GitHub repository (owner/repo) to publish to.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Release tag (default: v{version} from SKILL.md).
+        #[arg(long)]
+        tag: Option<String>,
     },
     /// Start the ACP server for editor integrations.
     Serve,
@@ -136,7 +148,10 @@ pub async fn run(command: Command) -> i32 {
             .await
         }
         Command::Run { name } => cmd_run(&name),
-        Command::Install { path } => cmd_install(&path),
+        Command::Install { source } => cmd_install(&source),
+        Command::Publish { path, repo, tag } => {
+            cmd_publish(&path, repo.as_deref(), tag.as_deref()).await
+        }
         Command::History => cmd_history(),
         Command::Serve => cmd_serve().await,
         Command::Mcp => cmd_mcp().await,
@@ -1099,21 +1114,27 @@ fn cmd_install_git(url: &str) -> i32 {
         println!("Installed skill '{skill_name}' from {url}");
     }
 
-    if install_dir.join("patterns.toml").exists() {
-        println!("  includes patterns.toml");
-    }
+    // Update lockfile
+    update_lockfile(&cwd, skill_name, &format!("git:{url}"), &install_dir);
 
-    println!();
-    println!("Run with: agentzero run {skill_name}");
+    print_skill_info(&install_dir, skill_name);
     0
 }
 
-fn cmd_install(path: &str) -> i32 {
-    // Check if it's a git URL
-    if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("git@") {
-        return cmd_install_git(path);
-    }
+fn cmd_install(source: &str) -> i32 {
+    use agentzero::skills::remote::{parse_skill_ref, SkillRefKind};
 
+    match parse_skill_ref(source) {
+        SkillRefKind::Local(path) => cmd_install_local(&path),
+        SkillRefKind::GitUrl(url) => cmd_install_git(&url),
+        SkillRefKind::GitHub { owner, repo } => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime should create");
+            rt.block_on(cmd_install_github(&owner, &repo))
+        }
+    }
+}
+
+fn cmd_install_local(path: &str) -> i32 {
     let source = std::path::Path::new(path);
 
     // Validate source has SKILL.md
@@ -1154,23 +1175,154 @@ fn cmd_install(path: &str) -> i32 {
         install_dir.display()
     );
 
-    // Check if it has a patterns.toml
+    // Update lockfile
+    update_lockfile(&cwd, skill_name, "local", &install_dir);
+
+    print_skill_info(&install_dir, skill_name);
+    0
+}
+
+async fn cmd_install_github(owner: &str, repo: &str) -> i32 {
+    use agentzero::skills::github::GitHubClient;
+    use agentzero::skills::package;
+
+    println!("Resolving {owner}/{repo} from GitHub releases...");
+
+    let client = GitHubClient::from_env();
+    let release = match client.get_latest_release(owner, repo).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: failed to resolve release: {e}");
+            return 1;
+        }
+    };
+
+    println!("Found release {} (v{})", release.tag, release.version);
+
+    // Download the tarball
+    println!("Downloading {}...", release.tarball_url);
+    let tarball = match client.download(&release.tarball_url).await {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("error: download failed: {e}");
+            return 1;
+        }
+    };
+
+    // Verify checksum if available
+    if let Some(ref expected) = release.checksum {
+        println!("Verifying checksum...");
+        if let Err(e) = package::verify_checksum(&tarball, expected) {
+            eprintln!("error: {e}");
+            return 1;
+        }
+        println!("Checksum verified.");
+    } else {
+        println!("warning: no checksum in release notes, skipping verification");
+    }
+
+    // Extract
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let skills_dir = cwd.join("skills");
+    std::fs::create_dir_all(&skills_dir).ok();
+
+    let skill_name = match package::extract_tarball(&tarball, &skills_dir) {
+        Ok(name) => name,
+        Err(e) => {
+            eprintln!("error: failed to extract: {e}");
+            return 1;
+        }
+    };
+
+    let install_dir = skills_dir.join(&skill_name);
+    if !install_dir.join("SKILL.md").exists() {
+        eprintln!("warning: no SKILL.md found in extracted package");
+    }
+
+    println!("Installed skill '{skill_name}' from {owner}/{repo}");
+
+    // Update lockfile with GitHub source and checksum
+    let source_str = format!("github:{owner}/{repo}");
+    update_lockfile_with_checksum(
+        &cwd,
+        &skill_name,
+        &source_str,
+        &install_dir,
+        &package::compute_checksum(&tarball),
+    );
+
+    print_skill_info(&install_dir, &skill_name);
+    0
+}
+
+/// Update the lockfile after installing a skill.
+fn update_lockfile(
+    cwd: &std::path::Path,
+    skill_name: &str,
+    source: &str,
+    install_dir: &std::path::Path,
+) {
+    update_lockfile_with_checksum(cwd, skill_name, source, install_dir, "");
+}
+
+fn update_lockfile_with_checksum(
+    cwd: &std::path::Path,
+    skill_name: &str,
+    source: &str,
+    install_dir: &std::path::Path,
+    checksum: &str,
+) {
+    use agentzero::skills::registry::{lockfile_path, LockedSkill, SkillLockfile};
+
+    let lockfile_path = lockfile_path(cwd);
+    let mut lockfile = SkillLockfile::load(&lockfile_path).unwrap_or_default();
+
+    let manifest = agentzero::skills::registry::load_manifest(install_dir);
+    let (version, runtime, permissions) = match manifest {
+        Ok(m) => (
+            m.version,
+            format!("{:?}", m.runtime).to_lowercase(),
+            m.permissions
+                .iter()
+                .map(|p| format!("{:?}", p.capability).to_lowercase())
+                .collect(),
+        ),
+        Err(_) => ("0.1.0".into(), "unknown".into(), vec![]),
+    };
+
+    lockfile.register(LockedSkill {
+        name: skill_name.to_string(),
+        version,
+        source: source.to_string(),
+        runtime,
+        permissions,
+        checksum: if checksum.is_empty() {
+            None
+        } else {
+            Some(checksum.to_string())
+        },
+    });
+
+    if let Err(e) = lockfile.save(&lockfile_path) {
+        eprintln!("warning: failed to update lockfile: {e}");
+    }
+}
+
+fn print_skill_info(install_dir: &std::path::Path, skill_name: &str) {
     if install_dir.join("patterns.toml").exists() {
         println!("  includes patterns.toml");
     }
-
-    // List capabilities from SKILL.md (basic grep)
     if let Ok(content) = std::fs::read_to_string(install_dir.join("SKILL.md")) {
         if content.contains("runtime: none") {
             println!("  runtime: instruction-only");
         } else if content.contains("runtime: wasm") {
             println!("  runtime: wasm-sandbox");
+        } else if content.contains("runtime: host_supervised") {
+            println!("  runtime: host-supervised");
         }
     }
-
     println!();
     println!("Run with: agentzero run {skill_name}");
-    0
 }
 
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), std::io::Error> {
@@ -1186,6 +1338,117 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
         }
     }
     Ok(())
+}
+
+async fn cmd_publish(path: &str, repo_override: Option<&str>, tag_override: Option<&str>) -> i32 {
+    use agentzero::skills::github::GitHubClient;
+    use agentzero::skills::package;
+
+    let skill_dir = std::path::Path::new(path);
+    if !skill_dir.join("SKILL.md").exists() {
+        eprintln!("error: no SKILL.md in {path}");
+        eprintln!("Run this command from a skill directory or pass the path.");
+        return 1;
+    }
+
+    // Package the skill
+    println!("Packaging skill...");
+    let pkg = match package::package_skill(skill_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: failed to package: {e}");
+            return 1;
+        }
+    };
+
+    println!("  name:     {}", pkg.name);
+    println!("  version:  {}", pkg.version);
+    println!("  size:     {} bytes", pkg.tarball.len());
+    println!("  checksum: {}", pkg.checksum);
+
+    // Determine target repo
+    let repo_str = match repo_override {
+        Some(r) => r.to_string(),
+        None => {
+            // Try to infer from git remote
+            let output = std::process::Command::new("git")
+                .args(["remote", "get-url", "origin"])
+                .current_dir(skill_dir)
+                .output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    let url = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    // Extract owner/repo from GitHub URL
+                    if let Some(path) = url
+                        .strip_prefix("https://github.com/")
+                        .or_else(|| url.strip_prefix("git@github.com:"))
+                    {
+                        path.trim_end_matches('/')
+                            .trim_end_matches(".git")
+                            .to_string()
+                    } else {
+                        eprintln!("error: cannot determine GitHub repo from remote '{url}'");
+                        eprintln!("Use --repo owner/repo to specify.");
+                        return 1;
+                    }
+                }
+                _ => {
+                    eprintln!("error: no --repo specified and no git remote found");
+                    eprintln!("Use --repo owner/repo to specify the target.");
+                    return 1;
+                }
+            }
+        }
+    };
+
+    let parts: Vec<&str> = repo_str.splitn(2, '/').collect();
+    if parts.len() != 2 {
+        eprintln!("error: repo must be in owner/repo format, got: {repo_str}");
+        return 1;
+    }
+    let (owner, repo) = (parts[0], parts[1]);
+
+    let tag = tag_override
+        .map(|t| t.to_string())
+        .unwrap_or_else(|| format!("v{}", pkg.version));
+
+    println!();
+    println!("Publishing to {owner}/{repo} as {tag}...");
+
+    let client = GitHubClient::from_env();
+
+    // Create the release
+    let release_body = format!(
+        "## {} v{}\n\n{}\n\n{}",
+        pkg.name, pkg.version, pkg.checksum, pkg.manifest.description
+    );
+
+    let upload_url = match client
+        .create_release(owner, repo, &tag, &format!("{} v{}", pkg.name, pkg.version), &release_body)
+        .await
+    {
+        Ok(url) => url,
+        Err(e) => {
+            eprintln!("error: failed to create release: {e}");
+            return 1;
+        }
+    };
+
+    // Upload the tarball
+    let filename = format!("{}-{}.tar.gz", pkg.name, pkg.version);
+    println!("Uploading {filename}...");
+    if let Err(e) = client
+        .upload_asset(&upload_url, &filename, &pkg.tarball)
+        .await
+    {
+        eprintln!("error: failed to upload asset: {e}");
+        return 1;
+    }
+
+    println!();
+    println!("Published {}-{} to {owner}/{repo}", pkg.name, pkg.version);
+    println!("Install with: agentzero install {owner}/{repo}");
+    0
 }
 
 fn cmd_run(name: &str) -> i32 {
@@ -2058,7 +2321,7 @@ mod tests {
     #[test]
     fn parse_install() {
         match parse(&["install", "/tmp/my-skill"]) {
-            super::Command::Install { path } => assert_eq!(path, "/tmp/my-skill"),
+            super::Command::Install { source } => assert_eq!(source, "/tmp/my-skill"),
             other => panic!("expected Install, got {other:?}"),
         }
     }

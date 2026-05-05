@@ -17,6 +17,8 @@ pub enum RegistryError {
     ParseError(String),
     #[error("skill not found: {0}")]
     NotFound(String),
+    #[error("checksum mismatch: expected {expected}, got {actual}")]
+    ChecksumMismatch { expected: String, actual: String },
 }
 
 /// A locked skill entry with version and integrity info.

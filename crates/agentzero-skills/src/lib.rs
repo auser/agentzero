@@ -4,7 +4,10 @@
 //! metadata, required capabilities, runtime requirements, and version.
 //! Skill execution is permissioned and auditable.
 
+pub mod github;
+pub mod package;
 pub mod registry;
+pub mod remote;
 pub mod report;
 pub mod scanner;
 
@@ -47,7 +50,13 @@ pub struct SkillPermission {
 pub enum SkillPackageRef {
     /// Local filesystem path.
     Local { path: String },
-    /// Remote registry reference (future).
+    /// GitHub release (owner/repo).
+    GitHub {
+        owner: String,
+        repo: String,
+        version: String,
+    },
+    /// Remote registry reference (future central index).
     Registry { name: String, version: String },
 }
 
