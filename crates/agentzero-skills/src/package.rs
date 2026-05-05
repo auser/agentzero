@@ -119,8 +119,9 @@ pub fn extract_tarball(tarball: &[u8], dest: &Path) -> Result<String, RegistryEr
             entry
                 .read_to_end(&mut contents)
                 .map_err(|e| RegistryError::IoError(format!("failed to read entry: {e}")))?;
-            std::fs::write(&dest_path, &contents)
-                .map_err(|e| RegistryError::IoError(format!("failed to write {}: {e}", dest_path.display())))?;
+            std::fs::write(&dest_path, &contents).map_err(|e| {
+                RegistryError::IoError(format!("failed to write {}: {e}", dest_path.display()))
+            })?;
         }
     }
 
@@ -186,7 +187,10 @@ mod tests {
     #[test]
     fn verify_checksum_fails_on_mismatch() {
         let data = b"test data";
-        let result = verify_checksum(data, "sha256:0000000000000000000000000000000000000000000000000000000000000000");
+        let result = verify_checksum(
+            data,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        );
         assert!(result.is_err());
     }
 

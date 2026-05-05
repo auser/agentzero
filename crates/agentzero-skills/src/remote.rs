@@ -186,7 +186,10 @@ mod tests {
         let body = "## Release v1.0\n\nsha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\n\nEnjoy!";
         let checksum = extract_checksum_from_body(body);
         assert!(checksum.is_some());
-        assert!(checksum.as_ref().expect("should exist").starts_with("sha256:"));
+        assert!(checksum
+            .as_ref()
+            .expect("should exist")
+            .starts_with("sha256:"));
     }
 
     #[test]

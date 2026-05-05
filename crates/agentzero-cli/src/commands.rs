@@ -1424,7 +1424,13 @@ async fn cmd_publish(path: &str, repo_override: Option<&str>, tag_override: Opti
     );
 
     let upload_url = match client
-        .create_release(owner, repo, &tag, &format!("{} v{}", pkg.name, pkg.version), &release_body)
+        .create_release(
+            owner,
+            repo,
+            &tag,
+            &format!("{} v{}", pkg.name, pkg.version),
+            &release_body,
+        )
         .await
     {
         Ok(url) => url,
@@ -1488,8 +1494,7 @@ fn cmd_run(name: &str) -> i32 {
                     println!("Found patterns.toml — running scanner...");
                     println!();
                     use agentzero::skills::{report, scanner};
-                    let results =
-                        scanner::scan_directory_with_patterns(&cwd, Some(&patterns_path));
+                    let results = scanner::scan_directory_with_patterns(&cwd, Some(&patterns_path));
                     let report_text = report::generate_report(&results, name);
                     println!("{report_text}");
                     return if results.findings.is_empty() { 0 } else { 1 };
@@ -1864,9 +1869,7 @@ fn cmd_doctor() -> i32 {
                     let dir = e.path();
                     let name = e.file_name().to_string_lossy().to_string();
                     // Check if this is a WASM skill
-                    if let Ok(manifest) =
-                        agentzero::skills::registry::load_manifest(&dir)
-                    {
+                    if let Ok(manifest) = agentzero::skills::registry::load_manifest(&dir) {
                         if manifest.runtime == agentzero::skills::SkillRuntime::Wasm {
                             wasm_skill_count += 1;
                         }

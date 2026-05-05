@@ -794,9 +794,10 @@ mod tests {
     fn execute_instruction_only_skill() {
         use agentzero_skills::{SkillManifest, SkillPermission, SkillRuntime};
 
-        let policy = PolicyEngine::with_rules(vec![
-            PolicyRule::allow(Capability::SkillLoad, DataClassification::Private),
-        ]);
+        let policy = PolicyEngine::with_rules(vec![PolicyRule::allow(
+            Capability::SkillLoad,
+            DataClassification::Private,
+        )]);
         let session = Session::new(SessionConfig::default(), policy).expect("should create");
 
         let manifest = SkillManifest {
@@ -875,9 +876,10 @@ mod tests {
     fn execute_unsupported_runtime_fails() {
         use agentzero_skills::{SkillManifest, SkillRuntime};
 
-        let policy = PolicyEngine::with_rules(vec![
-            PolicyRule::allow(Capability::SkillLoad, DataClassification::Private),
-        ]);
+        let policy = PolicyEngine::with_rules(vec![PolicyRule::allow(
+            Capability::SkillLoad,
+            DataClassification::Private,
+        )]);
         let session = Session::new(SessionConfig::default(), policy).expect("should create");
 
         let manifest = SkillManifest {
@@ -966,7 +968,10 @@ mod tests {
 
         let result = session.execute_skill(&manifest, None);
         assert!(result.is_err());
-        assert!(result.expect_err("should fail").to_string().contains("denied"));
+        assert!(result
+            .expect_err("should fail")
+            .to_string()
+            .contains("denied"));
     }
 
     /// Minimal WASM module: exports `main() -> i32` returning 42.
@@ -977,8 +982,8 @@ mod tests {
             0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7F, // type section
             0x03, 0x02, 0x01, 0x00, // function section
             0x05, 0x03, 0x01, 0x00, 0x01, // memory section
-            0x07, 0x11, 0x02, 0x04, 0x6D, 0x61, 0x69, 0x6E, 0x00, 0x00, 0x06, 0x6D, 0x65,
-            0x6D, 0x6F, 0x72, 0x79, 0x02, 0x00, // export section
+            0x07, 0x11, 0x02, 0x04, 0x6D, 0x61, 0x69, 0x6E, 0x00, 0x00, 0x06, 0x6D, 0x65, 0x6D,
+            0x6F, 0x72, 0x79, 0x02, 0x00, // export section
             0x0A, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2A, 0x0B, // code section
         ]
     }
@@ -993,9 +998,10 @@ mod tests {
             PolicyRule::allow(Capability::SkillLoad, DataClassification::Private),
             PolicyRule::allow_runtime(Capability::SkillLoad, RuntimeTier::WasmSandbox),
         ]);
-        let tool_policy = PolicyEngine::with_rules(vec![
-            PolicyRule::allow_runtime(Capability::RuntimeLaunch, RuntimeTier::WasmSandbox),
-        ]);
+        let tool_policy = PolicyEngine::with_rules(vec![PolicyRule::allow_runtime(
+            Capability::RuntimeLaunch,
+            RuntimeTier::WasmSandbox,
+        )]);
         let session = Session::new(SessionConfig::default(), session_policy)
             .expect("session should create")
             .with_tool_executor(ToolExecutor::new(tool_policy));
@@ -1018,7 +1024,10 @@ mod tests {
         let result = session.execute_skill(&manifest, Some(&wasm_bytes));
         assert!(result.is_ok(), "WASM skill should succeed: {result:?}");
         let output = result.expect("should succeed");
-        assert!(output.contains("42"), "output should contain exit code 42: {output}");
+        assert!(
+            output.contains("42"),
+            "output should contain exit code 42: {output}"
+        );
     }
 
     #[cfg(feature = "wasm")]
@@ -1050,6 +1059,9 @@ mod tests {
         let wasm_bytes = minimal_wasm_module();
         let result = session.execute_skill(&manifest, Some(&wasm_bytes));
         assert!(result.is_err(), "should be denied");
-        assert!(result.expect_err("should fail").to_string().contains("denied"));
+        assert!(result
+            .expect_err("should fail")
+            .to_string()
+            .contains("denied"));
     }
 }

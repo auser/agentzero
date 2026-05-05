@@ -92,9 +92,7 @@ impl GitHubClient {
         body: &str,
     ) -> Result<String, RegistryError> {
         let token = self.token.as_ref().ok_or_else(|| {
-            RegistryError::IoError(
-                "GitHub token required for publish (set GITHUB_TOKEN)".into(),
-            )
+            RegistryError::IoError("GitHub token required for publish (set GITHUB_TOKEN)".into())
         })?;
 
         let url = format!("{GITHUB_API}/repos/{owner}/{repo}/releases");
@@ -152,9 +150,10 @@ impl GitHubClient {
         filename: &str,
         data: &[u8],
     ) -> Result<(), RegistryError> {
-        let token = self.token.as_ref().ok_or_else(|| {
-            RegistryError::IoError("GitHub token required for upload".into())
-        })?;
+        let token = self
+            .token
+            .as_ref()
+            .ok_or_else(|| RegistryError::IoError("GitHub token required for upload".into()))?;
 
         let url = format!("{upload_url}?name={filename}");
         let resp = self
@@ -241,10 +240,7 @@ impl GitHubClient {
             .iter()
             .find(|a| a.name.ends_with(".tar.gz"))
             .ok_or_else(|| {
-                RegistryError::NotFound(format!(
-                    "no .tar.gz asset in release {}",
-                    release.tag_name
-                ))
+                RegistryError::NotFound(format!("no .tar.gz asset in release {}", release.tag_name))
             })?;
 
         // Extract version from tag (strip leading 'v' if present)
@@ -290,7 +286,9 @@ mod tests {
         let client = GitHubClient::new(None);
         let release = GitHubRelease {
             tag_name: "v1.0.0".into(),
-            body: Some("sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".into()),
+            body: Some(
+                "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2".into(),
+            ),
             assets: vec![GitHubAsset {
                 name: "my-skill-1.0.0.tar.gz".into(),
                 browser_download_url: "https://github.com/downloads/my-skill-1.0.0.tar.gz".into(),
