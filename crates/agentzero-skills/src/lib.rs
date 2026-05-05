@@ -4,6 +4,7 @@
 //! metadata, required capabilities, runtime requirements, and version.
 //! Skill execution is permissioned and auditable.
 
+pub mod registry;
 pub mod report;
 pub mod scanner;
 
