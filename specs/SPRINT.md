@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 19 COMPLETE (v0.1.0 RELEASED)**
+**Status: PHASE 21 COMPLETE (v0.2.0 READY)**
 
 ## Tasks
 
@@ -199,13 +199,31 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] Integration tests: hand-crafted WASM module (main→42) tested through WasmEngine (4 tests) and full Session::execute_skill pipeline (2 tests).
 - [x] Website docs updated: skills guide, policy guide, CLI reference, crate map, security model, architecture overview.
 
+### Phase 20: Runtime Quick Wins
+- [x] Default `wasm` feature enabled across all crates (sandbox, session, facade, CLI).
+- [x] `HostSupervised` skill runtime fully wired: entrypoint resolution, shell_command execution, policy gating, audit trail.
+- [x] `SkillManifest` gains `entrypoint` field (optional, parsed from SKILL.md frontmatter).
+- [x] `SkillMetadata` struct replaces tuple return from `parse_skill_metadata`.
+- [x] All runtime tiers working: None (InstructionOnly), HostSupervised, WasmSandbox. Only MVM deferred.
+
+### Phase 21: Remote Registry & Publish
+- [x] `package.rs` — tarball creation (tar.gz), SHA-256 checksums, extraction, round-trip verification.
+- [x] `remote.rs` — `parse_skill_ref()` dispatches user input to Local, GitUrl, or GitHub owner/repo.
+- [x] `github.rs` — async GitHub API client: fetch releases, create releases, upload assets, download tarballs.
+- [x] `SkillPackageRef::GitHub { owner, repo, version }` variant added.
+- [x] `RegistryError::ChecksumMismatch` for integrity verification.
+- [x] `agentzero install owner/repo` — resolves latest GitHub release, downloads tarball, verifies SHA-256, extracts, updates lockfile.
+- [x] `agentzero install https://github.com/owner/repo` — recognized as GitHub ref, uses API instead of git clone.
+- [x] `agentzero publish --repo owner/repo` — packages skill, creates GitHub release with checksum, uploads tarball.
+- [x] All install paths (local, git, GitHub) now update `.agentzero/skills.lock` with full metadata.
+- [x] Website docs updated: skills guide (install, publish, host-supervised), CLI reference, crate map.
+- [x] 21 new tests across package (5), remote (12), github (4).
+
 ## Not Yet (deferred)
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
-- [ ] Remote package registry (authenticated, with lockfile verification).
-- [ ] `agentzero publish` for sharing skills.
-- [ ] `HostSupervised` skill runtime in `execute_skill` (currently returns "not yet supported").
-- [ ] Default `wasm` feature to on in release builds.
+- [ ] Central skill index (JSON file in a well-known repo for short-name resolution).
+- [ ] Lockfile checksum re-verification on `agentzero run`.
 
 ## Notes
 

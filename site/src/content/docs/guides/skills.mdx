@@ -1,9 +1,19 @@
 ---
 title: Skills & Packages
-description: Install, create, and manage skill packages
+description: Install, create, publish, and manage skill packages
 ---
 
 ## Installing Skills
+
+### From GitHub (owner/repo)
+
+```bash
+# Resolves latest GitHub release, downloads tarball, verifies checksum
+agentzero install auser/my-cool-skill
+
+# Also works with full URLs
+agentzero install https://github.com/auser/my-cool-skill
+```
 
 ### From a Local Path
 
@@ -14,8 +24,10 @@ agentzero install /path/to/my-skill
 ### From Git
 
 ```bash
-agentzero install https://github.com/user/security-scanner
+agentzero install https://gitlab.com/user/security-scanner
 ```
+
+All install methods update `.agentzero/skills.lock` with name, version, source, runtime, permissions, and checksum.
 
 ## Running Skills
 
@@ -23,8 +35,11 @@ agentzero install https://github.com/user/security-scanner
 # Run a specific skill
 agentzero run repo-security-audit
 
-# Run a WASM skill (requires --features wasm build)
+# Run a WASM skill
 agentzero run my-wasm-tool
+
+# Run a host-supervised skill (entrypoint from SKILL.md or run.sh)
+agentzero run my-script-tool
 
 # List available skills
 agentzero run nonexistent  # shows available skills
@@ -38,6 +53,8 @@ A skill is a directory with a `SKILL.md` file:
 my-skill/
   SKILL.md
   patterns.toml  (optional — makes it a scanner)
+  module.wasm    (optional — for WASM skills)
+  run.sh         (optional — for host-supervised skills)
 ```
 
 ### SKILL.md Format
@@ -45,16 +62,11 @@ my-skill/
 ```markdown
 ---
 name: my-skill
+version: 1.0.0
 description: What this skill does
 runtime: none
-permissions:
-  filesystem:
-    read: ["."]
-    write: [".agentzero/audit"]
-  network:
-    default: deny
-  shell:
-    default: deny
+- read
+- write
 ---
 
 # My Skill
@@ -73,7 +85,46 @@ Describe what this skill does.
 |---------|-------------|
 | `none` | Instruction-only (no executable code) |
 | `wasm` | Runs in WASM sandbox (policy-gated) |
-| `host-supervised` | Runs on host with approval |
+| `host_supervised` | Runs on host with shell approval |
+
+## Publishing Skills
+
+Package a skill and publish it as a GitHub Release:
+
+```bash
+# Publish from the skill directory
+cd my-skill/
+agentzero publish --repo auser/my-cool-skill
+
+# Publish with explicit tag
+agentzero publish --repo auser/my-cool-skill --tag v2.0.0
+
+# Publish from a different path
+agentzero publish /path/to/skill --repo auser/my-cool-skill
+```
+
+### What Publish Does
+
+1. Validates `SKILL.md` exists and parses the manifest
+2. Creates a `.tar.gz` tarball of the skill directory
+3. Computes SHA-256 checksum of the tarball
+4. Creates a GitHub Release with the checksum in the release body
+5. Uploads the tarball as a release asset
+
+### Requirements
+
+- `GITHUB_TOKEN` environment variable set with repo access
+- Or a token stored in the vault: `agentzero vault add github token`
+
+### Install a Published Skill
+
+After publishing, others can install with:
+
+```bash
+agentzero install auser/my-cool-skill
+```
+
+This resolves the latest release, downloads the tarball, verifies the SHA-256 checksum against the release notes, and extracts to `skills/`.
 
 ## WASM Skills
 
@@ -123,19 +174,13 @@ When you run `agentzero run my-wasm-tool`:
 
 ### Enabling WASM Support
 
-WASM support requires two things:
+WASM is enabled by default in release builds. To allow WASM skill execution, add to `.agentzero/policy.yml`:
 
-1. **Build with the feature flag:**
-   ```bash
-   cargo build --features wasm
-   ```
+```toml
+wasm_execution = "allow"
+```
 
-2. **Allow in policy** (`.agentzero/policy.yml`):
-   ```toml
-   wasm_execution = "allow"
-   ```
-
-Without both, WASM skills are denied. This is by design — fail closed.
+Without the policy entry, WASM skills are denied. This is by design — fail closed.
 
 ### Checking WASM Status
 
@@ -148,6 +193,35 @@ The doctor command reports:
 - The current WASM policy setting
 - How many installed skills use the WASM runtime
 
+## Host-Supervised Skills
+
+Host-supervised skills run shell commands on the host with policy approval. They're for tools that need filesystem writes, shell access, or other host capabilities.
+
+### Creating a Host-Supervised Skill
+
+```
+my-script-tool/
+  SKILL.md
+  run.sh          # entrypoint script
+```
+
+The `SKILL.md` declares `runtime: host_supervised`:
+
+```markdown
+---
+name: my-script-tool
+version: 0.1.0
+runtime: host_supervised
+entrypoint: run.sh
+- shell
+- write
+---
+
+# My Script Tool
+```
+
+If `entrypoint` is omitted, defaults to `run.sh` in the skill directory.
+
 ## Skill Lockfile
 
 Installed skills are tracked in `.agentzero/skills.lock`:
@@ -159,9 +233,22 @@ version = 1
 name = "repo-security-audit"
 version = "0.1.0"
 source = "local"
-runtime = "none"
-permissions = ["read"]
+runtime = "instructiononly"
+permissions = ["fileread"]
+
+[skills.my-cool-skill]
+name = "my-cool-skill"
+version = "1.0.0"
+source = "github:auser/my-cool-skill"
+runtime = "wasm"
+permissions = ["fileread"]
+checksum = "sha256:a1b2c3..."
 ```
+
+The lockfile records:
+- **source** — `local`, `git:<url>`, or `github:<owner>/<repo>`
+- **checksum** — SHA-256 of the downloaded tarball (GitHub installs)
+- **permissions** — capability snapshot from the manifest at install time
 
 ## Built-in Skills
 

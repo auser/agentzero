@@ -51,7 +51,11 @@ Sandbox profiles and WASM runtime (behind `wasm` feature flag). Wasmtime v29 bac
 ## Extensions
 
 ### `agentzero-skills`
-Skill manifests, security scanner, report generator, skill registry with lockfile. Includes `load_manifest()` for building `SkillManifest` from SKILL.md frontmatter and `find_wasm_module()` for locating `.wasm` files.
+Skill manifests, security scanner, report generator, skill registry with lockfile. Includes:
+- `registry` — manifest loading, lockfile management, checksum verification
+- `package` — tarball creation/extraction, SHA-256 checksums
+- `remote` — skill ref parsing (local/git/GitHub), release resolution
+- `github` — async GitHub API client for install and publish
 
 ### `agentzero-mcp`
 MCP server (JSON-RPC 2.0 over stdio). Exposes tools to any MCP client.

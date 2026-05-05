@@ -67,11 +67,37 @@ For instruction-only skills, displays the `SKILL.md` content.
 
 ## `agentzero install`
 
-Install a skill from a local path or git URL.
+Install a skill from a local path, GitHub owner/repo, or git URL.
 
 ```bash
-agentzero install <path-or-url>
+agentzero install <source>
 ```
+
+The source is auto-detected:
+
+| Format | Example | Action |
+|--------|---------|--------|
+| `owner/repo` | `auser/my-skill` | Download latest GitHub release |
+| GitHub URL | `https://github.com/auser/my-skill` | Download latest GitHub release |
+| Git URL | `https://gitlab.com/user/repo` | Clone via git |
+| Local path | `/path/to/skill` or `./my-skill` | Copy directory |
+
+GitHub installs verify SHA-256 checksums from the release notes. All install methods update `.agentzero/skills.lock`.
+
+## `agentzero publish`
+
+Package and publish a skill to a GitHub release.
+
+```bash
+agentzero publish [path] [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--repo` | Target GitHub repository (owner/repo). Auto-detected from git remote if omitted. |
+| `--tag` | Release tag (default: v{version} from SKILL.md) |
+
+Requires `GITHUB_TOKEN` environment variable. Creates a GitHub release, uploads the tarball, and includes the SHA-256 checksum in the release notes.
 
 ## `agentzero doctor`
 
