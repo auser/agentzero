@@ -91,6 +91,15 @@ changelog:
 changelog-preview:
   git-cliff --unreleased --strip header
 
+# Build release binary and symlink to ~/.bin/agentzero
+install:
+  #!/usr/bin/env sh
+  set -eu
+  cargo build --release
+  mkdir -p "$HOME/.bin"
+  ln -sf "$(pwd)/target/release/agentzero" "$HOME/.bin/agentzero"
+  echo "Installed: ~/.bin/agentzero → $(pwd)/target/release/agentzero"
+
 # Show tree of the project
 show-tree:
   find . -maxdepth 4 -type f | sort
