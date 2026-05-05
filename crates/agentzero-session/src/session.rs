@@ -1,9 +1,11 @@
 use agentzero_audit::{AuditLogger, AuditSink, InMemorySink};
 use agentzero_core::{
     AuditEvent, Capability, DataClassification, ExecutionId, PolicyDecision, RedactionResult,
-    RuntimeTier, SessionId,
+    RuntimeTier, SessionId, SkillId,
 };
 use agentzero_policy::PolicyEngine;
+use agentzero_sandbox::SandboxProfile;
+use agentzero_skills::{SkillManifest, SkillRuntime};
 use agentzero_tracing::{info, warn};
 use thiserror::Error;
 
@@ -42,6 +44,18 @@ impl Default for SessionConfig {
             project_root: None,
         }
     }
+}
+
+/// Parameters for emitting an audit event.
+struct AuditParams<'a> {
+    action: &'a str,
+    capability: Capability,
+    classification: DataClassification,
+    decision: PolicyDecision,
+    reason: &'a str,
+    redactions: &'a [String],
+    runtime: RuntimeTier,
+    skill_id: Option<SkillId>,
 }
 
 /// A supervised agent session.
@@ -329,6 +343,136 @@ impl Session {
         self.policy.evaluate(&request)
     }
 
+    /// Execute a skill inside its declared runtime sandbox.
+    ///
+    /// For WASM skills: resolves the module bytes, builds a `SandboxProfile`
+    /// from the manifest, checks policy, and delegates to `ToolExecutor::execute_wasm`.
+    /// For `InstructionOnly` skills: returns the skill instructions as output.
+    /// Other runtime tiers return an error (not yet implemented).
+    pub fn execute_skill(
+        &self,
+        manifest: &SkillManifest,
+        wasm_bytes: Option<&[u8]>,
+    ) -> Result<String, SessionError> {
+        info!(
+            session_id = %self.id,
+            skill = %manifest.name,
+            runtime = ?manifest.runtime,
+            "executing skill"
+        );
+
+        manifest
+            .validate()
+            .map_err(|e| SessionError::Failed(e.to_string()))?;
+
+        let tier = manifest.runtime_tier();
+
+        // Policy check: SkillLoad at the skill's runtime tier
+        let decision =
+            self.check_policy_with_tier(Capability::SkillLoad, DataClassification::Private, tier);
+        if !decision.is_allowed() {
+            self.emit_audit_event(AuditParams {
+                action: &format!("skill_denied:{}", manifest.name),
+                capability: Capability::SkillLoad,
+                classification: DataClassification::Private,
+                decision: decision.clone(),
+                reason: &format!("skill {} denied by policy", manifest.name),
+                redactions: &[],
+                runtime: tier,
+                skill_id: Some(manifest.id.clone()),
+            })?;
+            return Err(SessionError::Failed(format!(
+                "skill {} denied: {decision:?}",
+                manifest.name
+            )));
+        }
+
+        match manifest.runtime {
+            SkillRuntime::InstructionOnly => {
+                self.emit_audit_event(AuditParams {
+                    action: &format!("skill:instruction:{}", manifest.name),
+                    capability: Capability::SkillLoad,
+                    classification: DataClassification::Private,
+                    decision: PolicyDecision::Allow,
+                    reason: "instruction-only skill loaded",
+                    redactions: &[],
+                    runtime: RuntimeTier::None,
+                    skill_id: Some(manifest.id.clone()),
+                })?;
+                Ok(format!("skill {} loaded (instruction-only)", manifest.name))
+            }
+            SkillRuntime::Wasm => {
+                let bytes = wasm_bytes.ok_or_else(|| {
+                    SessionError::Failed(format!(
+                        "skill {} requires WASM module bytes but none provided",
+                        manifest.name
+                    ))
+                })?;
+
+                let profile = self.build_wasm_profile(manifest);
+                let result = self
+                    .tool_executor
+                    .execute_wasm(bytes, &profile)
+                    .map_err(|e| SessionError::Failed(e.to_string()))?;
+
+                self.emit_audit_event(AuditParams {
+                    action: &format!("skill:wasm:{}", manifest.name),
+                    capability: Capability::RuntimeLaunch,
+                    classification: DataClassification::Private,
+                    decision: PolicyDecision::Allow,
+                    reason: &format!("WASM skill {} executed", manifest.name),
+                    redactions: &[],
+                    runtime: RuntimeTier::WasmSandbox,
+                    skill_id: Some(manifest.id.clone()),
+                })?;
+
+                Ok(result.output)
+            }
+            other => Err(SessionError::Failed(format!(
+                "runtime {other:?} not yet supported"
+            ))),
+        }
+    }
+
+    /// Evaluate a policy request with a specific runtime tier.
+    fn check_policy_with_tier(
+        &self,
+        capability: Capability,
+        classification: DataClassification,
+        runtime: RuntimeTier,
+    ) -> PolicyDecision {
+        let request = agentzero_policy::PolicyRequest {
+            capability,
+            classification,
+            runtime,
+            context: format!("session:{}", self.id),
+        };
+        self.policy.evaluate(&request)
+    }
+
+    /// Build a WASM sandbox profile from a skill manifest.
+    fn build_wasm_profile(&self, manifest: &SkillManifest) -> SandboxProfile {
+        use agentzero_sandbox::{SandboxLimit, SandboxNetworkPolicy};
+
+        let capabilities = manifest
+            .permissions
+            .iter()
+            .map(|p| p.capability.clone())
+            .collect();
+
+        SandboxProfile {
+            runtime: RuntimeTier::WasmSandbox,
+            capabilities,
+            mounts: vec![], // WASM modules get no filesystem mounts
+            network: SandboxNetworkPolicy::Deny,
+            limits: SandboxLimit {
+                max_duration_secs: 30,
+                max_memory_bytes: Some(64 * 1024 * 1024),
+                max_cpu_secs: None,
+            },
+        }
+    }
+
     /// Signal session end and emit audit event.
     pub fn end(&self) -> Result<(), SessionError> {
         self.emit_lifecycle_event("session_end", "session ended by user")
@@ -396,19 +540,32 @@ impl Session {
         reason: &str,
         redactions: &[String],
     ) -> Result<(), SessionError> {
+        self.emit_audit_event(AuditParams {
+            action,
+            capability,
+            classification,
+            decision,
+            reason,
+            redactions,
+            runtime: RuntimeTier::HostReadonly,
+            skill_id: None,
+        })
+    }
+
+    fn emit_audit_event(&self, params: AuditParams<'_>) -> Result<(), SessionError> {
         let event = AuditEvent {
             execution_id: ExecutionId::new(),
             session_id: self.id.clone(),
             timestamp: chrono::Utc::now(),
-            action: action.to_string(),
-            capability,
-            classification,
-            decision,
-            reason: reason.to_string(),
-            runtime: RuntimeTier::HostReadonly,
-            skill_id: None,
+            action: params.action.to_string(),
+            capability: params.capability,
+            classification: params.classification,
+            decision: params.decision,
+            reason: params.reason.to_string(),
+            runtime: params.runtime,
+            skill_id: params.skill_id,
             tool_id: None,
-            redactions_applied: redactions.to_vec(),
+            redactions_applied: params.redactions.to_vec(),
             approval_scope: None,
         };
         self.audit_sink
@@ -559,5 +716,110 @@ mod tests {
         let session = Session::new(SessionConfig::default(), PolicyEngine::deny_by_default())
             .expect("should create");
         assert!(session.end().is_ok());
+    }
+
+    #[test]
+    fn execute_instruction_only_skill() {
+        use agentzero_skills::{SkillManifest, SkillPermission, SkillRuntime};
+
+        let policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow(Capability::SkillLoad, DataClassification::Private),
+        ]);
+        let session = Session::new(SessionConfig::default(), policy).expect("should create");
+
+        let manifest = SkillManifest {
+            id: agentzero_core::SkillId::from_string("test-skill"),
+            name: "test-skill".into(),
+            version: "0.1.0".into(),
+            description: "A test instruction-only skill".into(),
+            runtime: SkillRuntime::InstructionOnly,
+            permissions: vec![SkillPermission {
+                capability: Capability::FileRead,
+                reason: "needs file access".into(),
+            }],
+            source: None,
+        };
+
+        let result = session.execute_skill(&manifest, None);
+        assert!(result.is_ok());
+        assert!(result.expect("should succeed").contains("instruction-only"));
+    }
+
+    #[test]
+    fn execute_skill_denied_by_policy() {
+        use agentzero_skills::{SkillManifest, SkillRuntime};
+
+        let policy = PolicyEngine::deny_by_default();
+        let session = Session::new(SessionConfig::default(), policy).expect("should create");
+
+        let manifest = SkillManifest {
+            id: agentzero_core::SkillId::from_string("denied-skill"),
+            name: "denied-skill".into(),
+            version: "0.1.0".into(),
+            description: "Should be denied".into(),
+            runtime: SkillRuntime::Wasm,
+            permissions: vec![],
+            source: None,
+        };
+
+        let result = session.execute_skill(&manifest, Some(&[]));
+        assert!(result.is_err());
+        let err = result.expect_err("should fail");
+        assert!(err.to_string().contains("denied"));
+    }
+
+    #[test]
+    fn execute_wasm_skill_without_bytes_fails() {
+        use agentzero_skills::{SkillManifest, SkillRuntime};
+
+        let policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow(Capability::SkillLoad, DataClassification::Private),
+            PolicyRule::allow_runtime(Capability::SkillLoad, RuntimeTier::WasmSandbox),
+        ]);
+        let session = Session::new(SessionConfig::default(), policy).expect("should create");
+
+        let manifest = SkillManifest {
+            id: agentzero_core::SkillId::from_string("wasm-skill"),
+            name: "wasm-skill".into(),
+            version: "0.1.0".into(),
+            description: "WASM skill without bytes".into(),
+            runtime: SkillRuntime::Wasm,
+            permissions: vec![],
+            source: None,
+        };
+
+        let result = session.execute_skill(&manifest, None);
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("should fail")
+            .to_string()
+            .contains("WASM module bytes"));
+    }
+
+    #[test]
+    fn execute_unsupported_runtime_fails() {
+        use agentzero_skills::{SkillManifest, SkillRuntime};
+
+        let policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow(Capability::SkillLoad, DataClassification::Private),
+        ]);
+        let session = Session::new(SessionConfig::default(), policy).expect("should create");
+
+        let manifest = SkillManifest {
+            id: agentzero_core::SkillId::from_string("mvm-skill"),
+            name: "mvm-skill".into(),
+            version: "0.1.0".into(),
+            description: "MVM skill".into(),
+            runtime: SkillRuntime::Mvm,
+            permissions: vec![],
+            source: None,
+        };
+
+        let result = session.execute_skill(&manifest, None);
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("should fail")
+            .to_string()
+            .contains("not yet supported"));
     }
 }

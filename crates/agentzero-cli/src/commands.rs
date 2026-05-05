@@ -1199,24 +1199,46 @@ fn cmd_run(name: &str) -> i32 {
         println!("Running installed skill: {name}");
         println!("Skill directory: {}", skill_dir.display());
 
-        // Check if it has a patterns.toml (scanner-based skill)
-        let patterns_path = skill_dir.join("patterns.toml");
-        if patterns_path.exists() {
-            println!("Found patterns.toml — running scanner...");
-            println!();
-            use agentzero::skills::{report, scanner};
-            let results = scanner::scan_directory_with_patterns(&cwd, Some(&patterns_path));
-            let report_text = report::generate_report(&results, name);
-            println!("{report_text}");
-            return if results.findings.is_empty() { 0 } else { 1 };
-        }
+        // Load manifest from SKILL.md frontmatter
+        let manifest = match agentzero::skills::registry::load_manifest(&skill_dir) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("error: failed to load skill manifest: {e}");
+                return 1;
+            }
+        };
 
-        // Otherwise just print the skill info
-        if let Ok(content) = std::fs::read_to_string(skill_dir.join("SKILL.md")) {
-            println!();
-            println!("{content}");
+        // Route by runtime type
+        match manifest.runtime {
+            agentzero::skills::SkillRuntime::Wasm => {
+                return cmd_run_wasm_skill(&cwd, &skill_dir, &manifest);
+            }
+            agentzero::skills::SkillRuntime::InstructionOnly => {
+                // Check if it has a patterns.toml (scanner-based skill)
+                let patterns_path = skill_dir.join("patterns.toml");
+                if patterns_path.exists() {
+                    println!("Found patterns.toml — running scanner...");
+                    println!();
+                    use agentzero::skills::{report, scanner};
+                    let results =
+                        scanner::scan_directory_with_patterns(&cwd, Some(&patterns_path));
+                    let report_text = report::generate_report(&results, name);
+                    println!("{report_text}");
+                    return if results.findings.is_empty() { 0 } else { 1 };
+                }
+
+                // Otherwise just print the skill info
+                if let Ok(content) = std::fs::read_to_string(skill_dir.join("SKILL.md")) {
+                    println!();
+                    println!("{content}");
+                }
+                return 0;
+            }
+            other => {
+                eprintln!("error: runtime {other:?} is not yet supported");
+                return 1;
+            }
         }
-        return 0;
     }
 
     // List available skills
@@ -1237,6 +1259,119 @@ fn cmd_run(name: &str) -> i32 {
     }
     eprintln!();
     1
+}
+
+/// Run a WASM-backed skill through the full session pipeline:
+/// policy check → sandbox profile → WasmEngine → audit.
+fn cmd_run_wasm_skill(
+    cwd: &std::path::Path,
+    skill_dir: &std::path::Path,
+    manifest: &agentzero::skills::SkillManifest,
+) -> i32 {
+    use agentzero::session::{Session, SessionConfig, SessionMode, ToolExecutor};
+
+    // Find the .wasm module
+    let wasm_path = match agentzero::skills::registry::find_wasm_module(skill_dir) {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "error: skill {} declares runtime: wasm but no .wasm file found in {}",
+                manifest.name,
+                skill_dir.display()
+            );
+            return 1;
+        }
+    };
+
+    println!("Runtime: WASM");
+    println!("Module:  {}", wasm_path.display());
+
+    // Read WASM bytes
+    let wasm_bytes = match std::fs::read(&wasm_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("error: failed to read WASM module: {e}");
+            return 1;
+        }
+    };
+
+    // Load policy
+    let policy_path = cwd.join(".agentzero/policy.yml");
+    let policy = if policy_path.exists() {
+        match agentzero::policy::load_policy_file(&policy_path) {
+            Ok(rules) => {
+                println!(
+                    "Policy:  {} rules from {}",
+                    rules.len(),
+                    policy_path.display()
+                );
+                agentzero::policy::PolicyEngine::with_rules(rules)
+            }
+            Err(e) => {
+                eprintln!("warning: failed to load policy: {e}");
+                agentzero::policy::PolicyEngine::deny_by_default()
+            }
+        }
+    } else {
+        println!("Policy:  deny-by-default (no policy file)");
+        agentzero::policy::PolicyEngine::deny_by_default()
+    };
+
+    // Create tool executor with its own policy copy
+    let tool_policy = if policy_path.exists() {
+        agentzero::policy::load_policy_file(&policy_path)
+            .map(agentzero::policy::PolicyEngine::with_rules)
+            .unwrap_or_else(|_| agentzero::policy::PolicyEngine::deny_by_default())
+    } else {
+        agentzero::policy::PolicyEngine::deny_by_default()
+    };
+    let tool_executor =
+        ToolExecutor::new(tool_policy).with_project_root(cwd.to_string_lossy().to_string());
+
+    // Create session
+    let session_config = SessionConfig {
+        mode: SessionMode::LocalOnly,
+        project_root: Some(cwd.to_string_lossy().to_string()),
+    };
+    let session = match Session::new(session_config, policy) {
+        Ok(s) => s.with_tool_executor(tool_executor),
+        Err(e) => {
+            eprintln!("error: failed to create session: {e}");
+            return 1;
+        }
+    };
+
+    // Wire audit to disk if project is initialized
+    let audit_dir = cwd.join(".agentzero/audit");
+    let session = if audit_dir.exists() {
+        match session.with_audit_dir(&audit_dir) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("warning: failed to set up audit logging: {e}");
+                return 1;
+            }
+        }
+    } else {
+        session
+    };
+
+    println!("Session: {}", session.id());
+    println!();
+
+    // Execute through the session pipeline
+    match session.execute_skill(manifest, Some(&wasm_bytes)) {
+        Ok(output) => {
+            if !output.is_empty() {
+                println!("{output}");
+            }
+            println!("Skill {} completed successfully.", manifest.name);
+            0
+        }
+        Err(e) => {
+            eprintln!("error: skill execution failed: {e}");
+            1
+        }
+    }
 }
 
 fn cmd_run_security_audit() -> i32 {

@@ -24,6 +24,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+wasm = ["agentzero-session/wasm"]
+
 [dependencies]
 agentzero-acp = { workspace = true }
 agentzero-audit = { workspace = true }

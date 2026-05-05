@@ -6,10 +6,16 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+wasm = ["agentzero-sandbox/wasm"]
+
 [dependencies]
 agentzero-core = { workspace = true }
 agentzero-audit = { workspace = true }
 agentzero-policy = { workspace = true }
+agentzero-sandbox = { workspace = true }
+agentzero-skills = { workspace = true }
 agentzero-tools = { workspace = true }
 agentzero-tracing = { workspace = true }
 chrono = { workspace = true }

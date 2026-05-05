@@ -1,4 +1,4 @@
-use agentzero_core::{Capability, DataClassification, PolicyDecision};
+use agentzero_core::{Capability, DataClassification, PolicyDecision, RuntimeTier};
 
 use crate::PolicyRequest;
 
@@ -18,6 +18,11 @@ enum RuleMatcher {
     },
     /// Match any request with the given capability.
     Capability { capability: Capability },
+    /// Match a capability at a specific runtime tier.
+    CapabilityAndRuntime {
+        capability: Capability,
+        runtime: RuntimeTier,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +65,30 @@ impl PolicyRule {
         Self {
             matcher: RuleMatcher::Capability { capability },
             effect: RuleEffect::RequireApproval {
+                reason: reason.to_string(),
+            },
+        }
+    }
+
+    /// Create an allow rule for a capability at a specific runtime tier.
+    pub fn allow_runtime(capability: Capability, runtime: RuntimeTier) -> Self {
+        Self {
+            matcher: RuleMatcher::CapabilityAndRuntime {
+                capability,
+                runtime,
+            },
+            effect: RuleEffect::Allow,
+        }
+    }
+
+    /// Create a deny rule for a capability at a specific runtime tier.
+    pub fn deny_runtime(capability: Capability, runtime: RuntimeTier, reason: &str) -> Self {
+        Self {
+            matcher: RuleMatcher::CapabilityAndRuntime {
+                capability,
+                runtime,
+            },
+            effect: RuleEffect::Deny {
                 reason: reason.to_string(),
             },
         }
@@ -110,6 +139,10 @@ impl PolicyRule {
                 classification,
             } => request.capability == *capability && request.classification == *classification,
             RuleMatcher::Capability { capability } => request.capability == *capability,
+            RuleMatcher::CapabilityAndRuntime {
+                capability,
+                runtime,
+            } => request.capability == *capability && request.runtime == *runtime,
         }
     }
 }
@@ -174,6 +207,48 @@ mod tests {
         ));
         assert!(d1.is_some());
         assert!(d2.is_some());
+    }
+
+    #[test]
+    fn allow_runtime_rule_matches_tier() {
+        let rule = PolicyRule::allow_runtime(Capability::RuntimeLaunch, RuntimeTier::WasmSandbox);
+        let req = PolicyRequest {
+            capability: Capability::RuntimeLaunch,
+            classification: DataClassification::Private,
+            runtime: RuntimeTier::WasmSandbox,
+            context: "test".into(),
+        };
+        assert_eq!(rule.evaluate(&req), Some(PolicyDecision::Allow));
+    }
+
+    #[test]
+    fn allow_runtime_rule_does_not_match_different_tier() {
+        let rule = PolicyRule::allow_runtime(Capability::RuntimeLaunch, RuntimeTier::WasmSandbox);
+        let req = PolicyRequest {
+            capability: Capability::RuntimeLaunch,
+            classification: DataClassification::Private,
+            runtime: RuntimeTier::HostSupervised,
+            context: "test".into(),
+        };
+        assert_eq!(rule.evaluate(&req), None);
+    }
+
+    #[test]
+    fn deny_runtime_rule_matches() {
+        let rule = PolicyRule::deny_runtime(
+            Capability::RuntimeLaunch,
+            RuntimeTier::MvmMicrovm,
+            "MVM not supported",
+        );
+        let req = PolicyRequest {
+            capability: Capability::RuntimeLaunch,
+            classification: DataClassification::Private,
+            runtime: RuntimeTier::MvmMicrovm,
+            context: "test".into(),
+        };
+        let decision = rule.evaluate(&req);
+        assert!(decision.is_some());
+        assert!(!decision.as_ref().expect("should be Some").is_allowed());
     }
 
     #[test]

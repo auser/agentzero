@@ -158,6 +158,8 @@ dependencies = [
  "agentzero-audit",
  "agentzero-core",
  "agentzero-policy",
+ "agentzero-sandbox",
+ "agentzero-skills",
  "agentzero-tools",
  "agentzero-tracing",
  "chrono",

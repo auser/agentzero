@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use agentzero_core::{Capability, DataClassification};
+use agentzero_core::{Capability, DataClassification, RuntimeTier};
 use agentzero_tracing::info;
 use serde::Deserialize;
 
@@ -28,6 +28,8 @@ struct PolicyFile {
     file_read: String,
     #[serde(default)]
     network: String,
+    #[serde(default)]
+    wasm_execution: String,
 }
 
 fn default_version() -> u32 {
@@ -170,6 +172,39 @@ pub fn load_policy_file(path: &Path) -> Result<Vec<PolicyRule>, String> {
             ));
         }
         _ => {}
+    }
+
+    // WASM execution rules
+    match parsed.wasm_execution.as_str() {
+        "allow" => {
+            rules.push(PolicyRule::allow_runtime(
+                Capability::RuntimeLaunch,
+                RuntimeTier::WasmSandbox,
+            ));
+            rules.push(PolicyRule::allow_runtime(
+                Capability::SkillLoad,
+                RuntimeTier::WasmSandbox,
+            ));
+        }
+        "require_approval" => {
+            rules.push(PolicyRule::require_approval(
+                Capability::RuntimeLaunch,
+                "WASM execution requires approval per policy",
+            ));
+        }
+        _ => {
+            // Default: deny WASM execution (fail closed)
+            rules.push(PolicyRule::deny_runtime(
+                Capability::RuntimeLaunch,
+                RuntimeTier::WasmSandbox,
+                "WASM execution denied by default policy",
+            ));
+            rules.push(PolicyRule::deny_runtime(
+                Capability::SkillLoad,
+                RuntimeTier::WasmSandbox,
+                "WASM skill loading denied by default policy",
+            ));
+        }
     }
 
     info!(rules = rules.len(), "policy rules loaded");
@@ -320,6 +355,56 @@ mod tests {
 
         let rules = load_policy_file(&policy_path);
         assert!(rules.is_ok());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wasm_allow_policy_permits_runtime_launch() {
+        let dir = temp_dir("wasm-allow");
+        fs::create_dir_all(&dir).expect("should create dir");
+        let policy_path = dir.join("policy.yml");
+        fs::write(
+            &policy_path,
+            "version = 1\ndefault_classification = \"private\"\nwasm_execution = \"allow\"\n",
+        )
+        .expect("should write");
+
+        let rules = load_policy_file(&policy_path).expect("should load");
+        let engine = crate::PolicyEngine::with_rules(rules);
+
+        let request = crate::PolicyRequest {
+            capability: Capability::RuntimeLaunch,
+            classification: DataClassification::Private,
+            runtime: agentzero_core::RuntimeTier::WasmSandbox,
+            context: "test wasm".into(),
+        };
+        assert!(engine.evaluate(&request).is_allowed());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wasm_default_policy_denies_runtime_launch() {
+        let dir = temp_dir("wasm-deny");
+        fs::create_dir_all(&dir).expect("should create dir");
+        let policy_path = dir.join("policy.yml");
+        fs::write(
+            &policy_path,
+            "version = 1\ndefault_classification = \"private\"\n",
+        )
+        .expect("should write");
+
+        let rules = load_policy_file(&policy_path).expect("should load");
+        let engine = crate::PolicyEngine::with_rules(rules);
+
+        let request = crate::PolicyRequest {
+            capability: Capability::RuntimeLaunch,
+            classification: DataClassification::Private,
+            runtime: agentzero_core::RuntimeTier::WasmSandbox,
+            context: "test wasm".into(),
+        };
+        assert!(!engine.evaluate(&request).is_allowed());
 
         fs::remove_dir_all(&dir).ok();
     }

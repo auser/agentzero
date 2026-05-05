@@ -149,6 +149,78 @@ fn parse_skill_metadata(path: &Path) -> (String, String, Vec<String>) {
     (version, runtime, permissions)
 }
 
+/// Build a `SkillManifest` from a skill directory containing SKILL.md.
+///
+/// Parses the SKILL.md frontmatter for metadata and checks for a `.wasm`
+/// module file alongside the manifest.
+pub fn load_manifest(skill_dir: &Path) -> Result<crate::SkillManifest, RegistryError> {
+    let skill_md = skill_dir.join("SKILL.md");
+    if !skill_md.exists() {
+        return Err(RegistryError::NotFound(format!(
+            "no SKILL.md in {}",
+            skill_dir.display()
+        )));
+    }
+
+    let name = skill_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let (version, runtime_str, perm_strs) = parse_skill_metadata(&skill_md);
+
+    let runtime = match runtime_str.as_str() {
+        "wasm" => crate::SkillRuntime::Wasm,
+        "host_supervised" => crate::SkillRuntime::HostSupervised,
+        "mvm" => crate::SkillRuntime::Mvm,
+        _ => crate::SkillRuntime::InstructionOnly,
+    };
+
+    let permissions = perm_strs
+        .into_iter()
+        .map(|p| {
+            let capability = match p.as_str() {
+                "read" => agentzero_core::Capability::FileRead,
+                "write" => agentzero_core::Capability::FileWrite,
+                "shell" => agentzero_core::Capability::ShellCommand,
+                "network" => agentzero_core::Capability::NetworkRequest,
+                _ => agentzero_core::Capability::FileRead,
+            };
+            crate::SkillPermission {
+                capability,
+                reason: format!("declared in SKILL.md: {p}"),
+            }
+        })
+        .collect();
+
+    let source = Some(crate::SkillPackageRef::Local {
+        path: skill_dir.to_string_lossy().to_string(),
+    });
+
+    Ok(crate::SkillManifest {
+        id: agentzero_core::SkillId::from_string(&name),
+        name: name.clone(),
+        version,
+        description: name,
+        runtime,
+        permissions,
+        source,
+    })
+}
+
+/// Find the `.wasm` module file in a skill directory, if any.
+pub fn find_wasm_module(skill_dir: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(skill_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("wasm") {
+            return Some(path);
+        }
+    }
+    None
+}
+
 /// Default lockfile path for a project.
 pub fn lockfile_path(project_root: &Path) -> PathBuf {
     project_root.join(".agentzero/skills.lock")
@@ -223,6 +295,68 @@ mod tests {
         let lockfile =
             SkillLockfile::load(Path::new("/nonexistent/skills.lock")).expect("should succeed");
         assert!(lockfile.skills.is_empty());
+    }
+
+    #[test]
+    fn load_manifest_instruction_only() {
+        let dir = temp_dir("manifest-inst");
+        let skill_dir = dir.join("my-skill");
+        fs::create_dir_all(&skill_dir).expect("should create");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nversion: 1.0.0\nruntime: none\n---\n# My Skill\n",
+        )
+        .expect("should write");
+
+        let manifest = load_manifest(&skill_dir).expect("should load");
+        assert_eq!(manifest.name, "my-skill");
+        assert_eq!(manifest.version, "1.0.0");
+        assert_eq!(manifest.runtime, crate::SkillRuntime::InstructionOnly);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_manifest_wasm_runtime() {
+        let dir = temp_dir("manifest-wasm");
+        let skill_dir = dir.join("wasm-skill");
+        fs::create_dir_all(&skill_dir).expect("should create");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nversion: 0.2.0\nruntime: wasm\n- read\n---\n# WASM Skill\n",
+        )
+        .expect("should write");
+        fs::write(skill_dir.join("module.wasm"), b"fake wasm").expect("should write");
+
+        let manifest = load_manifest(&skill_dir).expect("should load");
+        assert_eq!(manifest.runtime, crate::SkillRuntime::Wasm);
+
+        let wasm_path = find_wasm_module(&skill_dir);
+        assert!(wasm_path.is_some());
+        assert!(wasm_path
+            .expect("should find")
+            .to_string_lossy()
+            .contains("module.wasm"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_manifest_missing_dir_fails() {
+        let result = load_manifest(Path::new("/nonexistent/skill"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn find_wasm_module_returns_none_when_absent() {
+        let dir = temp_dir("no-wasm");
+        let skill_dir = dir.join("plain-skill");
+        fs::create_dir_all(&skill_dir).expect("should create");
+        fs::write(skill_dir.join("SKILL.md"), "# No WASM").expect("should write");
+
+        assert!(find_wasm_module(&skill_dir).is_none());
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

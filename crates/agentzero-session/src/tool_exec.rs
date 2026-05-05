@@ -17,6 +17,10 @@ pub enum ToolExecutorError {
     Failed(String),
     #[error("invalid path: {0}")]
     InvalidPath(String),
+    #[error("wasm execution failed: {0}")]
+    WasmFailed(String),
+    #[error("wasm feature not enabled")]
+    WasmNotAvailable,
 }
 
 /// Result of a tool execution.
@@ -270,15 +274,98 @@ impl ToolExecutor {
         })
     }
 
+    /// Execute a WASM module with the given bytes, respecting policy.
+    ///
+    /// Policy is checked for `RuntimeLaunch` at `WasmSandbox` tier before execution.
+    /// The caller is responsible for resolving the WASM bytes from the skill's `SkillPackageRef`.
+    #[cfg(feature = "wasm")]
+    pub fn execute_wasm(
+        &self,
+        wasm_bytes: &[u8],
+        profile: &agentzero_sandbox::SandboxProfile,
+    ) -> Result<ToolResult, ToolExecutorError> {
+        use agentzero_sandbox::wasm::{WasmConfig, WasmEngine};
+
+        let execution_id = ExecutionId::new();
+        let tool_id = ToolId::from_string("wasm_sandbox");
+
+        debug!(tool = "wasm_sandbox", "checking policy for WASM execution");
+
+        let decision = self.check_policy_with_tier(
+            Capability::RuntimeLaunch,
+            DataClassification::Private,
+            RuntimeTier::WasmSandbox,
+        );
+        if !decision.is_allowed() {
+            warn!(tool = "wasm_sandbox", "WASM execution denied by policy");
+            return Err(ToolExecutorError::Denied(format!(
+                "WASM execution denied: {decision:?}"
+            )));
+        }
+
+        let config = WasmConfig {
+            max_memory_bytes: profile.limits.max_memory_bytes.unwrap_or(64 * 1024 * 1024),
+            max_duration_secs: profile.limits.max_duration_secs,
+            allow_filesystem: false,
+        };
+
+        info!(
+            tool = "wasm_sandbox",
+            bytes = wasm_bytes.len(),
+            max_memory = config.max_memory_bytes,
+            max_duration = config.max_duration_secs,
+            "launching WASM execution"
+        );
+
+        let engine =
+            WasmEngine::new(config).map_err(|e| ToolExecutorError::WasmFailed(e.to_string()))?;
+
+        let wasm_result = engine
+            .execute(wasm_bytes)
+            .map_err(|e| ToolExecutorError::WasmFailed(e.to_string()))?;
+
+        info!(
+            tool = "wasm_sandbox",
+            success = wasm_result.success,
+            "WASM execution complete"
+        );
+
+        Ok(ToolResult {
+            tool_id,
+            execution_id,
+            success: wasm_result.success,
+            output: wasm_result.output,
+        })
+    }
+
+    /// Stub when the `wasm` feature is not enabled.
+    #[cfg(not(feature = "wasm"))]
+    pub fn execute_wasm(
+        &self,
+        _wasm_bytes: &[u8],
+        _profile: &agentzero_sandbox::SandboxProfile,
+    ) -> Result<ToolResult, ToolExecutorError> {
+        Err(ToolExecutorError::WasmNotAvailable)
+    }
+
     fn check_policy(
         &self,
         capability: Capability,
         classification: DataClassification,
     ) -> PolicyDecision {
+        self.check_policy_with_tier(capability, classification, RuntimeTier::HostReadonly)
+    }
+
+    fn check_policy_with_tier(
+        &self,
+        capability: Capability,
+        classification: DataClassification,
+        runtime: RuntimeTier,
+    ) -> PolicyDecision {
         let request = PolicyRequest {
             capability,
             classification,
-            runtime: RuntimeTier::HostReadonly,
+            runtime,
             context: String::new(),
         };
         self.policy.evaluate(&request)
