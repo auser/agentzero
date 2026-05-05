@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentZero</title>
+  <meta name="description" content="The secure runtime for AI agents.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+
+    /* -- THEME TOKENS -- */
+    :root,[data-theme="dark"]{
+      --bg:#08080a;--bg2:#0e0e12;--surface:#131318;--surface2:#1a1a20;
+      --glass:rgba(255,255,255,.04);--glass-border:rgba(255,255,255,.06);--glass-hover:rgba(255,255,255,.07);
+      --bd:#1e1e24;--bd2:#2a2a32;
+      --t:#ededf0;--t2:#9a9aa4;--t3:#5e5e68;
+      --accent:#4f8ff7;--accent-dim:rgba(79,143,247,.1);
+      --green:#3dd68c;--purple:#b18cfa;--yellow:#f5c542;
+      --hero-glow:radial-gradient(ellipse at 50% 30%,rgba(79,143,247,.06) 0%,transparent 60%);
+      --card-shadow:0 2px 30px rgba(0,0,0,.3);
+    }
+    [data-theme="light"]{
+      --bg:#f4f4f7;--bg2:#eaeaef;--surface:#fff;--surface2:#f0f0f5;
+      --glass:rgba(255,255,255,.65);--glass-border:rgba(0,0,0,.06);--glass-hover:rgba(255,255,255,.8);
+      --bd:#dddde2;--bd2:#ccccd2;
+      --t:#111118;--t2:#55555e;--t3:#88889a;
+      --accent:#3570d4;--accent-dim:rgba(53,112,212,.08);
+      --green:#1a9960;--purple:#7c5fc4;--yellow:#c09520;
+      --hero-glow:radial-gradient(ellipse at 50% 30%,rgba(53,112,212,.06) 0%,transparent 60%);
+      --card-shadow:0 2px 30px rgba(0,0,0,.06);
+    }
+
+    html{scroll-behavior:smooth}
+    body{background:var(--bg);color:var(--t);font-family:'Inter',system-ui,sans-serif;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
+    a{color:var(--t2);text-decoration:none;transition:color .15s}
+    a:hover{color:var(--t)}
+    code{font-family:'JetBrains Mono',monospace;font-size:.85em}
+
+    /* -- NAV -- */
+    header{position:fixed;top:0;left:0;right:0;z-index:50;padding:0 clamp(1.5rem,4vw,3rem);height:3.5rem;display:flex;align-items:center;justify-content:space-between;background:var(--glass);backdrop-filter:blur(20px) saturate(180%);border-bottom:1px solid var(--glass-border);transition:background .3s}
+    .mark{font-weight:800;font-size:1rem;color:var(--t);letter-spacing:-.02em;display:flex;align-items:center;gap:.5rem}
+    .mark svg{opacity:.65}
+    .links{display:flex;align-items:center;gap:1.25rem;font-size:.82rem;font-weight:500}
+    .theme-btn{background:none;border:1px solid var(--bd);border-radius:6px;padding:.3rem .55rem;cursor:pointer;color:var(--t2);font-size:.78rem;display:flex;align-items:center;gap:.3rem;transition:all .15s}
+    .theme-btn:hover{border-color:var(--bd2);color:var(--t)}
+
+    /* -- HERO -- */
+    .hero{min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:6rem 2rem 4rem;position:relative}
+    .hero::before{content:'';position:absolute;inset:0;background:var(--hero-glow);pointer-events:none;transition:background .3s}
+    .hero-inner{position:relative;max-width:52rem}
+    .hero-badge{display:inline-flex;align-items:center;gap:.5rem;padding:.35rem .85rem;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);background:var(--accent-dim);border:1px solid rgba(79,143,247,.15);border-radius:100px;margin-bottom:2rem}
+    .hero h1{font-size:clamp(2.6rem,7vw,5.2rem);font-weight:900;letter-spacing:-.05em;line-height:.97;margin-bottom:2rem}
+    .hero h1 em{font-style:normal;color:var(--t3)}
+    .hero-sub{font-size:1.1rem;line-height:1.8;color:var(--t2);max-width:32rem;margin:0 auto 2.5rem}
+    .hero-cta{display:flex;align-items:center;gap:.75rem;justify-content:center;flex-wrap:wrap}
+    .btn-fill{display:inline-flex;align-items:center;gap:.4rem;padding:.6rem 1.2rem;font-size:.85rem;font-weight:600;border-radius:8px;background:var(--accent);color:#fff;transition:opacity .15s}
+    .btn-fill:hover{opacity:.88;color:#fff}
+    .btn-outline{display:inline-flex;align-items:center;gap:.4rem;padding:.6rem 1.2rem;font-size:.85rem;font-weight:500;border-radius:8px;color:var(--t2);border:1px solid var(--bd);transition:all .15s}
+    .btn-outline:hover{color:var(--t);border-color:var(--bd2)}
+
+    /* -- STATS STRIP -- */
+    .stats{display:flex;justify-content:center;gap:1rem;margin-top:3.5rem;flex-wrap:wrap}
+    .stat{background:var(--glass);backdrop-filter:blur(16px);border:1px solid var(--glass-border);border-radius:12px;padding:1.25rem 1.75rem;text-align:center;min-width:140px;transition:background .15s,border .15s;box-shadow:var(--card-shadow)}
+    .stat:hover{background:var(--glass-hover)}
+    .stat .num{font-size:1.6rem;font-weight:800;letter-spacing:-.03em;margin-bottom:.2rem}
+    .stat .lbl{font-size:.72rem;color:var(--t3);font-weight:500;text-transform:uppercase;letter-spacing:.06em}
+
+    /* -- SECTIONS -- */
+    section{padding:7rem clamp(1.5rem,4vw,3rem);max-width:60rem;margin:0 auto}
+    .sn{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--t3);margin-bottom:1.5rem}
+    section h2{font-size:clamp(1.6rem,4vw,2.6rem);font-weight:800;letter-spacing:-.04em;line-height:1.1;margin-bottom:1.25rem}
+    section h2 em{font-style:normal;color:var(--t3)}
+    .sd{font-size:1rem;line-height:1.8;color:var(--t2);max-width:34rem;margin-bottom:2.5rem}
+
+    /* -- TERMINAL -- */
+    .tw{margin:3rem 0}
+    .tm{background:var(--surface);border:1px solid var(--bd);border-radius:12px;overflow:hidden;box-shadow:var(--card-shadow);transition:background .3s,border .3s}
+    .tb{display:flex;align-items:center;gap:.5rem;padding:.65rem 1rem;border-bottom:1px solid var(--bd);transition:border .3s}
+    .tb i{width:9px;height:9px;border-radius:50%}
+    .tb i:nth-child(1){background:#ff5f57}
+    .tb i:nth-child(2){background:#febc2e}
+    .tb i:nth-child(3){background:#28c840}
+    .tb span{flex:1;text-align:center;font-family:'JetBrains Mono',monospace;font-size:.68rem;color:var(--t3)}
+    .tm pre{padding:1.25rem 1.5rem;font-family:'JetBrains Mono',monospace;font-size:.8rem;line-height:2;color:var(--t2);overflow-x:auto;white-space:pre-wrap}
+    .tm .g{color:var(--green)}.tm .y{color:var(--yellow)}.tm .c{color:#67e8f9}.tm .p{color:var(--purple)}.tm .d{color:var(--t3)}
+
+    /* -- SPLIT -- */
+    .split{display:grid;grid-template-columns:1fr 1fr;gap:3rem;align-items:start;margin:3rem 0}
+    .st h3{font-size:1.1rem;font-weight:700;margin-bottom:.5rem}
+    .st p{font-size:.88rem;color:var(--t2);line-height:1.7;margin-bottom:1.25rem}
+    .sc{background:var(--surface);border:1px solid var(--bd);border-radius:12px;padding:1.5rem;box-shadow:var(--card-shadow);transition:background .3s,border .3s}
+    .sc pre{font-family:'JetBrains Mono',monospace;font-size:.8rem;line-height:1.8;color:var(--t2)}
+    .sc .fl{font-size:.68rem;color:var(--t3);margin-bottom:.75rem}
+
+    /* -- GRID -- */
+    .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--bd);border:1px solid var(--bd);border-radius:12px;overflow:hidden;margin:3rem 0;transition:background .3s}
+    .g3 .cl{background:var(--bg);padding:1.75rem 1.5rem;transition:background .3s}
+    .g3 h3{font-size:.92rem;font-weight:700;margin-bottom:.35rem}
+    .g3 p{font-size:.82rem;color:var(--t3);line-height:1.65}
+
+    /* -- CTA -- */
+    .cta{text-align:center;padding:6rem 2rem;border-top:1px solid var(--bd);transition:border .3s}
+    .cta h2{margin-bottom:.75rem}
+    .cta p{color:var(--t2);margin:0 auto 2rem;max-width:28rem}
+    .cta .hero-cta{justify-content:center}
+
+    /* -- FOOTER -- */
+    footer{padding:2rem clamp(1.5rem,4vw,3rem);border-top:1px solid var(--glass-border);display:flex;align-items:center;justify-content:space-between;max-width:60rem;margin:0 auto;font-size:.78rem;color:var(--t3);transition:border .3s}
+    footer .fk{display:flex;gap:1.25rem}
+
+    @media(max-width:768px){
+      .split{grid-template-columns:1fr;gap:2rem}
+      .g3{grid-template-columns:1fr}
+      .stats{gap:.6rem}
+      .stat{min-width:100px;padding:1rem}
+      .links a:not(:last-child):not(.theme-btn){display:none}
+    }
+  </style>
+  <script>
+    // Theme toggle with localStorage persistence
+    (function(){
+      var stored = localStorage.getItem('az-theme');
+      if(stored) document.documentElement.setAttribute('data-theme', stored);
+      else if(window.matchMedia('(prefers-color-scheme: light)').matches) document.documentElement.setAttribute('data-theme','light');
+    })();
+  </script>
+</head>
+<body>
+
+  <header>
+    <a href="/" class="mark">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      AgentZero
+    </a>
+    <div class="links">
+      <a href="/getting-started/introduction/">Docs</a>
+      <a href="/architecture/security/">Security</a>
+      <a href="https://github.com/auser/agentzero">GitHub</a>
+      <button class="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-inner">
+      <div class="hero-badge">Open source &middot; v0.1.0</div>
+      <h1>There are many agent<br>runtimes, <em>but this<br>one is secure.</em></h1>
+      <p class="hero-sub">AgentZero wraps every tool call in policy. Secrets stay in an encrypted vault. PII gets redacted before it leaves your machine. Every action is auditable. Local models by default.</p>
+      <div class="hero-cta">
+        <a href="/getting-started/quickstart/" class="btn-fill">Get started &rarr;</a>
+        <a href="https://github.com/auser/agentzero" class="btn-outline">GitHub</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="num">13</div><div class="lbl">Rust Crates</div></div>
+        <div class="stat"><div class="num">224</div><div class="lbl">Tests</div></div>
+        <div class="stat"><div class="num">5</div><div class="lbl">Tools</div></div>
+        <div class="stat"><div class="num">4</div><div class="lbl">Providers</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 01: THE EXPERIENCE -->
+  <section>
+    <p class="sn">01</p>
+    <h2>Talk to your codebase. <em>Safely.</em></h2>
+    <p class="sd">AgentZero connects to a local model and gives it tools to read files, search code, and run commands &mdash; but every tool call passes through policy. Dangerous operations require your explicit approval.</p>
+    <div class="tw"><div class="tm">
+      <div class="tb"><i></i><i></i><i></i><span>~/project</span></div>
+      <pre><span class="c">you&gt;</span> are there any leaked credentials in this repo?
+  <span class="d"><span class="y">[tool: search]</span> pattern="password=" &hellip; ok (890 B)</span>
+  <span class="d"><span class="y">[tool: read]</span> config/database.yml &hellip; ok (240 B)</span>
+
+<span class="p">agentzero&gt;</span> Found one issue. <code>config/database.yml</code> line 8 has a
+hardcoded password. The value was <span class="y">redacted</span> from this response.
+
+  <span class="d">$ agentzero vault add postgres db-password</span>
+
+<span class="c">you&gt;</span> run the full security audit
+  <span class="d"><span class="y">[APPROVE shell: agentzero run repo-security-audit?]</span> (y/n) y</span>
+  <span class="d">Scanning 42 files&hellip; 3 findings. Report &rarr; .agentzero/audit/report.md</span></pre>
+    </div></div>
+  </section>
+
+  <!-- SECTION 02: MCP -->
+  <section>
+    <p class="sn">02</p>
+    <h2>One line to secure <em>your editor's AI.</em></h2>
+    <p class="sd">AgentZero runs as an MCP server. Point Claude Code, Cursor, or Zed at it and every tool call goes through policy, gets audited, and respects your project's security rules.</p>
+    <div class="split">
+      <div class="sc">
+        <div class="fl">.claude/settings.json</div>
+        <pre>{
+  <span class="p">"mcpServers"</span>: {
+    <span class="p">"agentzero"</span>: {
+      <span class="p">"command"</span>: <span class="g">"agentzero"</span>,
+      <span class="p">"args"</span>: [<span class="g">"mcp"</span>]
+    }
+  }
+}</pre>
+      </div>
+      <div class="st">
+        <h3>Five tools, fully gated</h3>
+        <p><code>read_file</code> &middot; <code>list_directory</code> &middot; <code>search_files</code> &middot; <code>write_file</code> &middot; <code>run_command</code></p>
+        <p>Every call goes through path validation, sensitive path blocking, and emits a structured audit event. No tool call is invisible.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 03: SECURITY -->
+  <section>
+    <p class="sn">03</p>
+    <h2>What we built. <em>And what we didn't.</em></h2>
+    <p class="sd">A small, auditable core &mdash; not a framework. Every security invariant enforced in code, not documentation.</p>
+    <div class="g3">
+      <div class="cl"><h3>Deny by default</h3><p>Unknown permissions denied. Unknown data classifications fail closed. The agent proves access before acting.</p></div>
+      <div class="cl"><h3>Secret handles</h3><p>Models see handle://vault/github/token. Never raw values. Exposed only at execution time, only after policy.</p></div>
+      <div class="cl"><h3>PII redaction</h3><p>Scanned before remote model calls. Emails, tokens, keys replaced with typed placeholders. Automatic.</p></div>
+      <div class="cl"><h3>Content provenance</h3><p>Tool output labeled untrusted. The model knows what is data and what is instruction. Injection does not escalate.</p></div>
+      <div class="cl"><h3>Encrypted at rest</h3><p>AES-256-GCM + Argon2id. Vault, sessions, audit logs. Per-line encryption so logs stay appendable.</p></div>
+      <div class="cl"><h3>Local first</h3><p>Ollama, llama.cpp, vLLM, LM Studio. Your data stays on your machine. Remote calls require explicit policy.</p></div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <div class="cta">
+    <h2>Ship with confidence.</h2>
+    <p>Open source. MIT licensed. Built in Rust for developers who work with private code.</p>
+    <div class="hero-cta">
+      <a href="/getting-started/quickstart/" class="btn-fill">Read the docs &rarr;</a>
+      <a href="https://github.com/auser/agentzero" class="btn-outline">View source</a>
+    </div>
+  </div>
+
+  <footer>
+    <span>AgentZero &middot; MIT License</span>
+    <div class="fk">
+      <a href="/getting-started/introduction/">Docs</a>
+      <a href="/guides/mcp/">MCP</a>
+      <a href="https://github.com/auser/agentzero">GitHub</a>
+    </div>
+  </footer>
+
+  <script>
+    function toggleTheme(){
+      var html=document.documentElement;
+      var current=html.getAttribute('data-theme');
+      var next=current==='dark'?'light':'dark';
+      html.setAttribute('data-theme',next);
+      localStorage.setItem('az-theme',next);
+    }
+  </script>
+</body>
+</html>
