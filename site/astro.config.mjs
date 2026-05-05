@@ -22,9 +22,13 @@ export default defineConfig({
 					items: [
 						{ label: 'Chat with Local Models', slug: 'guides/chat' },
 						{ label: 'MCP Integration', slug: 'guides/mcp' },
+						{ label: 'ACP Editor Adapter', slug: 'guides/editor-adapter' },
 						{ label: 'Security Scanner', slug: 'guides/scanner' },
 						{ label: 'Skills & Packages', slug: 'guides/skills' },
 						{ label: 'Secret Vault', slug: 'guides/vault' },
+						{ label: 'Encryption at Rest', slug: 'guides/encryption' },
+						{ label: 'Session History & Resume', slug: 'guides/sessions' },
+						{ label: 'Audit Logs', slug: 'guides/audit' },
 						{ label: 'Policy Configuration', slug: 'guides/policy' },
 					],
 				},

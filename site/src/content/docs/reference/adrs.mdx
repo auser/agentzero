@@ -1,0 +1,66 @@
+---
+title: Architecture Decision Records
+description: Binding architectural decisions governing AgentZero
+---
+
+AgentZero is governed by Architecture Decision Records (ADRs). These are binding — any feature that changes architecture, security, permissions, runtime isolation, tool access, public APIs, or storage must have ADR coverage before implementation.
+
+## ADR Index
+
+### ADR 0001: Minimal Secure Core
+
+AgentZero is a small local secure session engine. The core includes only session orchestration, provider abstraction, policy evaluation, redaction, audit, a minimal tool registry, project-local configuration, and CLI/TUI entrypoints. Gateway, MCP, ACP, packages, MVM, WASM, swarms, SDKs, and marketplace behavior are adapters or optional modules, not core architecture.
+
+### ADR 0002: Local-First Model Routing
+
+AgentZero defaults to local models. Remote model calls require policy evaluation, data classification, redaction checks, and audit logging. Secrets and credentials are never sent to remote models. PII is denied or redacted before remote model calls unless explicit policy allows otherwise.
+
+### ADR 0003: Policy, Redaction, and Audit Wrap Every Action
+
+Every meaningful action must pass through policy evaluation before execution and emit an audit event after decision. Redaction and secret scanning must occur before model calls, network egress, logs, and tool output exposure when sensitive content may be present.
+
+### ADR 0004: Skills as First-Class Capability Bundles
+
+AgentZero supports `SKILL.md`-style skills as first-class capability bundles. Skills may contain instructions, references, assets, prompts, helper scripts, and policy metadata. Skill execution is permissioned. Skills may be instruction-only, WASM-backed, MVM-backed, or denied.
+
+### ADR 0005: Package Manifest, Lockfile, and Trust Model
+
+Packages require a manifest declaring permissions, runtime requirements, package contents, source, and security metadata. Executable packages require a lockfile with resolved versions, content hashes, and permission snapshots before execution. No package install script runs by default.
+
+### ADR 0006: Runtime Isolation Tiers
+
+AgentZero defines explicit runtime isolation tiers: `none`, `host-readonly`, `host-supervised`, `wasm-sandbox`, `mvm-microvm`, and `deny`. WASM is used for low-risk portable tools. MVM is used for high-risk execution: Python, Node, native binaries, package installs, browser automation, MCP servers, and long-running services.
+
+### ADR 0007: ACP is an Adapter, Not the Core
+
+AgentZero should be able to interoperate with agent clients/editors where possible. Protocol adapters are isolated. Internal runtime contracts are not coupled to one protocol. Editor integrations are adapters, not the core product.
+
+### ADR 0008: Prompt Injection and Untrusted Content Boundaries
+
+AgentZero labels content by trust source and never lets untrusted content become trusted instruction. Documents, tool output, web pages, and package content are untrusted unless explicitly promoted by policy or user approval.
+
+### ADR 0009: Capability-Based Secret Handles
+
+AgentZero represents secrets as capability handles (`handle://vault/github/default`). The model sees handles and metadata, not raw secret values. Tools receive raw secret material only at execution time if policy allows the specific action.
+
+### ADR 0010: Non-Goals and Platform Creep Boundary
+
+AgentZero is not a swarm platform, hosted SaaS, workflow DAG engine, MCP marketplace, or generic bot platform. These boundaries are explicit to prevent scope creep.
+
+## Where to Find ADRs
+
+The source ADR files live in `specs/adrs/` in the repository:
+
+```
+specs/adrs/
+  0001-minimal-secure-core.md
+  0002-local-first-model-routing.md
+  0003-policy-redaction-and-audit-wrap-every-action.md
+  0004-skills-as-first-class-capability-bundles.md
+  0005-package-manifest-lockfile-and-trust-model.md
+  0006-runtime-isolation-tiers-host-wasm-mvm.md
+  0007-acp-is-an-adapter-not-the-core.md
+  0008-prompt-injection-and-untrusted-content-boundaries.md
+  0009-capability-based-secret-handles.md
+  0010-non-goals-and-platform-creep-boundary.md
+```

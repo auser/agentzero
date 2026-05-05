@@ -1,0 +1,62 @@
+---
+title: ACP Editor Adapter
+description: Connect custom editors to AgentZero via the Agent Control Protocol
+---
+
+## Overview
+
+The ACP (Agent Control Protocol) adapter provides a JSON-RPC interface over stdio for editor integrations. While [MCP](/guides/mcp/) is the standard for tools like Claude Code and Cursor, ACP offers a simpler protocol for custom editor plugins.
+
+## Starting the Server
+
+```bash
+agentzero serve
+```
+
+The server reads newline-delimited JSON from stdin and writes responses to stdout.
+
+## Protocol
+
+ACP uses a simple request/response format:
+
+```json
+{"id": "1", "method": "initialize", "params": {}}
+```
+
+```json
+{"id": "1", "success": true, "result": {"name": "agentzero", "version": "0.1.0", "capabilities": ["chat", "tool_call", "session_info", "list_tools"]}}
+```
+
+## Available Methods
+
+| Method | Description |
+|--------|-------------|
+| `initialize` | Returns server info and capabilities |
+| `session_info` | Returns session ID, status, and available tools |
+| `list_tools` | Returns tool definitions |
+| `tool_call` | Execute a tool with arguments |
+| `chat` | Send a chat message (requires model provider) |
+| `shutdown` | Graceful shutdown |
+
+## Tool Calls
+
+```json
+{"id": "2", "method": "tool_call", "params": {"name": "read", "arguments": {"path": "Cargo.toml"}}}
+```
+
+```json
+{"id": "2", "success": true, "result": {"success": true, "output": "[workspace]\n..."}}
+```
+
+All tool calls go through the same session engine as the CLI — policy evaluation, path validation, and audit logging are all active.
+
+## ACP vs MCP
+
+| | ACP | MCP |
+|---|---|---|
+| Protocol | Simple JSON-RPC | JSON-RPC 2.0 (standard) |
+| Ecosystem | Custom editors | Claude Code, Cursor, Zed |
+| Tool naming | Internal names (`read`, `list`) | MCP names (`read_file`, `list_directory`) |
+| Use when | Building a custom integration | Using an existing MCP client |
+
+For most users, [MCP](/guides/mcp/) is the right choice. ACP exists for cases where you need a lighter-weight or custom integration.

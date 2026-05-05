@@ -1,0 +1,90 @@
+---
+title: Audit Logs
+description: View, manage, and understand the audit trail
+---
+
+## Overview
+
+Every meaningful action in AgentZero produces a structured audit event. This includes:
+
+- Session start and end
+- Model calls (local and remote)
+- Tool executions (read, list, search, write, shell)
+- Policy decisions (allow, deny, require approval, allow with redaction)
+- Redactions applied
+- Approval grants and denials
+
+## Viewing Audit Events
+
+```bash
+agentzero audit tail
+```
+
+```
+Last 5 events from session f7a2c3e1:
+
+  14:23:01 | FileRead | Private | Allow | tool read executed successfully
+  14:23:03 | FileRead | Private | Allow | tool search executed successfully
+  14:23:05 | ShellCommand | Private | RequiresApproval | shell commands require approval
+  14:23:08 | ShellCommand | Private | Allow | tool shell executed successfully
+  14:23:10 | FileRead | Private | Allow | tool list executed successfully
+```
+
+Show more events:
+
+```bash
+agentzero audit tail --count 50
+```
+
+## Audit Event Structure
+
+Each event is a JSON line in `.agentzero/audit/<session_id>.jsonl`:
+
+```json
+{
+  "execution_id": "a1b2c3d4-...",
+  "session_id": "f7a2c3e1-...",
+  "timestamp": "2025-01-15T14:23:01.234Z",
+  "action": "tool:read",
+  "capability": "file_read",
+  "classification": "private",
+  "decision": {"effect": "allow"},
+  "reason": "tool read executed successfully",
+  "runtime": "host_readonly",
+  "skill_id": null,
+  "tool_id": "read",
+  "redactions_applied": [],
+  "approval_scope": null
+}
+```
+
+## What Gets Audited
+
+| Event | When |
+|-------|------|
+| `session_start` | Session created |
+| `session_end` | Session ended by user |
+| `model_call_local` | Local model call |
+| `model_call_remote` | Remote model call allowed |
+| `model_call_remote_redacted` | Remote call with PII redacted |
+| `model_call_denied` | Remote call blocked by policy |
+| `tool:read` | File read executed |
+| `tool:list` | Directory list executed |
+| `tool:search` | File search executed |
+| `tool:write` | File write executed |
+| `tool:shell` | Shell command executed |
+
+## Encrypted Audit Logs
+
+With `--encrypt`, audit events are written to `.jsonl.enc` files. Each line is independently encrypted (AES-256-GCM), so:
+
+- New events append without re-encrypting the file
+- Individual events can be decrypted independently
+- The raw file never contains plaintext
+
+## Security Properties
+
+- **No raw secrets** in audit events (handles only)
+- **Redaction list** recorded when content is modified
+- **Policy decision** and reason captured for every action
+- **Tamper evidence** — encrypted logs detect corruption via GCM authentication tags

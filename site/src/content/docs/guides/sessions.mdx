@@ -1,0 +1,81 @@
+---
+title: Session History & Resume
+description: Save, browse, and resume past chat sessions
+---
+
+## How Sessions Work
+
+Every `agentzero chat` session gets a unique ID. When you exit, the full conversation history is saved to `.agentzero/sessions/<id>.json` (or `.json.enc` if encrypted).
+
+## Listing Past Sessions
+
+```bash
+agentzero history
+```
+
+```
+Past sessions:
+
+  f7a2c3e1-...  model=llama3.2  messages=24  mode=local-only
+  a1b9d4f0-...  model=codellama  messages=8  mode=local-only
+  e3c8a2b7-...  model=llama3.2  messages=42  mode=local-only
+
+3 session(s) found.
+```
+
+## Resuming a Session
+
+```bash
+agentzero chat --local --resume f7a2c3e1-...
+```
+
+```
+Resumed session f7a2c3e1-... (24 messages)
+
+you> (continue where you left off)
+```
+
+The full message history is loaded, including system prompt, user messages, assistant responses, and tool call results. The model has full context from the previous conversation.
+
+## Session File Format
+
+Sessions are stored as JSON:
+
+```json
+{
+  "session_id": "f7a2c3e1-...",
+  "model": "llama3.2",
+  "mode": "local-only",
+  "message_count": 24,
+  "messages": [
+    {"role": "system", "content": "You are AgentZero..."},
+    {"role": "user", "content": "what does this project do?"},
+    {"role": "assistant", "content": "This is a Rust workspace..."}
+  ]
+}
+```
+
+## Encrypted Sessions
+
+When using `--encrypt`, sessions are saved as `.json.enc`:
+
+```bash
+agentzero chat --local --encrypt
+# Session saved (encrypted) to .agentzero/sessions/f7a2c3e1-....json.enc
+```
+
+Encrypted sessions cannot currently be resumed (the resume feature reads plaintext JSON). This is a known limitation.
+
+## Context Compaction
+
+Long conversations are automatically compacted before each model call when they exceed 50 messages or 32KB of text. The compaction:
+
+1. Preserves the system prompt
+2. Summarizes older messages into a context summary
+3. Keeps the most recent 10 messages intact
+
+This happens transparently — you'll see a notice:
+
+```
+  [context compacted: 61 → 8 messages]
+```

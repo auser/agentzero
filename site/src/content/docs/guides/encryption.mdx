@@ -1,0 +1,68 @@
+---
+title: Encryption at Rest
+description: Protect audit logs, sessions, and secrets with AES-256-GCM
+---
+
+## Overview
+
+AgentZero can encrypt sensitive data at rest using AES-256-GCM with Argon2id key derivation. This covers:
+
+- **Audit logs** — encrypted line-by-line (appendable without re-encrypting)
+- **Session history** — saved as `.json.enc` files
+- **Secret vault** — always encrypted per-secret
+
+## Encrypting Chat Sessions
+
+Pass `--encrypt` when starting a chat:
+
+```bash
+agentzero chat --local --encrypt
+# Encryption passphrase: ********
+# Audit logs and sessions will be encrypted.
+```
+
+When the session ends, both the audit log and conversation history are encrypted before writing to disk.
+
+## What Gets Encrypted
+
+| Data | Location | Encrypted? |
+|------|----------|-----------|
+| Audit events | `.agentzero/audit/<id>.jsonl.enc` | With `--encrypt` |
+| Session history | `.agentzero/sessions/<id>.json.enc` | With `--encrypt` |
+| Vault secrets | `.agentzero/vault/<provider>/<name>.enc` | Always |
+
+## Encryption Details
+
+- **Algorithm**: AES-256-GCM (authenticated encryption)
+- **Key derivation**: Argon2id (memory-hard, brute-force resistant)
+- **Salt**: Random 16 bytes per encryption
+- **Nonce**: Random 12 bytes per encryption
+- **Format**: `salt(16) || nonce(12) || ciphertext || tag(16)`
+
+Each encryption uses a fresh random salt and nonce, so encrypting the same data twice produces different ciphertext.
+
+## Audit Log Encryption
+
+Encrypted audit logs use per-line encryption. Each JSONL line is independently encrypted and base64-encoded. This means:
+
+- New events can be appended without decrypting the entire file
+- Individual events can be decrypted independently
+- The file remains a valid line-oriented format
+
+## Vault Encryption
+
+The vault is always encrypted — there's no plaintext mode. Each secret is stored as a separate `.enc` file under `.agentzero/vault/<provider>/<name>.enc`.
+
+```bash
+# Vault operations always require a passphrase
+agentzero vault add github token
+# Vault passphrase: ********
+# Secret value: ghp_...
+```
+
+## Security Considerations
+
+- **Passphrase strength matters** — Argon2id resists brute force, but a weak passphrase is still weak
+- **No key escrow** — if you lose the passphrase, encrypted data is unrecoverable
+- **Memory safety** — `ResolvedSecret` values are zeroed on drop (best-effort)
+- **No plaintext residue** — encrypted files never contain plaintext fragments
