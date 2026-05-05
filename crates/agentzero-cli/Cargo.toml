@@ -10,6 +10,10 @@ repository.workspace = true
 name = "agentzero"
 path = "src/main.rs"
 
+[features]
+default = []
+wasm = ["agentzero/wasm"]
+
 [dependencies]
 agentzero = { workspace = true }
 chrono = { workspace = true }

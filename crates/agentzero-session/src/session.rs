@@ -822,4 +822,86 @@ mod tests {
             .to_string()
             .contains("not yet supported"));
     }
+
+    /// Minimal WASM module: exports `main() -> i32` returning 42.
+    #[cfg(feature = "wasm")]
+    fn minimal_wasm_module() -> Vec<u8> {
+        vec![
+            0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00, // header
+            0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7F, // type section
+            0x03, 0x02, 0x01, 0x00, // function section
+            0x05, 0x03, 0x01, 0x00, 0x01, // memory section
+            0x07, 0x11, 0x02, 0x04, 0x6D, 0x61, 0x69, 0x6E, 0x00, 0x00, 0x06, 0x6D, 0x65,
+            0x6D, 0x6F, 0x72, 0x79, 0x02, 0x00, // export section
+            0x0A, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2A, 0x0B, // code section
+        ]
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn execute_wasm_skill_end_to_end() {
+        use agentzero_skills::{SkillManifest, SkillPermission, SkillRuntime};
+
+        // Policy: allow skill loading and WASM runtime launch
+        let session_policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow(Capability::SkillLoad, DataClassification::Private),
+            PolicyRule::allow_runtime(Capability::SkillLoad, RuntimeTier::WasmSandbox),
+        ]);
+        let tool_policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow_runtime(Capability::RuntimeLaunch, RuntimeTier::WasmSandbox),
+        ]);
+        let session = Session::new(SessionConfig::default(), session_policy)
+            .expect("session should create")
+            .with_tool_executor(ToolExecutor::new(tool_policy));
+
+        let manifest = SkillManifest {
+            id: agentzero_core::SkillId::from_string("wasm-test"),
+            name: "wasm-test".into(),
+            version: "0.1.0".into(),
+            description: "Integration test WASM skill".into(),
+            runtime: SkillRuntime::Wasm,
+            permissions: vec![SkillPermission {
+                capability: Capability::FileRead,
+                reason: "test permission".into(),
+            }],
+            source: None,
+        };
+
+        let wasm_bytes = minimal_wasm_module();
+        let result = session.execute_skill(&manifest, Some(&wasm_bytes));
+        assert!(result.is_ok(), "WASM skill should succeed: {result:?}");
+        let output = result.expect("should succeed");
+        assert!(output.contains("42"), "output should contain exit code 42: {output}");
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn execute_wasm_skill_denied_without_runtime_policy() {
+        use agentzero_skills::{SkillManifest, SkillRuntime};
+
+        // Allow skill loading but NOT runtime launch
+        let session_policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow(Capability::SkillLoad, DataClassification::Private),
+            PolicyRule::allow_runtime(Capability::SkillLoad, RuntimeTier::WasmSandbox),
+        ]);
+        let tool_policy = PolicyEngine::deny_by_default(); // no RuntimeLaunch rule
+        let session = Session::new(SessionConfig::default(), session_policy)
+            .expect("session should create")
+            .with_tool_executor(ToolExecutor::new(tool_policy));
+
+        let manifest = SkillManifest {
+            id: agentzero_core::SkillId::from_string("wasm-denied"),
+            name: "wasm-denied".into(),
+            version: "0.1.0".into(),
+            description: "Should fail at runtime launch".into(),
+            runtime: SkillRuntime::Wasm,
+            permissions: vec![],
+            source: None,
+        };
+
+        let wasm_bytes = minimal_wasm_module();
+        let result = session.execute_skill(&manifest, Some(&wasm_bytes));
+        assert!(result.is_err(), "should be denied");
+        assert!(result.expect_err("should fail").to_string().contains("denied"));
+    }
 }

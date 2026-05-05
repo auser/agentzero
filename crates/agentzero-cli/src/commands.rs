@@ -232,6 +232,7 @@ fn cmd_init(private: bool) -> i32 {
             "shell_commands = \"require_approval\"\n",
             "file_write = \"require_approval\"\n",
             "network = \"deny\"\n",
+            "wasm_execution = \"deny\"\n",
         )
     } else {
         concat!(
@@ -242,6 +243,7 @@ fn cmd_init(private: bool) -> i32 {
             "shell_commands = \"require_approval\"\n",
             "file_write = \"require_approval\"\n",
             "network = \"require_approval\"\n",
+            "wasm_execution = \"require_approval\"\n",
         )
     };
 
@@ -1465,16 +1467,53 @@ fn cmd_doctor() -> i32 {
     }
     println!();
 
+    // WASM sandbox
+    print!("WASM sandbox:   ");
+    if cfg!(feature = "wasm") {
+        print!("compiled in");
+    } else {
+        print!("not compiled (rebuild with --features wasm)");
+    }
+    // Check WASM policy
+    if az_dir.join("policy.yml").exists() {
+        let content = std::fs::read_to_string(az_dir.join("policy.yml")).unwrap_or_default();
+        if content.contains("wasm_execution") {
+            if content.contains("wasm_execution = \"allow\"") {
+                print!(" | policy: allow");
+            } else if content.contains("wasm_execution = \"require_approval\"") {
+                print!(" | policy: require_approval");
+            } else {
+                print!(" | policy: deny");
+            }
+        } else {
+            print!(" | policy: deny (not configured)");
+        }
+    }
+    println!();
+
     // Skills
     let skills_dir = cwd.join("skills");
     let mut skill_count = 0;
+    let mut wasm_skill_count = 0;
     print!("Skills:         ");
     if skills_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&skills_dir) {
             let names: Vec<_> = entries
                 .flatten()
                 .filter(|e| e.path().is_dir() && e.path().join("SKILL.md").exists())
-                .map(|e| e.file_name().to_string_lossy().to_string())
+                .map(|e| {
+                    let dir = e.path();
+                    let name = e.file_name().to_string_lossy().to_string();
+                    // Check if this is a WASM skill
+                    if let Ok(manifest) =
+                        agentzero::skills::registry::load_manifest(&dir)
+                    {
+                        if manifest.runtime == agentzero::skills::SkillRuntime::Wasm {
+                            wasm_skill_count += 1;
+                        }
+                    }
+                    name
+                })
                 .collect();
             skill_count = names.len();
             if names.is_empty() {
@@ -1486,7 +1525,11 @@ fn cmd_doctor() -> i32 {
     } else {
         print!("no skills/ directory");
     }
-    println!(" ({skill_count})");
+    print!(" ({skill_count})");
+    if wasm_skill_count > 0 {
+        print!(" ({wasm_skill_count} WASM)");
+    }
+    println!();
 
     // Vault
     let vault_dir = az_dir.join("vault");
