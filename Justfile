@@ -48,6 +48,49 @@ docs-dev:
 docs-preview:
   cd site && pnpm run preview
 
+# Release a specific version: just release 0.2.0
+release version:
+  #!/usr/bin/env sh
+  set -eu
+  VERSION="{{version}}"
+  TAG="v${VERSION}"
+  echo "Releasing ${TAG}..."
+  # Ensure clean tree
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "error: working tree is dirty — commit or stash first" >&2
+    exit 1
+  fi
+  # Run CI checks
+  just ci
+  # Generate changelog
+  git-cliff --tag "${TAG}" -o CHANGELOG.md
+  # Update version in root Cargo.toml
+  sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+  # Commit changelog + version bump
+  git add CHANGELOG.md Cargo.toml Cargo.lock
+  git commit -m "chore: release ${TAG}"
+  # Tag
+  git tag -a "${TAG}" -m "$(git-cliff --tag "${TAG}" --unreleased --strip header)"
+  echo ""
+  echo "Tagged ${TAG}. Push with:"
+  echo "  git push origin main ${TAG}"
+
+# Release with auto-detected version from conventional commits
+release-auto:
+  #!/usr/bin/env sh
+  set -eu
+  VERSION="$(git-cliff --bumped-version | sed 's/^v//')"
+  echo "Auto-detected next version: ${VERSION}"
+  just release "${VERSION}"
+
+# Generate changelog without releasing
+changelog:
+  git-cliff -o CHANGELOG.md
+
+# Preview unreleased changelog
+changelog-preview:
+  git-cliff --unreleased --strip header
+
 # Show tree of the project
 show-tree:
   find . -maxdepth 4 -type f | sort
