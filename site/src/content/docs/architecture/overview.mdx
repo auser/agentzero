@@ -16,11 +16,18 @@ Session Engine
     ↓
 Policy Evaluation ← .agentzero/policy.yml
     ↓
-Tool Executor
+┌─────────────────────────────────┐
+│  Tool Executor (host tools)     │
+│  OR                             │
+│  Skill Executor (by runtime):   │
+│    InstructionOnly → display    │
+│    WASM → WasmEngine (sandbox)  │
+│    MVM  → MicroVM (planned)     │
+└─────────────────────────────────┘
     ↓
 Audit Logger → .agentzero/audit/<session>.jsonl
     ↓
-Tool Output (labeled untrusted)
+Tool/Skill Output (labeled untrusted)
     ↓
 Model (with redaction if remote)
     ↓
@@ -33,6 +40,7 @@ Response to User
 - **Every action** emits an audit event after decision
 - **Secret handles** — models see URIs, tools get values at runtime
 - **Content provenance** — untrusted output wrapped with boundary markers
+- **Runtime isolation** — WASM skills run in sandboxed wasmtime, no ambient host access
 - **Fail closed** — unknown classification, permissions, or runtime → deny
 
 ## Workspace Structure

@@ -20,7 +20,7 @@ use agentzero::mcp::McpServer;
 Shared vocabulary: IDs, enums, types, secret handles, trust labels, redaction, model routing, encryption (AES-256-GCM), vault.
 
 ### `agentzero-policy`
-Rule-based policy engine with TOML loader. Deny-by-default. Evaluates capability + classification against rules. First matching rule wins.
+Rule-based policy engine with TOML loader. Deny-by-default. Evaluates capability + classification (and optionally runtime tier) against rules. First matching rule wins. Supports runtime-aware rules for WASM/MVM gating.
 
 ### `agentzero-audit`
 Audit event logging. JSONL file sink, encrypted sink, in-memory sink for tests. Every meaningful action emits an event.
@@ -34,18 +34,24 @@ Session engine tying together models, tools, policy, and audit. Includes:
 - Multi-provider router with fallback
 - Retry with exponential backoff
 - Tool executor with policy checks
+- Skill executor with runtime routing (InstructionOnly, WASM, MVM)
+- WASM execution via `ToolExecutor::execute_wasm()` (behind `wasm` feature)
 - Context compaction
 
 ### `agentzero-tools`
 Tool registry with built-in schemas (read, list, search, write, shell).
 
 ### `agentzero-sandbox`
-Sandbox profiles and WASM runtime (behind `wasm` feature flag). Wasmtime-backed with fuel limits.
+Sandbox profiles and WASM runtime (behind `wasm` feature flag). Wasmtime v29 backend with:
+- Fuel-based execution time limits
+- Memory limits (default 64 MB)
+- No ambient filesystem or network access
+- Policy-gated via `RuntimeTier::WasmSandbox`
 
 ## Extensions
 
 ### `agentzero-skills`
-Skill manifests, security scanner, report generator, skill registry with lockfile.
+Skill manifests, security scanner, report generator, skill registry with lockfile. Includes `load_manifest()` for building `SkillManifest` from SKILL.md frontmatter and `find_wasm_module()` for locating `.wasm` files.
 
 ### `agentzero-mcp`
 MCP server (JSON-RPC 2.0 over stdio). Exposes tools to any MCP client.

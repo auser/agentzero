@@ -59,6 +59,12 @@ Run an installed skill.
 agentzero run <name>
 ```
 
+For WASM skills, this creates a session, checks policy, builds a sandbox profile, and executes the `.wasm` module through the wasmtime engine. Requires `--features wasm` at build time and `wasm_execution = "allow"` in `policy.yml`.
+
+For scanner-based skills (with `patterns.toml`), runs the security scanner against the current directory.
+
+For instruction-only skills, displays the `SKILL.md` content.
+
 ## `agentzero install`
 
 Install a skill from a local path or git URL.
@@ -69,7 +75,7 @@ agentzero install <path-or-url>
 
 ## `agentzero doctor`
 
-System diagnostic.
+System diagnostic. Reports crate status, project initialization, policy rules, skills, vault, sessions, providers, and WASM sandbox status (compiled-in, policy setting, WASM skill count).
 
 ```bash
 agentzero doctor

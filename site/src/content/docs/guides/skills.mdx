@@ -23,6 +23,9 @@ agentzero install https://github.com/user/security-scanner
 # Run a specific skill
 agentzero run repo-security-audit
 
+# Run a WASM skill (requires --features wasm build)
+agentzero run my-wasm-tool
+
 # List available skills
 agentzero run nonexistent  # shows available skills
 ```
@@ -69,8 +72,81 @@ Describe what this skill does.
 | Runtime | Description |
 |---------|-------------|
 | `none` | Instruction-only (no executable code) |
-| `wasm` | Runs in WASM sandbox |
+| `wasm` | Runs in WASM sandbox (policy-gated) |
 | `host-supervised` | Runs on host with approval |
+
+## WASM Skills
+
+WASM skills run inside a sandboxed wasmtime engine with no ambient host access. This is the recommended runtime for portable, low-risk tools.
+
+### Creating a WASM Skill
+
+```
+my-wasm-tool/
+  SKILL.md
+  module.wasm     # compiled WASM module
+```
+
+The `SKILL.md` declares `runtime: wasm`:
+
+```markdown
+---
+name: my-wasm-tool
+version: 0.1.0
+runtime: wasm
+- read
+---
+
+# My WASM Tool
+```
+
+### How WASM Execution Works
+
+When you run `agentzero run my-wasm-tool`:
+
+1. **Manifest loaded** from `SKILL.md` frontmatter
+2. **Policy check** — `wasm_execution` must be `allow` or `require_approval` in `policy.yml`
+3. **WASM bytes loaded** from the `.wasm` file in the skill directory
+4. **Sandbox profile built** — no filesystem, no network, 64 MB memory, 30s time limit
+5. **WasmEngine executes** the module with fuel-based time limits
+6. **Audit event emitted** with execution result and runtime tier
+7. **Output returned** to the CLI
+
+### WASM Sandbox Limits
+
+| Limit | Default |
+|-------|---------|
+| Memory | 64 MB |
+| Execution time | 30 seconds |
+| Filesystem | None (denied) |
+| Network | Denied |
+
+### Enabling WASM Support
+
+WASM support requires two things:
+
+1. **Build with the feature flag:**
+   ```bash
+   cargo build --features wasm
+   ```
+
+2. **Allow in policy** (`.agentzero/policy.yml`):
+   ```toml
+   wasm_execution = "allow"
+   ```
+
+Without both, WASM skills are denied. This is by design — fail closed.
+
+### Checking WASM Status
+
+```bash
+agentzero doctor
+```
+
+The doctor command reports:
+- Whether WASM is compiled into the binary
+- The current WASM policy setting
+- How many installed skills use the WASM runtime
 
 ## Skill Lockfile
 
