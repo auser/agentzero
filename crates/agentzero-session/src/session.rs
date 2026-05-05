@@ -428,9 +428,80 @@ impl Session {
 
                 Ok(result.output)
             }
-            other => Err(SessionError::Failed(format!(
-                "runtime {other:?} not yet supported"
-            ))),
+            SkillRuntime::HostSupervised => {
+                // Resolve entrypoint: manifest field, or run.sh in skill dir
+                let entrypoint = manifest.entrypoint.clone().unwrap_or_else(|| {
+                    manifest
+                        .source
+                        .as_ref()
+                        .map(|s| match s {
+                            agentzero_skills::SkillPackageRef::Local { path } => {
+                                format!("{path}/run.sh")
+                            }
+                            agentzero_skills::SkillPackageRef::Registry { name, .. } => {
+                                format!("skills/{name}/run.sh")
+                            }
+                        })
+                        .unwrap_or_else(|| format!("skills/{}/run.sh", manifest.name))
+                });
+
+                // Check ShellCommand capability at HostSupervised tier
+                let shell_decision = self.check_policy_with_tier(
+                    Capability::ShellCommand,
+                    DataClassification::Private,
+                    RuntimeTier::HostSupervised,
+                );
+                if !shell_decision.is_allowed() {
+                    self.emit_audit_event(AuditParams {
+                        action: &format!("skill_shell_denied:{}", manifest.name),
+                        capability: Capability::ShellCommand,
+                        classification: DataClassification::Private,
+                        decision: shell_decision.clone(),
+                        reason: &format!(
+                            "host-supervised skill {} shell denied by policy",
+                            manifest.name
+                        ),
+                        redactions: &[],
+                        runtime: RuntimeTier::HostSupervised,
+                        skill_id: Some(manifest.id.clone()),
+                    })?;
+                    return Err(SessionError::Failed(format!(
+                        "skill {} shell execution denied: {shell_decision:?}",
+                        manifest.name
+                    )));
+                }
+
+                info!(
+                    session_id = %self.id,
+                    skill = %manifest.name,
+                    entrypoint = %entrypoint,
+                    "executing host-supervised skill"
+                );
+
+                let result = self
+                    .tool_executor
+                    .shell_command(&entrypoint)
+                    .map_err(|e| SessionError::Failed(e.to_string()))?;
+
+                self.emit_audit_event(AuditParams {
+                    action: &format!("skill:host_supervised:{}", manifest.name),
+                    capability: Capability::ShellCommand,
+                    classification: DataClassification::Private,
+                    decision: PolicyDecision::Allow,
+                    reason: &format!(
+                        "host-supervised skill {} executed: {}",
+                        manifest.name, entrypoint
+                    ),
+                    redactions: &[],
+                    runtime: RuntimeTier::HostSupervised,
+                    skill_id: Some(manifest.id.clone()),
+                })?;
+
+                Ok(result.output)
+            }
+            SkillRuntime::Mvm => Err(SessionError::Failed(
+                "runtime Mvm not yet supported".to_string(),
+            )),
         }
     }
 
@@ -738,6 +809,7 @@ mod tests {
                 reason: "needs file access".into(),
             }],
             source: None,
+            entrypoint: None,
         };
 
         let result = session.execute_skill(&manifest, None);
@@ -760,6 +832,7 @@ mod tests {
             runtime: SkillRuntime::Wasm,
             permissions: vec![],
             source: None,
+            entrypoint: None,
         };
 
         let result = session.execute_skill(&manifest, Some(&[]));
@@ -786,6 +859,7 @@ mod tests {
             runtime: SkillRuntime::Wasm,
             permissions: vec![],
             source: None,
+            entrypoint: None,
         };
 
         let result = session.execute_skill(&manifest, None);
@@ -813,6 +887,7 @@ mod tests {
             runtime: SkillRuntime::Mvm,
             permissions: vec![],
             source: None,
+            entrypoint: None,
         };
 
         let result = session.execute_skill(&manifest, None);
@@ -821,6 +896,76 @@ mod tests {
             .expect_err("should fail")
             .to_string()
             .contains("not yet supported"));
+    }
+
+    #[test]
+    fn execute_host_supervised_skill() {
+        use agentzero_skills::{SkillManifest, SkillPermission, SkillRuntime};
+
+        let session_policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow(Capability::SkillLoad, DataClassification::Private),
+            PolicyRule::allow(Capability::ShellCommand, DataClassification::Private),
+        ]);
+        // Tool executor needs to actually allow shell
+        let tool_policy = PolicyEngine::with_rules(vec![PolicyRule::allow(
+            Capability::ShellCommand,
+            DataClassification::Private,
+        )]);
+        let session = Session::new(SessionConfig::default(), session_policy)
+            .expect("session should create")
+            .with_tool_executor(ToolExecutor::new(tool_policy));
+
+        let manifest = SkillManifest {
+            id: agentzero_core::SkillId::from_string("echo-skill"),
+            name: "echo-skill".into(),
+            version: "0.1.0".into(),
+            description: "Simple echo test".into(),
+            runtime: SkillRuntime::HostSupervised,
+            permissions: vec![SkillPermission {
+                capability: Capability::ShellCommand,
+                reason: "needs shell".into(),
+            }],
+            source: None,
+            entrypoint: Some("echo hello-from-skill".into()),
+        };
+
+        let result = session.execute_skill(&manifest, None);
+        assert!(result.is_ok(), "host-supervised should succeed: {result:?}");
+        let output = result.expect("should succeed");
+        assert!(
+            output.contains("hello-from-skill"),
+            "should contain echo output: {output}"
+        );
+    }
+
+    #[test]
+    fn execute_host_supervised_denied_by_policy() {
+        use agentzero_skills::{SkillManifest, SkillRuntime};
+
+        // Session allows skill loading but tool executor denies shell
+        let session_policy = PolicyEngine::with_rules(vec![PolicyRule::allow(
+            Capability::SkillLoad,
+            DataClassification::Private,
+        )]);
+        let tool_policy = PolicyEngine::deny_by_default();
+        let session = Session::new(SessionConfig::default(), session_policy)
+            .expect("session should create")
+            .with_tool_executor(ToolExecutor::new(tool_policy));
+
+        let manifest = SkillManifest {
+            id: agentzero_core::SkillId::from_string("denied-shell"),
+            name: "denied-shell".into(),
+            version: "0.1.0".into(),
+            description: "Should be denied".into(),
+            runtime: SkillRuntime::HostSupervised,
+            permissions: vec![],
+            source: None,
+            entrypoint: Some("echo should-not-run".into()),
+        };
+
+        let result = session.execute_skill(&manifest, None);
+        assert!(result.is_err());
+        assert!(result.expect_err("should fail").to_string().contains("denied"));
     }
 
     /// Minimal WASM module: exports `main() -> i32` returning 42.
@@ -865,6 +1010,7 @@ mod tests {
                 reason: "test permission".into(),
             }],
             source: None,
+            entrypoint: None,
         };
 
         let wasm_bytes = minimal_wasm_module();
@@ -897,6 +1043,7 @@ mod tests {
             runtime: SkillRuntime::Wasm,
             permissions: vec![],
             source: None,
+            entrypoint: None,
         };
 
         let wasm_bytes = minimal_wasm_module();

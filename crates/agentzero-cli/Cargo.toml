@@ -11,7 +11,7 @@ name = "agentzero"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["wasm"]
 wasm = ["agentzero/wasm"]
 
 [dependencies]

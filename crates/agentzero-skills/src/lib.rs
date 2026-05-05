@@ -61,6 +61,10 @@ pub struct SkillManifest {
     pub runtime: SkillRuntime,
     pub permissions: Vec<SkillPermission>,
     pub source: Option<SkillPackageRef>,
+    /// Entrypoint command for host-supervised skills (e.g. "run.sh").
+    /// Defaults to `None`; looked up from SKILL.md frontmatter or falls back to `run.sh`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
 }
 
 impl SkillManifest {
@@ -104,6 +108,7 @@ mod tests {
             source: Some(SkillPackageRef::Local {
                 path: "skills/repo-security-audit".into(),
             }),
+            entrypoint: None,
         }
     }
 

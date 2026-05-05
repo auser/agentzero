@@ -1215,6 +1215,9 @@ fn cmd_run(name: &str) -> i32 {
             agentzero::skills::SkillRuntime::Wasm => {
                 return cmd_run_wasm_skill(&cwd, &skill_dir, &manifest);
             }
+            agentzero::skills::SkillRuntime::HostSupervised => {
+                return cmd_run_host_supervised_skill(&cwd, &manifest);
+            }
             agentzero::skills::SkillRuntime::InstructionOnly => {
                 // Check if it has a patterns.toml (scanner-based skill)
                 let patterns_path = skill_dir.join("patterns.toml");
@@ -1362,6 +1365,99 @@ fn cmd_run_wasm_skill(
 
     // Execute through the session pipeline
     match session.execute_skill(manifest, Some(&wasm_bytes)) {
+        Ok(output) => {
+            if !output.is_empty() {
+                println!("{output}");
+            }
+            println!("Skill {} completed successfully.", manifest.name);
+            0
+        }
+        Err(e) => {
+            eprintln!("error: skill execution failed: {e}");
+            1
+        }
+    }
+}
+
+/// Run a host-supervised skill through the session pipeline:
+/// policy check → shell execution → audit.
+fn cmd_run_host_supervised_skill(
+    cwd: &std::path::Path,
+    manifest: &agentzero::skills::SkillManifest,
+) -> i32 {
+    use agentzero::session::{Session, SessionConfig, SessionMode, ToolExecutor};
+
+    let entrypoint = manifest
+        .entrypoint
+        .clone()
+        .unwrap_or_else(|| format!("skills/{}/run.sh", manifest.name));
+
+    println!("Runtime:     host-supervised");
+    println!("Entrypoint:  {entrypoint}");
+
+    // Load policy
+    let policy_path = cwd.join(".agentzero/policy.yml");
+    let policy = if policy_path.exists() {
+        match agentzero::policy::load_policy_file(&policy_path) {
+            Ok(rules) => {
+                println!(
+                    "Policy:      {} rules from {}",
+                    rules.len(),
+                    policy_path.display()
+                );
+                agentzero::policy::PolicyEngine::with_rules(rules)
+            }
+            Err(e) => {
+                eprintln!("warning: failed to load policy: {e}");
+                agentzero::policy::PolicyEngine::deny_by_default()
+            }
+        }
+    } else {
+        println!("Policy:      deny-by-default (no policy file)");
+        agentzero::policy::PolicyEngine::deny_by_default()
+    };
+
+    // Create tool executor with its own policy copy
+    let tool_policy = if policy_path.exists() {
+        agentzero::policy::load_policy_file(&policy_path)
+            .map(agentzero::policy::PolicyEngine::with_rules)
+            .unwrap_or_else(|_| agentzero::policy::PolicyEngine::deny_by_default())
+    } else {
+        agentzero::policy::PolicyEngine::deny_by_default()
+    };
+    let tool_executor =
+        ToolExecutor::new(tool_policy).with_project_root(cwd.to_string_lossy().to_string());
+
+    let session_config = SessionConfig {
+        mode: SessionMode::LocalOnly,
+        project_root: Some(cwd.to_string_lossy().to_string()),
+    };
+    let session = match Session::new(session_config, policy) {
+        Ok(s) => s.with_tool_executor(tool_executor),
+        Err(e) => {
+            eprintln!("error: failed to create session: {e}");
+            return 1;
+        }
+    };
+
+    // Wire audit to disk if project is initialized
+    let audit_dir = cwd.join(".agentzero/audit");
+    let session = if audit_dir.exists() {
+        match session.with_audit_dir(&audit_dir) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("warning: failed to set up audit logging: {e}");
+                return 1;
+            }
+        }
+    } else {
+        session
+    };
+
+    println!("Session:     {}", session.id());
+    println!();
+
+    match session.execute_skill(manifest, None) {
         Ok(output) => {
             if !output.is_empty() {
                 println!("{output}");
@@ -1827,6 +1923,7 @@ fn cmd_demo() -> i32 {
             reason: "needs to read repo files".into(),
         }],
         source: None,
+        entrypoint: None,
     };
     skill
         .validate()

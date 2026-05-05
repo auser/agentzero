@@ -98,7 +98,10 @@ pub fn scan_installed(skills_dir: &Path) -> Result<Vec<LockedSkill>, RegistryErr
         }
 
         let name = entry.file_name().to_string_lossy().to_string();
-        let (version, runtime, permissions) = parse_skill_metadata(&skill_md);
+        let meta = parse_skill_metadata(&skill_md);
+        let version = meta.version;
+        let runtime = meta.runtime;
+        let permissions = meta.permissions;
 
         let source = if path.join(".git").exists() {
             "git".into()
@@ -120,12 +123,23 @@ pub fn scan_installed(skills_dir: &Path) -> Result<Vec<LockedSkill>, RegistryErr
     Ok(skills)
 }
 
+/// Parsed skill metadata from SKILL.md frontmatter.
+struct SkillMetadata {
+    version: String,
+    runtime: String,
+    permissions: Vec<String>,
+    entrypoint: Option<String>,
+}
+
 /// Parse basic metadata from SKILL.md frontmatter.
-fn parse_skill_metadata(path: &Path) -> (String, String, Vec<String>) {
+fn parse_skill_metadata(path: &Path) -> SkillMetadata {
     let content = std::fs::read_to_string(path).unwrap_or_default();
-    let mut version = "0.1.0".to_string();
-    let mut runtime = "none".to_string();
-    let mut permissions = Vec::new();
+    let mut meta = SkillMetadata {
+        version: "0.1.0".to_string(),
+        runtime: "none".to_string(),
+        permissions: Vec::new(),
+        entrypoint: None,
+    };
 
     // Simple frontmatter parsing
     if let Some(after_prefix) = content.strip_prefix("---") {
@@ -134,19 +148,27 @@ fn parse_skill_metadata(path: &Path) -> (String, String, Vec<String>) {
             for line in frontmatter.lines() {
                 let line = line.trim();
                 if let Some(v) = line.strip_prefix("version:") {
-                    version = v.trim().to_string();
+                    meta.version = v.trim().to_string();
                 }
                 if let Some(r) = line.strip_prefix("runtime:") {
-                    runtime = r.trim().to_string();
+                    meta.runtime = r.trim().to_string();
                 }
-                if line.starts_with("- read") || line.starts_with("- write") {
-                    permissions.push(line.trim_start_matches("- ").to_string());
+                if let Some(e) = line.strip_prefix("entrypoint:") {
+                    meta.entrypoint = Some(e.trim().to_string());
+                }
+                if line.starts_with("- read")
+                    || line.starts_with("- write")
+                    || line.starts_with("- shell")
+                    || line.starts_with("- network")
+                {
+                    meta.permissions
+                        .push(line.trim_start_matches("- ").to_string());
                 }
             }
         }
     }
 
-    (version, runtime, permissions)
+    meta
 }
 
 /// Build a `SkillManifest` from a skill directory containing SKILL.md.
@@ -168,16 +190,17 @@ pub fn load_manifest(skill_dir: &Path) -> Result<crate::SkillManifest, RegistryE
         .unwrap_or("unknown")
         .to_string();
 
-    let (version, runtime_str, perm_strs) = parse_skill_metadata(&skill_md);
+    let meta = parse_skill_metadata(&skill_md);
 
-    let runtime = match runtime_str.as_str() {
+    let runtime = match meta.runtime.as_str() {
         "wasm" => crate::SkillRuntime::Wasm,
         "host_supervised" => crate::SkillRuntime::HostSupervised,
         "mvm" => crate::SkillRuntime::Mvm,
         _ => crate::SkillRuntime::InstructionOnly,
     };
 
-    let permissions = perm_strs
+    let permissions = meta
+        .permissions
         .into_iter()
         .map(|p| {
             let capability = match p.as_str() {
@@ -201,11 +224,12 @@ pub fn load_manifest(skill_dir: &Path) -> Result<crate::SkillManifest, RegistryE
     Ok(crate::SkillManifest {
         id: agentzero_core::SkillId::from_string(&name),
         name: name.clone(),
-        version,
+        version: meta.version,
         description: name,
         runtime,
         permissions,
         source,
+        entrypoint: meta.entrypoint,
     })
 }
 
