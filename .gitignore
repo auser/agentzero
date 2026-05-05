@@ -1,4 +1,7 @@
 /target/
+site/dist/
+site/node_modules/
+site/.astro/
 .agentzero/audit/*.jsonl
 .agentzero/sessions/
 .agentzero/vault/

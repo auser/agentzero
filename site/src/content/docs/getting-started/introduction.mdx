@@ -1,0 +1,49 @@
+---
+title: Introduction
+description: What is AgentZero and why does it exist
+---
+
+# AgentZero
+
+AgentZero is the secure operating layer for AI agents. It lets local AI agents work with private files, code, tools, and secrets without bypassing policy, redaction, audit, or runtime isolation.
+
+## The Problem
+
+AI coding agents are powerful but risky. They need access to your filesystem, shell, and credentials to be useful — but that access is typically unconstrained:
+
+- No policy governing what the agent can do
+- No redaction before data leaves your machine
+- No audit trail of what happened
+- Secrets exposed in prompts and logs
+- No isolation between trusted and untrusted content
+
+## The Solution
+
+AgentZero wraps every tool call in a security layer:
+
+```
+User → Model → Tool Request → Policy Check → Audit Event → Execution
+                                    ↓
+                              Deny / Approve / Redact
+```
+
+Every action passes through policy evaluation before execution. Every action emits an auditable event. Secrets are handles, not values. PII is redacted before remote calls.
+
+## Core Principles
+
+- **Safety is the product** — not a feature bolted on later
+- **Deny by default** — unknown permissions are denied
+- **Local first** — all inference local unless policy allows remote
+- **Secrets are handles** — models never see raw values
+- **Content is labeled** — tool output marked as untrusted
+- **Everything is auditable** — structured event log for every action
+
+## What You Can Do
+
+- Chat with local LLMs (Ollama, llama.cpp, vLLM, LM Studio)
+- Use tools (read, list, search, write, shell) with policy enforcement
+- Run security scanners with configurable pattern files
+- Expose tools via MCP to Claude Code, Cursor, Zed
+- Encrypt sessions and audit logs at rest
+- Manage secrets in an encrypted vault
+- Install and share skills via git

@@ -1,0 +1,52 @@
+---
+title: Model Providers
+description: Supported LLM providers and configuration
+---
+
+## Supported Providers
+
+| Provider | API Type | Default Port | Flag |
+|----------|----------|-------------|------|
+| Ollama | Native `/api/chat` | 11434 | `--provider ollama` |
+| llama.cpp | OpenAI `/v1/chat/completions` | 8080 | `--provider llama-cpp` |
+| vLLM | OpenAI `/v1/chat/completions` | 8000 | `--provider vllm` |
+| LM Studio | OpenAI `/v1/chat/completions` | 1234 | `--provider lm-studio` |
+
+## Provider Routing
+
+AgentZero tries providers in priority order:
+
+1. **Local providers** always attempted first
+2. **Remote providers** only used if classification allows
+3. **Automatic fallback** when primary is unavailable
+4. **Retry with backoff** on transient failures
+
+## Classification-Based Routing
+
+| Classification | Local | Remote |
+|---------------|-------|--------|
+| Public | Allowed | Allowed |
+| Internal | Allowed | Policy check |
+| Private | Allowed | Requires redaction |
+| PII | Allowed | Redacted then allowed |
+| Secret | Allowed | **Denied** |
+| Credential | Allowed | **Denied** |
+| Unknown | Allowed | **Denied** |
+
+## Custom Server URL
+
+```bash
+agentzero chat --local --provider llama-cpp --url http://gpu-box:8080
+```
+
+## Settings Defaults
+
+Configure in `.agentzero/settings.toml`:
+
+```toml
+[general]
+default_provider = "ollama"
+default_model = "llama3.2"
+```
+
+These are used when CLI flags are at their defaults.

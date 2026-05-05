@@ -1,0 +1,83 @@
+---
+title: Quick Start
+description: Get up and running in 2 minutes
+---
+
+## Initialize a Project
+
+```bash
+cd your-project
+agentzero init --private
+```
+
+This creates `.agentzero/` with:
+- `policy.yml` — security policy rules
+- `settings.toml` — default provider and model
+- `models.json` — provider configurations
+- `audit/` — audit event logs
+- `sessions/` — conversation history
+- `vault/` — encrypted secrets
+- `prompts/` — custom system prompts
+- `skills/` — local skill overrides
+
+## Chat with Your Project
+
+```bash
+agentzero chat --local
+```
+
+The agent can read files, list directories, search code, and execute tools — all governed by your policy.
+
+```
+you> what does this project do?
+  [tool: read] ok (1234 bytes)
+  [tool: list] ok (450 bytes)
+
+agentzero> This is a Rust workspace with 13 crates implementing...
+```
+
+## Run a Security Scan
+
+```bash
+agentzero run repo-security-audit
+```
+
+Scans for secrets, PII, prompt injection attempts, and unsafe patterns.
+
+## Use as MCP Server
+
+Add to your Claude Code or Cursor settings:
+
+```json
+{
+  "mcpServers": {
+    "agentzero": {
+      "command": "agentzero",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Now your editor's AI gets policy-controlled tool access through AgentZero.
+
+## Choose a Different Model
+
+```bash
+# Use a specific model
+agentzero chat --local --model codellama
+
+# Use llama.cpp instead of Ollama
+agentzero chat --local --provider llama-cpp
+
+# Use vLLM on a custom port
+agentzero chat --local --provider vllm --url http://gpu-box:8000
+```
+
+## Enable Encryption
+
+```bash
+agentzero chat --local --encrypt
+# Encryption passphrase: ********
+# Audit logs and sessions encrypted at rest
+```

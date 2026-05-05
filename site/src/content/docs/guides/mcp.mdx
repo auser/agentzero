@@ -1,0 +1,83 @@
+---
+title: MCP Integration
+description: Use AgentZero as a tool provider for any MCP client
+---
+
+## What is MCP?
+
+The Model Context Protocol (MCP) is a standard for AI tools. AgentZero implements an MCP server, letting any MCP-compatible client use its tools with full policy enforcement.
+
+## Setup with Claude Code
+
+Add to your Claude Code MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "agentzero": {
+      "command": "agentzero",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+## Setup with Cursor
+
+Add to Cursor's MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "agentzero": {
+      "command": "agentzero",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+## Available Tools
+
+| MCP Tool | Description |
+|----------|-------------|
+| `read_file` | Read file contents |
+| `list_directory` | List directory contents |
+| `search_files` | Search for patterns in files |
+| `write_file` | Write content to a file |
+| `run_command` | Execute a shell command |
+
+## Security
+
+All tool calls go through AgentZero's session engine:
+
+- **Policy evaluation** before every tool execution
+- **Path validation** blocks access outside project root
+- **Sensitive paths** (`.ssh`, `.env`, `.aws/credentials`) denied
+- **Audit events** emitted for every call
+- **Project policy** loaded from `.agentzero/policy.yml`
+
+## Protocol Details
+
+AgentZero speaks JSON-RPC 2.0 over stdio:
+
+```
+→ {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"agentzero","version":"0.1.0"}}}
+
+→ {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+← {"jsonrpc":"2.0","id":2,"result":{"tools":[...]}}
+
+→ {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"Cargo.toml"}}}
+← {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"[workspace]\n..."}]}}
+```
+
+## Running Manually
+
+```bash
+# Start the MCP server
+agentzero mcp
+
+# Test with a JSON-RPC request
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | agentzero mcp
+```

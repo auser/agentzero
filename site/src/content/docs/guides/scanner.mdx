@@ -1,0 +1,86 @@
+---
+title: Security Scanner
+description: Scan repositories for secrets, PII, and prompt injection
+---
+
+## Running a Scan
+
+```bash
+agentzero run repo-security-audit
+```
+
+Scans the current directory for:
+- Hardcoded secrets (API keys, tokens, private keys)
+- PII patterns (emails, SSNs, personal data)
+- Prompt injection attempts
+- Sensitive files (`.env`, `.pem`, credentials)
+- Package install scripts
+
+## Output
+
+The scanner produces a markdown report:
+
+```
+# Security Audit Report: my-project
+
+## Executive Summary
+- Files scanned: 42
+- Total findings: 3
+  - Critical: 1
+  - High: 1
+  - Warning: 1
+
+## Findings
+- **[CRITICAL]** [SENSITIVE_FILE] `.env`
+  Sensitive file should not be in repository
+- **[HIGH]** [SECRET] `config.yaml:5`
+  Hardcoded password assignment
+- **[WARNING]** [PII] `users.csv:2`
+  Email address (Gmail)
+
+## Recommendations
+- **Rotate exposed secrets** and add them to .gitignore
+- **Remove sensitive files** from the repository
+```
+
+## Custom Patterns
+
+Patterns are loaded from `skills/repo-security-audit/patterns.toml`. You can extend them:
+
+```toml
+[[secrets]]
+pattern = "MY_CUSTOM_TOKEN"
+description = "Custom internal token"
+severity = "critical"
+
+[[pii]]
+pattern = "@company-internal.com"
+description = "Internal email address"
+severity = "warning"
+case_insensitive = true
+
+[[injection]]
+pattern = "override safety"
+description = "Safety override attempt"
+severity = "high"
+case_insensitive = true
+
+[sensitive_files]
+names = [".env", "secrets.yaml", "internal-creds.json"]
+extensions = ["pem", "key"]
+
+[skip]
+directories = [".git", "target", "node_modules", "vendor"]
+```
+
+## Writing Custom Skills
+
+Any installed skill with a `patterns.toml` file works as a scanner:
+
+```bash
+# Install from git
+agentzero install https://github.com/your-org/compliance-scanner
+
+# Run it
+agentzero run compliance-scanner
+```

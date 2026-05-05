@@ -36,6 +36,18 @@ fmt:
 # Run CI checks
 ci: docs-check adr-check check test clippy fmt
 
+# Build the docs site
+docs-build:
+  cd site && pnpm install && pnpm run build
+
+# Start docs dev server
+docs-dev:
+  cd site && pnpm install && pnpm run dev
+
+# Preview built docs
+docs-preview:
+  cd site && pnpm run preview
+
 # Show tree of the project
 show-tree:
   find . -maxdepth 4 -type f | sort

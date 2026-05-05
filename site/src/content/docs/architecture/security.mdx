@@ -1,0 +1,60 @@
+---
+title: Security Model
+description: How AgentZero enforces safety guarantees
+---
+
+## Trust Boundaries
+
+Content is classified by trust source:
+
+| Source | Trust Level |
+|--------|-------------|
+| User instructions | Trusted |
+| Project policy | Trusted |
+| AgentZero core code | Trusted |
+| Skill instructions | Untrusted |
+| Document content | Untrusted |
+| Tool output | Untrusted |
+| Network content | Untrusted |
+
+**Untrusted content never becomes trusted instruction.**
+
+## Data Classification
+
+| Level | Remote Models | Handling |
+|-------|--------------|----------|
+| `public` | Allowed | No restrictions |
+| `internal` | Policy check | Requires explicit policy |
+| `private` | Redact or deny | Must redact before remote |
+| `pii` | Redact | Always redacted for remote |
+| `secret` | Denied | Never sent remotely |
+| `credential` | Denied | Never sent remotely |
+| `unknown` | Denied | Fails closed as private |
+
+## Fail Closed
+
+When uncertain, AgentZero denies:
+
+- Unknown data classification → treat as private
+- Unknown permission → deny
+- Unknown runtime safety → deny
+- Failed redaction → deny remote call
+- Failed policy load → deny privileged actions
+- Failed audit init → deny session start
+
+## Encryption
+
+- **AES-256-GCM** for all encryption at rest
+- **Argon2id** key derivation (memory-hard)
+- **Random salt + nonce** per encryption
+- **Per-line encryption** for audit logs (appendable)
+- **Per-secret files** in vault
+
+## What AgentZero Prevents
+
+- Raw secrets reaching model context
+- PII in remote model calls without redaction
+- Prompt injection from tool output
+- Ambient host access from skills/tools
+- Secret leakage in audit logs
+- Unaudited tool execution

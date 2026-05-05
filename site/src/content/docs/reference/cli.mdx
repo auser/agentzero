@@ -1,0 +1,111 @@
+---
+title: CLI Reference
+description: All AgentZero commands and flags
+---
+
+## `agentzero init`
+
+Initialize a new project.
+
+```bash
+agentzero init [--private]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--private` | Use private-by-default policy (network denied, local-only routing) |
+
+## `agentzero chat`
+
+Start an interactive chat session.
+
+```bash
+agentzero chat [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--local` | Use local models only |
+| `-m, --model` | Model name (default: llama3.2) |
+| `--stream` | Stream tokens as they arrive |
+| `-p, --provider` | Provider: ollama, llama-cpp, vllm, lm-studio |
+| `--url` | Custom server URL |
+| `--resume` | Resume a previous session by ID |
+| `--encrypt` | Encrypt audit and session files |
+
+## `agentzero mcp`
+
+Start the MCP server for editor integration.
+
+```bash
+agentzero mcp
+```
+
+Reads JSON-RPC 2.0 from stdin, writes to stdout.
+
+## `agentzero serve`
+
+Start the ACP server.
+
+```bash
+agentzero serve
+```
+
+## `agentzero run`
+
+Run an installed skill.
+
+```bash
+agentzero run <name>
+```
+
+## `agentzero install`
+
+Install a skill from a local path or git URL.
+
+```bash
+agentzero install <path-or-url>
+```
+
+## `agentzero doctor`
+
+System diagnostic.
+
+```bash
+agentzero doctor
+```
+
+## `agentzero history`
+
+List past chat sessions.
+
+```bash
+agentzero history
+```
+
+## `agentzero policy status`
+
+Show active policy rules.
+
+```bash
+agentzero policy status
+```
+
+## `agentzero audit tail`
+
+Show recent audit events.
+
+```bash
+agentzero audit tail [-c, --count N]
+```
+
+## `agentzero vault`
+
+Manage encrypted secrets.
+
+```bash
+agentzero vault list
+agentzero vault add <provider> <name>
+agentzero vault get <provider> <name>
+agentzero vault remove <provider> <name>
+```

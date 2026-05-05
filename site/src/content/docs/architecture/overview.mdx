@@ -1,0 +1,71 @@
+---
+title: Architecture Overview
+description: How AgentZero is structured
+---
+
+## Design Philosophy
+
+AgentZero is a small, auditable core — not a framework. Every new capability must prove it belongs inside the secure core or be implemented as an adapter/skill/package.
+
+## Data Flow
+
+```
+User Input
+    ↓
+Session Engine
+    ↓
+Policy Evaluation ← .agentzero/policy.yml
+    ↓
+Tool Executor
+    ↓
+Audit Logger → .agentzero/audit/<session>.jsonl
+    ↓
+Tool Output (labeled untrusted)
+    ↓
+Model (with redaction if remote)
+    ↓
+Response to User
+```
+
+## Key Contracts
+
+- **Every action** passes through policy before execution
+- **Every action** emits an audit event after decision
+- **Secret handles** — models see URIs, tools get values at runtime
+- **Content provenance** — untrusted output wrapped with boundary markers
+- **Fail closed** — unknown classification, permissions, or runtime → deny
+
+## Workspace Structure
+
+```
+agentzero/
+  Cargo.toml          (workspace + facade crate)
+  src/lib.rs          (re-exports all sub-crates)
+  crates/
+    agentzero-core/   (types, crypto, vault, trust, redaction)
+    agentzero-policy/ (rule engine + TOML loader)
+    agentzero-audit/  (JSONL + encrypted logging)
+    agentzero-session/(engine, providers, tools, router, retry)
+    agentzero-tools/  (registry + schemas)
+    agentzero-skills/ (manifests, scanner, report, registry)
+    agentzero-sandbox/(profiles + WASM runtime)
+    agentzero-mcp/    (MCP server)
+    agentzero-acp/    (ACP adapter)
+    agentzero-tracing/(centralized logging)
+    agentzero-cli/    (CLI binary)
+```
+
+## ADRs
+
+Architecture decisions are binding. See `specs/adrs/` for all 10:
+
+1. Minimal Secure Core
+2. Local-First Model Routing
+3. Policy/Redaction/Audit Wrap Every Action
+4. Skills as First-Class Capability Bundles
+5. Package Manifest & Lockfile Trust Model
+6. Runtime Isolation Tiers (Host/WASM/MVM)
+7. ACP is an Adapter, Not the Core
+8. Prompt Injection & Untrusted Content Boundaries
+9. Capability-Based Secret Handles
+10. Non-Goals & Platform Creep Boundary

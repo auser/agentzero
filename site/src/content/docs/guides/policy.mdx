@@ -1,0 +1,68 @@
+---
+title: Policy Configuration
+description: Configure security policy for your project
+---
+
+## Policy File
+
+Policy lives at `.agentzero/policy.yml` (TOML format):
+
+```toml
+# AgentZero Policy
+version = 1
+default_classification = "private"
+model_routing = "local_only"
+shell_commands = "require_approval"
+file_write = "require_approval"
+network = "deny"
+```
+
+## Options
+
+### `default_classification`
+
+How data is classified by default:
+- `public` — safe for remote models
+- `private` — requires redaction for remote
+- `secret` — never sent remotely
+
+### `model_routing`
+
+- `local_only` — no remote model calls ever
+- `local_preferred` — allow remote with redaction when local unavailable
+
+### `shell_commands`
+
+- `allow` — shell commands execute without approval
+- `require_approval` — user must approve each command
+- `deny` — shell commands always blocked
+
+### `file_write`
+
+- `allow` — writes execute without approval
+- `require_approval` — user must approve each write
+- `deny` — writes always blocked
+
+### `network`
+
+- `allow` — network requests permitted
+- `require_approval` — user must approve
+- `deny` — all network access blocked
+
+## View Active Policy
+
+```bash
+agentzero policy status
+```
+
+## How Policy is Enforced
+
+Every tool call passes through the policy engine before execution:
+
+1. Tool requests a capability (e.g., `FileWrite`)
+2. Policy engine evaluates against rules
+3. Decision: `Allow`, `Deny`, `RequiresApproval`, or `AllowWithRedaction`
+4. Audit event emitted with decision and reason
+5. If denied or requires approval, tool call is blocked
+
+No tool, skill, or model call can bypass policy evaluation.

@@ -1,0 +1,62 @@
+---
+title: Crate Map
+description: What each crate does
+---
+
+## Facade
+
+### `agentzero`
+Re-exports all sub-crates under a single namespace:
+```rust
+use agentzero::core::{AgentId, DataClassification};
+use agentzero::policy::PolicyEngine;
+use agentzero::session::Session;
+use agentzero::mcp::McpServer;
+```
+
+## Core
+
+### `agentzero-core`
+Shared vocabulary: IDs, enums, types, secret handles, trust labels, redaction, model routing, encryption (AES-256-GCM), vault.
+
+### `agentzero-policy`
+Rule-based policy engine with TOML loader. Deny-by-default. Evaluates capability + classification against rules. First matching rule wins.
+
+### `agentzero-audit`
+Audit event logging. JSONL file sink, encrypted sink, in-memory sink for tests. Every meaningful action emits an event.
+
+## Runtime
+
+### `agentzero-session`
+Session engine tying together models, tools, policy, and audit. Includes:
+- Ollama provider (native API)
+- OpenAI-compatible provider (llama.cpp, vLLM, LM Studio)
+- Multi-provider router with fallback
+- Retry with exponential backoff
+- Tool executor with policy checks
+- Context compaction
+
+### `agentzero-tools`
+Tool registry with built-in schemas (read, list, search, write, shell).
+
+### `agentzero-sandbox`
+Sandbox profiles and WASM runtime (behind `wasm` feature flag). Wasmtime-backed with fuel limits.
+
+## Extensions
+
+### `agentzero-skills`
+Skill manifests, security scanner, report generator, skill registry with lockfile.
+
+### `agentzero-mcp`
+MCP server (JSON-RPC 2.0 over stdio). Exposes tools to any MCP client.
+
+### `agentzero-acp`
+ACP adapter for custom editor integrations. JSON-RPC over stdio.
+
+## Infrastructure
+
+### `agentzero-tracing`
+Centralized tracing setup. Re-exports `tracing` macros. Configurable format (human/JSON).
+
+### `agentzero-cli`
+CLI binary with all commands. Default run target.

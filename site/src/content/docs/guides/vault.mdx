@@ -1,0 +1,64 @@
+---
+title: Secret Vault
+description: Encrypted secret storage with capability-based access
+---
+
+## Overview
+
+AgentZero stores secrets encrypted at rest. The model only ever sees handles like `handle://vault/github/token` — never raw values. Tools receive the actual secret only at execution time after policy approval.
+
+## Add a Secret
+
+```bash
+agentzero vault add github token
+# Vault passphrase: ********
+# Secret value: ghp_abc123...
+# Stored: handle://vault/github/token
+```
+
+## List Secrets
+
+```bash
+agentzero vault list
+# Vault passphrase: ********
+# Stored secrets:
+#   handle://vault/aws/key
+#   handle://vault/github/token
+# 2 secret(s)
+```
+
+## Retrieve a Secret
+
+```bash
+agentzero vault get github token
+# Vault passphrase: ********
+# ghp_abc123...
+```
+
+## Remove a Secret
+
+```bash
+agentzero vault remove github token
+# Vault passphrase: ********
+# Removed: handle://vault/github/token
+```
+
+## Storage Format
+
+Each secret is stored as an individual AES-256-GCM encrypted file:
+
+```
+.agentzero/vault/
+  github/
+    token.enc
+  aws/
+    key.enc
+```
+
+## Security Properties
+
+- **AES-256-GCM** encryption per secret
+- **Argon2id** key derivation (memory-hard, brute-force resistant)
+- **Random salt + nonce** per encryption (ciphertext never repeats)
+- **Passphrase required** for every vault operation
+- **No plaintext** ever touches disk
