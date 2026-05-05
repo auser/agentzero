@@ -1,26 +1,25 @@
 ---
-// Landing page — takes priority over Starlight's [...slug] catch-all
+// AgentZero landing page
 ---
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AgentZero</title>
-  <meta name="description" content="The secure runtime for AI agents." />
+  <title>AgentZero — Secure AI agent runtime</title>
+  <meta name="description" content="Policy-controlled, audited, encrypted tool execution for local AI workflows." />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/landing.css" />
-  <script is:inline>
-    (function(){
-      var s = localStorage.getItem('az-theme');
-      if(s) document.documentElement.setAttribute('data-theme', s);
-      else if(window.matchMedia('(prefers-color-scheme: light)').matches) document.documentElement.setAttribute('data-theme','light');
-    })();
-  </script>
+  <script is:inline>{
+    let s = localStorage.getItem('az-theme');
+    if(s) document.documentElement.setAttribute('data-theme', s);
+    else if(window.matchMedia('(prefers-color-scheme: light)').matches) document.documentElement.setAttribute('data-theme','light');
+  }</script>
 </head>
 <body>
+
   <header>
     <a href="/" class="mark">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
@@ -36,53 +35,112 @@
     </div>
   </header>
 
+  <!-- =========== HERO =========== -->
   <div class="hero">
     <div class="hero-inner">
       <div class="hero-badge">Open source &middot; v0.1.0</div>
-      <h1>There are many agent<br />runtimes, <em>but this<br />one is secure.</em></h1>
-      <p class="hero-sub">AgentZero wraps every tool call in policy. Secrets stay in an encrypted vault. PII gets redacted before it leaves your machine. Every action is auditable. Local models by default.</p>
+      <h1>Secure tool execution<br />for AI agents, <em>without<br />the trust assumptions.</em></h1>
+      <p class="hero-sub">
+        AgentZero is a local-first runtime that evaluates policy before every tool call,
+        redacts PII before it leaves your machine, stores secrets as encrypted handles,
+        and produces a structured audit trail for every action an agent takes.
+      </p>
       <div class="hero-cta">
         <a href="/getting-started/quickstart/" class="btn-fill">Get started &rarr;</a>
-        <a href="https://github.com/auser/agentzero" class="btn-outline">GitHub</a>
+        <a href="https://github.com/auser/agentzero" class="btn-outline">View on GitHub</a>
       </div>
       <div class="stats">
         <div class="stat"><div class="num">13</div><div class="lbl">Rust Crates</div></div>
         <div class="stat"><div class="num">224</div><div class="lbl">Tests</div></div>
-        <div class="stat"><div class="num">5</div><div class="lbl">Tools</div></div>
-        <div class="stat"><div class="num">4</div><div class="lbl">Providers</div></div>
+        <div class="stat"><div class="num">5.7 MB</div><div class="lbl">Binary Size</div></div>
+        <div class="stat"><div class="num">5</div><div class="lbl">Built-in Tools</div></div>
+        <div class="stat"><div class="num">4</div><div class="lbl">LLM Providers</div></div>
       </div>
     </div>
   </div>
 
-  <section>
-    <p class="sn">01</p>
-    <h2>Talk to your codebase. <em>Safely.</em></h2>
-    <p class="sd">AgentZero connects to a local model and gives it tools to read files, search code, and run commands &mdash; but every tool call passes through policy. Dangerous operations require your explicit approval.</p>
-    <div class="tw"><div class="tm">
-      <div class="tb"><i></i><i></i><i></i><span>~/project</span></div>
-      <pre set:html={`<span class="c">you&gt;</span> are there any leaked credentials in this repo?
+  <!-- =========== SECTION 1: THE PROBLEM =========== -->
+  <div class="sec">
+    <div class="sec-narrow">
+      <h2>If an agent is powerful enough to be useful, it is powerful enough to <em>require governance.</em></h2>
+      <p class="sec-sub">
+        AI coding agents need filesystem access, shell execution, and sometimes credentials to do real work.
+        That access is typically unconstrained &mdash; no policy, no redaction, no audit trail, no isolation
+        between trusted instructions and untrusted content. AgentZero closes that gap.
+      </p>
+    </div>
+  </div>
+
+  <!-- =========== SECTION 2: THE EXPERIENCE =========== -->
+  <div class="sec">
+    <div class="sec-narrow">
+      <h2>Talk to your codebase. <em>Every action is governed.</em></h2>
+      <p class="sec-sub">
+        Connect to a local model. Ask questions about your code. Read files, search patterns, run commands.
+        Every tool call passes through policy evaluation. Dangerous operations require your explicit approval.
+      </p>
+      <div class="tw"><div class="tm">
+        <div class="tm-bar"><i></i><i></i><i></i><span>~/project &mdash; agentzero chat --local</span></div>
+        <pre set:html={`<span class="c">you&gt;</span> are there any leaked credentials in this repo?
   <span class="d"><span class="y">[tool: search]</span> pattern="password=" … ok (890 B)</span>
+  <span class="d"><span class="y">[tool: search]</span> pattern="ghp_" … ok (0 B)</span>
   <span class="d"><span class="y">[tool: read]</span> config/database.yml … ok (240 B)</span>
 
 <span class="p">agentzero&gt;</span> Found one issue. config/database.yml line 8 has a
 hardcoded password. The value was <span class="y">redacted</span> from this response.
+I recommend moving it to the vault:
 
   <span class="d">$ agentzero vault add postgres db-password</span>
 
 <span class="c">you&gt;</span> run the full security audit
   <span class="d"><span class="y">[APPROVE shell: agentzero run repo-security-audit?]</span> (y/n) y</span>
-  <span class="d">Scanning 42 files… 3 findings. Report → .agentzero/audit/report.md</span>`} />
-    </div></div>
-  </section>
+  <span class="d">Scanning 42 files… 3 findings.</span>
+  <span class="d">Report → .agentzero/audit/security-report.md</span>`} />
+      </div></div>
+    </div>
+  </div>
 
-  <section>
-    <p class="sn">02</p>
-    <h2>One line to secure <em>your editor's AI.</em></h2>
-    <p class="sd">AgentZero runs as an MCP server. Point Claude Code, Cursor, or Zed at it and every tool call goes through policy, gets audited, and respects your project's security rules.</p>
-    <div class="split">
-      <div class="sc">
-        <div class="fl">.claude/settings.json</div>
-        <pre set:html={`{
+  <!-- =========== SECTION 3: PIPELINE =========== -->
+  <div class="sec">
+    <div class="sec-narrow">
+      <h2>Unbypassable policy plane. <em>Every action, every time.</em></h2>
+      <p class="sec-sub">
+        No tool call, model request, file write, or shell command executes without passing through
+        the policy engine first. The decision is logged. The action is auditable. There is no side door.
+      </p>
+      <div class="feat-2">
+        <div class="feat-card">
+          <h3>Policy evaluation</h3>
+          <p>Every request is matched against rules loaded from <code>.agentzero/policy.yml</code>. Capabilities are explicit: FileRead, FileWrite, ShellCommand, ModelCall, SecretHandleUsage. Unknown permissions are denied.</p>
+        </div>
+        <div class="feat-card">
+          <h3>Structured audit trail</h3>
+          <p>Session start, model calls, tool executions, policy decisions, redactions applied, approvals granted or denied. JSONL format. Optionally encrypted at rest with AES-256-GCM.</p>
+        </div>
+        <div class="feat-card">
+          <h3>Content provenance</h3>
+          <p>Tool output is wrapped with trust boundary markers before returning to the model. The agent knows what is trusted instruction and what is untrusted data. Prompt injection from file content does not escalate.</p>
+        </div>
+        <div class="feat-card">
+          <h3>Approval flow</h3>
+          <p>Shell commands and file writes require explicit user approval. The agent asks. You decide. The decision is recorded. Scopes: once, session, project, or never.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========== SECTION 4: MCP =========== -->
+  <div class="sec">
+    <div class="sec-narrow">
+      <h2>One config line. <em>Full security layer for your editor.</em></h2>
+      <p class="sec-sub">
+        AgentZero runs as an MCP server. Claude Code, Cursor, Zed &mdash; any MCP client gets
+        policy-controlled, audited tool access without changing application code.
+      </p>
+      <div class="split">
+        <div class="sc">
+          <div class="fl">.claude/settings.json</div>
+          <pre set:html={`{
   <span class="p">"mcpServers"</span>: {
     <span class="p">"agentzero"</span>: {
       <span class="p">"command"</span>: <span class="g">"agentzero"</span>,
@@ -90,32 +148,76 @@ hardcoded password. The value was <span class="y">redacted</span> from this resp
     }
   }
 }`} />
-      </div>
-      <div class="st">
-        <h3>Five tools, fully gated</h3>
-        <p><code>read_file</code> &middot; <code>list_directory</code> &middot; <code>search_files</code> &middot; <code>write_file</code> &middot; <code>run_command</code></p>
-        <p>Every call goes through path validation, sensitive path blocking, and emits a structured audit event.</p>
+        </div>
+        <div class="st">
+          <h3>Five tools, fully gated</h3>
+          <p><code>read_file</code> &middot; <code>list_directory</code> &middot; <code>search_files</code> &middot; <code>write_file</code> &middot; <code>run_command</code></p>
+          <p>Path validation blocks traversal outside the project root. Sensitive paths (<code>.ssh</code>, <code>.env</code>, <code>.aws/credentials</code>) are denied. Every call emits a structured audit event with the decision, capability, and context.</p>
+        </div>
       </div>
     </div>
-  </section>
+  </div>
 
-  <section>
-    <p class="sn">03</p>
-    <h2>What we built. <em>And what we didn't.</em></h2>
-    <p class="sd">A small, auditable core &mdash; not a framework. Every security invariant enforced in code, not documentation.</p>
-    <div class="g3">
-      <div class="cl"><h3>Deny by default</h3><p>Unknown permissions denied. Unknown data classifications fail closed.</p></div>
-      <div class="cl"><h3>Secret handles</h3><p>Models see handle://vault/github/token. Never raw values.</p></div>
-      <div class="cl"><h3>PII redaction</h3><p>Scanned before remote calls. Emails, tokens, keys replaced automatically.</p></div>
-      <div class="cl"><h3>Content provenance</h3><p>Tool output labeled untrusted. Injection from file content doesn't escalate.</p></div>
-      <div class="cl"><h3>Encrypted at rest</h3><p>AES-256-GCM + Argon2id. Vault, sessions, audit logs.</p></div>
-      <div class="cl"><h3>Local first</h3><p>Ollama, llama.cpp, vLLM, LM Studio. Data stays on your machine.</p></div>
+  <!-- =========== SECTION 5: SECURITY =========== -->
+  <div class="sec">
+    <div class="sec-narrow">
+      <h2>What AgentZero enforces, <em>and what it does not depend on.</em></h2>
+      <p class="sec-sub">
+        Security is not a feature that can be toggled. These invariants are structural &mdash;
+        enforced in the type system, the policy engine, and the execution contracts.
+      </p>
+      <ul class="inv-list">
+        <li>No tool, skill, or model call bypasses policy evaluation</li>
+        <li>No raw secret ever appears in model context or audit logs</li>
+        <li>No PII reaches a remote model without redaction or explicit policy</li>
+        <li>Unknown data classification fails closed as private</li>
+        <li>Unknown permissions are denied</li>
+        <li>Untrusted content never becomes trusted instruction</li>
+        <li>Offline mode performs zero network calls</li>
+        <li>Every meaningful action emits a structured audit event</li>
+      </ul>
     </div>
-  </section>
+  </div>
 
+  <!-- =========== SECTION 6: FEATURES =========== -->
+  <div class="sec">
+    <div class="sec-narrow">
+      <h2>Local models. Encrypted vault. <em>Zero trust by design.</em></h2>
+      <div class="fg">
+        <div class="fc"><h3>Deny by default</h3><p>Unknown permissions denied. Unknown data classifications fail closed. The agent proves access before acting.</p></div>
+        <div class="fc"><h3>Secret handles</h3><p>Models see <code>handle://vault/github/token</code>. Never raw values. Exposed only at execution time, only after policy approval.</p></div>
+        <div class="fc"><h3>PII redaction</h3><p>Content scanned before remote model calls. Emails, tokens, keys replaced with typed placeholders. Automatic, not optional.</p></div>
+        <div class="fc"><h3>Encrypted at rest</h3><p>AES-256-GCM with Argon2id key derivation. Vault, sessions, audit logs. Per-line encryption so logs stay appendable.</p></div>
+        <div class="fc"><h3>Multi-provider routing</h3><p>Ollama, llama.cpp, vLLM, LM Studio. Try local first, fall back with redaction. Retry with exponential backoff on transient failures.</p></div>
+        <div class="fc"><h3>Context compaction</h3><p>Long conversations auto-summarize older messages. System prompt and recent context preserved. No context overflow, no lost instructions.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========== SECTION 7: ARCHITECTURE =========== -->
+  <div class="sec">
+    <div class="sec-narrow">
+      <h2>The execution contract is the product. <em>The backend is an implementation detail.</em></h2>
+      <p class="sec-sub">
+        13 Rust crates. Each one has a single responsibility. The facade crate re-exports everything
+        under a clean namespace. The CLI is one of many possible frontends &mdash; the MCP server,
+        ACP adapter, and session engine all use the same policy and audit contracts.
+      </p>
+      <div class="fg">
+        <div class="fc"><h3>agentzero-core</h3><p>Types, crypto, vault, trust labels, redaction, model routing. The shared vocabulary.</p></div>
+        <div class="fc"><h3>agentzero-policy</h3><p>Rule-based engine with TOML loader. Deny by default. First matching rule wins.</p></div>
+        <div class="fc"><h3>agentzero-session</h3><p>Session engine, providers, tool executor, router, retry logic, context compaction.</p></div>
+        <div class="fc"><h3>agentzero-audit</h3><p>JSONL file sink, encrypted sink, in-memory sink. Every event is structured and replayable.</p></div>
+        <div class="fc"><h3>agentzero-mcp</h3><p>MCP server. JSON-RPC 2.0 over stdio. Five tools with full policy enforcement.</p></div>
+        <div class="fc"><h3>agentzero-skills</h3><p>Manifests, security scanner, report generator, skill registry with lockfile tracking.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========== CTA =========== -->
   <div class="cta">
     <h2>Ship with confidence.</h2>
-    <p class="sd" style="margin:0 auto 2rem;text-align:center">Open source. MIT licensed. Built in Rust for developers who work with private code.</p>
+    <p>Open source. MIT licensed. 5.7 MB binary. Built in Rust for developers who work with private code and can't afford to leak.</p>
     <div class="hero-cta" style="justify-content:center">
       <a href="/getting-started/quickstart/" class="btn-fill">Read the docs &rarr;</a>
       <a href="https://github.com/auser/agentzero" class="btn-outline">View source</a>
@@ -127,17 +229,15 @@ hardcoded password. The value was <span class="y">redacted</span> from this resp
     <div class="fk">
       <a href="/getting-started/introduction/">Docs</a>
       <a href="/guides/mcp/">MCP</a>
+      <a href="/architecture/security/">Security</a>
       <a href="https://github.com/auser/agentzero">GitHub</a>
     </div>
   </footer>
 
   <script is:inline>
     function toggleTheme(){
-      var h=document.documentElement;
-      var c=h.getAttribute('data-theme');
-      var n=c==='dark'?'light':'dark';
-      h.setAttribute('data-theme',n);
-      localStorage.setItem('az-theme',n);
+      var h=document.documentElement,c=h.getAttribute('data-theme'),n=c==='dark'?'light':'dark';
+      h.setAttribute('data-theme',n);localStorage.setItem('az-theme',n);
     }
   </script>
 </body>
