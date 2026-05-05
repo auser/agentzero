@@ -10,7 +10,7 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 
 ## Current Phase
 
-**Status: PHASE 18 COMPLETE (v0.1.0 READY)**
+**Status: PHASE 19 COMPLETE (v0.1.0 RELEASED)**
 
 ## Tasks
 
@@ -183,11 +183,29 @@ Establish the documentation, ADR, security, and implementation foundation for Ag
 - [x] GitHub Actions CI workflow (check, test, clippy, fmt, docs).
 - [x] README rewrite for v0.1.0 (install, quick start, MCP integration, architecture).
 
+### Phase 19: WASM Sandbox Integration
+- [x] Runtime-aware policy rule matching (`CapabilityAndRuntime` matcher, `allow_runtime`/`deny_runtime`).
+- [x] `wasm_execution` policy field in loader (allow/require_approval/deny, fail closed).
+- [x] `Session::execute_skill()` routing by `SkillRuntime` (InstructionOnly, WASM, unsupported).
+- [x] `ToolExecutor::execute_wasm()` with cfg-gated real/stub implementations.
+- [x] `AuditParams` struct for runtime-tier-aware audit events with skill IDs.
+- [x] `registry::load_manifest()` builds `SkillManifest` from SKILL.md frontmatter.
+- [x] `registry::find_wasm_module()` locates `.wasm` files in skill directories.
+- [x] CLI `cmd_run` rewritten: manifest load → runtime routing → WASM pipeline.
+- [x] CLI `cmd_run_wasm_skill`: full session pipeline (policy → sandbox → audit → output).
+- [x] `wasm` feature flag wired through workspace: cli → facade → session → sandbox → wasmtime.
+- [x] `agentzero init` generates `wasm_execution` field in policy.yml.
+- [x] `agentzero doctor` reports WASM compilation status, policy setting, WASM skill count.
+- [x] Integration tests: hand-crafted WASM module (main→42) tested through WasmEngine (4 tests) and full Session::execute_skill pipeline (2 tests).
+- [x] Website docs updated: skills guide, policy guide, CLI reference, crate map, security model, architecture overview.
+
 ## Not Yet (deferred)
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
 - [ ] Remote package registry (authenticated, with lockfile verification).
 - [ ] `agentzero publish` for sharing skills.
+- [ ] `HostSupervised` skill runtime in `execute_skill` (currently returns "not yet supported").
+- [ ] Default `wasm` feature to on in release builds.
 
 ## Notes
 
