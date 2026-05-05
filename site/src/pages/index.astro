@@ -1,0 +1,144 @@
+---
+// Landing page — takes priority over Starlight's [...slug] catch-all
+---
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AgentZero</title>
+  <meta name="description" content="The secure runtime for AI agents." />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/landing.css" />
+  <script is:inline>
+    (function(){
+      var s = localStorage.getItem('az-theme');
+      if(s) document.documentElement.setAttribute('data-theme', s);
+      else if(window.matchMedia('(prefers-color-scheme: light)').matches) document.documentElement.setAttribute('data-theme','light');
+    })();
+  </script>
+</head>
+<body>
+  <header>
+    <a href="/" class="mark">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+      AgentZero
+    </a>
+    <div class="links">
+      <a href="/getting-started/introduction/">Docs</a>
+      <a href="/architecture/security/">Security</a>
+      <a href="https://github.com/auser/agentzero">GitHub</a>
+      <button class="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="hero">
+    <div class="hero-inner">
+      <div class="hero-badge">Open source &middot; v0.1.0</div>
+      <h1>There are many agent<br />runtimes, <em>but this<br />one is secure.</em></h1>
+      <p class="hero-sub">AgentZero wraps every tool call in policy. Secrets stay in an encrypted vault. PII gets redacted before it leaves your machine. Every action is auditable. Local models by default.</p>
+      <div class="hero-cta">
+        <a href="/getting-started/quickstart/" class="btn-fill">Get started &rarr;</a>
+        <a href="https://github.com/auser/agentzero" class="btn-outline">GitHub</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="num">13</div><div class="lbl">Rust Crates</div></div>
+        <div class="stat"><div class="num">224</div><div class="lbl">Tests</div></div>
+        <div class="stat"><div class="num">5</div><div class="lbl">Tools</div></div>
+        <div class="stat"><div class="num">4</div><div class="lbl">Providers</div></div>
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <p class="sn">01</p>
+    <h2>Talk to your codebase. <em>Safely.</em></h2>
+    <p class="sd">AgentZero connects to a local model and gives it tools to read files, search code, and run commands &mdash; but every tool call passes through policy. Dangerous operations require your explicit approval.</p>
+    <div class="tw"><div class="tm">
+      <div class="tb"><i></i><i></i><i></i><span>~/project</span></div>
+      <pre set:html={`<span class="c">you&gt;</span> are there any leaked credentials in this repo?
+  <span class="d"><span class="y">[tool: search]</span> pattern="password=" … ok (890 B)</span>
+  <span class="d"><span class="y">[tool: read]</span> config/database.yml … ok (240 B)</span>
+
+<span class="p">agentzero&gt;</span> Found one issue. config/database.yml line 8 has a
+hardcoded password. The value was <span class="y">redacted</span> from this response.
+
+  <span class="d">$ agentzero vault add postgres db-password</span>
+
+<span class="c">you&gt;</span> run the full security audit
+  <span class="d"><span class="y">[APPROVE shell: agentzero run repo-security-audit?]</span> (y/n) y</span>
+  <span class="d">Scanning 42 files… 3 findings. Report → .agentzero/audit/report.md</span>`} />
+    </div></div>
+  </section>
+
+  <section>
+    <p class="sn">02</p>
+    <h2>One line to secure <em>your editor's AI.</em></h2>
+    <p class="sd">AgentZero runs as an MCP server. Point Claude Code, Cursor, or Zed at it and every tool call goes through policy, gets audited, and respects your project's security rules.</p>
+    <div class="split">
+      <div class="sc">
+        <div class="fl">.claude/settings.json</div>
+        <pre set:html={`{
+  <span class="p">"mcpServers"</span>: {
+    <span class="p">"agentzero"</span>: {
+      <span class="p">"command"</span>: <span class="g">"agentzero"</span>,
+      <span class="p">"args"</span>: [<span class="g">"mcp"</span>]
+    }
+  }
+}`} />
+      </div>
+      <div class="st">
+        <h3>Five tools, fully gated</h3>
+        <p><code>read_file</code> &middot; <code>list_directory</code> &middot; <code>search_files</code> &middot; <code>write_file</code> &middot; <code>run_command</code></p>
+        <p>Every call goes through path validation, sensitive path blocking, and emits a structured audit event.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="sn">03</p>
+    <h2>What we built. <em>And what we didn't.</em></h2>
+    <p class="sd">A small, auditable core &mdash; not a framework. Every security invariant enforced in code, not documentation.</p>
+    <div class="g3">
+      <div class="cl"><h3>Deny by default</h3><p>Unknown permissions denied. Unknown data classifications fail closed.</p></div>
+      <div class="cl"><h3>Secret handles</h3><p>Models see handle://vault/github/token. Never raw values.</p></div>
+      <div class="cl"><h3>PII redaction</h3><p>Scanned before remote calls. Emails, tokens, keys replaced automatically.</p></div>
+      <div class="cl"><h3>Content provenance</h3><p>Tool output labeled untrusted. Injection from file content doesn't escalate.</p></div>
+      <div class="cl"><h3>Encrypted at rest</h3><p>AES-256-GCM + Argon2id. Vault, sessions, audit logs.</p></div>
+      <div class="cl"><h3>Local first</h3><p>Ollama, llama.cpp, vLLM, LM Studio. Data stays on your machine.</p></div>
+    </div>
+  </section>
+
+  <div class="cta">
+    <h2>Ship with confidence.</h2>
+    <p class="sd" style="margin:0 auto 2rem;text-align:center">Open source. MIT licensed. Built in Rust for developers who work with private code.</p>
+    <div class="hero-cta" style="justify-content:center">
+      <a href="/getting-started/quickstart/" class="btn-fill">Read the docs &rarr;</a>
+      <a href="https://github.com/auser/agentzero" class="btn-outline">View source</a>
+    </div>
+  </div>
+
+  <footer>
+    <span>AgentZero &middot; MIT License</span>
+    <div class="fk">
+      <a href="/getting-started/introduction/">Docs</a>
+      <a href="/guides/mcp/">MCP</a>
+      <a href="https://github.com/auser/agentzero">GitHub</a>
+    </div>
+  </footer>
+
+  <script is:inline>
+    function toggleTheme(){
+      var h=document.documentElement;
+      var c=h.getAttribute('data-theme');
+      var n=c==='dark'?'light':'dark';
+      h.setAttribute('data-theme',n);
+      localStorage.setItem('az-theme',n);
+    }
+  </script>
+</body>
+</html>
