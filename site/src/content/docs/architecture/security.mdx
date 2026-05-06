@@ -54,14 +54,14 @@ When uncertain, AgentZero denies:
 
 Skills execute at different isolation tiers per ADR 0006:
 
-| Tier | Use Case | Isolation |
-|------|----------|-----------|
-| None | Instruction-only skills | No code executed |
-| Host Readonly | Safe read-only tools | Filesystem access, path-restricted |
-| Host Supervised | Tools with write/shell | Policy-gated, audited |
-| **WASM Sandbox** | Portable tools | No filesystem, no network, fuel-limited |
-| MVM MicroVM | High-risk execution | Full VM isolation (planned) |
-| Deny | Blocked | Nothing executes |
+| Tier | Use Case | Isolation | Status |
+|------|----------|-----------|--------|
+| None | Instruction-only skills | No code executed | ✓ shipped |
+| Host Readonly | Safe read-only tools | Filesystem access, path-restricted | ✓ shipped |
+| Host Supervised | Tools with write/shell | Policy-gated `ShellCommand` capability, full audit trail | ✓ shipped |
+| **WASM Sandbox** | Portable tools | No filesystem, no network, fuel-limited | ✓ shipped |
+| MVM MicroVM | High-risk execution | Full VM isolation | planned |
+| Deny | Blocked | Nothing executes | ✓ shipped |
 
 WASM skills run inside a wasmtime sandbox with:
 - **No ambient filesystem** — all WASI access denied

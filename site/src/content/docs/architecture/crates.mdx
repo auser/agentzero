@@ -34,18 +34,20 @@ Session engine tying together models, tools, policy, and audit. Includes:
 - Multi-provider router with fallback
 - Retry with exponential backoff
 - Tool executor with policy checks
-- Skill executor with runtime routing (InstructionOnly, WASM, MVM)
-- WASM execution via `ToolExecutor::execute_wasm()` (behind `wasm` feature)
+- Skill executor with runtime routing (InstructionOnly, HostSupervised, WasmSandbox; MVM planned)
+- WASM execution via `ToolExecutor::execute_wasm()` (default `wasm` feature)
+- Host-supervised execution via `shell_command` with policy + audit
 - Context compaction
 
 ### `agentzero-tools`
 Tool registry with built-in schemas (read, list, search, write, shell).
 
 ### `agentzero-sandbox`
-Sandbox profiles and WASM runtime (behind `wasm` feature flag). Wasmtime v29 backend with:
-- Fuel-based execution time limits
-- Memory limits (default 64 MB)
+Sandbox profiles (`SandboxProfile`, `SandboxLimit`, `SandboxNetworkPolicy`) plus the WASM runtime. The `wasm` feature is on by default; build with `--no-default-features` for a smaller binary without WASM. Wasmtime backend provides:
+- Fuel-based execution time limits (30s default)
+- Memory cap (64 MB default)
 - No ambient filesystem or network access
+- `_start` (WASI) and `main() -> i32` entrypoints
 - Policy-gated via `RuntimeTier::WasmSandbox`
 
 ## Extensions

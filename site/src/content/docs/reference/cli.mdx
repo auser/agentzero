@@ -59,11 +59,12 @@ Run an installed skill.
 agentzero run <name>
 ```
 
-For WASM skills, this creates a session, checks policy, builds a sandbox profile, and executes the `.wasm` module through the wasmtime engine. Requires `--features wasm` at build time and `wasm_execution = "allow"` in `policy.yml`.
+Routes by skill runtime declared in `SKILL.md`:
 
-For scanner-based skills (with `patterns.toml`), runs the security scanner against the current directory.
-
-For instruction-only skills, displays the `SKILL.md` content.
+- **WASM skills** — creates a session, checks policy, builds a sandbox profile, and executes the `.wasm` module through the wasmtime engine. WASM is compiled in by default (disable with `--no-default-features`); requires `wasm_execution = "allow"` or `"require_approval"` in `policy.yml`.
+- **Host-supervised skills** — runs the entrypoint script (default `run.sh`) on the host with `ShellCommand` capability check. Policy-gated and audited.
+- **Scanner skills** (with `patterns.toml`) — runs the security scanner against the current directory.
+- **Instruction-only skills** — displays the `SKILL.md` content.
 
 ## `agentzero install`
 
@@ -95,7 +96,7 @@ agentzero publish [path] [OPTIONS]
 | Flag | Description |
 |------|-------------|
 | `--repo` | Target GitHub repository (owner/repo). Auto-detected from git remote if omitted. |
-| `--tag` | Release tag (default: v{version} from SKILL.md) |
+| `--tag` | Release tag (default: `v<version>` from SKILL.md) |
 
 Requires `GITHUB_TOKEN` environment variable. Creates a GitHub release, uploads the tarball, and includes the SHA-256 checksum in the release notes.
 
