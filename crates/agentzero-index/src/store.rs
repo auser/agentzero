@@ -116,12 +116,7 @@ impl FileStore {
 }
 
 fn chrono_now() -> String {
-    // Use a simple ISO 8601 timestamp without pulling in chrono
-    let now = std::time::SystemTime::now();
-    let dur = now
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}", dur.as_secs())
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 #[cfg(test)]

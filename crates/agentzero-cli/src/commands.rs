@@ -90,6 +90,11 @@ pub enum Command {
         #[command(subcommand)]
         action: VaultAction,
     },
+    /// Generate shell completions.
+    Completions {
+        /// Shell to generate completions for.
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -202,6 +207,10 @@ pub async fn run(command: Command) -> i32 {
         },
         Command::Vault { action } => cmd_vault(action),
         Command::Index { action } => cmd_index(action).await,
+        Command::Completions { shell } => {
+            cmd_completions(shell);
+            0
+        }
     }
 }
 
@@ -299,6 +308,16 @@ async fn cmd_index(action: IndexAction) -> i32 {
             }
         }
     }
+}
+
+fn cmd_completions(shell: clap_complete::Shell) {
+    use clap::CommandFactory;
+    clap_complete::generate(
+        shell,
+        &mut crate::Cli::command(),
+        "az",
+        &mut std::io::stdout(),
+    );
 }
 
 fn cmd_init(private: bool) -> i32 {
@@ -2047,8 +2066,8 @@ fn cmd_run_dependency_audit() -> i32 {
     println!();
 
     // Use the built-in patterns file
-    let patterns_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/dependency-audit/patterns.toml");
+    let patterns_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skills/dependency-audit/patterns.toml");
 
     if !patterns_path.exists() {
         // Try relative to cwd
@@ -2094,8 +2113,8 @@ fn cmd_run_secrets_scan() -> i32 {
     println!();
 
     // Use the built-in patterns file
-    let patterns_path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/secrets-scan/patterns.toml");
+    let patterns_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skills/secrets-scan/patterns.toml");
 
     let scan_path = if patterns_path.exists() {
         patterns_path

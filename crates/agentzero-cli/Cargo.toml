@@ -17,6 +17,7 @@ rag = ["agentzero/rag"]
 
 [dependencies]
 agentzero = { workspace = true }
+clap_complete = "4"
 chrono = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }

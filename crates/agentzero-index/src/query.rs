@@ -18,7 +18,11 @@ pub fn top_k(query: &[f32], chunks: &[EmbeddedChunk], k: usize) -> Vec<QueryResu
         .collect();
 
     // Sort descending by score
-    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     scored.truncate(k);
     scored
 }

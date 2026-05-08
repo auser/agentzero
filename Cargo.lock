@@ -102,6 +102,7 @@ dependencies = [
  "agentzero",
  "chrono",
  "clap",
+ "clap_complete",
  "serde_json",
  "tokio",
  "toml",
@@ -128,6 +129,7 @@ dependencies = [
  "agentzero-core",
  "agentzero-tracing",
  "bincode",
+ "chrono",
  "reqwest",
  "serde",
  "serde_json",
@@ -534,6 +536,15 @@ dependencies = [
  "anstyle",
  "clap_lex",
  "strsim",
+]
+
+[[package]]
+name = "clap_complete"
+version = "4.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "660c0520455b1013b9bcb0393d5f643d7e4454fb69c915b8d6d2aa0e9a45acc3"
+dependencies = [
+ "clap",
 ]
 
 [[package]]

@@ -30,14 +30,19 @@ pub enum FindingCategory {
     PromptInjection,
     SensitiveFile,
     PackageScript,
+    VulnerableDependency,
+    HighEntropyString,
 }
 
 impl FindingCategory {
     pub fn classification(&self) -> DataClassification {
         match self {
-            Self::Secret | Self::SensitiveFile => DataClassification::Secret,
+            Self::Secret | Self::SensitiveFile | Self::HighEntropyString => {
+                DataClassification::Secret
+            }
             Self::Pii => DataClassification::Pii,
             Self::PromptInjection | Self::PackageScript => DataClassification::Private,
+            Self::VulnerableDependency => DataClassification::Private,
         }
     }
 
@@ -48,6 +53,8 @@ impl FindingCategory {
             Self::PromptInjection => "PROMPT_INJECTION",
             Self::SensitiveFile => "SENSITIVE_FILE",
             Self::PackageScript => "PACKAGE_SCRIPT",
+            Self::VulnerableDependency => "VULNERABLE_DEPENDENCY",
+            Self::HighEntropyString => "HIGH_ENTROPY",
         }
     }
 }
@@ -402,6 +409,152 @@ fn redact_line(line: &str) -> String {
     }
 }
 
+// --- Shannon entropy for secrets detection ---
+
+/// Calculate the Shannon entropy (bits per character) of a string.
+///
+/// Returns a value between 0.0 (completely uniform) and ~6.5 (random ASCII).
+/// Strings with entropy > 4.5 and length > 20 are likely embedded secrets.
+pub fn shannon_entropy(s: &str) -> f64 {
+    if s.is_empty() {
+        return 0.0;
+    }
+
+    let mut freq = [0u32; 256];
+    for &b in s.as_bytes() {
+        freq[b as usize] += 1;
+    }
+
+    let len = s.len() as f64;
+    let mut entropy = 0.0;
+
+    for &count in &freq {
+        if count > 0 {
+            let p = count as f64 / len;
+            entropy -= p * p.log2();
+        }
+    }
+
+    entropy
+}
+
+// --- Dependency lockfile scanning ---
+
+/// A vulnerable package entry from the dependency-audit patterns file.
+#[derive(Debug, Deserialize)]
+pub struct VulnerablePackage {
+    pub ecosystem: String,
+    pub name: String,
+    pub versions: Vec<String>,
+    pub description: String,
+    #[serde(default = "default_severity")]
+    pub severity: String,
+}
+
+/// The dependency-audit pattern file schema.
+#[derive(Debug, Deserialize)]
+pub struct DependencyPatternFile {
+    #[serde(default)]
+    pub packages: Vec<VulnerablePackage>,
+    #[serde(default)]
+    pub lockfiles: std::collections::HashMap<String, Vec<String>>,
+}
+
+/// Scan a project directory for vulnerable dependencies using patterns.
+pub fn scan_dependencies(root: &Path, patterns_path: &Path) -> ScanResults {
+    let mut results = ScanResults::default();
+
+    let content = match std::fs::read_to_string(patterns_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("warning: failed to read dependency patterns: {e}");
+            return results;
+        }
+    };
+
+    let patterns: DependencyPatternFile = match toml::from_str(&content) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("warning: failed to parse dependency patterns: {e}");
+            return results;
+        }
+    };
+
+    // Scan each lockfile type
+    for (ecosystem, filenames) in &patterns.lockfiles {
+        for filename in filenames {
+            let lockfile_path = root.join(filename);
+            if lockfile_path.exists() {
+                if let Ok(lockfile_content) = std::fs::read_to_string(&lockfile_path) {
+                    results.files_scanned.push(lockfile_path.clone());
+                    scan_lockfile_content(
+                        &lockfile_path,
+                        &lockfile_content,
+                        ecosystem,
+                        &patterns.packages,
+                        &mut results,
+                    );
+                }
+            }
+        }
+    }
+
+    results
+        .findings
+        .sort_by_key(|f| std::cmp::Reverse(f.severity));
+    results
+}
+
+/// Check lockfile content against known vulnerable packages.
+fn scan_lockfile_content(
+    path: &Path,
+    content: &str,
+    ecosystem: &str,
+    packages: &[VulnerablePackage],
+    results: &mut ScanResults,
+) {
+    for pkg in packages {
+        if pkg.ecosystem != ecosystem {
+            continue;
+        }
+
+        // Simple substring matching — check if the package name appears in the lockfile
+        for (line_num, line) in content.lines().enumerate() {
+            let line_num = line_num + 1;
+
+            // Check if this line mentions the package name
+            if !line.contains(&pkg.name) {
+                continue;
+            }
+
+            // Check if any of the vulnerable versions appear on this line or nearby
+            let version_match = pkg.versions.iter().any(|v| {
+                if v == "*" {
+                    true // Wildcard matches any version
+                } else {
+                    line.contains(v)
+                }
+            });
+
+            if version_match {
+                results.findings.push(Finding {
+                    path: path.to_path_buf(),
+                    line: line_num,
+                    category: FindingCategory::VulnerableDependency,
+                    severity: Severity::from_str(&pkg.severity),
+                    description: format!(
+                        "{} ({}@{})",
+                        pkg.description,
+                        pkg.name,
+                        pkg.versions.join(", ")
+                    ),
+                    snippet: redact_line(line),
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -631,5 +784,153 @@ directories = [".git"]
         assert!(!patterns.pii.is_empty());
         assert!(!patterns.injection.is_empty());
         assert!(!patterns.sensitive_files.names.is_empty());
+    }
+
+    // --- Phase 3: Entropy and dependency tests ---
+
+    #[test]
+    fn entropy_of_empty_string_is_zero() {
+        assert_eq!(shannon_entropy(""), 0.0);
+    }
+
+    #[test]
+    fn entropy_of_repeated_char_is_zero() {
+        assert_eq!(shannon_entropy("aaaaaaaaaa"), 0.0);
+    }
+
+    #[test]
+    fn entropy_of_random_looking_string_is_high() {
+        // A realistic-looking API key
+        let key = "sk_live_4eC39HqLyjWDarjtT1zdp7dc8jK3qL9m";
+        let e = shannon_entropy(key);
+        assert!(
+            e > 4.0,
+            "entropy {e} should be > 4.0 for API key-like string"
+        );
+    }
+
+    #[test]
+    fn entropy_of_english_text_is_moderate() {
+        let text = "the quick brown fox jumps over the lazy dog";
+        let e = shannon_entropy(text);
+        assert!(
+            e > 3.0 && e < 5.0,
+            "entropy {e} should be moderate for English text"
+        );
+    }
+
+    #[test]
+    fn vulnerable_dependency_category_label() {
+        assert_eq!(
+            FindingCategory::VulnerableDependency.label(),
+            "VULNERABLE_DEPENDENCY"
+        );
+    }
+
+    #[test]
+    fn high_entropy_category_label() {
+        assert_eq!(FindingCategory::HighEntropyString.label(), "HIGH_ENTROPY");
+    }
+
+    #[test]
+    fn dependency_audit_detects_known_vulnerable_package() {
+        let dir = temp_dir("dep-audit");
+        fs::create_dir_all(&dir).expect("should create dir");
+
+        // Write a fake package-lock.json mentioning a known-bad package
+        fs::write(
+            dir.join("package-lock.json"),
+            r#"{
+                "name": "test-project",
+                "dependencies": {
+                    "event-stream": {
+                        "version": "3.3.6",
+                        "resolved": "https://registry.npmjs.org/event-stream/-/event-stream-3.3.6.tgz"
+                    }
+                }
+            }"#,
+        )
+        .expect("should write");
+
+        // Write patterns matching the built-in dependency-audit patterns
+        let patterns_toml = r#"
+[[packages]]
+ecosystem = "npm"
+name = "event-stream"
+versions = ["3.3.6"]
+description = "Supply chain attack: malicious flatmap-stream dependency"
+severity = "critical"
+
+[lockfiles]
+npm = ["package-lock.json"]
+"#;
+        let patterns_path = dir.join("patterns.toml");
+        fs::write(&patterns_path, patterns_toml).expect("should write");
+
+        let results = scan_dependencies(&dir, &patterns_path);
+        assert!(
+            results
+                .findings
+                .iter()
+                .any(|f| f.category == FindingCategory::VulnerableDependency),
+            "should detect event-stream 3.3.6 as vulnerable"
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dependency_audit_clean_lockfile_has_no_findings() {
+        let dir = temp_dir("dep-clean");
+        fs::create_dir_all(&dir).expect("should create dir");
+
+        fs::write(
+            dir.join("package-lock.json"),
+            r#"{"name": "safe-project", "dependencies": {"express": {"version": "4.18.0"}}}"#,
+        )
+        .expect("should write");
+
+        let patterns_toml = r#"
+[[packages]]
+ecosystem = "npm"
+name = "event-stream"
+versions = ["3.3.6"]
+description = "Supply chain attack"
+severity = "critical"
+
+[lockfiles]
+npm = ["package-lock.json"]
+"#;
+        let patterns_path = dir.join("patterns.toml");
+        fs::write(&patterns_path, patterns_toml).expect("should write");
+
+        let results = scan_dependencies(&dir, &patterns_path);
+        assert!(results.findings.is_empty());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dependency_patterns_file_loads() {
+        let patterns_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/dependency-audit/patterns.toml");
+        if patterns_path.exists() {
+            let content = fs::read_to_string(&patterns_path).expect("should read");
+            let patterns: DependencyPatternFile =
+                toml::from_str(&content).expect("should parse dependency patterns");
+            assert!(!patterns.packages.is_empty());
+            assert!(!patterns.lockfiles.is_empty());
+        }
+    }
+
+    #[test]
+    fn secrets_scan_patterns_file_loads() {
+        let patterns_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/secrets-scan/patterns.toml");
+        if patterns_path.exists() {
+            let patterns =
+                load_patterns(&patterns_path).expect("should load secrets-scan patterns");
+            assert!(!patterns.secrets.is_empty());
+        }
     }
 }

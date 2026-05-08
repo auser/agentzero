@@ -59,8 +59,9 @@ impl PolicyEngine {
         // Fail closed: no rule matched
         PolicyDecision::Deny {
             reason: format!(
-                "deny-by-default: {:?} with classification {:?}",
-                request.capability, request.classification
+                "deny-by-default: no policy rule allows {:?} on {:?}-classified data (runtime: {:?}). \
+                Add an allow rule to .agentzero/policy.yml for this capability and classification.",
+                request.capability, request.classification, request.runtime
             ),
         }
     }

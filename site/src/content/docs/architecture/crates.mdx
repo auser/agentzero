@@ -50,6 +50,14 @@ Sandbox profiles (`SandboxProfile`, `SandboxLimit`, `SandboxNetworkPolicy`) plus
 - `_start` (WASI) and `main() -> i32` entrypoints
 - Policy-gated via `RuntimeTier::WasmSandbox`
 
+### `agentzero-index`
+Document indexing and semantic query engine. Behind the `rag` feature flag. Includes:
+- Text chunking via `text-splitter` (sentence/paragraph boundaries)
+- Embedding via Ollama `/api/embed` (zero external deps)
+- In-memory vector store with bincode serialization to disk
+- Cosine similarity search with top-k retrieval
+- File walker with extension-based filtering
+
 ## Extensions
 
 ### `agentzero-skills`

@@ -214,10 +214,22 @@ impl OpenAICompatProvider {
             req = req.bearer_auth(key);
         }
 
-        let response = req
-            .send()
-            .await
-            .map_err(|e| ModelProviderError::Unavailable(format!("server unreachable: {e}")))?;
+        let response = req.send().await.map_err(|e| {
+            if e.is_connect() {
+                ModelProviderError::Unavailable(format!(
+                    "cannot connect to {} at {}. Is the server running?",
+                    self.server_type(),
+                    self.config.base_url
+                ))
+            } else if e.is_timeout() {
+                ModelProviderError::Unavailable(
+                    "request timed out. The model may be loading or the request is too large."
+                        .into(),
+                )
+            } else {
+                ModelProviderError::Unavailable(format!("server request failed: {e}"))
+            }
+        })?;
 
         if !response.status().is_success() {
             let status = response.status();

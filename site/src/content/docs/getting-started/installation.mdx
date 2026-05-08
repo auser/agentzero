@@ -26,6 +26,19 @@ az --version
 az doctor
 ```
 
+## Shell Completions
+
+```bash
+# Zsh
+az completions zsh > ~/.zfunc/_az
+
+# Bash
+az completions bash > ~/.local/share/bash-completion/completions/az
+
+# Fish
+az completions fish > ~/.config/fish/completions/az.fish
+```
+
 ## LLM Provider Setup
 
 AgentZero needs a local model server for chat. Choose one:

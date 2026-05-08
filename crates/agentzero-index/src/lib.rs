@@ -101,7 +101,10 @@ impl IndexEngine {
             }
         }
 
-        info!(chunks = all_chunks.len(), "chunked files, starting embedding");
+        info!(
+            chunks = all_chunks.len(),
+            "chunked files, starting embedding"
+        );
 
         // Embed in batches to avoid overwhelming the server
         let batch_size = 32;

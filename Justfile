@@ -95,7 +95,7 @@ changelog-preview:
 install:
   #!/usr/bin/env sh
   set -eu
-  cargo build --release
+  cargo build --release --features wasm,rag
   mkdir -p "$HOME/.bin"
   ln -sf "$(pwd)/target/release/az" "$HOME/.bin/az"
   echo "Installed: ~/.bin/az → $(pwd)/target/release/az"

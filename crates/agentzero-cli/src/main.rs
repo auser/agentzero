@@ -4,7 +4,7 @@ mod commands;
 
 #[derive(Parser)]
 #[command(name = "az", about = "AgentZero — secure AI agent runtime", version)]
-struct Cli {
+pub struct Cli {
     #[command(subcommand)]
     command: commands::Command,
 }

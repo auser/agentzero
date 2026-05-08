@@ -23,6 +23,7 @@ export default defineConfig({
 						{ label: 'Chat with Local Models', slug: 'guides/chat' },
 						{ label: 'MCP Integration', slug: 'guides/mcp' },
 						{ label: 'ACP Editor Adapter', slug: 'guides/editor-adapter' },
+						{ label: 'Document Querying', slug: 'guides/document-query' },
 						{ label: 'Security Scanner', slug: 'guides/scanner' },
 						{ label: 'Skills & Packages', slug: 'guides/skills' },
 						{ label: 'Secret Vault', slug: 'guides/vault' },

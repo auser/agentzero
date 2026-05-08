@@ -2,15 +2,70 @@ use std::path::Path;
 
 /// File extensions treated as indexable text.
 const TEXT_EXTENSIONS: &[&str] = &[
-    "txt", "md", "markdown", "rst", "org", "adoc", // Prose
-    "rs", "py", "js", "ts", "jsx", "tsx", "go", "java", "c", "h", "cpp", "hpp", "cs", "rb",
-    "php", "swift", "kt", "scala", "lua", "sh", "bash", "zsh", "fish", "ps1", // Code
-    "toml", "yaml", "yml", "json", "xml", "csv", "ini", "cfg", "conf", // Config
-    "sql", "graphql", "proto", // Data/schema
-    "dockerfile", "makefile", // Build
-    "html", "css", "scss", "less", "sass", // Web
-    "el", "clj", "cljs", "edn", "ex", "exs", "erl", "hrl", "hs", "ml", "mli", "nim", "zig",
-    "v", "sv", // More languages
+    "txt",
+    "md",
+    "markdown",
+    "rst",
+    "org",
+    "adoc", // Prose
+    "rs",
+    "py",
+    "js",
+    "ts",
+    "jsx",
+    "tsx",
+    "go",
+    "java",
+    "c",
+    "h",
+    "cpp",
+    "hpp",
+    "cs",
+    "rb",
+    "php",
+    "swift",
+    "kt",
+    "scala",
+    "lua",
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
+    "ps1", // Code
+    "toml",
+    "yaml",
+    "yml",
+    "json",
+    "xml",
+    "csv",
+    "ini",
+    "cfg",
+    "conf", // Config
+    "sql",
+    "graphql",
+    "proto", // Data/schema
+    "dockerfile",
+    "makefile", // Build
+    "html",
+    "css",
+    "scss",
+    "less",
+    "sass", // Web
+    "el",
+    "clj",
+    "cljs",
+    "edn",
+    "ex",
+    "exs",
+    "erl",
+    "hrl",
+    "hs",
+    "ml",
+    "mli",
+    "nim",
+    "zig",
+    "v",
+    "sv", // More languages
 ];
 
 /// Directories to always skip when walking.

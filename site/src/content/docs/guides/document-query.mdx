@@ -1,0 +1,125 @@
+---
+title: Document Querying
+description: Index and query arbitrary documents with semantic search
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="note">
+Document querying requires the `rag` feature flag. Build with `cargo build --features rag` or use `just install` (which enables it by default).
+</Aside>
+
+## Overview
+
+AgentZero can index a directory of text files — code, markdown, config, prose — and answer questions about them using semantic search. During chat, the LLM can call a `query` tool to retrieve the most relevant chunks from the index.
+
+This works by:
+1. **Chunking** files into overlapping pieces using sentence/paragraph boundaries
+2. **Embedding** each chunk via Ollama's `/api/embed` endpoint
+3. **Storing** the vectors to disk (`.agentzero/index/`)
+4. **Querying** with cosine similarity at chat time
+
+## Prerequisites
+
+Pull an embedding model in Ollama:
+
+```bash
+ollama pull nomic-embed-text
+```
+
+Other supported models: `mxbai-embed-large`, `snowflake-arctic-embed`, `all-minilm`.
+
+## Build the Index
+
+```bash
+az index build
+```
+
+This walks the current directory, skipping `.agentzero/`, `.git/`, `target/`, `node_modules/`, and other build artifacts. It indexes all text-based files: source code, markdown, TOML, YAML, JSON, and more.
+
+### Options
+
+```bash
+# Index a specific directory
+az index build --path /path/to/documents
+
+# Use a different embedding model
+az index build --model mxbai-embed-large
+
+# Custom Ollama server
+az index build --url http://gpu-box:11434
+
+# Adjust chunk size (default: 1000 characters)
+az index build --chunk-size 500
+```
+
+## Check Index Status
+
+```bash
+az index status
+```
+
+```
+Index status:
+  Model:      nomic-embed-text
+  Files:      47
+  Chunks:     312
+  Created at: 1715184000
+```
+
+## Use in Chat
+
+Once the index is built, the `query` tool is automatically available during chat:
+
+```bash
+az chat --local
+```
+
+```
+you> what error handling patterns does this project use?
+  [tool: query] ok (2048 bytes)
+
+agentzero> Based on the indexed documents, the project uses thiserror
+for error types with a consistent pattern of...
+```
+
+The LLM decides when to use `query` vs `read` or `search` based on the question. `query` is best for semantic/conceptual questions, while `search` is better for exact string matches.
+
+## Clear the Index
+
+```bash
+az index clear
+```
+
+## What Gets Indexed
+
+| File Type | Extensions |
+|-----------|-----------|
+| Prose | `.txt`, `.md`, `.rst`, `.org`, `.adoc` |
+| Code | `.rs`, `.py`, `.js`, `.ts`, `.go`, `.java`, `.c`, `.cpp`, `.rb`, `.php`, `.swift`, `.kt`, `.scala`, `.lua`, `.sh`, `.zig`, `.hs`, `.ex`, `.clj`, `.nim`, `.v` |
+| Config | `.toml`, `.yaml`, `.yml`, `.json`, `.xml`, `.csv`, `.ini`, `.cfg` |
+| Data/Schema | `.sql`, `.graphql`, `.proto` |
+| Build | `Dockerfile`, `Makefile`, `Justfile` |
+| Web | `.html`, `.css`, `.scss`, `.less` |
+
+Binary files, images, and PDFs are skipped in Phase 1. PDF/HTML/DOCX parsing is planned for a future release.
+
+## Storage
+
+The index lives at `.agentzero/index/`:
+
+| File | Format | Purpose |
+|------|--------|---------|
+| `default.idx` | bincode | Serialized chunk embeddings |
+| `metadata.json` | JSON | Human-readable stats |
+
+The index is local to your project and not committed to git (add `.agentzero/` to `.gitignore`).
+
+## How It Works
+
+1. **Chunking** — `text-splitter` splits files at semantic boundaries (sentences, paragraphs) with a configurable max size
+2. **Embedding** — Chunks are sent in batches of 32 to Ollama's `/api/embed` endpoint
+3. **Storage** — Embedded chunks are serialized to disk with bincode
+4. **Query** — The question is embedded with the same model, then ranked against all chunks by cosine similarity. Top 5 results are returned.
+
+All of this runs locally through your existing Ollama instance — no external API calls, no data leaves your machine.

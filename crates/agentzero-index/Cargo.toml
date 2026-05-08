@@ -10,6 +10,7 @@ repository.workspace = true
 agentzero-core = { workspace = true }
 agentzero-tracing = { workspace = true }
 bincode = { workspace = true }
+chrono = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

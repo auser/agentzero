@@ -181,6 +181,23 @@ impl OllamaProvider {
         Self::new(OllamaConfig::default())
     }
 
+    /// Convert a reqwest error into a descriptive ModelProviderError.
+    fn connection_error(&self, e: reqwest::Error) -> ModelProviderError {
+        if e.is_connect() {
+            ModelProviderError::Unavailable(format!(
+                "cannot connect to Ollama at {}. Is Ollama running? Start it with: ollama serve",
+                self.config.base_url
+            ))
+        } else if e.is_timeout() {
+            ModelProviderError::Unavailable(
+                "Ollama request timed out. The model may be loading or the request is too large."
+                    .into(),
+            )
+        } else {
+            ModelProviderError::Unavailable(format!("Ollama request failed: {e}"))
+        }
+    }
+
     /// Check if the Ollama server is reachable.
     pub async fn health_check(&self) -> Result<bool, OllamaError> {
         let url = format!("{}/api/tags", self.config.base_url);
@@ -236,7 +253,7 @@ impl OllamaProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| ModelProviderError::Unavailable(format!("ollama unreachable: {e}")))?;
+            .map_err(|e| self.connection_error(e))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -296,7 +313,7 @@ impl OllamaProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| ModelProviderError::Unavailable(format!("ollama unreachable: {e}")))?;
+            .map_err(|e| self.connection_error(e))?;
 
         if !response.status().is_success() {
             let status = response.status();

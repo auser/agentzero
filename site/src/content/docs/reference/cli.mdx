@@ -132,6 +132,39 @@ Show recent audit events.
 az audit tail [-c, --count N]
 ```
 
+## `az index`
+
+Build and query a semantic document index. Requires the `rag` feature (`cargo build --features rag`).
+
+### `az index build`
+
+```bash
+az index build [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--path` | Directory to index (default: current directory) |
+| `--model` | Embedding model (default: nomic-embed-text) |
+| `--url` | Ollama server URL (default: http://localhost:11434) |
+| `--chunk-size` | Max characters per chunk (default: 1000) |
+
+### `az index status`
+
+```bash
+az index status
+```
+
+Shows model name, file count, chunk count, and creation timestamp.
+
+### `az index clear`
+
+```bash
+az index clear
+```
+
+Removes the index from `.agentzero/index/`.
+
 ## `az vault`
 
 Manage encrypted secrets.
@@ -141,4 +174,27 @@ az vault list
 az vault add <provider> <name>
 az vault get <provider> <name>
 az vault remove <provider> <name>
+```
+
+## `az completions`
+
+Generate shell completions for `az`.
+
+```bash
+az completions <SHELL>
+```
+
+Supported shells: `bash`, `zsh`, `fish`, `elvish`, `powershell`.
+
+### Setup
+
+```bash
+# Zsh — add to ~/.zshrc
+az completions zsh > ~/.zfunc/_az
+
+# Bash
+az completions bash > ~/.local/share/bash-completion/completions/az
+
+# Fish
+az completions fish > ~/.config/fish/completions/az.fish
 ```

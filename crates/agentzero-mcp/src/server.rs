@@ -329,7 +329,9 @@ mod tests {
     #[tokio::test]
     async fn handle_initialize() {
         let server = test_server();
-        let resp = server.handle(&request("initialize", serde_json::json!({}))).await;
+        let resp = server
+            .handle(&request("initialize", serde_json::json!({})))
+            .await;
         assert!(resp.result.is_some());
         let result = resp.result.expect("should have result");
         assert_eq!(result["serverInfo"]["name"], "agentzero");
@@ -339,7 +341,9 @@ mod tests {
     #[tokio::test]
     async fn handle_tools_list() {
         let server = test_server();
-        let resp = server.handle(&request("tools/list", serde_json::json!({}))).await;
+        let resp = server
+            .handle(&request("tools/list", serde_json::json!({})))
+            .await;
         assert!(resp.result.is_some());
         let result = resp.result.expect("should have result");
         let tools = result["tools"].as_array().expect("should be array");
@@ -354,13 +358,15 @@ mod tests {
     #[tokio::test]
     async fn handle_tools_call_read() {
         let server = test_server();
-        let resp = server.handle(&request(
-            "tools/call",
-            serde_json::json!({
-                "name": "read_file",
-                "arguments": {"path": "Cargo.toml"}
-            }),
-        )).await;
+        let resp = server
+            .handle(&request(
+                "tools/call",
+                serde_json::json!({
+                    "name": "read_file",
+                    "arguments": {"path": "Cargo.toml"}
+                }),
+            ))
+            .await;
         assert!(resp.result.is_some());
         let result = resp.result.expect("should have result");
         let text = result["content"][0]["text"]
@@ -372,13 +378,15 @@ mod tests {
     #[tokio::test]
     async fn handle_tools_call_list() {
         let server = test_server();
-        let resp = server.handle(&request(
-            "tools/call",
-            serde_json::json!({
-                "name": "list_directory",
-                "arguments": {"path": "."}
-            }),
-        )).await;
+        let resp = server
+            .handle(&request(
+                "tools/call",
+                serde_json::json!({
+                    "name": "list_directory",
+                    "arguments": {"path": "."}
+                }),
+            ))
+            .await;
         assert!(resp.result.is_some());
         let result = resp.result.expect("should have result");
         let text = result["content"][0]["text"]
@@ -390,13 +398,15 @@ mod tests {
     #[tokio::test]
     async fn handle_tools_call_search() {
         let server = test_server();
-        let resp = server.handle(&request(
-            "tools/call",
-            serde_json::json!({
-                "name": "search_files",
-                "arguments": {"pattern": "agentzero", "path": "src"}
-            }),
-        )).await;
+        let resp = server
+            .handle(&request(
+                "tools/call",
+                serde_json::json!({
+                    "name": "search_files",
+                    "arguments": {"pattern": "agentzero", "path": "src"}
+                }),
+            ))
+            .await;
         assert!(resp.result.is_some());
         let result = resp.result.expect("should have result");
         let text = result["content"][0]["text"]
@@ -408,13 +418,15 @@ mod tests {
     #[tokio::test]
     async fn handle_tools_call_unknown() {
         let server = test_server();
-        let resp = server.handle(&request(
-            "tools/call",
-            serde_json::json!({
-                "name": "nonexistent_tool",
-                "arguments": {}
-            }),
-        )).await;
+        let resp = server
+            .handle(&request(
+                "tools/call",
+                serde_json::json!({
+                    "name": "nonexistent_tool",
+                    "arguments": {}
+                }),
+            ))
+            .await;
         let result = resp.result.expect("should have result");
         assert_eq!(result["isError"], true);
     }
@@ -422,7 +434,9 @@ mod tests {
     #[tokio::test]
     async fn handle_unknown_method() {
         let server = test_server();
-        let resp = server.handle(&request("unknown/method", serde_json::json!({}))).await;
+        let resp = server
+            .handle(&request("unknown/method", serde_json::json!({})))
+            .await;
         assert!(resp.error.is_some());
         assert_eq!(resp.error.expect("should have error").code, -32601);
     }
@@ -430,7 +444,9 @@ mod tests {
     #[tokio::test]
     async fn handle_shutdown() {
         let server = test_server();
-        let resp = server.handle(&request("shutdown", serde_json::json!({}))).await;
+        let resp = server
+            .handle(&request("shutdown", serde_json::json!({})))
+            .await;
         assert!(resp.result.is_some());
     }
 }

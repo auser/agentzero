@@ -85,9 +85,7 @@ impl Embedder for OllamaEmbedder {
                 .text()
                 .await
                 .unwrap_or_else(|_| "(unreadable body)".into());
-            return Err(EmbedError::RequestFailed(format!(
-                "HTTP {status}: {body}"
-            )));
+            return Err(EmbedError::RequestFailed(format!("HTTP {status}: {body}")));
         }
 
         let parsed: OllamaEmbedResponse = resp

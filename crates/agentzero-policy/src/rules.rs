@@ -48,7 +48,8 @@ impl PolicyRule {
     /// Create a deny rule for a specific capability + classification.
     pub fn deny(capability: Capability, classification: DataClassification) -> Self {
         let reason = format!(
-            "denied: {:?} with {:?} classification",
+            "policy denies {:?} on {:?}-classified data. \
+            Change the rule in .agentzero/policy.yml to allow this action.",
             capability, classification
         );
         Self {

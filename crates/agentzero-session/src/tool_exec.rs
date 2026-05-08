@@ -289,7 +289,11 @@ impl ToolExecutor {
         let execution_id = ExecutionId::new();
         let tool_id = ToolId::from_string("query");
 
-        debug!(tool = "query", question = question, "checking policy for index query");
+        debug!(
+            tool = "query",
+            question = question,
+            "checking policy for index query"
+        );
 
         let decision = self.check_policy(Capability::FileRead, DataClassification::Private);
         if !decision.is_allowed() {
@@ -299,10 +303,7 @@ impl ToolExecutor {
             )));
         }
 
-        let project_root = self
-            .project_root
-            .as_deref()
-            .unwrap_or(".");
+        let project_root = self.project_root.as_deref().unwrap_or(".");
 
         let config = agentzero_index::IndexConfig {
             ollama_url: ollama_url.to_string(),
@@ -310,8 +311,7 @@ impl ToolExecutor {
             ..Default::default()
         };
 
-        let engine =
-            agentzero_index::IndexEngine::new(std::path::Path::new(project_root), config);
+        let engine = agentzero_index::IndexEngine::new(std::path::Path::new(project_root), config);
 
         let results = engine
             .query(question)

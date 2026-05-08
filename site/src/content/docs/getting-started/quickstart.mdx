@@ -19,6 +19,7 @@ This creates `.agentzero/` with:
 - `vault/` — encrypted secrets
 - `prompts/` — custom system prompts
 - `skills/` — local skill overrides
+- `index/` — semantic search index (when using `az index build`)
 
 ## Chat with Your Project
 
@@ -43,6 +44,25 @@ az run repo-security-audit
 ```
 
 Scans for secrets, PII, prompt injection attempts, and unsafe patterns.
+
+## Query Your Documents
+
+Build a semantic index of your project files, then ask questions about them in chat:
+
+```bash
+ollama pull nomic-embed-text
+az index build
+az chat --local
+```
+
+```
+you> how does the policy engine work?
+  [tool: query] ok (2048 bytes)
+
+agentzero> The policy engine uses deny-by-default semantics with...
+```
+
+See the [Document Querying guide](/guides/document-query) for details.
 
 ## Use as MCP Server
 
