@@ -5,6 +5,7 @@
 //! Skill execution is permissioned and auditable.
 
 pub mod github;
+pub mod index;
 pub mod package;
 pub mod registry;
 pub mod remote;

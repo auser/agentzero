@@ -10,6 +10,8 @@ pub enum SkillRefKind {
     GitUrl(String),
     /// GitHub owner/repo shorthand (e.g., `auser/my-skill`).
     GitHub { owner: String, repo: String },
+    /// Bare skill name to resolve via the central index (e.g., `security-audit`).
+    IndexName(String),
 }
 
 /// A resolved GitHub release with download information.
@@ -74,6 +76,12 @@ pub fn parse_skill_ref(input: &str) -> SkillRefKind {
                 repo: repo.to_string(),
             };
         }
+    }
+
+    // Bare name with no slashes or path indicators → index lookup
+    // (e.g., "security-audit", "dependency-audit")
+    if !input.contains('/') && !input.contains('.') && !input.contains(std::path::MAIN_SEPARATOR) {
+        return SkillRefKind::IndexName(input.to_string());
     }
 
     // Default to local path
@@ -174,10 +182,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_bare_name_is_local() {
+    fn parse_bare_name_is_index() {
         assert_eq!(
             parse_skill_ref("my-skill"),
-            SkillRefKind::Local("my-skill".into())
+            SkillRefKind::IndexName("my-skill".into())
+        );
+    }
+
+    #[test]
+    fn parse_bare_name_with_dot_is_local() {
+        // Names with dots fall through to local (e.g., a filename like "skill.tar.gz")
+        assert_eq!(
+            parse_skill_ref("skill.tar"),
+            SkillRefKind::Local("skill.tar".into())
         );
     }
 

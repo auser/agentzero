@@ -40,10 +40,13 @@ pub enum Command {
         #[arg(long)]
         skip_verify: bool,
     },
-    /// Install a skill from a local path, GitHub owner/repo, or git URL.
+    /// Install a skill from a local path, GitHub owner/repo, git URL, or short name.
     Install {
-        /// Skill source: local path, owner/repo, or git URL.
+        /// Skill source: local path, owner/repo, git URL, or short name from the index.
         source: String,
+        /// Force refresh the skill index cache before resolving.
+        #[arg(long)]
+        refresh_index: bool,
     },
     /// Package and publish a skill to a GitHub release.
     Publish {
@@ -151,7 +154,10 @@ pub async fn run(command: Command) -> i32 {
             .await
         }
         Command::Run { name, skip_verify } => cmd_run(&name, skip_verify),
-        Command::Install { source } => cmd_install(&source),
+        Command::Install {
+            source,
+            refresh_index,
+        } => cmd_install(&source, refresh_index).await,
         Command::Publish { path, repo, tag } => {
             cmd_publish(&path, repo.as_deref(), tag.as_deref()).await
         }
@@ -1124,15 +1130,48 @@ fn cmd_install_git(url: &str) -> i32 {
     0
 }
 
-fn cmd_install(source: &str) -> i32 {
+async fn cmd_install(source: &str, refresh_index: bool) -> i32 {
     use agentzero::skills::remote::{parse_skill_ref, SkillRefKind};
 
     match parse_skill_ref(source) {
         SkillRefKind::Local(path) => cmd_install_local(&path),
         SkillRefKind::GitUrl(url) => cmd_install_git(&url),
-        SkillRefKind::GitHub { owner, repo } => {
-            let rt = tokio::runtime::Runtime::new().expect("tokio runtime should create");
-            rt.block_on(cmd_install_github(&owner, &repo))
+        SkillRefKind::GitHub { owner, repo } => cmd_install_github(&owner, &repo).await,
+        SkillRefKind::IndexName(name) => cmd_install_from_index(&name, refresh_index).await,
+    }
+}
+
+async fn cmd_install_from_index(name: &str, refresh_index: bool) -> i32 {
+    use agentzero::skills::index::{load_or_fetch_index, DEFAULT_INDEX_REPO};
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+
+    println!("Resolving '{name}' from skill index...");
+    let index = match load_or_fetch_index(&cwd, DEFAULT_INDEX_REPO, refresh_index).await {
+        Ok(idx) => idx,
+        Err(e) => {
+            eprintln!("error: failed to load skill index: {e}");
+            eprintln!("hint: check your network connection or install by GitHub URL instead");
+            eprintln!("hint: e.g., `agentzero install owner/repo`");
+            return 1;
+        }
+    };
+
+    match index.resolve(name) {
+        Some((owner, repo)) => {
+            println!("Found: {owner}/{repo}");
+            cmd_install_github(&owner, &repo).await
+        }
+        None => {
+            eprintln!("error: skill '{name}' not found in the central index");
+            let available = index.list();
+            if !available.is_empty() {
+                eprintln!("Available skills:");
+                for (skill_name, description) in &available {
+                    eprintln!("  {skill_name} — {description}");
+                }
+            }
+            1
         }
     }
 }
@@ -2409,8 +2448,28 @@ mod tests {
     #[test]
     fn parse_install() {
         match parse(&["install", "/tmp/my-skill"]) {
-            super::Command::Install { source } => assert_eq!(source, "/tmp/my-skill"),
+            super::Command::Install {
+                source,
+                refresh_index,
+            } => {
+                assert_eq!(source, "/tmp/my-skill");
+                assert!(!refresh_index);
+            }
             other => panic!("expected Install, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_install_refresh_index() {
+        match parse(&["install", "--refresh-index", "security-audit"]) {
+            super::Command::Install {
+                source,
+                refresh_index,
+            } => {
+                assert_eq!(source, "security-audit");
+                assert!(refresh_index);
+            }
+            other => panic!("expected Install --refresh-index, got {other:?}"),
         }
     }
 
