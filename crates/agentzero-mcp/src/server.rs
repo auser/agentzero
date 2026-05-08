@@ -116,7 +116,7 @@ impl McpServer {
                 }
             };
 
-            let response = self.handle(&request);
+            let response = self.handle(&request).await;
             let json = serde_json::to_string(&response).expect("response should serialize");
             stdout.write_all(format!("{json}\n").as_bytes()).await.ok();
             stdout.flush().await.ok();
@@ -131,11 +131,11 @@ impl McpServer {
         Ok(())
     }
 
-    fn handle(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
+    async fn handle(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
         match request.method.as_str() {
             "initialize" => self.handle_initialize(request),
             "tools/list" => self.handle_tools_list(request),
-            "tools/call" => self.handle_tools_call(request),
+            "tools/call" => self.handle_tools_call(request).await,
             "shutdown" => JsonRpcResponse::success(
                 request.id.clone(),
                 serde_json::json!({"status": "shutdown"}),
@@ -248,7 +248,7 @@ impl McpServer {
         JsonRpcResponse::success(request.id.clone(), serde_json::json!({ "tools": tools }))
     }
 
-    fn handle_tools_call(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
+    async fn handle_tools_call(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
         let tool_name = request
             .params
             .get("name")
@@ -286,7 +286,7 @@ impl McpServer {
             }
         };
 
-        match self.session.execute_tool(internal_name, &args) {
+        match self.session.execute_tool(internal_name, &args).await {
             Ok(output) => {
                 let result = McpToolResult::text(&output);
                 JsonRpcResponse::success(
@@ -326,20 +326,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn handle_initialize() {
+    #[tokio::test]
+    async fn handle_initialize() {
         let server = test_server();
-        let resp = server.handle(&request("initialize", serde_json::json!({})));
+        let resp = server.handle(&request("initialize", serde_json::json!({}))).await;
         assert!(resp.result.is_some());
         let result = resp.result.expect("should have result");
         assert_eq!(result["serverInfo"]["name"], "agentzero");
         assert!(result["capabilities"]["tools"].is_object());
     }
 
-    #[test]
-    fn handle_tools_list() {
+    #[tokio::test]
+    async fn handle_tools_list() {
         let server = test_server();
-        let resp = server.handle(&request("tools/list", serde_json::json!({})));
+        let resp = server.handle(&request("tools/list", serde_json::json!({}))).await;
         assert!(resp.result.is_some());
         let result = resp.result.expect("should have result");
         let tools = result["tools"].as_array().expect("should be array");
@@ -351,8 +351,8 @@ mod tests {
         assert_eq!(tools[4]["name"], "run_command");
     }
 
-    #[test]
-    fn handle_tools_call_read() {
+    #[tokio::test]
+    async fn handle_tools_call_read() {
         let server = test_server();
         let resp = server.handle(&request(
             "tools/call",
@@ -360,7 +360,7 @@ mod tests {
                 "name": "read_file",
                 "arguments": {"path": "Cargo.toml"}
             }),
-        ));
+        )).await;
         assert!(resp.result.is_some());
         let result = resp.result.expect("should have result");
         let text = result["content"][0]["text"]
@@ -369,8 +369,8 @@ mod tests {
         assert!(text.contains("[package]"));
     }
 
-    #[test]
-    fn handle_tools_call_list() {
+    #[tokio::test]
+    async fn handle_tools_call_list() {
         let server = test_server();
         let resp = server.handle(&request(
             "tools/call",
@@ -378,7 +378,7 @@ mod tests {
                 "name": "list_directory",
                 "arguments": {"path": "."}
             }),
-        ));
+        )).await;
         assert!(resp.result.is_some());
         let result = resp.result.expect("should have result");
         let text = result["content"][0]["text"]
@@ -387,8 +387,8 @@ mod tests {
         assert!(text.contains("Cargo.toml"));
     }
 
-    #[test]
-    fn handle_tools_call_search() {
+    #[tokio::test]
+    async fn handle_tools_call_search() {
         let server = test_server();
         let resp = server.handle(&request(
             "tools/call",
@@ -396,7 +396,7 @@ mod tests {
                 "name": "search_files",
                 "arguments": {"pattern": "agentzero", "path": "src"}
             }),
-        ));
+        )).await;
         assert!(resp.result.is_some());
         let result = resp.result.expect("should have result");
         let text = result["content"][0]["text"]
@@ -405,8 +405,8 @@ mod tests {
         assert!(text.contains("agentzero"));
     }
 
-    #[test]
-    fn handle_tools_call_unknown() {
+    #[tokio::test]
+    async fn handle_tools_call_unknown() {
         let server = test_server();
         let resp = server.handle(&request(
             "tools/call",
@@ -414,23 +414,23 @@ mod tests {
                 "name": "nonexistent_tool",
                 "arguments": {}
             }),
-        ));
+        )).await;
         let result = resp.result.expect("should have result");
         assert_eq!(result["isError"], true);
     }
 
-    #[test]
-    fn handle_unknown_method() {
+    #[tokio::test]
+    async fn handle_unknown_method() {
         let server = test_server();
-        let resp = server.handle(&request("unknown/method", serde_json::json!({})));
+        let resp = server.handle(&request("unknown/method", serde_json::json!({}))).await;
         assert!(resp.error.is_some());
         assert_eq!(resp.error.expect("should have error").code, -32601);
     }
 
-    #[test]
-    fn handle_shutdown() {
+    #[tokio::test]
+    async fn handle_shutdown() {
         let server = test_server();
-        let resp = server.handle(&request("shutdown", serde_json::json!({})));
+        let resp = server.handle(&request("shutdown", serde_json::json!({}))).await;
         assert!(resp.result.is_some());
     }
 }

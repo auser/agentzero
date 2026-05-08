@@ -9,10 +9,12 @@ repository.workspace = true
 [features]
 default = ["wasm"]
 wasm = ["agentzero-sandbox/wasm"]
+rag = ["agentzero-index"]
 
 [dependencies]
 agentzero-core = { workspace = true }
 agentzero-audit = { workspace = true }
+agentzero-index = { workspace = true, optional = true }
 agentzero-policy = { workspace = true }
 agentzero-sandbox = { workspace = true }
 agentzero-skills = { workspace = true }

@@ -348,7 +348,8 @@ impl OllamaProvider {
 
     /// Return the built-in tool definitions for AgentZero tools.
     pub fn agentzero_tool_definitions() -> Vec<ToolDefinition> {
-        vec![
+        #[allow(unused_mut)]
+        let mut tools = vec![
             ToolDefinition {
                 tool_type: "function".into(),
                 function: ToolFunctionDef {
@@ -441,7 +442,29 @@ impl OllamaProvider {
                     }),
                 },
             },
-        ]
+        ];
+
+        // Add query tool when rag feature is enabled
+        #[cfg(feature = "rag")]
+        tools.push(ToolDefinition {
+            tool_type: "function".into(),
+            function: ToolFunctionDef {
+                name: "query".into(),
+                description: "Search the semantic index for document chunks relevant to a question. The index must be built first with `agentzero index build`.".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "Natural language question to search for in the indexed documents"
+                        }
+                    },
+                    "required": ["question"]
+                }),
+            },
+        });
+
+        tools
     }
 }
 
@@ -495,12 +518,18 @@ mod tests {
     #[test]
     fn tool_definitions_are_valid() {
         let tools = OllamaProvider::agentzero_tool_definitions();
-        assert_eq!(tools.len(), 5);
+        assert!(tools.len() >= 5);
         assert_eq!(tools[0].function.name, "read");
         assert_eq!(tools[1].function.name, "list");
         assert_eq!(tools[2].function.name, "search");
         assert_eq!(tools[3].function.name, "write");
         assert_eq!(tools[4].function.name, "shell");
+
+        #[cfg(feature = "rag")]
+        {
+            assert_eq!(tools.len(), 6);
+            assert_eq!(tools[5].function.name, "query");
+        }
     }
 
     #[test]

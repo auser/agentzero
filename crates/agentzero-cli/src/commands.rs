@@ -78,6 +78,11 @@ pub enum Command {
         #[command(subcommand)]
         action: AuditAction,
     },
+    /// Build and query a semantic document index (requires --features rag).
+    Index {
+        #[command(subcommand)]
+        action: IndexAction,
+    },
     /// List past chat sessions.
     History,
     /// Manage secret vault handles.
@@ -130,6 +135,29 @@ pub enum VaultAction {
     },
 }
 
+#[derive(Debug, Subcommand)]
+pub enum IndexAction {
+    /// Build the semantic index for the current project directory.
+    Build {
+        /// Directory to index (defaults to current directory).
+        #[arg(long)]
+        path: Option<String>,
+        /// Embedding model to use (default: nomic-embed-text).
+        #[arg(long, default_value = "nomic-embed-text")]
+        model: String,
+        /// Ollama server URL.
+        #[arg(long, default_value = "http://localhost:11434")]
+        url: String,
+        /// Maximum characters per chunk.
+        #[arg(long, default_value = "1000")]
+        chunk_size: usize,
+    },
+    /// Show index status and statistics.
+    Status,
+    /// Remove the index from disk.
+    Clear,
+}
+
 pub async fn run(command: Command) -> i32 {
     match command {
         Command::Init { private } => cmd_init(private),
@@ -173,6 +201,103 @@ pub async fn run(command: Command) -> i32 {
             AuditAction::Tail { count } => cmd_audit_tail(count),
         },
         Command::Vault { action } => cmd_vault(action),
+        Command::Index { action } => cmd_index(action).await,
+    }
+}
+
+async fn cmd_index(action: IndexAction) -> i32 {
+    #[cfg(not(feature = "rag"))]
+    {
+        let _ = action;
+        eprintln!("error: the 'rag' feature is not enabled");
+        eprintln!("rebuild with: cargo build --features rag");
+        1
+    }
+
+    #[cfg(feature = "rag")]
+    {
+        use agentzero::index::{IndexConfig, IndexEngine};
+
+        let cwd = match std::env::current_dir() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("error: cannot determine current directory: {e}");
+                return 1;
+            }
+        };
+
+        match action {
+            IndexAction::Build {
+                path,
+                model,
+                url,
+                chunk_size,
+            } => {
+                let root = path
+                    .as_deref()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| cwd.clone());
+
+                let config = IndexConfig {
+                    ollama_url: url,
+                    embed_model: model,
+                    chunk_size,
+                    ..Default::default()
+                };
+
+                let engine = IndexEngine::new(&cwd, config);
+
+                println!("Building index for {}...", root.display());
+
+                match engine.build(&root).await {
+                    Ok(stats) => {
+                        println!(
+                            "Index built: {} files, {} chunks (model: {})",
+                            stats.files_indexed, stats.chunks_created, stats.model_name
+                        );
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        1
+                    }
+                }
+            }
+            IndexAction::Status => {
+                let config = IndexConfig::default();
+                let engine = IndexEngine::new(&cwd, config);
+
+                match engine.status() {
+                    Some(meta) => {
+                        println!("Index status:");
+                        println!("  Model:      {}", meta.model_name);
+                        println!("  Files:      {}", meta.file_count);
+                        println!("  Chunks:     {}", meta.chunk_count);
+                        println!("  Created at: {}", meta.created_at);
+                        0
+                    }
+                    None => {
+                        println!("No index found. Run `az index build` first.");
+                        0
+                    }
+                }
+            }
+            IndexAction::Clear => {
+                let config = IndexConfig::default();
+                let engine = IndexEngine::new(&cwd, config);
+
+                match engine.clear() {
+                    Ok(()) => {
+                        println!("Index cleared.");
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        1
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -191,7 +316,7 @@ fn cmd_init(private: bool) -> i32 {
         return 1;
     }
 
-    let dirs = ["audit", "sessions", "prompts", "skills", "vault"];
+    let dirs = ["audit", "sessions", "prompts", "skills", "vault", "index"];
     for sub in &dirs {
         if let Err(e) = std::fs::create_dir_all(az_dir.join(sub)) {
             eprintln!("error: failed to create .agentzero/{sub}: {e}");
@@ -792,7 +917,7 @@ async fn cmd_chat(
                     print!("  [tool: {tool_name}] ");
                     io::stdout().flush().ok();
 
-                    match session.execute_tool(tool_name, tool_args) {
+                    match session.execute_tool(tool_name, tool_args).await {
                         Ok(output) => {
                             let truncated = if output.len() > 2000 {
                                 format!(
@@ -1565,6 +1690,12 @@ fn cmd_run(name: &str, skip_verify: bool) -> i32 {
     if name == "repo-security-audit" {
         return cmd_run_security_audit();
     }
+    if name == "dependency-audit" {
+        return cmd_run_dependency_audit();
+    }
+    if name == "secrets-scan" {
+        return cmd_run_secrets_scan();
+    }
 
     // Check installed skills
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -1626,7 +1757,7 @@ fn cmd_run(name: &str, skip_verify: bool) -> i32 {
 
     // List available skills
     eprintln!("unknown skill: {name}");
-    eprint!("Available skills: repo-security-audit");
+    eprint!("Available skills: repo-security-audit, dependency-audit, secrets-scan");
     let skills_dir = cwd.join("skills");
     if skills_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&skills_dir) {
@@ -1892,6 +2023,99 @@ fn cmd_run_security_audit() -> i32 {
         0
     } else {
         // Non-zero exit for CI integration when findings exist
+        1
+    }
+}
+
+fn cmd_run_dependency_audit() -> i32 {
+    use agentzero::skills::{report, scanner};
+
+    let cwd = match std::env::current_dir() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+
+    let project_name = cwd
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    println!("Running dependency-audit on: {}", cwd.display());
+    println!();
+
+    // Use the built-in patterns file
+    let patterns_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/dependency-audit/patterns.toml");
+
+    if !patterns_path.exists() {
+        // Try relative to cwd
+        let alt_path = cwd.join("skills/dependency-audit/patterns.toml");
+        if alt_path.exists() {
+            let results = scanner::scan_dependencies(&cwd, &alt_path);
+            let report_text = report::generate_report(&results, project_name);
+            println!("{report_text}");
+            return if results.findings.is_empty() { 0 } else { 1 };
+        }
+        eprintln!("error: dependency-audit patterns.toml not found");
+        return 1;
+    }
+
+    let results = scanner::scan_dependencies(&cwd, &patterns_path);
+    let report_text = report::generate_report(&results, project_name);
+    println!("{report_text}");
+
+    if results.findings.is_empty() {
+        0
+    } else {
+        1
+    }
+}
+
+fn cmd_run_secrets_scan() -> i32 {
+    use agentzero::skills::{report, scanner};
+
+    let cwd = match std::env::current_dir() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+
+    let project_name = cwd
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    println!("Running secrets-scan on: {}", cwd.display());
+    println!();
+
+    // Use the built-in patterns file
+    let patterns_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/secrets-scan/patterns.toml");
+
+    let scan_path = if patterns_path.exists() {
+        patterns_path
+    } else {
+        let alt_path = cwd.join("skills/secrets-scan/patterns.toml");
+        if alt_path.exists() {
+            alt_path
+        } else {
+            eprintln!("error: secrets-scan patterns.toml not found");
+            return 1;
+        }
+    };
+
+    let results = scanner::scan_directory_with_patterns(&cwd, Some(&scan_path));
+    let report_text = report::generate_report(&results, project_name);
+    println!("{report_text}");
+
+    if results.findings.is_empty() {
+        0
+    } else {
         1
     }
 }

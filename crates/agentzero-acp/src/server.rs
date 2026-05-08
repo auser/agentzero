@@ -116,7 +116,7 @@ impl AcpServer {
                 }
             };
 
-            let response = self.handle(&request);
+            let response = self.handle(&request).await;
             let json = serde_json::to_string(&response).expect("response should serialize");
             stdout.write_all(format!("{json}\n").as_bytes()).await.ok();
             stdout.flush().await.ok();
@@ -131,7 +131,7 @@ impl AcpServer {
         Ok(())
     }
 
-    fn handle(&self, request: &AcpRequest) -> AcpResponse {
+    async fn handle(&self, request: &AcpRequest) -> AcpResponse {
         match request.method {
             AcpMethod::Initialize => AcpResponse::ok(
                 &request.id,
@@ -161,7 +161,7 @@ impl AcpServer {
                     ]
                 }),
             ),
-            AcpMethod::ToolCall => self.handle_tool_call(request),
+            AcpMethod::ToolCall => self.handle_tool_call(request).await,
             AcpMethod::Chat => {
                 // Chat via ACP — for now return a message explaining usage
                 let message = request
@@ -182,7 +182,7 @@ impl AcpServer {
         }
     }
 
-    fn handle_tool_call(&self, request: &AcpRequest) -> AcpResponse {
+    async fn handle_tool_call(&self, request: &AcpRequest) -> AcpResponse {
         let tool_name = match request.params.get("name").and_then(|v| v.as_str()) {
             Some(n) => n,
             None => {
@@ -198,7 +198,7 @@ impl AcpServer {
 
         info!(tool = tool_name, "ACP tool_call");
 
-        match self.session.execute_tool(tool_name, &arguments) {
+        match self.session.execute_tool(tool_name, &arguments).await {
             Ok(output) => AcpResponse::ok(
                 &request.id,
                 serde_json::json!({
@@ -235,15 +235,15 @@ mod tests {
         .expect("should create")
     }
 
-    #[test]
-    fn handle_initialize() {
+    #[tokio::test]
+    async fn handle_initialize() {
         let server = test_server();
         let req = AcpRequest {
             id: "1".into(),
             method: AcpMethod::Initialize,
             params: serde_json::json!({}),
         };
-        let resp = server.handle(&req);
+        let resp = server.handle(&req).await;
         assert!(resp.success);
         assert!(resp.result.as_ref().expect("should have result")["name"]
             .as_str()
@@ -251,22 +251,22 @@ mod tests {
             .contains("agentzero"));
     }
 
-    #[test]
-    fn handle_list_tools() {
+    #[tokio::test]
+    async fn handle_list_tools() {
         let server = test_server();
         let req = AcpRequest {
             id: "2".into(),
             method: AcpMethod::ListTools,
             params: serde_json::json!({}),
         };
-        let resp = server.handle(&req);
+        let resp = server.handle(&req).await;
         assert!(resp.success);
         let tools = &resp.result.expect("should have result")["tools"];
         assert!(tools.as_array().expect("should be array").len() >= 5);
     }
 
-    #[test]
-    fn handle_tool_call_read() {
+    #[tokio::test]
+    async fn handle_tool_call_read() {
         let server = test_server();
         let req = AcpRequest {
             id: "3".into(),
@@ -276,7 +276,7 @@ mod tests {
                 "arguments": {"path": "Cargo.toml"}
             }),
         };
-        let resp = server.handle(&req);
+        let resp = server.handle(&req).await;
         assert!(resp.success);
         let result = resp.result.expect("should have result");
         assert_eq!(result["success"], true);
@@ -286,8 +286,8 @@ mod tests {
             .contains("[package]"));
     }
 
-    #[test]
-    fn handle_tool_call_list() {
+    #[tokio::test]
+    async fn handle_tool_call_list() {
         let server = test_server();
         let req = AcpRequest {
             id: "4".into(),
@@ -297,7 +297,7 @@ mod tests {
                 "arguments": {"path": "."}
             }),
         };
-        let resp = server.handle(&req);
+        let resp = server.handle(&req).await;
         assert!(resp.success);
         let result = resp.result.expect("should have result");
         assert!(result["output"]
@@ -306,39 +306,39 @@ mod tests {
             .contains("Cargo.toml"));
     }
 
-    #[test]
-    fn handle_tool_call_missing_name() {
+    #[tokio::test]
+    async fn handle_tool_call_missing_name() {
         let server = test_server();
         let req = AcpRequest {
             id: "5".into(),
             method: AcpMethod::ToolCall,
             params: serde_json::json!({}),
         };
-        let resp = server.handle(&req);
+        let resp = server.handle(&req).await;
         assert!(!resp.success);
     }
 
-    #[test]
-    fn handle_shutdown() {
+    #[tokio::test]
+    async fn handle_shutdown() {
         let server = test_server();
         let req = AcpRequest {
             id: "6".into(),
             method: AcpMethod::Shutdown,
             params: serde_json::json!({}),
         };
-        let resp = server.handle(&req);
+        let resp = server.handle(&req).await;
         assert!(resp.success);
     }
 
-    #[test]
-    fn handle_session_info() {
+    #[tokio::test]
+    async fn handle_session_info() {
         let server = test_server();
         let req = AcpRequest {
             id: "7".into(),
             method: AcpMethod::SessionInfo,
             params: serde_json::json!({}),
         };
-        let resp = server.handle(&req);
+        let resp = server.handle(&req).await;
         assert!(resp.success);
         let result = resp.result.expect("should have result");
         assert!(result["session_id"].as_str().is_some());

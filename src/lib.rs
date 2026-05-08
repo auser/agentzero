@@ -24,3 +24,6 @@ pub use agentzero_session as session;
 pub use agentzero_skills as skills;
 pub use agentzero_tools as tools;
 pub use agentzero_tracing as tracing;
+
+#[cfg(feature = "rag")]
+pub use agentzero_index as index;

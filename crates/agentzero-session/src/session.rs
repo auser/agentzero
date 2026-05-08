@@ -230,7 +230,7 @@ impl Session {
     }
 
     /// Execute a tool by name with the given arguments.
-    pub fn execute_tool(
+    pub async fn execute_tool(
         &self,
         tool_name: &str,
         args: &serde_json::Value,
@@ -238,7 +238,7 @@ impl Session {
         info!(session_id = %self.id, tool = tool_name, "executing tool");
 
         let capability = match tool_name {
-            "read" | "list" | "search" => Capability::FileRead,
+            "read" | "list" | "search" | "query" => Capability::FileRead,
             "write" | "propose_edit" => Capability::FileWrite,
             "shell" => Capability::ShellCommand,
             _ => Capability::FileRead,
@@ -307,6 +307,26 @@ impl Session {
                             })?;
                     self.tool_executor
                         .shell_command(command)
+                        .map_err(|e| SessionError::Failed(e.to_string()))?
+                }
+                "query" => {
+                    let question =
+                        args.get("question")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                SessionError::Failed("query: missing 'question' argument".into())
+                            })?;
+                    let ollama_url = args
+                        .get("ollama_url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("http://localhost:11434");
+                    let embed_model = args
+                        .get("embed_model")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("nomic-embed-text");
+                    self.tool_executor
+                        .query_index(question, ollama_url, embed_model)
+                        .await
                         .map_err(|e| SessionError::Failed(e.to_string()))?
                 }
                 other => {
@@ -690,40 +710,40 @@ mod tests {
         assert!(session.accepts_provider(&local));
     }
 
-    #[test]
-    fn execute_read_tool() {
+    #[tokio::test]
+    async fn execute_read_tool() {
         let session = session_with_read_allowed();
         let args = serde_json::json!({"path": "Cargo.toml"});
-        let result = session.execute_tool("read", &args);
+        let result = session.execute_tool("read", &args).await;
         assert!(result.is_ok());
         assert!(result.expect("should succeed").contains("[package]"));
     }
 
-    #[test]
-    fn execute_list_tool() {
+    #[tokio::test]
+    async fn execute_list_tool() {
         let session = session_with_read_allowed();
         let args = serde_json::json!({"path": "."});
-        let result = session.execute_tool("list", &args);
+        let result = session.execute_tool("list", &args).await;
         assert!(result.is_ok());
         assert!(result.expect("should succeed").contains("Cargo.toml"));
     }
 
-    #[test]
-    fn execute_unknown_tool_fails() {
+    #[tokio::test]
+    async fn execute_unknown_tool_fails() {
         let session = session_with_read_allowed();
         let args = serde_json::json!({});
-        let result = session.execute_tool("delete_everything", &args);
+        let result = session.execute_tool("delete_everything", &args).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn execute_propose_edit() {
+    #[tokio::test]
+    async fn execute_propose_edit() {
         let session = session_with_read_allowed();
         let args = serde_json::json!({
             "path": "src/lib.rs",
             "description": "Add new facade re-export"
         });
-        let result = session.execute_tool("propose_edit", &args);
+        let result = session.execute_tool("propose_edit", &args).await;
         assert!(result.is_ok());
         let output = result.expect("should succeed");
         assert!(output.contains("PROPOSED EDIT"));

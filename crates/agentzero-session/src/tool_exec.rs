@@ -21,6 +21,10 @@ pub enum ToolExecutorError {
     WasmFailed(String),
     #[error("wasm feature not enabled")]
     WasmNotAvailable,
+    #[error("rag feature not enabled")]
+    RagNotAvailable,
+    #[error("index query failed: {0}")]
+    IndexQueryFailed(String),
 }
 
 /// Result of a tool execution.
@@ -272,6 +276,73 @@ impl ToolExecutor {
             success: output.status.success(),
             output: combined,
         })
+    }
+
+    /// Query the semantic index for chunks relevant to a question.
+    #[cfg(feature = "rag")]
+    pub async fn query_index(
+        &self,
+        question: &str,
+        ollama_url: &str,
+        embed_model: &str,
+    ) -> Result<ToolResult, ToolExecutorError> {
+        let execution_id = ExecutionId::new();
+        let tool_id = ToolId::from_string("query");
+
+        debug!(tool = "query", question = question, "checking policy for index query");
+
+        let decision = self.check_policy(Capability::FileRead, DataClassification::Private);
+        if !decision.is_allowed() {
+            warn!(tool = "query", "index query denied by policy");
+            return Err(ToolExecutorError::Denied(format!(
+                "index query denied: {decision:?}"
+            )));
+        }
+
+        let project_root = self
+            .project_root
+            .as_deref()
+            .unwrap_or(".");
+
+        let config = agentzero_index::IndexConfig {
+            ollama_url: ollama_url.to_string(),
+            embed_model: embed_model.to_string(),
+            ..Default::default()
+        };
+
+        let engine =
+            agentzero_index::IndexEngine::new(std::path::Path::new(project_root), config);
+
+        let results = engine
+            .query(question)
+            .await
+            .map_err(|e| ToolExecutorError::IndexQueryFailed(e.to_string()))?;
+
+        let output = agentzero_index::format_results(&results);
+
+        info!(
+            tool = "query",
+            results = results.len(),
+            "index query complete"
+        );
+
+        Ok(ToolResult {
+            tool_id,
+            execution_id,
+            success: true,
+            output,
+        })
+    }
+
+    /// Stub when the `rag` feature is not enabled.
+    #[cfg(not(feature = "rag"))]
+    pub async fn query_index(
+        &self,
+        _question: &str,
+        _ollama_url: &str,
+        _embed_model: &str,
+    ) -> Result<ToolResult, ToolExecutorError> {
+        Err(ToolExecutorError::RagNotAvailable)
     }
 
     /// Execute a WASM module with the given bytes, respecting policy.

@@ -13,6 +13,7 @@ path = "src/main.rs"
 [features]
 default = ["wasm"]
 wasm = ["agentzero/wasm"]
+rag = ["agentzero/rag"]
 
 [dependencies]
 agentzero = { workspace = true }
