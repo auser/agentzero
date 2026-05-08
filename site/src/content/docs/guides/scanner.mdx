@@ -6,7 +6,7 @@ description: Scan repositories for secrets, PII, and prompt injection
 ## Running a Scan
 
 ```bash
-agentzero run repo-security-audit
+az run repo-security-audit
 ```
 
 Scans the current directory for:
@@ -79,8 +79,8 @@ Any installed skill with a `patterns.toml` file works as a scanner:
 
 ```bash
 # Install from git
-agentzero install https://github.com/your-org/compliance-scanner
+az install https://github.com/your-org/compliance-scanner
 
 # Run it
-agentzero run compliance-scanner
+az run compliance-scanner
 ```

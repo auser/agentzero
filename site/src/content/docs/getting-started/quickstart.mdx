@@ -7,7 +7,7 @@ description: Get up and running in 2 minutes
 
 ```bash
 cd your-project
-agentzero init --private
+az init --private
 ```
 
 This creates `.agentzero/` with:
@@ -23,7 +23,7 @@ This creates `.agentzero/` with:
 ## Chat with Your Project
 
 ```bash
-agentzero chat --local
+az chat --local
 ```
 
 The agent can read files, list directories, search code, and execute tools — all governed by your policy.
@@ -39,7 +39,7 @@ agentzero> This is a Rust workspace with 13 crates implementing...
 ## Run a Security Scan
 
 ```bash
-agentzero run repo-security-audit
+az run repo-security-audit
 ```
 
 Scans for secrets, PII, prompt injection attempts, and unsafe patterns.
@@ -65,19 +65,19 @@ Now your editor's AI gets policy-controlled tool access through AgentZero.
 
 ```bash
 # Use a specific model
-agentzero chat --local --model codellama
+az chat --local --model codellama
 
 # Use llama.cpp instead of Ollama
-agentzero chat --local --provider llama-cpp
+az chat --local --provider llama-cpp
 
 # Use vLLM on a custom port
-agentzero chat --local --provider vllm --url http://gpu-box:8000
+az chat --local --provider vllm --url http://gpu-box:8000
 ```
 
 ## Enable Encryption
 
 ```bash
-agentzero chat --local --encrypt
+az chat --local --encrypt
 # Encryption passphrase: ********
 # Audit logs and sessions encrypted at rest
 ```

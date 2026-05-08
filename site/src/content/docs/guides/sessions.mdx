@@ -5,12 +5,12 @@ description: Save, browse, and resume past chat sessions
 
 ## How Sessions Work
 
-Every `agentzero chat` session gets a unique ID. When you exit, the full conversation history is saved to `.agentzero/sessions/<id>.json` (or `.json.enc` if encrypted).
+Every `az chat` session gets a unique ID. When you exit, the full conversation history is saved to `.agentzero/sessions/<id>.json` (or `.json.enc` if encrypted).
 
 ## Listing Past Sessions
 
 ```bash
-agentzero history
+az history
 ```
 
 ```
@@ -26,7 +26,7 @@ Past sessions:
 ## Resuming a Session
 
 ```bash
-agentzero chat --local --resume f7a2c3e1-...
+az chat --local --resume f7a2c3e1-...
 ```
 
 ```
@@ -60,7 +60,7 @@ Sessions are stored as JSON:
 When using `--encrypt`, sessions are saved as `.json.enc`:
 
 ```bash
-agentzero chat --local --encrypt
+az chat --local --encrypt
 # Session saved (encrypted) to .agentzero/sessions/f7a2c3e1-....json.enc
 ```
 

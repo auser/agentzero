@@ -16,7 +16,7 @@ AgentZero can encrypt sensitive data at rest using AES-256-GCM with Argon2id key
 Pass `--encrypt` when starting a chat:
 
 ```bash
-agentzero chat --local --encrypt
+az chat --local --encrypt
 # Encryption passphrase: ********
 # Audit logs and sessions will be encrypted.
 ```
@@ -55,7 +55,7 @@ The vault is always encrypted — there's no plaintext mode. Each secret is stor
 
 ```bash
 # Vault operations always require a passphrase
-agentzero vault add github token
+az vault add github token
 # Vault passphrase: ********
 # Secret value: ghp_...
 ```

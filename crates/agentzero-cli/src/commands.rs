@@ -36,6 +36,9 @@ pub enum Command {
     Run {
         /// Name of the skill or tool to run.
         name: String,
+        /// Skip lockfile integrity verification before running.
+        #[arg(long)]
+        skip_verify: bool,
     },
     /// Install a skill from a local path, GitHub owner/repo, or git URL.
     Install {
@@ -147,7 +150,7 @@ pub async fn run(command: Command) -> i32 {
             )
             .await
         }
-        Command::Run { name } => cmd_run(&name),
+        Command::Run { name, skip_verify } => cmd_run(&name, skip_verify),
         Command::Install { source } => cmd_install(&source),
         Command::Publish { path, repo, tag } => {
             cmd_publish(&path, repo.as_deref(), tag.as_deref()).await
@@ -895,7 +898,7 @@ fn cmd_history() -> i32 {
     let sessions_dir = cwd.join(".agentzero/sessions");
 
     if !sessions_dir.exists() {
-        println!("No sessions directory. Run `agentzero init` first.");
+        println!("No sessions directory. Run `az init` first.");
         return 1;
     }
 
@@ -963,7 +966,7 @@ fn cmd_vault(action: VaultAction) -> i32 {
         .parent()
         .is_some_and(|p| p.join("vault").exists() || p.exists())
     {
-        eprintln!("Run `agentzero init` first.");
+        eprintln!("Run `az init` first.");
         return 1;
     }
 
@@ -1290,6 +1293,15 @@ fn update_lockfile_with_checksum(
         Err(_) => ("0.1.0".into(), "unknown".into(), vec![]),
     };
 
+    // Compute directory checksum for runtime integrity verification
+    let dir_checksum = match agentzero::skills::registry::compute_directory_checksum(install_dir) {
+        Ok(cs) => Some(cs),
+        Err(e) => {
+            eprintln!("warning: failed to compute directory checksum: {e}");
+            None
+        }
+    };
+
     lockfile.register(LockedSkill {
         name: skill_name.to_string(),
         version,
@@ -1301,6 +1313,7 @@ fn update_lockfile_with_checksum(
         } else {
             Some(checksum.to_string())
         },
+        dir_checksum,
     });
 
     if let Err(e) = lockfile.save(&lockfile_path) {
@@ -1322,7 +1335,7 @@ fn print_skill_info(install_dir: &std::path::Path, skill_name: &str) {
         }
     }
     println!();
-    println!("Run with: agentzero run {skill_name}");
+    println!("Run with: az run {skill_name}");
 }
 
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), std::io::Error> {
@@ -1457,7 +1470,58 @@ async fn cmd_publish(path: &str, repo_override: Option<&str>, tag_override: Opti
     0
 }
 
-fn cmd_run(name: &str) -> i32 {
+/// Verify skill integrity using lockfile checksums.
+///
+/// Uses a two-tier approach: mtime-based fast path, then full SHA-256 hash.
+/// Returns `Ok(())` if the skill passes verification, `Err(exit_code)` if it fails.
+fn verify_skill_integrity(
+    cwd: &std::path::Path,
+    skill_name: &str,
+    skill_dir: &std::path::Path,
+) -> Result<(), i32> {
+    use agentzero::skills::registry::{lockfile_path, SkillLockfile, VerificationCache};
+
+    let lockfile_path = lockfile_path(cwd);
+    let lockfile = SkillLockfile::load(&lockfile_path).unwrap_or_default();
+
+    // Check if this skill has a dir_checksum in the lockfile
+    let has_dir_checksum = lockfile
+        .skills
+        .get(skill_name)
+        .and_then(|s| s.dir_checksum.as_ref())
+        .is_some();
+
+    if !has_dir_checksum {
+        // Legacy entry or not in lockfile — skip verification silently
+        return Ok(());
+    }
+
+    // Fast path: check mtime cache
+    let cache_path = VerificationCache::path(cwd);
+    let mut cache = VerificationCache::load(&cache_path).unwrap_or_default();
+
+    if cache.is_fresh(skill_name, skill_dir) {
+        return Ok(());
+    }
+
+    // Full path: compute and compare directory checksum
+    if let Err(e) = lockfile.verify_skill(skill_name, skill_dir) {
+        eprintln!("error: {e}");
+        eprintln!("hint: the skill may have been tampered with after installation");
+        eprintln!("hint: reinstall with `agentzero install` or bypass with `--skip-verify`");
+        return Err(1);
+    }
+
+    // Verification passed — update cache
+    cache.mark_verified(skill_name);
+    if let Err(e) = cache.save(&cache_path) {
+        eprintln!("warning: failed to save verification cache: {e}");
+    }
+
+    Ok(())
+}
+
+fn cmd_run(name: &str, skip_verify: bool) -> i32 {
     // Check built-in skills first
     if name == "repo-security-audit" {
         return cmd_run_security_audit();
@@ -1467,6 +1531,13 @@ fn cmd_run(name: &str) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_default();
     let skill_dir = cwd.join(format!("skills/{name}"));
     if skill_dir.exists() && skill_dir.join("SKILL.md").exists() {
+        // Runtime integrity verification
+        if !skip_verify {
+            if let Err(code) = verify_skill_integrity(&cwd, name, &skill_dir) {
+                return code;
+            }
+        }
+
         println!("Running installed skill: {name}");
         println!("Skill directory: {}", skill_dir.display());
 
@@ -1827,7 +1898,7 @@ fn cmd_doctor() -> i32 {
             );
         }
     } else {
-        println!("Project:        not initialized (run `agentzero init`)");
+        println!("Project:        not initialized (run `az init`)");
     }
     println!();
 
@@ -1936,7 +2007,7 @@ fn cmd_doctor() -> i32 {
     println!("Providers:      ollama, llama-cpp, vllm, lm-studio");
     println!("Tools:          read, list, search, write, shell (5)");
     println!("Encryption:     AES-256-GCM + Argon2id");
-    println!("ACP:            available (run `agentzero serve`)");
+    println!("ACP:            available (run `az serve`)");
     0
 }
 
@@ -1964,7 +2035,7 @@ fn cmd_policy_status() -> i32 {
         }
     } else {
         println!("No policy file found. Using deny-by-default.");
-        println!("Run `agentzero init --private` to create one.");
+        println!("Run `az init --private` to create one.");
     }
 
     println!();
@@ -1979,7 +2050,7 @@ fn cmd_audit_tail(count: usize) -> i32 {
     let audit_dir = cwd.join(".agentzero/audit");
 
     if !audit_dir.exists() {
-        println!("No audit directory found. Run `agentzero init` first.");
+        println!("No audit directory found. Run `az init` first.");
         return 1;
     }
 
@@ -2256,7 +2327,7 @@ mod tests {
     }
 
     fn parse(args: &[&str]) -> super::Command {
-        let mut full_args = vec!["agentzero"];
+        let mut full_args = vec!["az"];
         full_args.extend_from_slice(args);
         TestCli::parse_from(full_args).command
     }
@@ -2296,8 +2367,22 @@ mod tests {
     #[test]
     fn parse_run() {
         match parse(&["run", "repo-security-audit"]) {
-            super::Command::Run { name } => assert_eq!(name, "repo-security-audit"),
+            super::Command::Run { name, skip_verify } => {
+                assert_eq!(name, "repo-security-audit");
+                assert!(!skip_verify);
+            }
             other => panic!("expected Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_run_skip_verify() {
+        match parse(&["run", "--skip-verify", "repo-security-audit"]) {
+            super::Command::Run { name, skip_verify } => {
+                assert_eq!(name, "repo-security-audit");
+                assert!(skip_verify);
+            }
+            other => panic!("expected Run --skip-verify, got {other:?}"),
         }
     }
 

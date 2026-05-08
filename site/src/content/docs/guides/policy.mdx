@@ -60,12 +60,12 @@ Controls whether WASM-backed skills can execute:
 
 WASM execution is denied by default. To run WASM skills, explicitly set this to `allow` or `require_approval`. WASM support is compiled in by default (disable with `--no-default-features`).
 
-`agentzero init` writes `wasm_execution = "require_approval"` for the default profile and `wasm_execution = "deny"` for `--private`.
+`az init` writes `wasm_execution = "require_approval"` for the default profile and `wasm_execution = "deny"` for `--private`.
 
 ## View Active Policy
 
 ```bash
-agentzero policy status
+az policy status
 ```
 
 ## How Policy is Enforced

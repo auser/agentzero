@@ -3,24 +3,24 @@ title: CLI Reference
 description: All AgentZero commands and flags
 ---
 
-## `agentzero init`
+## `az init`
 
 Initialize a new project.
 
 ```bash
-agentzero init [--private]
+az init [--private]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--private` | Use private-by-default policy (network denied, local-only routing) |
 
-## `agentzero chat`
+## `az chat`
 
 Start an interactive chat session.
 
 ```bash
-agentzero chat [OPTIONS]
+az chat [OPTIONS]
 ```
 
 | Flag | Description |
@@ -33,30 +33,30 @@ agentzero chat [OPTIONS]
 | `--resume` | Resume a previous session by ID |
 | `--encrypt` | Encrypt audit and session files |
 
-## `agentzero mcp`
+## `az mcp`
 
 Start the MCP server for editor integration.
 
 ```bash
-agentzero mcp
+az mcp
 ```
 
 Reads JSON-RPC 2.0 from stdin, writes to stdout.
 
-## `agentzero serve`
+## `az serve`
 
 Start the ACP server.
 
 ```bash
-agentzero serve
+az serve
 ```
 
-## `agentzero run`
+## `az run`
 
 Run an installed skill.
 
 ```bash
-agentzero run <name>
+az run <name>
 ```
 
 Routes by skill runtime declared in `SKILL.md`:
@@ -66,12 +66,12 @@ Routes by skill runtime declared in `SKILL.md`:
 - **Scanner skills** (with `patterns.toml`) — runs the security scanner against the current directory.
 - **Instruction-only skills** — displays the `SKILL.md` content.
 
-## `agentzero install`
+## `az install`
 
 Install a skill from a local path, GitHub owner/repo, or git URL.
 
 ```bash
-agentzero install <source>
+az install <source>
 ```
 
 The source is auto-detected:
@@ -85,12 +85,12 @@ The source is auto-detected:
 
 GitHub installs verify SHA-256 checksums from the release notes. All install methods update `.agentzero/skills.lock`.
 
-## `agentzero publish`
+## `az publish`
 
 Package and publish a skill to a GitHub release.
 
 ```bash
-agentzero publish [path] [OPTIONS]
+az publish [path] [OPTIONS]
 ```
 
 | Flag | Description |
@@ -100,45 +100,45 @@ agentzero publish [path] [OPTIONS]
 
 Requires `GITHUB_TOKEN` environment variable. Creates a GitHub release, uploads the tarball, and includes the SHA-256 checksum in the release notes.
 
-## `agentzero doctor`
+## `az doctor`
 
 System diagnostic. Reports crate status, project initialization, policy rules, skills, vault, sessions, providers, and WASM sandbox status (compiled-in, policy setting, WASM skill count).
 
 ```bash
-agentzero doctor
+az doctor
 ```
 
-## `agentzero history`
+## `az history`
 
 List past chat sessions.
 
 ```bash
-agentzero history
+az history
 ```
 
-## `agentzero policy status`
+## `az policy status`
 
 Show active policy rules.
 
 ```bash
-agentzero policy status
+az policy status
 ```
 
-## `agentzero audit tail`
+## `az audit tail`
 
 Show recent audit events.
 
 ```bash
-agentzero audit tail [-c, --count N]
+az audit tail [-c, --count N]
 ```
 
-## `agentzero vault`
+## `az vault`
 
 Manage encrypted secrets.
 
 ```bash
-agentzero vault list
-agentzero vault add <provider> <name>
-agentzero vault get <provider> <name>
-agentzero vault remove <provider> <name>
+az vault list
+az vault add <provider> <name>
+az vault get <provider> <name>
+az vault remove <provider> <name>
 ```

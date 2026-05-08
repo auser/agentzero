@@ -97,8 +97,8 @@ install:
   set -eu
   cargo build --release
   mkdir -p "$HOME/.bin"
-  ln -sf "$(pwd)/target/release/agentzero" "$HOME/.bin/agentzero"
-  echo "Installed: ~/.bin/agentzero → $(pwd)/target/release/agentzero"
+  ln -sf "$(pwd)/target/release/az" "$HOME/.bin/az"
+  echo "Installed: ~/.bin/az → $(pwd)/target/release/az"
 
 # Show tree of the project
 show-tree:

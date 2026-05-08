@@ -9,22 +9,22 @@ description: Install, create, publish, and manage skill packages
 
 ```bash
 # Resolves latest GitHub release, downloads tarball, verifies checksum
-agentzero install auser/my-cool-skill
+az install auser/my-cool-skill
 
 # Also works with full URLs
-agentzero install https://github.com/auser/my-cool-skill
+az install https://github.com/auser/my-cool-skill
 ```
 
 ### From a Local Path
 
 ```bash
-agentzero install /path/to/my-skill
+az install /path/to/my-skill
 ```
 
 ### From Git
 
 ```bash
-agentzero install https://gitlab.com/user/security-scanner
+az install https://gitlab.com/user/security-scanner
 ```
 
 All install methods update `.agentzero/skills.lock` with name, version, source, runtime, permissions, and checksum.
@@ -33,16 +33,16 @@ All install methods update `.agentzero/skills.lock` with name, version, source, 
 
 ```bash
 # Run a specific skill
-agentzero run repo-security-audit
+az run repo-security-audit
 
 # Run a WASM skill
-agentzero run my-wasm-tool
+az run my-wasm-tool
 
 # Run a host-supervised skill (entrypoint from SKILL.md or run.sh)
-agentzero run my-script-tool
+az run my-script-tool
 
 # List available skills
-agentzero run nonexistent  # shows available skills
+az run nonexistent  # shows available skills
 ```
 
 ## Creating a Skill
@@ -94,13 +94,13 @@ Package a skill and publish it as a GitHub Release:
 ```bash
 # Publish from the skill directory
 cd my-skill/
-agentzero publish --repo auser/my-cool-skill
+az publish --repo auser/my-cool-skill
 
 # Publish with explicit tag
-agentzero publish --repo auser/my-cool-skill --tag v2.0.0
+az publish --repo auser/my-cool-skill --tag v2.0.0
 
 # Publish from a different path
-agentzero publish /path/to/skill --repo auser/my-cool-skill
+az publish /path/to/skill --repo auser/my-cool-skill
 ```
 
 ### What Publish Does
@@ -114,14 +114,14 @@ agentzero publish /path/to/skill --repo auser/my-cool-skill
 ### Requirements
 
 - `GITHUB_TOKEN` environment variable set with repo access
-- Or a token stored in the vault: `agentzero vault add github token`
+- Or a token stored in the vault: `az vault add github token`
 
 ### Install a Published Skill
 
 After publishing, others can install with:
 
 ```bash
-agentzero install auser/my-cool-skill
+az install auser/my-cool-skill
 ```
 
 This resolves the latest release, downloads the tarball, verifies the SHA-256 checksum against the release notes, and extracts to `skills/`.
@@ -153,7 +153,7 @@ runtime: wasm
 
 ### How WASM Execution Works
 
-When you run `agentzero run my-wasm-tool`:
+When you run `az run my-wasm-tool`:
 
 1. **Manifest loaded** from `SKILL.md` frontmatter
 2. **Policy check** — `wasm_execution` must be `allow` or `require_approval` in `policy.yml`
@@ -185,7 +185,7 @@ Without the policy entry, WASM skills are denied. This is by design — fail clo
 ### Checking WASM Status
 
 ```bash
-agentzero doctor
+az doctor
 ```
 
 The doctor command reports:

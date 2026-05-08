@@ -11,4 +11,5 @@ site/.astro/
 .DS_Store
 specs/scratch.md
 .claude
+/.playwright-mcp
 

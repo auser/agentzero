@@ -10,7 +10,7 @@ AgentZero stores secrets encrypted at rest. The model only ever sees handles lik
 ## Add a Secret
 
 ```bash
-agentzero vault add github token
+az vault add github token
 # Vault passphrase: ********
 # Secret value: ghp_abc123...
 # Stored: handle://vault/github/token
@@ -19,7 +19,7 @@ agentzero vault add github token
 ## List Secrets
 
 ```bash
-agentzero vault list
+az vault list
 # Vault passphrase: ********
 # Stored secrets:
 #   handle://vault/aws/key
@@ -30,7 +30,7 @@ agentzero vault list
 ## Retrieve a Secret
 
 ```bash
-agentzero vault get github token
+az vault get github token
 # Vault passphrase: ********
 # ghp_abc123...
 ```
@@ -38,7 +38,7 @@ agentzero vault get github token
 ## Remove a Secret
 
 ```bash
-agentzero vault remove github token
+az vault remove github token
 # Vault passphrase: ********
 # Removed: handle://vault/github/token
 ```

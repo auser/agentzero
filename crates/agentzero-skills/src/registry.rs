@@ -19,6 +19,12 @@ pub enum RegistryError {
     NotFound(String),
     #[error("checksum mismatch: expected {expected}, got {actual}")]
     ChecksumMismatch { expected: String, actual: String },
+    #[error("integrity check failed for skill '{skill}': expected {expected}, got {actual}")]
+    IntegrityFailed {
+        skill: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 /// A locked skill entry with version and integrity info.
@@ -31,6 +37,10 @@ pub struct LockedSkill {
     pub permissions: Vec<String>,
     #[serde(default)]
     pub checksum: Option<String>,
+    /// SHA-256 hash of extracted directory contents (sorted file paths + contents).
+    /// Used for runtime integrity verification since the original tarball is not kept.
+    #[serde(default)]
+    pub dir_checksum: Option<String>,
 }
 
 /// Skill lockfile tracking installed skills.
@@ -118,6 +128,7 @@ pub fn scan_installed(skills_dir: &Path) -> Result<Vec<LockedSkill>, RegistryErr
             runtime,
             permissions,
             checksum: None,
+            dir_checksum: None,
         });
     }
 
@@ -252,6 +263,181 @@ pub fn lockfile_path(project_root: &Path) -> PathBuf {
     project_root.join(".agentzero/skills.lock")
 }
 
+/// Compute a deterministic SHA-256 hash of a directory's contents.
+///
+/// Walks all files in sorted order by relative path, feeding each file's
+/// relative path and contents into a single SHA-256 hasher. This produces
+/// a stable hash that changes when any file is added, removed, or modified.
+///
+/// Returns a string like `sha256:a1b2c3...`.
+pub fn compute_directory_checksum(dir: &Path) -> Result<String, RegistryError> {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    let mut entries = Vec::new();
+
+    collect_files(dir, dir, &mut entries)?;
+    entries.sort();
+
+    for rel_path in &entries {
+        let full_path = dir.join(rel_path);
+        let contents = std::fs::read(&full_path).map_err(|e| {
+            RegistryError::IoError(format!("failed to read {}: {e}", full_path.display()))
+        })?;
+        // Hash relative path, content length, and content together for unambiguous framing
+        hasher.update(rel_path.as_bytes());
+        hasher.update((contents.len() as u64).to_le_bytes());
+        hasher.update(&contents);
+    }
+
+    let hash = hasher.finalize();
+    Ok(format!("sha256:{}", hex_encode(&hash)))
+}
+
+/// Recursively collect all file paths relative to `base` under `dir`.
+fn collect_files(base: &Path, dir: &Path, entries: &mut Vec<String>) -> Result<(), RegistryError> {
+    let read_dir = std::fs::read_dir(dir).map_err(|e| RegistryError::IoError(e.to_string()))?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|e| RegistryError::IoError(e.to_string()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(base, &path, entries)?;
+        } else if path.is_file() {
+            let rel = path
+                .strip_prefix(base)
+                .map_err(|e| RegistryError::IoError(e.to_string()))?;
+            entries.push(rel.to_string_lossy().to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Encode bytes as lowercase hex.
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Cached verification metadata to avoid re-hashing on every run.
+///
+/// Stores the last-verified epoch seconds per skill name in a JSON sidecar
+/// file at `.agentzero/skills.lock.meta`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VerificationCache {
+    pub last_verified: BTreeMap<String, u64>,
+}
+
+impl VerificationCache {
+    /// Path to the verification cache sidecar file.
+    pub fn path(project_root: &Path) -> PathBuf {
+        project_root.join(".agentzero/skills.lock.meta")
+    }
+
+    /// Load from disk, returning empty cache if file doesn't exist.
+    pub fn load(path: &Path) -> Result<Self, RegistryError> {
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let content =
+            std::fs::read_to_string(path).map_err(|e| RegistryError::IoError(e.to_string()))?;
+        serde_json::from_str(&content).map_err(|e| RegistryError::ParseError(e.to_string()))
+    }
+
+    /// Save to disk.
+    pub fn save(&self, path: &Path) -> Result<(), RegistryError> {
+        let content = serde_json::to_string_pretty(self)
+            .map_err(|e| RegistryError::ParseError(e.to_string()))?;
+        std::fs::write(path, content).map_err(|e| RegistryError::IoError(e.to_string()))
+    }
+
+    /// Record that a skill was verified at the current time.
+    pub fn mark_verified(&mut self, skill_name: &str) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.last_verified.insert(skill_name.to_string(), now);
+    }
+
+    /// Check if a skill directory has been modified since last verification.
+    ///
+    /// Returns `true` if we should skip re-hashing (mtime is not newer).
+    pub fn is_fresh(&self, skill_name: &str, skill_dir: &Path) -> bool {
+        let last = match self.last_verified.get(skill_name) {
+            Some(ts) => *ts,
+            None => return false,
+        };
+
+        match newest_mtime(skill_dir) {
+            Ok(mtime) => mtime <= last,
+            Err(_) => false,
+        }
+    }
+}
+
+/// Get the newest modification time (as epoch seconds) from any file in a directory.
+fn newest_mtime(dir: &Path) -> Result<u64, RegistryError> {
+    let mut newest: u64 = 0;
+    let read_dir = std::fs::read_dir(dir).map_err(|e| RegistryError::IoError(e.to_string()))?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|e| RegistryError::IoError(e.to_string()))?;
+        let path = entry.path();
+
+        let mtime = if path.is_dir() {
+            newest_mtime(&path)?
+        } else {
+            path.metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        };
+
+        if mtime > newest {
+            newest = mtime;
+        }
+    }
+
+    Ok(newest)
+}
+
+impl SkillLockfile {
+    /// Verify the integrity of an installed skill against its lockfile entry.
+    ///
+    /// Computes the directory checksum and compares against the stored `dir_checksum`.
+    /// Returns `Ok(())` if the check passes or if no `dir_checksum` is recorded (legacy entry).
+    pub fn verify_skill(&self, skill_name: &str, skill_dir: &Path) -> Result<(), RegistryError> {
+        let entry = match self.skills.get(skill_name) {
+            Some(e) => e,
+            None => {
+                // Not in lockfile — nothing to verify against
+                return Ok(());
+            }
+        };
+
+        let expected = match &entry.dir_checksum {
+            Some(cs) => cs,
+            None => {
+                // Legacy entry without dir_checksum — skip with no error
+                return Ok(());
+            }
+        };
+
+        let actual = compute_directory_checksum(skill_dir)?;
+        if actual != *expected {
+            return Err(RegistryError::IntegrityFailed {
+                skill: skill_name.to_string(),
+                expected: expected.clone(),
+                actual,
+            });
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,6 +472,7 @@ mod tests {
             runtime: "none".into(),
             permissions: vec!["read".into()],
             checksum: None,
+            dir_checksum: None,
         });
 
         lockfile.save(&path).expect("should save");
@@ -395,9 +582,164 @@ mod tests {
             runtime: "wasm".into(),
             permissions: vec![],
             checksum: Some("sha256:abc".into()),
+            dir_checksum: None,
         });
         assert!(lockfile.contains("test"));
         lockfile.remove("test");
         assert!(!lockfile.contains("test"));
+    }
+
+    #[test]
+    fn directory_checksum_is_deterministic() {
+        let dir = temp_dir("checksum-det");
+        let skill_dir = dir.join("my-skill");
+        fs::create_dir_all(&skill_dir).expect("should create");
+        fs::write(skill_dir.join("SKILL.md"), "# Test Skill\n").expect("should write");
+        fs::write(skill_dir.join("patterns.toml"), "# patterns\n").expect("should write");
+
+        let c1 = compute_directory_checksum(&skill_dir).expect("should compute");
+        let c2 = compute_directory_checksum(&skill_dir).expect("should compute");
+        assert_eq!(c1, c2);
+        assert!(c1.starts_with("sha256:"));
+        assert_eq!(c1.len(), 7 + 64);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn directory_checksum_changes_on_modification() {
+        let dir = temp_dir("checksum-mod");
+        let skill_dir = dir.join("my-skill");
+        fs::create_dir_all(&skill_dir).expect("should create");
+        fs::write(skill_dir.join("SKILL.md"), "# Original\n").expect("should write");
+
+        let before = compute_directory_checksum(&skill_dir).expect("should compute");
+        fs::write(skill_dir.join("SKILL.md"), "# Modified\n").expect("should write");
+        let after = compute_directory_checksum(&skill_dir).expect("should compute");
+
+        assert_ne!(before, after);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn verify_skill_passes_when_unchanged() {
+        let dir = temp_dir("verify-pass");
+        let skill_dir = dir.join("good-skill");
+        fs::create_dir_all(&skill_dir).expect("should create");
+        fs::write(skill_dir.join("SKILL.md"), "# Good Skill\n").expect("should write");
+
+        let checksum = compute_directory_checksum(&skill_dir).expect("should compute");
+        let mut lockfile = SkillLockfile::default();
+        lockfile.register(LockedSkill {
+            name: "good-skill".into(),
+            version: "1.0".into(),
+            source: "local".into(),
+            runtime: "none".into(),
+            permissions: vec![],
+            checksum: None,
+            dir_checksum: Some(checksum),
+        });
+
+        assert!(lockfile.verify_skill("good-skill", &skill_dir).is_ok());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn verify_skill_fails_on_tamper() {
+        let dir = temp_dir("verify-fail");
+        let skill_dir = dir.join("bad-skill");
+        fs::create_dir_all(&skill_dir).expect("should create");
+        fs::write(skill_dir.join("SKILL.md"), "# Original\n").expect("should write");
+
+        let checksum = compute_directory_checksum(&skill_dir).expect("should compute");
+        let mut lockfile = SkillLockfile::default();
+        lockfile.register(LockedSkill {
+            name: "bad-skill".into(),
+            version: "1.0".into(),
+            source: "local".into(),
+            runtime: "none".into(),
+            permissions: vec![],
+            checksum: None,
+            dir_checksum: Some(checksum),
+        });
+
+        // Tamper with the file
+        fs::write(skill_dir.join("SKILL.md"), "# Tampered!\n").expect("should write");
+
+        let result = lockfile.verify_skill("bad-skill", &skill_dir);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("integrity check failed"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn verify_skill_skips_legacy_entry() {
+        let dir = temp_dir("verify-legacy");
+        let skill_dir = dir.join("legacy-skill");
+        fs::create_dir_all(&skill_dir).expect("should create");
+        fs::write(skill_dir.join("SKILL.md"), "# Legacy\n").expect("should write");
+
+        let mut lockfile = SkillLockfile::default();
+        lockfile.register(LockedSkill {
+            name: "legacy-skill".into(),
+            version: "1.0".into(),
+            source: "local".into(),
+            runtime: "none".into(),
+            permissions: vec![],
+            checksum: None,
+            dir_checksum: None, // No dir_checksum = legacy
+        });
+
+        // Should pass even though no dir_checksum exists
+        assert!(lockfile.verify_skill("legacy-skill", &skill_dir).is_ok());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn verification_cache_roundtrip() {
+        let dir = temp_dir("vcache-rt");
+        fs::create_dir_all(&dir).expect("should create");
+        let path = dir.join("skills.lock.meta");
+
+        let mut cache = VerificationCache::default();
+        cache.mark_verified("test-skill");
+        assert!(cache.last_verified.contains_key("test-skill"));
+
+        cache.save(&path).expect("should save");
+        let loaded = VerificationCache::load(&path).expect("should load");
+        assert!(loaded.last_verified.contains_key("test-skill"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn verification_cache_freshness() {
+        let dir = temp_dir("vcache-fresh");
+        let skill_dir = dir.join("my-skill");
+        fs::create_dir_all(&skill_dir).expect("should create");
+        fs::write(skill_dir.join("SKILL.md"), "# Test\n").expect("should write");
+
+        let mut cache = VerificationCache::default();
+
+        // Not verified yet — should not be fresh
+        assert!(!cache.is_fresh("my-skill", &skill_dir));
+
+        // Mark as verified
+        cache.mark_verified("my-skill");
+
+        // Should be fresh now (mtime is in the past relative to mark time)
+        assert!(cache.is_fresh("my-skill", &skill_dir));
+
+        // Modify the file — should no longer be fresh
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        fs::write(skill_dir.join("SKILL.md"), "# Modified\n").expect("should write");
+        assert!(!cache.is_fresh("my-skill", &skill_dir));
+
+        fs::remove_dir_all(&dir).ok();
     }
 }
