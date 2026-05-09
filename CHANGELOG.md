@@ -2,6 +2,23 @@
 
 All notable changes to AgentZero are documented here.
 
+## [0.3.0] - 2026-05-09
+
+### Documentation
+
+- Reflect default-on WASM and shipped HostSupervised tier
+
+### Features
+
+- Add dependency-audit, license-check, and secrets-scan skills
+- Add shell completions, ISO timestamps, and docs for RAG + index
+- Add agentzero-index crate for semantic document querying (RAG)
+- Add central skill index for short-name resolution
+
+### Miscellaneous
+
+- Rename binary from agentzero to az
+- Add just install — build release and symlink to ~/.bin
 ## [0.2.0] - 2026-05-05
 
 ### Documentation
@@ -15,6 +32,7 @@ All notable changes to AgentZero are documented here.
 
 ### Miscellaneous
 
+- Release v0.2.0
 - Add release commands and git-cliff changelog config
 
 ### Style
