@@ -1,0 +1,126 @@
+# Secrets Scan Patterns
+# Focused on deep secret detection with additional patterns
+# beyond the repo-security-audit skill.
+
+[[secrets]]
+pattern = "AKIA"
+description = "AWS Access Key ID (starts with AKIA)"
+severity = "critical"
+min_line_length = 20
+
+[[secrets]]
+pattern = "sk_live_"
+description = "Stripe live secret key"
+severity = "critical"
+
+[[secrets]]
+pattern = "sk_test_"
+description = "Stripe test secret key"
+severity = "warning"
+
+[[secrets]]
+pattern = "rk_live_"
+description = "Stripe restricted key (live)"
+severity = "critical"
+
+[[secrets]]
+pattern = "sq0csp-"
+description = "Square OAuth secret"
+severity = "critical"
+
+[[secrets]]
+pattern = "SG."
+description = "SendGrid API key"
+severity = "high"
+min_line_length = 40
+also_contains = "."
+
+[[secrets]]
+pattern = "xox"
+description = "Slack token (xoxb, xoxp, xoxs, xoxa)"
+severity = "critical"
+min_line_length = 30
+
+[[secrets]]
+pattern = "eyJ"
+description = "JWT token (base64-encoded JSON)"
+severity = "high"
+min_line_length = 30
+
+[[secrets]]
+pattern = "ghp_"
+description = "GitHub personal access token"
+severity = "critical"
+
+[[secrets]]
+pattern = "gho_"
+description = "GitHub OAuth access token"
+severity = "critical"
+
+[[secrets]]
+pattern = "ghu_"
+description = "GitHub user-to-server token"
+severity = "critical"
+
+[[secrets]]
+pattern = "ghs_"
+description = "GitHub server-to-server token"
+severity = "critical"
+
+[[secrets]]
+pattern = "github_pat_"
+description = "GitHub fine-grained personal access token"
+severity = "critical"
+
+[[secrets]]
+pattern = "-----BEGIN RSA PRIVATE KEY-----"
+description = "RSA private key"
+severity = "critical"
+
+[[secrets]]
+pattern = "-----BEGIN EC PRIVATE KEY-----"
+description = "EC private key"
+severity = "critical"
+
+[[secrets]]
+pattern = "-----BEGIN OPENSSH PRIVATE KEY-----"
+description = "OpenSSH private key"
+severity = "critical"
+
+[[secrets]]
+pattern = "AIza"
+description = "Google API key (starts with AIza)"
+severity = "high"
+min_line_length = 30
+
+[[secrets]]
+pattern = "sk-"
+description = "OpenAI / Anthropic API key"
+severity = "critical"
+min_line_length = 20
+
+[[secrets]]
+pattern = "npm_"
+description = "npm access token"
+severity = "critical"
+min_line_length = 20
+
+[[secrets]]
+pattern = "pypi-"
+description = "PyPI API token"
+severity = "critical"
+
+# Entropy detection config
+[entropy]
+enabled = true
+min_length = 20
+min_entropy = 4.5
+severity = "warning"
+description = "High-entropy string may be an embedded secret"
+
+[sensitive_files]
+names = [".env", ".env.local", ".env.production", ".env.staging", ".npmrc", ".pypirc", "credentials", "credentials.json", ".htpasswd"]
+extensions = ["pem", "key", "p12", "pfx", "jks", "keystore"]
+
+[skip]
+directories = [".git", "node_modules", "target", "vendor", "__pycache__", ".venv", "venv"]

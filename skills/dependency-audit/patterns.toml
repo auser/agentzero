@@ -1,0 +1,80 @@
+# Dependency Audit Patterns
+# Each entry defines a known-vulnerable package.
+
+[[packages]]
+ecosystem = "npm"
+name = "event-stream"
+versions = ["3.3.6"]
+description = "Supply chain attack: malicious flatmap-stream dependency added in 3.3.6"
+severity = "critical"
+
+[[packages]]
+ecosystem = "npm"
+name = "ua-parser-js"
+versions = ["0.7.29", "0.8.0", "1.0.0"]
+description = "Supply chain attack: compromised versions contained cryptominer and credential stealer"
+severity = "critical"
+
+[[packages]]
+ecosystem = "npm"
+name = "colors"
+versions = ["1.4.1", "1.4.2"]
+description = "Protestware: author introduced infinite loop in 1.4.1+"
+severity = "high"
+
+[[packages]]
+ecosystem = "npm"
+name = "faker"
+versions = ["6.6.6"]
+description = "Protestware: author deleted functionality in 6.6.6"
+severity = "high"
+
+[[packages]]
+ecosystem = "npm"
+name = "node-ipc"
+versions = ["10.1.1", "10.1.2", "10.1.3"]
+description = "Protestware: peacenotwar module wrote files to disk"
+severity = "critical"
+
+[[packages]]
+ecosystem = "npm"
+name = "coa"
+versions = ["2.0.3", "2.0.4"]
+description = "Hijacked: compromised versions contained malicious code"
+severity = "critical"
+
+[[packages]]
+ecosystem = "npm"
+name = "rc"
+versions = ["1.2.9", "1.3.0"]
+description = "Hijacked: compromised versions contained malicious code"
+severity = "critical"
+
+[[packages]]
+ecosystem = "pypi"
+name = "ctx"
+versions = ["*"]
+description = "Typosquat: malicious package impersonating common import name"
+severity = "critical"
+
+[[packages]]
+ecosystem = "rubygems"
+name = "rest-client"
+versions = ["1.6.13"]
+description = "Hijacked: compromised version exfiltrated environment variables"
+severity = "critical"
+
+[[packages]]
+ecosystem = "rubygems"
+name = "strong_password"
+versions = ["0.0.7"]
+description = "Hijacked: compromised version contained backdoor"
+severity = "critical"
+
+# Lockfile patterns: filenames to scan per ecosystem
+[lockfiles]
+npm = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]
+rust = ["Cargo.lock"]
+ruby = ["Gemfile.lock"]
+python = ["requirements.txt", "Pipfile.lock", "poetry.lock"]
+go = ["go.sum"]
