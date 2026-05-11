@@ -302,12 +302,22 @@ WASM host imports, codegen, and dynamic tool registration per ADR 0012.
 - [x] `ProviderType::Anthropic` in models_config with router wiring
 - [x] OpenAI-compat verified against: Groq, Together, DeepSeek (all use /v1/chat/completions)
 
+### Phase 26: Marketplace & Catalog (COMPLETE)
+
+- [x] TrustTier enum (Verified, Community, Generated) in SkillIndexEntry
+- [x] Catalog search: SkillIndex::search() with name/description/tag matching
+- [x] `az search` command with JSON output support
+- [x] `az link` for cross-project tool sharing via symlinks
+- [x] Extended SkillIndexEntry with author, tags, trust fields
+- [ ] Javy embedding (Tier 2 JS→WASM compilation, deferred — significant dependency)
+- [ ] `az publish --catalog` workflow (deferred — needs catalog repo infrastructure)
+
 ## Not Yet (deferred)
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
-- [ ] Central skill index (JSON file in a well-known repo for short-name resolution).
 - [ ] Lockfile checksum re-verification on `agentzero run`.
-- [ ] Marketplace / catalog for published tools
+- [ ] Javy embedding for Tier 2 tool generation
+- [ ] `az publish --catalog` with PR-based submission
 - [ ] Brain plugin (personal LLM wiki) — WASM plugin per ADR 0015
   - Spec: `specs/prompts/0006-agentzero-brain-production-plugin-prompt.md`
   - Plan: `specs/plans/0004-brain-plugin.md`
