@@ -296,9 +296,26 @@ impl AgentLoop {
             "pure_computation" => codegen::ToolTemplate::PureComputation,
             "logger" => codegen::ToolTemplate::Logger,
             "file_reader" => codegen::ToolTemplate::FileReader,
+            "file_counter" => codegen::ToolTemplate::FileCounter,
+            "file_writer" => {
+                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("/tmp/output.txt");
+                let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                codegen::ToolTemplate::FileWriter {
+                    path: path.to_string(),
+                    content: content.to_string(),
+                }
+            }
+            "multi_file_reader" => {
+                let paths = args
+                    .get("paths")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                codegen::ToolTemplate::MultiFileReader { paths }
+            }
             other => {
                 return Err(AgentLoopError::ProviderError(format!(
-                    "generate_tool: unknown template '{other}'. Valid: pure_computation, logger, file_reader"
+                    "generate_tool: unknown template '{other}'. Valid: pure_computation, logger, file_reader, file_counter, file_writer, multi_file_reader"
                 )));
             }
         };

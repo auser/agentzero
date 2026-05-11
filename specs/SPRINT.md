@@ -323,7 +323,8 @@ WASM host imports, codegen, and dynamic tool registration per ADR 0012.
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
 - [ ] Lockfile checksum re-verification on `agentzero run`.
-- [ ] Javy embedding for Tier 2 tool generation
+- [ ] Javy embedding deferred indefinitely (no in-process JS→WASM API; CLI-only, too large for 6MB target)
+- [ ] Richer wasm-encoder templates replace Javy: FileCounter, FileWriter, MultiFileReader added
 - [ ] `az publish --catalog` with PR-based submission
 - [ ] Brain plugin (personal LLM wiki) — WASM plugin per ADR 0015
   - Spec: `specs/prompts/0006-agentzero-brain-production-plugin-prompt.md`

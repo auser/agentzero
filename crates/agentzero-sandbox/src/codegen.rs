@@ -37,6 +37,29 @@ mod generator {
         /// A self-contained pure computation (no host imports).
         /// Exports: main returning an i32 exit code.
         PureComputation,
+
+        /// A tool that reads a file, logs its byte count, and returns
+        /// the count as the exit code (mod 256).
+        /// Imports: az::read_file, az::log. Exports: main.
+        FileCounter,
+
+        /// A tool that writes a predefined message to a file.
+        /// The path and content are baked into the module's data section.
+        /// Imports: az::write_file, az::log. Exports: main.
+        FileWriter {
+            /// Path to write to.
+            path: String,
+            /// Content to write.
+            content: String,
+        },
+
+        /// A tool that reads one file, reads another, and logs both.
+        /// Useful as a template for multi-file operations.
+        /// Imports: az::read_file, az::log. Exports: main.
+        MultiFileReader {
+            /// Paths to read.
+            paths: Vec<String>,
+        },
     }
 
     /// Schema for a generated tool, used for registration.
@@ -59,6 +82,9 @@ mod generator {
             ToolTemplate::PureComputation => generate_pure_computation(),
             ToolTemplate::Logger => generate_logger(),
             ToolTemplate::FileReader => generate_file_reader(),
+            ToolTemplate::FileCounter => generate_file_counter(),
+            ToolTemplate::FileWriter { path, content } => generate_file_writer(path, content),
+            ToolTemplate::MultiFileReader { paths } => generate_multi_file_reader(paths),
         }
     }
 
@@ -273,6 +299,228 @@ mod generator {
         debug!(bytes = bytes.len(), "generated file reader module");
         Ok(bytes)
     }
+
+    /// Generate a WASM module that reads a file and returns its byte count.
+    ///
+    /// Imports: az::read_file(ptr, len) -> i32, az::log(ptr, len)
+    /// Exports: main() -> i32 (returns read_file status)
+    ///
+    /// Like FileReader but with a "counting" log message — foundation for
+    /// parameterized analysis tools.
+    fn generate_file_counter() -> Result<Vec<u8>, CodegenError> {
+        use wasm_encoder::*;
+
+        let mut module = Module::new();
+
+        let mut types = TypeSection::new();
+        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);       // type 0: az::log
+        types.ty().function(vec![ValType::I32, ValType::I32], vec![ValType::I32]); // type 1: az::read_file
+        types.ty().function(vec![], vec![ValType::I32]);                     // type 2: main
+        module.section(&types);
+
+        let mut imports = ImportSection::new();
+        imports.import("az", "log", EntityType::Function(0));
+        imports.import("az", "read_file", EntityType::Function(1));
+        module.section(&imports);
+
+        let mut functions = FunctionSection::new();
+        functions.function(2); // main
+        module.section(&functions);
+
+        let mut memories = MemorySection::new();
+        memories.memory(MemoryType { minimum: 1, maximum: Some(1), memory64: false, shared: false, page_size_log2: None });
+        module.section(&memories);
+
+        let mut exports = ExportSection::new();
+        exports.export("main", ExportKind::Func, 2);
+        exports.export("memory", ExportKind::Memory, 0);
+        module.section(&exports);
+
+        let path = b"Cargo.toml";
+        let log_msg = b"file counted";
+
+        let mut codes = CodeSection::new();
+        let mut func = Function::new(vec![(1, ValType::I32)]);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Const(path.len() as i32));
+        func.instruction(&Instruction::Call(1)); // az::read_file
+        func.instruction(&Instruction::LocalSet(0));
+        func.instruction(&Instruction::I32Const(256));
+        func.instruction(&Instruction::I32Const(log_msg.len() as i32));
+        func.instruction(&Instruction::Call(0)); // az::log
+        func.instruction(&Instruction::LocalGet(0));
+        func.instruction(&Instruction::End);
+        codes.function(&func);
+        module.section(&codes);
+
+        let mut data = DataSection::new();
+        data.active(0, &ConstExpr::i32_const(0), path.iter().copied());
+        data.active(0, &ConstExpr::i32_const(256), log_msg.iter().copied());
+        module.section(&data);
+
+        let bytes = module.finish();
+        debug!(bytes = bytes.len(), "generated file counter module");
+        Ok(bytes)
+    }
+
+    /// Generate a WASM module that writes parameterized content to a file.
+    ///
+    /// Imports: az::write_file(path_ptr, path_len, content_ptr, content_len) -> i32, az::log(ptr, len)
+    /// The path and content are baked into the module's data section.
+    fn generate_file_writer(path: &str, content: &str) -> Result<Vec<u8>, CodegenError> {
+        use wasm_encoder::*;
+
+        if path.is_empty() {
+            return Err(CodegenError::Failed("FileWriter: path cannot be empty".into()));
+        }
+
+        let mut module = Module::new();
+
+        let mut types = TypeSection::new();
+        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);       // type 0: az::log
+        types.ty().function(                                                  // type 1: az::write_file
+            vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+            vec![ValType::I32],
+        );
+        types.ty().function(vec![], vec![ValType::I32]);                     // type 2: main
+        module.section(&types);
+
+        let mut imports = ImportSection::new();
+        imports.import("az", "log", EntityType::Function(0));
+        imports.import("az", "write_file", EntityType::Function(1));
+        module.section(&imports);
+
+        let mut functions = FunctionSection::new();
+        functions.function(2);
+        module.section(&functions);
+
+        let mut memories = MemorySection::new();
+        memories.memory(MemoryType { minimum: 1, maximum: Some(1), memory64: false, shared: false, page_size_log2: None });
+        module.section(&memories);
+
+        let mut exports = ExportSection::new();
+        exports.export("main", ExportKind::Func, 2);
+        exports.export("memory", ExportKind::Memory, 0);
+        module.section(&exports);
+
+        // Layout: path at 0, content at 512, log msg at 1024
+        let path_bytes = path.as_bytes();
+        let content_bytes = content.as_bytes();
+        let log_msg = b"file written";
+
+        let mut codes = CodeSection::new();
+        let mut func = Function::new(vec![(1, ValType::I32)]);
+        // call write_file(path_ptr=0, path_len, content_ptr=512, content_len)
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Const(path_bytes.len() as i32));
+        func.instruction(&Instruction::I32Const(512));
+        func.instruction(&Instruction::I32Const(content_bytes.len() as i32));
+        func.instruction(&Instruction::Call(1)); // az::write_file
+        func.instruction(&Instruction::LocalSet(0));
+        func.instruction(&Instruction::I32Const(1024));
+        func.instruction(&Instruction::I32Const(log_msg.len() as i32));
+        func.instruction(&Instruction::Call(0)); // az::log
+        func.instruction(&Instruction::LocalGet(0));
+        func.instruction(&Instruction::End);
+        codes.function(&func);
+        module.section(&codes);
+
+        let mut data = DataSection::new();
+        data.active(0, &ConstExpr::i32_const(0), path_bytes.iter().copied());
+        data.active(0, &ConstExpr::i32_const(512), content_bytes.iter().copied());
+        data.active(0, &ConstExpr::i32_const(1024), log_msg.iter().copied());
+        module.section(&data);
+
+        let bytes = module.finish();
+        debug!(bytes = bytes.len(), path = path, "generated file writer module");
+        Ok(bytes)
+    }
+
+    /// Generate a WASM module that reads multiple files sequentially.
+    ///
+    /// Imports: az::read_file(ptr, len) -> i32, az::log(ptr, len)
+    /// Each path is stored in the data section at sequential offsets.
+    /// Returns 0 if all reads succeed, or the first non-zero status.
+    fn generate_multi_file_reader(paths: &[String]) -> Result<Vec<u8>, CodegenError> {
+        use wasm_encoder::*;
+
+        if paths.is_empty() {
+            return Err(CodegenError::Failed("MultiFileReader: at least one path required".into()));
+        }
+        if paths.len() > 16 {
+            return Err(CodegenError::Failed("MultiFileReader: max 16 paths".into()));
+        }
+
+        let mut module = Module::new();
+
+        let mut types = TypeSection::new();
+        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);       // type 0: az::log
+        types.ty().function(vec![ValType::I32, ValType::I32], vec![ValType::I32]); // type 1: az::read_file
+        types.ty().function(vec![], vec![ValType::I32]);                     // type 2: main
+        module.section(&types);
+
+        let mut imports = ImportSection::new();
+        imports.import("az", "log", EntityType::Function(0));
+        imports.import("az", "read_file", EntityType::Function(1));
+        module.section(&imports);
+
+        let mut functions = FunctionSection::new();
+        functions.function(2);
+        module.section(&functions);
+
+        let mut memories = MemorySection::new();
+        memories.memory(MemoryType { minimum: 1, maximum: Some(1), memory64: false, shared: false, page_size_log2: None });
+        module.section(&memories);
+
+        let mut exports = ExportSection::new();
+        exports.export("main", ExportKind::Func, 2);
+        exports.export("memory", ExportKind::Memory, 0);
+        module.section(&exports);
+
+        // Layout: paths at offsets 0, 256, 512, ... (256 bytes per slot)
+        // Log message at offset 4096
+        let log_msg = format!("read {} files", paths.len());
+        let log_bytes = log_msg.as_bytes();
+
+        // Build code: for each path, call read_file; if non-zero, return early
+        let mut codes = CodeSection::new();
+        let mut func = Function::new(vec![(1, ValType::I32)]);
+        for (i, path) in paths.iter().enumerate() {
+            let offset = (i * 256) as i32;
+            func.instruction(&Instruction::I32Const(offset));
+            func.instruction(&Instruction::I32Const(path.len() as i32));
+            func.instruction(&Instruction::Call(1)); // az::read_file
+            func.instruction(&Instruction::LocalSet(0));
+            // If non-zero, return early
+            func.instruction(&Instruction::LocalGet(0));
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32Ne);
+            func.instruction(&Instruction::If(BlockType::Empty));
+            func.instruction(&Instruction::LocalGet(0));
+            func.instruction(&Instruction::Return);
+            func.instruction(&Instruction::End);
+        }
+        // Log and return 0
+        func.instruction(&Instruction::I32Const(4096));
+        func.instruction(&Instruction::I32Const(log_bytes.len() as i32));
+        func.instruction(&Instruction::Call(0)); // az::log
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::End);
+        codes.function(&func);
+        module.section(&codes);
+
+        let mut data = DataSection::new();
+        for (i, path) in paths.iter().enumerate() {
+            let offset = (i * 256) as i32;
+            data.active(0, &ConstExpr::i32_const(offset), path.as_bytes().iter().copied());
+        }
+        data.active(0, &ConstExpr::i32_const(4096), log_bytes.iter().copied());
+        module.section(&data);
+
+        let bytes = module.finish();
+        debug!(bytes = bytes.len(), paths = paths.len(), "generated multi-file reader module");
+        Ok(bytes)
+    }
 }
 
 #[cfg(feature = "wasm")]
@@ -339,6 +587,59 @@ mod tests {
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         let result = engine.execute(&bytes);
         assert!(result.is_err(), "logger should fail without host callbacks");
+    }
+
+    #[test]
+    fn generate_file_counter_is_valid() {
+        let bytes = generate(&ToolTemplate::FileCounter).expect("should generate");
+        let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
+        let result = engine.execute_with_host(&bytes, Arc::new(DenyAllHostCallbacks));
+        assert!(result.is_ok(), "file counter should execute: {result:?}");
+    }
+
+    #[test]
+    fn generate_file_writer_is_valid() {
+        let bytes = generate(&ToolTemplate::FileWriter {
+            path: "/tmp/test-out.txt".into(),
+            content: "hello from WASM".into(),
+        })
+        .expect("should generate");
+        let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
+        let result = engine.execute_with_host(&bytes, Arc::new(DenyAllHostCallbacks));
+        assert!(result.is_ok(), "file writer should execute: {result:?}");
+    }
+
+    #[test]
+    fn generate_file_writer_empty_path_fails() {
+        let result = generate(&ToolTemplate::FileWriter {
+            path: String::new(),
+            content: "content".into(),
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn generate_multi_file_reader_is_valid() {
+        let bytes = generate(&ToolTemplate::MultiFileReader {
+            paths: vec!["Cargo.toml".into(), "README.md".into()],
+        })
+        .expect("should generate");
+        let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
+        let result = engine.execute_with_host(&bytes, Arc::new(DenyAllHostCallbacks));
+        assert!(result.is_ok(), "multi-file reader should execute: {result:?}");
+    }
+
+    #[test]
+    fn generate_multi_file_reader_empty_fails() {
+        let result = generate(&ToolTemplate::MultiFileReader { paths: vec![] });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn generate_multi_file_reader_too_many_fails() {
+        let paths: Vec<String> = (0..17).map(|i| format!("file{i}.txt")).collect();
+        let result = generate(&ToolTemplate::MultiFileReader { paths });
+        assert!(result.is_err());
     }
 
     #[test]

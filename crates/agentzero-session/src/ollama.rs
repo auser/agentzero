@@ -489,7 +489,7 @@ impl OllamaProvider {
             tool_type: "function".into(),
             function: ToolFunctionDef {
                 name: "generate_tool".into(),
-                description: "Generate a new WASM tool from a template and register it for use. Templates: pure_computation (no imports, returns exit code), logger (calls az::log), file_reader (reads a file via az::read_file). Requires approval.".into(),
+                description: "Generate a new WASM tool from a template and register it for use. Templates: pure_computation, logger, file_reader, file_counter, file_writer (needs path+content args), multi_file_reader (needs paths array arg). Requires approval.".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -503,8 +503,21 @@ impl OllamaProvider {
                         },
                         "template": {
                             "type": "string",
-                            "enum": ["pure_computation", "logger", "file_reader"],
-                            "description": "Template to generate from: pure_computation, logger, or file_reader"
+                            "enum": ["pure_computation", "logger", "file_reader", "file_counter", "file_writer", "multi_file_reader"],
+                            "description": "Template to generate from"
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "File path (for file_writer template)"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Content to write (for file_writer template)"
+                        },
+                        "paths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "File paths (for multi_file_reader template)"
                         }
                     },
                     "required": ["name", "description", "template"]
