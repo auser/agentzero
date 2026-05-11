@@ -8,13 +8,14 @@ repository.workspace = true
 
 [features]
 default = ["wasm"]
-wasm = ["wasmtime"]
+wasm = ["wasmtime", "wasm-encoder"]
 
 [dependencies]
 agentzero-core = { workspace = true }
 agentzero-tracing = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+wasm-encoder = { workspace = true, optional = true }
 wasmtime = { workspace = true, optional = true }
 
 [dev-dependencies]

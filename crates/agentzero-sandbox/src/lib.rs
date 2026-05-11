@@ -3,6 +3,7 @@
 //! Defines execution constraints per ADR 0006 (runtime isolation tiers).
 //! Includes WASM sandbox runtime (behind `wasm` feature flag).
 
+pub mod codegen;
 pub mod wasm;
 
 use agentzero_core::{Capability, ExecutionId, RuntimeTier};
