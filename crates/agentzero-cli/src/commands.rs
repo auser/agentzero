@@ -209,7 +209,19 @@ pub async fn run(command: Command) -> i32 {
         }
         Command::History => cmd_history(),
         Command::Serve => cmd_serve().await,
-        Command::Mcp => cmd_mcp().await,
+        Command::Mcp => {
+            #[cfg(feature = "mcp")]
+            {
+                cmd_mcp().await
+            }
+            #[cfg(not(feature = "mcp"))]
+            {
+                eprintln!("MCP server is not available in this build.");
+                eprintln!("Rebuild with: cargo build --features mcp");
+                eprintln!("AgentZero's native protocol is ACP (az serve). See ADR 0014.");
+                1
+            }
+        }
         Command::Doctor => cmd_doctor(),
         Command::Demo => cmd_demo(),
         Command::Policy { action } => match action {
@@ -624,6 +636,7 @@ async fn cmd_serve() -> i32 {
     }
 }
 
+#[cfg(feature = "mcp")]
 async fn cmd_mcp() -> i32 {
     use agentzero::mcp::{McpServer, McpServerConfig};
 

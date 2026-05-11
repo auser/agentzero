@@ -14,6 +14,7 @@ path = "src/main.rs"
 default = ["wasm"]
 wasm = ["agentzero/wasm"]
 rag = ["agentzero/rag"]
+mcp = ["agentzero/mcp"]
 
 [dependencies]
 agentzero = { workspace = true }

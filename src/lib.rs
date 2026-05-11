@@ -17,6 +17,7 @@
 pub use agentzero_acp as acp;
 pub use agentzero_audit as audit;
 pub use agentzero_core as core;
+#[cfg(feature = "mcp")]
 pub use agentzero_mcp as mcp;
 pub use agentzero_policy as policy;
 pub use agentzero_sandbox as sandbox;

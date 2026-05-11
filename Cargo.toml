@@ -29,11 +29,12 @@ repository.workspace = true
 default = ["wasm"]
 wasm = ["agentzero-session/wasm"]
 rag = ["agentzero-index", "agentzero-session/rag"]
+mcp = ["agentzero-mcp"]
 
 [dependencies]
 agentzero-acp = { workspace = true }
 agentzero-audit = { workspace = true }
-agentzero-mcp = { workspace = true }
+agentzero-mcp = { workspace = true, optional = true }
 agentzero-core = { workspace = true }
 agentzero-index = { workspace = true, optional = true }
 agentzero-policy = { workspace = true }
