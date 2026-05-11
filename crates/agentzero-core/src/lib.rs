@@ -17,7 +17,7 @@ pub mod vault;
 
 pub use action::ActionKind;
 pub use id::{AgentId, ExecutionId, SessionId, SkillId, ToolId};
-pub use redaction::{placeholder_for, Redaction, RedactionResult};
+pub use redaction::{placeholder_for, redact_json_value, scan_for_secrets, Redaction, RedactionResult};
 pub use routing::{route_for_classification, ModelRoutingDecision};
 pub use secret::{ResolvedSecret, SecretHandle};
 pub use trust::{LabeledContent, TrustSource};

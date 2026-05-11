@@ -598,45 +598,11 @@ impl Session {
     }
 
     /// Scan content for sensitive patterns and return redaction result.
+    ///
+    /// Delegates to `agentzero_core::scan_for_secrets` — the single source of
+    /// truth for pattern-based secret/PII detection.
     fn redact_content(&self, content: &str) -> RedactionResult {
-        let mut redactions = Vec::new();
-        let lower = content.to_lowercase();
-
-        // Simple pattern-based redaction for common PII/secret patterns
-        let patterns: &[(&str, DataClassification)] = &[
-            ("@gmail.com", DataClassification::Pii),
-            ("@yahoo.com", DataClassification::Pii),
-            ("@hotmail.com", DataClassification::Pii),
-            ("@outlook.com", DataClassification::Pii),
-            ("ghp_", DataClassification::Secret),
-            ("gho_", DataClassification::Secret),
-            ("sk-", DataClassification::Secret),
-            ("AKIA", DataClassification::Secret),
-        ];
-
-        for (pattern, classification) in patterns {
-            let pattern_lower = pattern.to_lowercase();
-            let mut search_from = 0;
-            while let Some(pos) = lower[search_from..].find(&pattern_lower) {
-                let abs_pos = search_from + pos;
-                // Find word boundary (extend to whitespace or end)
-                let end = content[abs_pos..]
-                    .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
-                    .map_or(content.len(), |e| abs_pos + e);
-
-                let idx = redactions.len();
-                redactions.push(agentzero_core::Redaction {
-                    start: abs_pos,
-                    end,
-                    classification: *classification,
-                    placeholder: agentzero_core::placeholder_for(*classification, idx),
-                });
-                search_from = end;
-            }
-        }
-
-        redactions.sort_by_key(|r| r.start);
-        RedactionResult { redactions }
+        agentzero_core::scan_for_secrets(content)
     }
 
     fn emit_lifecycle_event(&self, action: &str, reason: &str) -> Result<(), SessionError> {

@@ -65,6 +65,82 @@ pub fn placeholder_for(classification: DataClassification, index: usize) -> Stri
     format!("[{tag}_{index}]")
 }
 
+/// Known patterns for secret and PII detection.
+///
+/// Each entry is a (prefix, classification) pair. The scanner finds the prefix
+/// in content and extends the match to the next word boundary.
+const SENSITIVE_PATTERNS: &[(&str, DataClassification)] = &[
+    ("@gmail.com", DataClassification::Pii),
+    ("@yahoo.com", DataClassification::Pii),
+    ("@hotmail.com", DataClassification::Pii),
+    ("@outlook.com", DataClassification::Pii),
+    ("ghp_", DataClassification::Secret),
+    ("gho_", DataClassification::Secret),
+    ("sk-", DataClassification::Secret),
+    ("AKIA", DataClassification::Secret),
+];
+
+/// Scan content for known secret and PII patterns, returning a `RedactionResult`.
+///
+/// This is the single source of truth for pattern-based redaction scanning.
+/// Used by `Session::prepare_for_model()`, audit logging, and tool argument redaction.
+pub fn scan_for_secrets(content: &str) -> RedactionResult {
+    let lower = content.to_lowercase();
+    let mut redactions = Vec::new();
+
+    for (pattern, classification) in SENSITIVE_PATTERNS {
+        let pattern_lower = pattern.to_lowercase();
+        let mut search_from = 0;
+        while let Some(pos) = lower[search_from..].find(&pattern_lower) {
+            let abs_pos = search_from + pos;
+            let end = content[abs_pos..]
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
+                .map_or(content.len(), |e| abs_pos + e);
+
+            let idx = redactions.len();
+            redactions.push(Redaction {
+                start: abs_pos,
+                end,
+                classification: *classification,
+                placeholder: placeholder_for(*classification, idx),
+            });
+            search_from = end;
+        }
+    }
+
+    redactions.sort_by_key(|r| r.start);
+    RedactionResult { redactions }
+}
+
+/// Redact known sensitive patterns from a JSON value for safe storage/display.
+///
+/// Walks all string values in the JSON structure and replaces detected
+/// secrets and PII with placeholders. Used before storing tool arguments
+/// in `ToolCallRecord` or displaying in approval prompts.
+pub fn redact_json_value(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => {
+            let result = scan_for_secrets(s);
+            if result.is_clean() {
+                value.clone()
+            } else {
+                serde_json::Value::String(result.apply(s))
+            }
+        }
+        serde_json::Value::Object(map) => {
+            let redacted: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), redact_json_value(v)))
+                .collect();
+            serde_json::Value::Object(redacted)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(redact_json_value).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +214,67 @@ mod tests {
             placeholder_for(DataClassification::Unknown, 0),
             "[REDACTED_0]"
         );
+    }
+
+    #[test]
+    fn scan_finds_api_keys() {
+        let result = scan_for_secrets("my key is sk-1234567890abcdef done");
+        assert!(!result.is_clean());
+        let redacted = result.apply("my key is sk-1234567890abcdef done");
+        assert!(!redacted.contains("sk-1234567890abcdef"));
+        assert!(redacted.contains("[SECRET_"));
+    }
+
+    #[test]
+    fn scan_finds_github_tokens() {
+        let result = scan_for_secrets("token ghp_ABCDabcd1234567890 end");
+        assert!(!result.is_clean());
+        let redacted = result.apply("token ghp_ABCDabcd1234567890 end");
+        assert!(!redacted.contains("ghp_"));
+    }
+
+    #[test]
+    fn scan_finds_emails() {
+        let result = scan_for_secrets("contact user@gmail.com please");
+        assert!(!result.is_clean());
+        let redacted = result.apply("contact user@gmail.com please");
+        assert!(!redacted.contains("@gmail.com"));
+        assert!(redacted.contains("[PII_"));
+    }
+
+    #[test]
+    fn scan_finds_aws_keys() {
+        let result = scan_for_secrets("key AKIAIOSFODNN7EXAMPLE here");
+        assert!(!result.is_clean());
+        let redacted = result.apply("key AKIAIOSFODNN7EXAMPLE here");
+        assert!(!redacted.contains("AKIAIOSFODNN7EXAMPLE"));
+    }
+
+    #[test]
+    fn scan_clean_content() {
+        let result = scan_for_secrets("nothing sensitive here");
+        assert!(result.is_clean());
+    }
+
+    #[test]
+    fn redact_json_hides_nested_secrets() {
+        let value = serde_json::json!({
+            "path": "/tmp/test",
+            "content": "API_KEY=sk-secret123456789",
+            "nested": {"email": "user@gmail.com"}
+        });
+        let redacted = redact_json_value(&value);
+        let s = redacted.to_string();
+        assert!(!s.contains("sk-secret"));
+        assert!(!s.contains("@gmail.com"));
+        assert!(s.contains("/tmp/test"));
+    }
+
+    #[test]
+    fn redact_json_preserves_clean() {
+        let value = serde_json::json!({"path": "/tmp/safe", "count": 42});
+        let redacted = redact_json_value(&value);
+        assert_eq!(value, redacted);
     }
 
     #[test]
