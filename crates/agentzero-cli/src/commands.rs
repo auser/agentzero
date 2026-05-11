@@ -75,6 +75,15 @@ pub enum Command {
     Mcp,
     /// Check system health and configuration.
     Doctor,
+    /// Detect platform and install a recommended local LLM backend.
+    Bootstrap {
+        /// Skip confirmation prompt and install automatically.
+        #[arg(long)]
+        non_interactive: bool,
+        /// Skip model download (install backend only).
+        #[arg(long)]
+        skip_model: bool,
+    },
     /// Run a minimal safe demo using core types.
     Demo,
     /// Manage policy rules.
@@ -223,6 +232,9 @@ pub async fn run(command: Command) -> i32 {
             }
         }
         Command::Doctor => cmd_doctor(),
+        Command::Bootstrap { non_interactive, skip_model } => {
+            cmd_bootstrap(non_interactive, skip_model)
+        }
         Command::Demo => cmd_demo(),
         Command::Policy { action } => match action {
             PolicyAction::Status => cmd_policy_status(),
@@ -671,6 +683,192 @@ async fn cmd_mcp() -> i32 {
             1
         }
     }
+}
+
+fn cmd_bootstrap(non_interactive: bool, skip_model: bool) -> i32 {
+    use std::io::{self, BufRead, Write};
+
+    println!("AgentZero Bootstrap — Local LLM Backend Setup\n");
+
+    // Detect platform
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    println!("Platform: {os}/{arch}");
+
+    let is_apple_silicon = os == "macos" && arch == "aarch64";
+
+    // Check for existing backends
+    let backends = [
+        ("ollama", 11434, "Ollama"),
+        ("llama-server", 8080, "llama.cpp"),
+        ("vllm", 8000, "vLLM"),
+    ];
+
+    let mut found = Vec::new();
+    for (cmd, port, name) in &backends {
+        if which_command(cmd) {
+            found.push(*name);
+            println!("  Found: {name} ({cmd} on PATH)");
+        } else {
+            // Try connecting to the port
+            let addr = format!("127.0.0.1:{port}");
+            if std::net::TcpStream::connect_timeout(
+                &addr.parse().expect("valid addr"),
+                std::time::Duration::from_millis(500),
+            )
+            .is_ok()
+            {
+                found.push(*name);
+                println!("  Found: {name} (listening on port {port})");
+            }
+        }
+    }
+
+    if !found.is_empty() {
+        println!("\nExisting backend(s) detected: {}", found.join(", "));
+        println!("You may already be ready. Run `az doctor` to verify.\n");
+    }
+
+    // Recommend backend
+    let recommendations = if is_apple_silicon {
+        vec![
+            ("Ollama", "curl -fsSL https://ollama.com/install.sh | sh"),
+            ("MLX", "pip install mlx-lm"),
+        ]
+    } else if os == "linux" {
+        vec![
+            ("Ollama", "curl -fsSL https://ollama.com/install.sh | sh"),
+            ("llama.cpp", "See https://github.com/ggml-org/llama.cpp for build instructions"),
+        ]
+    } else if os == "macos" {
+        vec![
+            ("Ollama", "curl -fsSL https://ollama.com/install.sh | sh"),
+        ]
+    } else {
+        // Windows
+        vec![
+            ("Ollama", "Download from https://ollama.com/download"),
+            ("LM Studio", "Download from https://lmstudio.ai/"),
+        ]
+    };
+
+    println!("Recommended backends for {os}/{arch}:");
+    for (i, (name, cmd)) in recommendations.iter().enumerate() {
+        println!("  {}. {name}: {cmd}", i + 1);
+    }
+
+    if non_interactive {
+        // Auto-install first recommendation (Ollama) on macOS/Linux
+        if os == "macos" || os == "linux" {
+            println!("\nInstalling Ollama (non-interactive mode)...");
+            let status = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("curl -fsSL https://ollama.com/install.sh | sh")
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    println!("Ollama installed successfully.");
+                    if !skip_model {
+                        println!("Pulling default model (llama3.2)...");
+                        let _ = std::process::Command::new("ollama")
+                            .args(["pull", "llama3.2"])
+                            .status();
+                    }
+                }
+                Ok(s) => {
+                    eprintln!("Ollama install failed with exit code: {s}");
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!("Failed to run install command: {e}");
+                    return 1;
+                }
+            }
+        } else {
+            println!("\nNon-interactive install is only supported on macOS/Linux.");
+            println!("Please install manually using the commands above.");
+            return 1;
+        }
+    } else {
+        println!("\nWould you like to install one? (1/2/skip) ");
+        print!("> ");
+        io::stdout().flush().ok();
+        let mut answer = String::new();
+        io::stdin().lock().read_line(&mut answer).ok();
+        let trimmed = answer.trim();
+
+        if trimmed == "skip" || trimmed.is_empty() {
+            println!("Skipped. You can install manually using the commands above.");
+            println!("Run `az doctor` after installing to verify the setup.");
+            return 0;
+        }
+
+        if let Ok(idx) = trimmed.parse::<usize>() {
+            if idx >= 1 && idx <= recommendations.len() {
+                let (name, cmd) = recommendations[idx - 1];
+                if cmd.starts_with("curl") || cmd.starts_with("pip") {
+                    println!("\nInstalling {name}...");
+                    let status = std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(cmd)
+                        .status();
+                    match status {
+                        Ok(s) if s.success() => {
+                            println!("{name} installed successfully.");
+                            if !skip_model && name == "Ollama" {
+                                println!("Pulling default model (llama3.2)...");
+                                let _ = std::process::Command::new("ollama")
+                                    .args(["pull", "llama3.2"])
+                                    .status();
+                            }
+                        }
+                        Ok(s) => {
+                            eprintln!("Install failed with exit code: {s}");
+                            return 1;
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to run install command: {e}");
+                            return 1;
+                        }
+                    }
+                } else {
+                    println!("\nPlease install {name} manually:");
+                    println!("  {cmd}");
+                    println!("Then run `az doctor` to verify.");
+                    return 0;
+                }
+            }
+        }
+    }
+
+    // Generate models.json if it doesn't exist
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let models_path = cwd.join(".agentzero/models.json");
+    if !models_path.exists() {
+        if let Some(parent) = models_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let default_config = agentzero::session::ModelsConfig::default_ollama();
+        if let Ok(json) = serde_json::to_string_pretty(&default_config) {
+            if std::fs::write(&models_path, json).is_ok() {
+                println!("\nCreated: {}", models_path.display());
+            }
+        }
+    }
+
+    println!("\nBootstrap complete. Run `az doctor` to verify your setup.");
+    0
+}
+
+/// Check if a command exists on PATH.
+fn which_command(cmd: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(cmd)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Load settings from .agentzero/settings.toml and return (provider, model) defaults.
