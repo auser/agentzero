@@ -276,12 +276,25 @@ Prerequisite for self-improving agent work. Fixes security gaps found during gap
 - [x] Implement approval scope tracking (Once/Session via ApprovedForSession)
 - [x] Extract redaction scanning into agentzero-core as shared public utility
 
+### Phase 24: Self-Improving Agent Foundation (IN PROGRESS)
+
+WASM host imports, codegen, and dynamic tool registration per ADR 0012.
+
+- [x] ADRs 0012 (Self-Improving via WASM), 0013 (WIT), 0014 (MCP Deprecation)
+- [x] `az:host` WIT interface definition (`crates/agentzero-sandbox/wit/az-host.wit`)
+- [x] WASM host imports via wasmtime Linker (`az::log`, `az::read_file`, `az::write_file`)
+- [x] `WasmHostCallbacks` trait for injectable host functions
+- [x] `wasm-encoder` template-based tool generation (PureComputation, Logger, FileReader)
+- [x] `DynamicToolRegistry` — per-project tool storage with directory-based versioning
+- [x] `AgentLoop::generate_and_register_tool()` — end-to-end codegen → registration
+- [ ] `generate_tool` built-in tool callable by the LLM during the agent loop
+- [ ] Wire `WasmHostCallbacks` to `ToolExecutor` + `PolicyEngine` in session
+
 ## Not Yet (deferred)
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
 - [ ] Central skill index (JSON file in a well-known repo for short-name resolution).
 - [ ] Lockfile checksum re-verification on `agentzero run`.
-- [ ] Self-improving agent via WASM (Phase 24: WIT interface, host imports, dynamic tool registration)
 - [ ] `az bootstrap` command (platform detection + backend install)
 - [ ] Anthropic provider
 - [ ] MCP to optional feature flag

@@ -7,7 +7,10 @@ use std::collections::HashSet;
 use std::pin::Pin;
 
 use agentzero_core::{redact_json_value, ApprovalScope, DataClassification};
+use agentzero_sandbox::codegen;
 use agentzero_tracing::{info, warn};
+
+use crate::dynamic_tools::DynamicToolRegistry;
 
 use crate::context::{self, ContextConfig};
 use crate::ollama::{ChatMessage, ToolDefinition};
@@ -145,6 +148,8 @@ pub struct AgentLoop {
     config: AgentLoopConfig,
     /// Tool names approved for the rest of this session (Session scope).
     session_approvals: HashSet<String>,
+    /// Optional dynamic tool registry for self-improving agent (ADR 0012).
+    tool_registry: Option<DynamicToolRegistry>,
 }
 
 impl AgentLoop {
@@ -162,6 +167,7 @@ impl AgentLoop {
             messages: Vec::new(),
             config,
             session_approvals: HashSet::new(),
+            tool_registry: None,
         }
     }
 
@@ -177,6 +183,50 @@ impl AgentLoop {
     pub fn with_messages(mut self, messages: Vec<ChatMessage>) -> Self {
         self.messages = messages;
         self
+    }
+
+    /// Enable dynamic tool generation with a project-rooted registry.
+    pub fn with_tool_registry(mut self, project_root: &std::path::Path) -> Self {
+        self.tool_registry = Some(DynamicToolRegistry::new(project_root));
+        self
+    }
+
+    /// Generate a WASM tool from a template and register it per-project.
+    ///
+    /// Returns the tool name and version. The tool becomes available for
+    /// use in subsequent agent loop rounds.
+    #[cfg(feature = "wasm")]
+    pub fn generate_and_register_tool(
+        &self,
+        name: &str,
+        description: &str,
+        template: codegen::ToolTemplate,
+    ) -> Result<(String, u32), AgentLoopError> {
+        let registry = self.tool_registry.as_ref().ok_or_else(|| {
+            AgentLoopError::ProviderError(
+                "tool generation requires a tool registry (call with_tool_registry)".into(),
+            )
+        })?;
+
+        info!(tool = name, template = ?template, "generating WASM tool");
+
+        let wasm_bytes = codegen::generate(&template)
+            .map_err(|e| AgentLoopError::ProviderError(format!("codegen failed: {e}")))?;
+
+        let template_name = format!("{template:?}");
+        let version = registry.register(name, description, &template_name, &wasm_bytes)
+            .map_err(|e| AgentLoopError::ProviderError(format!("registration failed: {e}")))?;
+
+        info!(tool = name, version = version, "tool generated and registered");
+        Ok((name.to_string(), version))
+    }
+
+    /// List all dynamic tools registered for this project.
+    pub fn list_dynamic_tools(&self) -> Vec<String> {
+        self.tool_registry
+            .as_ref()
+            .and_then(|r| r.list().ok())
+            .unwrap_or_default()
     }
 
     /// Return the session ID.
@@ -474,6 +524,63 @@ mod tests {
             Some(agentzero_core::ApprovalScope::Session)
         );
         assert_eq!(ApprovalDecision::Denied.scope(), None);
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn generate_and_register_tool_works() {
+        let session = test_session();
+        let router = ProviderRouter::local_only("llama3.2");
+        let tools = OllamaProvider::agentzero_tool_definitions();
+        let config = AgentLoopConfig::default();
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let agent = AgentLoop::new(router, session, tools, config)
+            .with_tool_registry(dir.path());
+
+        let (name, version) = agent
+            .generate_and_register_tool(
+                "test-codegen",
+                "A test generated tool",
+                agentzero_sandbox::codegen::ToolTemplate::PureComputation,
+            )
+            .expect("should generate and register");
+
+        assert_eq!(name, "test-codegen");
+        assert_eq!(version, 1);
+
+        // Verify it's listed
+        let tools = agent.list_dynamic_tools();
+        assert!(tools.contains(&"test-codegen".to_string()));
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn generate_tool_without_registry_fails() {
+        let session = test_session();
+        let router = ProviderRouter::local_only("llama3.2");
+        let tools = OllamaProvider::agentzero_tool_definitions();
+        let config = AgentLoopConfig::default();
+
+        let agent = AgentLoop::new(router, session, tools, config);
+        // No tool_registry set
+        let result = agent.generate_and_register_tool(
+            "test",
+            "desc",
+            agentzero_sandbox::codegen::ToolTemplate::PureComputation,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn list_dynamic_tools_empty_without_registry() {
+        let session = test_session();
+        let router = ProviderRouter::local_only("llama3.2");
+        let tools = OllamaProvider::agentzero_tool_definitions();
+        let config = AgentLoopConfig::default();
+
+        let agent = AgentLoop::new(router, session, tools, config);
+        assert!(agent.list_dynamic_tools().is_empty());
     }
 
     #[test]
