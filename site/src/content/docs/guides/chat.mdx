@@ -43,6 +43,7 @@ The model can request tools during conversation. Available tools:
 | `list` | List directory contents | Allowed |
 | `search` | Search file contents | Allowed |
 | `write` | Write to a file | Requires approval |
+| `edit` | Edit file contents (search-and-replace) | Requires approval |
 | `shell` | Execute shell command | Requires approval |
 
 Dangerous tools prompt for approval:
@@ -86,6 +87,29 @@ Prefer zero-copy operations where possible.
 ```
 
 The chat will use this instead of the default system prompt.
+
+## Single-Shot Mode
+
+Use `-P` (or `--print`) to send a single message and exit after the response. Useful for scripting and automation.
+
+```bash
+# Plain text output (default)
+az chat -P "what language is this project written in?"
+
+# Pretty JSON output
+az chat -P "list all public functions in src/lib.rs" --mode json
+
+# Compact JSONL for piping
+az chat -P "summarize this crate" --mode jsonl | jq .content
+```
+
+Available modes:
+
+| Mode | Description |
+|------|-------------|
+| `text` | Plain text (default) |
+| `json` | Pretty-printed JSON |
+| `jsonl` | Compact single-line JSON |
 
 ## Context Management
 

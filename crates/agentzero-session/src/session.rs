@@ -239,7 +239,7 @@ impl Session {
 
         let capability = match tool_name {
             "read" | "list" | "search" | "query" => Capability::FileRead,
-            "write" | "propose_edit" => Capability::FileWrite,
+            "write" | "edit" | "propose_edit" => Capability::FileWrite,
             "shell" => Capability::ShellCommand,
             _ => Capability::FileRead,
         };
@@ -270,6 +270,26 @@ impl Session {
                     let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
                     self.tool_executor
                         .search_files(path, pattern)
+                        .map_err(|e| SessionError::Failed(e.to_string()))?
+                }
+                "edit" => {
+                    let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                        SessionError::Failed("edit: missing 'path' argument".into())
+                    })?;
+                    let old_text =
+                        args.get("old_text")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                SessionError::Failed("edit: missing 'old_text' argument".into())
+                            })?;
+                    let new_text =
+                        args.get("new_text")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                SessionError::Failed("edit: missing 'new_text' argument".into())
+                            })?;
+                    self.tool_executor
+                        .edit_file(path, old_text, new_text)
                         .map_err(|e| SessionError::Failed(e.to_string()))?
                 }
                 "propose_edit" => {

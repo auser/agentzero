@@ -21,6 +21,7 @@ export default defineConfig({
 					label: 'Guides',
 					items: [
 						{ label: 'Chat with Local Models', slug: 'guides/chat' },
+						{ label: 'Model Configuration', slug: 'guides/models-config' },
 						{ label: 'MCP Integration', slug: 'guides/mcp' },
 						{ label: 'ACP Editor Adapter', slug: 'guides/editor-adapter' },
 						{ label: 'Document Querying', slug: 'guides/document-query' },

@@ -3,7 +3,9 @@
 //! Orchestrates model calls, tool invocation, and policy enforcement
 //! within a single supervised session (ADR 0001).
 
+pub mod agent_loop;
 pub mod context;
+pub mod models_config;
 pub mod ollama;
 pub mod openai_compat;
 mod provider;
@@ -12,6 +14,11 @@ pub mod router;
 mod session;
 mod tool_exec;
 
+pub use agent_loop::{
+    AgentLoop, AgentLoopConfig, AgentLoopError, AgentResponse, ApprovalDecision, ApprovalHandler,
+    AutoApprove, NoopProgress, ProgressHandler, ToolCallRecord,
+};
+pub use models_config::{ModelsConfig, ProviderConfig, ProviderType};
 pub use ollama::{
     ChatMessage, ChatResult, OllamaConfig, OllamaProvider, ToolCall, ToolCallFunction,
     ToolDefinition, ToolFunctionDef,

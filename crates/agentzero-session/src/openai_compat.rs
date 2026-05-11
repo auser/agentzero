@@ -162,12 +162,12 @@ impl OpenAICompatProvider {
 
     /// Send a chat completion request.
     pub async fn chat(&self, messages: &[ChatMessage]) -> Result<String, ModelProviderError> {
-        let result = self.chat_with_tools(messages, None).await?;
+        let result = self.chat_with_tools_impl(messages, None).await?;
         Ok(result.content)
     }
 
-    /// Send a chat completion with tool definitions.
-    pub async fn chat_with_tools(
+    /// Send a chat completion with tool definitions (implementation).
+    async fn chat_with_tools_impl(
         &self,
         messages: &[ChatMessage],
         tools: Option<&[ToolDefinition]>,
@@ -309,6 +309,52 @@ impl ModelProvider for OpenAICompatProvider {
         } else {
             ModelLocation::Remote
         }
+    }
+
+    fn model_name(&self) -> &str {
+        &self.config.model
+    }
+
+    fn health_check(
+        &self,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<bool, ModelProviderError>> + Send + '_>,
+    > {
+        Box::pin(async {
+            let url = format!("{}/v1/models", self.config.base_url);
+            debug!(url = %url, "checking openai-compat health");
+
+            let mut req = self.client.get(&url);
+            if let Some(ref key) = self.config.api_key {
+                req = req.bearer_auth(key);
+            }
+
+            match req.send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        info!(model = %self.config.model, "openai-compat server available");
+                        Ok(true)
+                    } else {
+                        warn!(status = %resp.status(), "openai-compat server returned non-success");
+                        Ok(false)
+                    }
+                }
+                Err(e) => {
+                    debug!(error = %e, "openai-compat server not reachable");
+                    Err(ModelProviderError::Unavailable(e.to_string()))
+                }
+            }
+        })
+    }
+
+    fn chat_with_tools<'a>(
+        &'a self,
+        messages: &'a [ChatMessage],
+        tools: Option<&'a [ToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ChatResult, ModelProviderError>> + Send + 'a>,
+    > {
+        Box::pin(async move { self.chat_with_tools_impl(messages, tools).await })
     }
 }
 

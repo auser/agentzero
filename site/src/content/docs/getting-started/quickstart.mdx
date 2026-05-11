@@ -81,6 +81,24 @@ Add to your Claude Code or Cursor settings:
 
 Now your editor's AI gets policy-controlled tool access through AgentZero.
 
+## Editor Integration
+
+Generate editor-native config files during init:
+
+```bash
+az init --private --editor vscode
+```
+
+This creates `.vscode/tasks.json` configured to launch `az serve`. Also works with `cursor` and `zed`.
+
+For scripting and automation, use single-shot mode:
+
+```bash
+az chat -P "what does this project do?" --mode json
+```
+
+This sends one message, prints the JSON response, and exits.
+
 ## Choose a Different Model
 
 ```bash

@@ -168,6 +168,72 @@ impl ToolExecutor {
         })
     }
 
+    /// Edit a file by replacing `old_text` with `new_text` (search-and-replace).
+    ///
+    /// Returns a unified diff of the changes. Requires `FileWrite` capability.
+    pub fn edit_file(
+        &self,
+        path: &str,
+        old_text: &str,
+        new_text: &str,
+    ) -> Result<ToolResult, ToolExecutorError> {
+        let execution_id = ExecutionId::new();
+        let tool_id = ToolId::from_string("edit");
+
+        debug!(
+            tool = "edit",
+            path = path,
+            "checking policy for file edit"
+        );
+
+        let decision = self.check_policy(Capability::FileWrite, DataClassification::Private);
+        if !decision.is_allowed() {
+            return match decision {
+                PolicyDecision::RequiresApproval { reason } => Err(ToolExecutorError::Denied(
+                    format!("file edit requires approval: {reason}"),
+                )),
+                _ => Err(ToolExecutorError::Denied(format!(
+                    "file edit denied: {decision:?}"
+                ))),
+            };
+        }
+
+        self.validate_path(path)?;
+
+        let original = std::fs::read_to_string(path)
+            .map_err(|e| ToolExecutorError::Failed(format!("failed to read {path}: {e}")))?;
+
+        if !original.contains(old_text) {
+            return Err(ToolExecutorError::Failed(format!(
+                "old_text not found in {path}"
+            )));
+        }
+
+        let updated = original.replacen(old_text, new_text, 1);
+
+        info!(
+            tool = "edit",
+            path = path,
+            "writing edited file"
+        );
+        std::fs::write(path, &updated)
+            .map_err(|e| ToolExecutorError::Failed(format!("failed to write {path}: {e}")))?;
+
+        // Generate a simple diff summary
+        let old_lines = old_text.lines().count();
+        let new_lines = new_text.lines().count();
+        let diff = format!(
+            "edited {path}: replaced {old_lines} line(s) with {new_lines} line(s)\n--- old\n{old_text}\n+++ new\n{new_text}"
+        );
+
+        Ok(ToolResult {
+            tool_id,
+            execution_id,
+            success: true,
+            output: diff,
+        })
+    }
+
     /// Propose an edit without writing — returns the proposed diff as output.
     pub fn propose_edit(
         &self,
@@ -595,6 +661,59 @@ mod tests {
             .expect("should succeed");
         assert!(result.output.contains("PROPOSED EDIT"));
         assert!(result.output.contains("requires approval"));
+    }
+
+    #[test]
+    fn edit_file_replaces_text() {
+        let policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow(Capability::FileRead, DataClassification::Private),
+            PolicyRule::allow(Capability::FileWrite, DataClassification::Private),
+        ]);
+        let executor = ToolExecutor::new(policy);
+
+        // Create a temp file
+        let dir = std::env::temp_dir().join("agentzero-test-edit");
+        std::fs::create_dir_all(&dir).ok();
+        let file = dir.join("test-edit.txt");
+        std::fs::write(&file, "hello world\nfoo bar\n").expect("write temp file");
+
+        let result = executor
+            .edit_file(file.to_str().expect("path"), "foo bar", "baz qux")
+            .expect("edit should succeed");
+        assert!(result.success);
+        assert!(result.output.contains("replaced"));
+
+        let content = std::fs::read_to_string(&file).expect("read back");
+        assert!(content.contains("baz qux"));
+        assert!(!content.contains("foo bar"));
+
+        // Cleanup
+        std::fs::remove_file(&file).ok();
+        std::fs::remove_dir(&dir).ok();
+    }
+
+    #[test]
+    fn edit_file_old_text_not_found() {
+        let policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow(Capability::FileRead, DataClassification::Private),
+            PolicyRule::allow(Capability::FileWrite, DataClassification::Private),
+        ]);
+        let executor = ToolExecutor::new(policy);
+
+        let dir = std::env::temp_dir().join("agentzero-test-edit2");
+        std::fs::create_dir_all(&dir).ok();
+        let file = dir.join("test-edit2.txt");
+        std::fs::write(&file, "hello world\n").expect("write temp file");
+
+        let result = executor.edit_file(file.to_str().expect("path"), "not here", "replacement");
+        assert!(result.is_err());
+        assert!(result
+            .expect_err("should fail")
+            .to_string()
+            .contains("not found"));
+
+        std::fs::remove_file(&file).ok();
+        std::fs::remove_dir(&dir).ok();
     }
 
     #[test]

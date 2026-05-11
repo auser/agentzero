@@ -29,8 +29,12 @@ Audit event logging. JSONL file sink, encrypted sink, in-memory sink for tests. 
 
 ### `agentzero-session`
 Session engine tying together models, tools, policy, and audit. Includes:
+- `AgentLoop` — reusable agentic loop with `send()`, `ApprovalHandler` trait, `ProgressHandler` trait, configurable `max_tool_rounds` and `max_output_bytes`
+- `ModelProvider` trait with `chat_with_tools()`, `chat_streaming()`, `health_check()`, `model_name()`
 - Ollama provider (native API)
 - OpenAI-compatible provider (llama.cpp, vLLM, LM Studio)
+- `ModelsConfig` loaded from `.agentzero/models.json` with dynamic provider instantiation
+- `ProviderRouter::from_config()` for dynamic provider loading
 - Multi-provider router with fallback
 - Retry with exponential backoff
 - Tool executor with policy checks
@@ -40,7 +44,7 @@ Session engine tying together models, tools, policy, and audit. Includes:
 - Context compaction
 
 ### `agentzero-tools`
-Tool registry with built-in schemas (read, list, search, write, shell).
+Tool registry with 6 built-in schemas (read, list, search, write, edit, shell).
 
 ### `agentzero-sandbox`
 Sandbox profiles (`SandboxProfile`, `SandboxLimit`, `SandboxNetworkPolicy`) plus the WASM runtime. The `wasm` feature is on by default; build with `--no-default-features` for a smaller binary without WASM. Wasmtime backend provides:
@@ -71,7 +75,10 @@ Skill manifests, security scanner, report generator, skill registry with lockfil
 MCP server (JSON-RPC 2.0 over stdio). Exposes tools to any MCP client.
 
 ### `agentzero-acp`
-ACP adapter for custom editor integrations. JSON-RPC over stdio.
+ACP adapter for custom editor integrations. JSON-RPC over stdio. Runs the full agentic loop via `chat` method (LLM inference + tool calls). Includes:
+- `AcpNotification` — server-initiated streaming events (token, tool_start, tool_result, requires_approval, context_compacted)
+- `list_models`, `switch_model` for dynamic model management
+- `approve_action`, `cancel` for interactive approval flow
 
 ## Infrastructure
 

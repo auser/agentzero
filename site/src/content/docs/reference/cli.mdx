@@ -8,12 +8,21 @@ description: All AgentZero commands and flags
 Initialize a new project.
 
 ```bash
-az init [--private]
+az init [--private] [--editor <editor>]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--private` | Use private-by-default policy (network denied, local-only routing) |
+| `--editor` | Generate editor-native config files. Values: `vscode`, `cursor`, `zed` |
+
+The `--editor` flag generates integration files for the specified editor:
+
+| Editor | Generated Files |
+|--------|----------------|
+| `vscode` | `.vscode/tasks.json` |
+| `cursor` | `.cursor/rules` |
+| `zed` | `.zed/tasks.json` |
 
 ## `az chat`
 
@@ -32,6 +41,8 @@ az chat [OPTIONS]
 | `--url` | Custom server URL |
 | `--resume` | Resume a previous session by ID |
 | `--encrypt` | Encrypt audit and session files |
+| `-P, --print` | Single-shot mode: send one message, print response, exit |
+| `--mode` | Output format for `-P` mode: `text` (default), `json` (pretty), `jsonl` (compact) |
 
 ## `az mcp`
 
@@ -45,7 +56,7 @@ Reads JSON-RPC 2.0 from stdin, writes to stdout.
 
 ## `az serve`
 
-Start the ACP server.
+Start the ACP server. Runs the full agentic loop — LLM inference with tool calling, approval flow, and streaming notifications. Editors connect over stdio to get a complete coding agent, not just a tool server.
 
 ```bash
 az serve

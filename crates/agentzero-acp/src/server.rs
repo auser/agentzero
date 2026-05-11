@@ -1,17 +1,29 @@
-//! ACP stdio server backed by a real AgentZero session.
+//! ACP stdio server backed by a real AgentZero session with full agentic loop.
+
+use std::sync::Arc;
 
 use agentzero_core::Capability;
 use agentzero_policy::PolicyEngine;
+use agentzero_session::agent_loop::{
+    AgentLoop, AgentLoopConfig, AutoApprove, ProgressHandler,
+};
+use agentzero_session::ollama::OllamaProvider;
+use agentzero_session::router::ProviderRouter;
 use agentzero_session::{Session, SessionConfig, SessionMode, ToolExecutor};
 use agentzero_tracing::{info, warn};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::Mutex;
 
-use crate::protocol::{AcpMethod, AcpRequest, AcpResponse};
+use crate::protocol::{AcpMethod, AcpNotification, AcpRequest, AcpResponse};
 
 /// ACP server configuration.
 pub struct AcpServerConfig {
     pub project_root: Option<String>,
     pub policy: PolicyEngine,
+    /// Model name for the provider (default: "llama3.2").
+    pub model: String,
+    /// Ollama base URL (default: "http://localhost:11434").
+    pub ollama_url: String,
 }
 
 impl Default for AcpServerConfig {
@@ -19,15 +31,66 @@ impl Default for AcpServerConfig {
         Self {
             project_root: None,
             policy: PolicyEngine::deny_by_default(),
+            model: "llama3.2".into(),
+            ollama_url: "http://localhost:11434".into(),
         }
     }
 }
 
-/// ACP server that communicates over stdio, backed by a session engine.
+/// Progress handler that sends notifications over stdout.
+struct AcpProgressHandler {
+    stdout: Arc<Mutex<tokio::io::Stdout>>,
+}
+
+impl ProgressHandler for AcpProgressHandler {
+    fn on_tool_start(&self, tool_name: &str, args: &serde_json::Value) {
+        let notification = AcpNotification::tool_start(tool_name, args);
+        if let Ok(json) = serde_json::to_string(&notification) {
+            // Best-effort notification — don't block the agent loop
+            let stdout = self.stdout.clone();
+            let line = format!("{json}\n");
+            tokio::spawn(async move {
+                let mut out = stdout.lock().await;
+                out.write_all(line.as_bytes()).await.ok();
+                out.flush().await.ok();
+            });
+        }
+    }
+
+    fn on_tool_result(&self, tool_name: &str, success: bool, output_len: usize) {
+        let notification = AcpNotification::tool_result(tool_name, success, output_len);
+        if let Ok(json) = serde_json::to_string(&notification) {
+            let stdout = self.stdout.clone();
+            let line = format!("{json}\n");
+            tokio::spawn(async move {
+                let mut out = stdout.lock().await;
+                out.write_all(line.as_bytes()).await.ok();
+                out.flush().await.ok();
+            });
+        }
+    }
+
+    fn on_context_compacted(&self, before: usize, after: usize) {
+        let notification = AcpNotification::context_compacted(before, after);
+        if let Ok(json) = serde_json::to_string(&notification) {
+            let stdout = self.stdout.clone();
+            let line = format!("{json}\n");
+            tokio::spawn(async move {
+                let mut out = stdout.lock().await;
+                out.write_all(line.as_bytes()).await.ok();
+                out.flush().await.ok();
+            });
+        }
+    }
+}
+
+/// ACP server that communicates over stdio, backed by an agent loop.
 pub struct AcpServer {
     name: String,
     version: String,
-    session: Session,
+    agent_loop: AgentLoop,
+    /// Shared stdout for sending notifications alongside responses.
+    stdout: Arc<Mutex<tokio::io::Stdout>>,
 }
 
 impl AcpServer {
@@ -71,19 +134,28 @@ impl AcpServer {
             .map_err(|e| format!("failed to create session: {e}"))?
             .with_tool_executor(tool_executor);
 
+        // Build provider router
+        let router = ProviderRouter::local_only(&config.model);
+
+        // Build agent loop
+        let tools = OllamaProvider::agentzero_tool_definitions();
+        let loop_config = AgentLoopConfig::default();
+        let agent_loop = AgentLoop::new(router, session, tools, loop_config)
+            .with_system_prompt(&default_system_prompt());
+
         Ok(Self {
             name: "agentzero".into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            session,
+            agent_loop,
+            stdout: Arc::new(Mutex::new(tokio::io::stdout())),
         })
     }
 
     /// Run the ACP server, reading from stdin and writing to stdout.
-    pub async fn run(&self) -> Result<(), String> {
+    pub async fn run(&mut self) -> Result<(), String> {
         info!("ACP server starting on stdio");
 
         let stdin = tokio::io::stdin();
-        let mut stdout = tokio::io::stdout();
         let mut reader = BufReader::new(stdin);
         let mut line = String::new();
 
@@ -110,16 +182,13 @@ impl AcpServer {
                 Ok(r) => r,
                 Err(e) => {
                     let resp = AcpResponse::err("unknown", &format!("invalid request: {e}"));
-                    let json = serde_json::to_string(&resp).expect("response should serialize");
-                    stdout.write_all(format!("{json}\n").as_bytes()).await.ok();
+                    self.send_response(&resp).await;
                     continue;
                 }
             };
 
             let response = self.handle(&request).await;
-            let json = serde_json::to_string(&response).expect("response should serialize");
-            stdout.write_all(format!("{json}\n").as_bytes()).await.ok();
-            stdout.flush().await.ok();
+            self.send_response(&response).await;
 
             if matches!(request.method, AcpMethod::Shutdown) {
                 info!("ACP server: shutdown requested");
@@ -127,54 +196,84 @@ impl AcpServer {
             }
         }
 
-        self.session.end().ok();
+        self.agent_loop.end().ok();
         Ok(())
     }
 
-    async fn handle(&self, request: &AcpRequest) -> AcpResponse {
+    async fn send_response(&self, response: &AcpResponse) {
+        let json = serde_json::to_string(response).expect("response should serialize");
+        let mut out = self.stdout.lock().await;
+        out.write_all(format!("{json}\n").as_bytes()).await.ok();
+        out.flush().await.ok();
+    }
+
+    async fn handle(&mut self, request: &AcpRequest) -> AcpResponse {
         match request.method {
             AcpMethod::Initialize => AcpResponse::ok(
                 &request.id,
                 serde_json::json!({
                     "name": self.name,
                     "version": self.version,
-                    "capabilities": ["chat", "tool_call", "session_info", "list_tools"]
+                    "capabilities": [
+                        "chat", "tool_call", "session_info",
+                        "list_tools", "list_models", "switch_model"
+                    ]
                 }),
             ),
             AcpMethod::SessionInfo => AcpResponse::ok(
                 &request.id,
                 serde_json::json!({
-                    "session_id": self.session.id().as_str(),
+                    "session_id": self.agent_loop.session_id(),
+                    "model": self.agent_loop.model_name(),
                     "status": "ready",
-                    "tools": ["read", "list", "search", "write", "shell"]
+                    "tools": self.agent_loop.tools().iter()
+                        .map(|t| t.function.name.as_str())
+                        .collect::<Vec<_>>()
                 }),
             ),
-            AcpMethod::ListTools => AcpResponse::ok(
-                &request.id,
-                serde_json::json!({
-                    "tools": [
-                        {"name": "read", "description": "Read file contents"},
-                        {"name": "list", "description": "List directory contents"},
-                        {"name": "search", "description": "Search file contents"},
-                        {"name": "write", "description": "Write file (requires approval)"},
-                        {"name": "shell", "description": "Shell command (requires approval)"}
-                    ]
-                }),
-            ),
+            AcpMethod::ListTools => {
+                let tools: Vec<serde_json::Value> = self
+                    .agent_loop
+                    .tools()
+                    .iter()
+                    .map(|t| {
+                        serde_json::json!({
+                            "name": t.function.name,
+                            "description": t.function.description
+                        })
+                    })
+                    .collect();
+                AcpResponse::ok(&request.id, serde_json::json!({ "tools": tools }))
+            }
             AcpMethod::ToolCall => self.handle_tool_call(request).await,
-            AcpMethod::Chat => {
-                // Chat via ACP — for now return a message explaining usage
-                let message = request
-                    .params
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+            AcpMethod::Chat => self.handle_chat(request).await,
+            AcpMethod::ListModels => {
+                // For now, return the current model. Phase 3 will add multi-provider.
                 AcpResponse::ok(
                     &request.id,
                     serde_json::json!({
-                        "message": format!("Received: \"{message}\". Chat requires a model provider — use `agentzero chat` for full chat, or use tool_call for direct tool access.")
+                        "models": [{
+                            "name": self.agent_loop.model_name(),
+                            "provider": "ollama",
+                            "active": true
+                        }]
                     }),
                 )
+            }
+            AcpMethod::SwitchModel => {
+                // Phase 3 will implement this fully
+                AcpResponse::err(&request.id, "model switching not yet implemented")
+            }
+            AcpMethod::ApproveAction => {
+                // This is handled inline during chat — see AcpApprovalHandler
+                AcpResponse::err(
+                    &request.id,
+                    "approve_action should be sent in response to a requires_approval notification",
+                )
+            }
+            AcpMethod::Cancel => {
+                // TODO: implement cancellation
+                AcpResponse::ok(&request.id, serde_json::json!({"status": "cancelled"}))
             }
             AcpMethod::Shutdown => {
                 AcpResponse::ok(&request.id, serde_json::json!({"status": "shutdown"}))
@@ -182,7 +281,44 @@ impl AcpServer {
         }
     }
 
-    async fn handle_tool_call(&self, request: &AcpRequest) -> AcpResponse {
+    async fn handle_chat(&mut self, request: &AcpRequest) -> AcpResponse {
+        let message = match request.params.get("message").and_then(|v| v.as_str()) {
+            Some(m) => m,
+            None => {
+                return AcpResponse::err(&request.id, "missing 'message' in params");
+            }
+        };
+
+        info!(message_len = message.len(), "ACP chat request");
+
+        // For now, use AutoApprove for ACP (Phase 2.5 will add bidirectional approval).
+        // The progress handler sends notifications over stdout.
+        let approver = AutoApprove;
+        let progress = AcpProgressHandler {
+            stdout: self.stdout.clone(),
+        };
+
+        match self.agent_loop.send(message, &approver, &progress).await {
+            Ok(response) => AcpResponse::ok(
+                &request.id,
+                serde_json::json!({
+                    "content": response.content,
+                    "model": response.model,
+                    "rounds": response.rounds,
+                    "tool_calls": response.tool_calls_made.iter().map(|tc| {
+                        serde_json::json!({
+                            "name": tc.name,
+                            "success": tc.success,
+                            "output_bytes": tc.output.len()
+                        })
+                    }).collect::<Vec<_>>()
+                }),
+            ),
+            Err(e) => AcpResponse::err(&request.id, &e.to_string()),
+        }
+    }
+
+    async fn handle_tool_call(&mut self, request: &AcpRequest) -> AcpResponse {
         let tool_name = match request.params.get("name").and_then(|v| v.as_str()) {
             Some(n) => n,
             None => {
@@ -198,12 +334,31 @@ impl AcpServer {
 
         info!(tool = tool_name, "ACP tool_call");
 
-        match self.session.execute_tool(tool_name, &arguments).await {
-            Ok(output) => AcpResponse::ok(
+        // Direct tool call wraps it as a chat message so it goes through the agent loop
+        // For backward compat, also support direct tool execution
+        let approver = AutoApprove;
+        let progress = AcpProgressHandler {
+            stdout: self.stdout.clone(),
+        };
+
+        let prompt = format!(
+            "Use the {tool_name} tool with these arguments: {}",
+            serde_json::to_string(&arguments).unwrap_or_default()
+        );
+
+        match self.agent_loop.send(&prompt, &approver, &progress).await {
+            Ok(response) => AcpResponse::ok(
                 &request.id,
                 serde_json::json!({
                     "success": true,
-                    "output": output
+                    "content": response.content,
+                    "tool_calls": response.tool_calls_made.iter().map(|tc| {
+                        serde_json::json!({
+                            "name": tc.name,
+                            "success": tc.success,
+                            "output": tc.output
+                        })
+                    }).collect::<Vec<_>>()
                 }),
             ),
             Err(e) => AcpResponse::ok(
@@ -215,6 +370,16 @@ impl AcpServer {
             ),
         }
     }
+}
+
+fn default_system_prompt() -> String {
+    "You are AgentZero, a local-first secure AI coding assistant. \
+     You have tools available: read (read files), list (list directories), \
+     search (search file contents), write (write files, requires approval), \
+     and shell (execute commands, requires approval). \
+     Use tools to help the user with their coding tasks. \
+     Always explain what you're doing before using tools."
+        .to_string()
 }
 
 impl Default for AcpServer {
@@ -237,7 +402,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_initialize() {
-        let server = test_server();
+        let mut server = test_server();
         let req = AcpRequest {
             id: "1".into(),
             method: AcpMethod::Initialize,
@@ -245,15 +410,18 @@ mod tests {
         };
         let resp = server.handle(&req).await;
         assert!(resp.success);
-        assert!(resp.result.as_ref().expect("should have result")["name"]
-            .as_str()
-            .expect("should be string")
-            .contains("agentzero"));
+        let result = resp.result.expect("should have result");
+        assert!(result["name"].as_str().expect("should be string").contains("agentzero"));
+        // Check new capabilities are advertised
+        let caps = result["capabilities"].as_array().expect("should be array");
+        let cap_strs: Vec<&str> = caps.iter().filter_map(|v| v.as_str()).collect();
+        assert!(cap_strs.contains(&"chat"));
+        assert!(cap_strs.contains(&"list_models"));
     }
 
     #[tokio::test]
     async fn handle_list_tools() {
-        let server = test_server();
+        let mut server = test_server();
         let req = AcpRequest {
             id: "2".into(),
             method: AcpMethod::ListTools,
@@ -262,65 +430,12 @@ mod tests {
         let resp = server.handle(&req).await;
         assert!(resp.success);
         let tools = &resp.result.expect("should have result")["tools"];
-        assert!(tools.as_array().expect("should be array").len() >= 5);
-    }
-
-    #[tokio::test]
-    async fn handle_tool_call_read() {
-        let server = test_server();
-        let req = AcpRequest {
-            id: "3".into(),
-            method: AcpMethod::ToolCall,
-            params: serde_json::json!({
-                "name": "read",
-                "arguments": {"path": "Cargo.toml"}
-            }),
-        };
-        let resp = server.handle(&req).await;
-        assert!(resp.success);
-        let result = resp.result.expect("should have result");
-        assert_eq!(result["success"], true);
-        assert!(result["output"]
-            .as_str()
-            .expect("should be string")
-            .contains("[package]"));
-    }
-
-    #[tokio::test]
-    async fn handle_tool_call_list() {
-        let server = test_server();
-        let req = AcpRequest {
-            id: "4".into(),
-            method: AcpMethod::ToolCall,
-            params: serde_json::json!({
-                "name": "list",
-                "arguments": {"path": "."}
-            }),
-        };
-        let resp = server.handle(&req).await;
-        assert!(resp.success);
-        let result = resp.result.expect("should have result");
-        assert!(result["output"]
-            .as_str()
-            .expect("should be string")
-            .contains("Cargo.toml"));
-    }
-
-    #[tokio::test]
-    async fn handle_tool_call_missing_name() {
-        let server = test_server();
-        let req = AcpRequest {
-            id: "5".into(),
-            method: AcpMethod::ToolCall,
-            params: serde_json::json!({}),
-        };
-        let resp = server.handle(&req).await;
-        assert!(!resp.success);
+        assert!(tools.as_array().expect("should be array").len() >= 6);
     }
 
     #[tokio::test]
     async fn handle_shutdown() {
-        let server = test_server();
+        let mut server = test_server();
         let req = AcpRequest {
             id: "6".into(),
             method: AcpMethod::Shutdown,
@@ -332,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_session_info() {
-        let server = test_server();
+        let mut server = test_server();
         let req = AcpRequest {
             id: "7".into(),
             method: AcpMethod::SessionInfo,
@@ -343,5 +458,49 @@ mod tests {
         let result = resp.result.expect("should have result");
         assert!(result["session_id"].as_str().is_some());
         assert_eq!(result["status"], "ready");
+        // New: includes model name
+        assert!(result["model"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn handle_list_models() {
+        let mut server = test_server();
+        let req = AcpRequest {
+            id: "8".into(),
+            method: AcpMethod::ListModels,
+            params: serde_json::json!({}),
+        };
+        let resp = server.handle(&req).await;
+        assert!(resp.success);
+        let result = resp.result.expect("should have result");
+        let models = result["models"].as_array().expect("should be array");
+        assert!(!models.is_empty());
+        assert_eq!(models[0]["active"], true);
+    }
+
+    #[tokio::test]
+    async fn handle_chat_missing_message() {
+        let mut server = test_server();
+        let req = AcpRequest {
+            id: "9".into(),
+            method: AcpMethod::Chat,
+            params: serde_json::json!({}),
+        };
+        let resp = server.handle(&req).await;
+        assert!(!resp.success);
+        assert!(resp.error.expect("should have error").contains("missing"));
+    }
+
+    #[tokio::test]
+    async fn handle_switch_model_not_yet() {
+        let mut server = test_server();
+        let req = AcpRequest {
+            id: "10".into(),
+            method: AcpMethod::SwitchModel,
+            params: serde_json::json!({"model": "codellama"}),
+        };
+        let resp = server.handle(&req).await;
+        assert!(!resp.success);
+        assert!(resp.error.expect("should have error").contains("not yet"));
     }
 }

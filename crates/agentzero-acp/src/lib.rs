@@ -10,5 +10,5 @@
 mod protocol;
 mod server;
 
-pub use protocol::{AcpMethod, AcpRequest, AcpResponse};
-pub use server::AcpServer;
+pub use protocol::{AcpMethod, AcpNotification, AcpRequest, AcpResponse};
+pub use server::{AcpServer, AcpServerConfig};

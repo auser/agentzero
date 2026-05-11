@@ -5,7 +5,7 @@ description: Connect custom editors to AgentZero via the Agent Control Protocol
 
 ## Overview
 
-The ACP (Agent Control Protocol) adapter provides a JSON-RPC interface over stdio for editor integrations. While [MCP](/guides/mcp/) is the standard for tools like Claude Code and Cursor, ACP offers a simpler protocol for custom editor plugins.
+The ACP (Agent Control Protocol) adapter exposes AgentZero as a full coding agent over JSON-RPC stdio. Unlike [MCP](/guides/mcp/) which provides individual tools to an external host, ACP runs the complete agentic loop — LLM inference, tool calling, approval flow, and context management — inside AgentZero. The editor sends chat messages; AgentZero drives the model, executes tools, and streams results back.
 
 ## Starting the Server
 
@@ -24,7 +24,7 @@ ACP uses a simple request/response format:
 ```
 
 ```json
-{"id": "1", "success": true, "result": {"name": "agentzero", "version": "0.1.0", "capabilities": ["chat", "tool_call", "session_info", "list_tools"]}}
+{"id": "1", "success": true, "result": {"name": "agentzero", "version": "0.3.0", "capabilities": ["chat", "tool_call", "session_info", "list_tools", "list_models", "switch_model"]}}
 ```
 
 ## Available Methods
@@ -35,10 +35,30 @@ ACP uses a simple request/response format:
 | `session_info` | Returns session ID, status, and available tools |
 | `list_tools` | Returns tool definitions |
 | `tool_call` | Execute a tool with arguments |
-| `chat` | Send a chat message (requires model provider) |
+| `chat` | Send a chat message (runs full agentic loop) |
+| `list_models` | Returns available models from all configured providers |
+| `switch_model` | Change the active model and provider |
+| `approve_action` | Approve or deny a pending tool call |
+| `cancel` | Cancel the current operation |
 | `shutdown` | Graceful shutdown |
 
+## Chat
+
+A `chat` request runs the full agentic loop. AgentZero sends the message to the model, executes any tool calls the model requests (subject to policy and approval), and returns the final response.
+
+```json
+{"id": "3", "method": "chat", "params": {"message": "fix the typo on line 12 of README.md"}}
+```
+
+During execution, the server emits notifications for streaming events (see Notifications below). The final response:
+
+```json
+{"id": "3", "success": true, "result": {"content": "Fixed the typo on line 12.", "model": "llama3.2", "rounds": 2, "tool_calls": [{"name": "read", "success": true, "output_bytes": 1234}, {"name": "edit", "success": true, "output_bytes": 89}]}}
+```
+
 ## Tool Calls
+
+Direct tool calls bypass the model and execute a tool immediately:
 
 ```json
 {"id": "2", "method": "tool_call", "params": {"name": "read", "arguments": {"path": "Cargo.toml"}}}
@@ -50,13 +70,53 @@ ACP uses a simple request/response format:
 
 All tool calls go through the same session engine as the CLI — policy evaluation, path validation, and audit logging are all active.
 
+## Notifications
+
+The server sends `AcpNotification` messages during chat execution. Notifications are server-initiated and have no `id` field:
+
+```json
+{"notification": "token", "params": {"text": "I'll fix"}}
+{"notification": "tool_start", "params": {"tool": "read", "arguments": {"path": "README.md"}}}
+{"notification": "tool_result", "params": {"tool": "read", "success": true, "output_bytes": 1234}}
+{"notification": "requires_approval", "params": {"request_id": "req-1", "tool": "edit", "arguments": {"path": "README.md", "old_text": "recieve", "new_text": "receive"}}}
+{"notification": "context_compacted", "params": {"before": 50, "after": 12}}
+```
+
+| Notification | When |
+|--------------|------|
+| `token` | Each streamed token from the model |
+| `tool_start` | A tool call begins |
+| `tool_result` | A tool call completes |
+| `requires_approval` | A tool call needs user approval (respond with `approve_action`) |
+| `context_compacted` | Context window was compacted to fit within model limits |
+
+## Editor Setup
+
+Generate editor-native configuration files with `az init --editor`:
+
+```bash
+# VS Code
+az init --private --editor vscode
+
+# Cursor
+az init --private --editor cursor
+
+# Zed
+az init --private --editor zed
+```
+
+This creates the appropriate task or rules files so the editor can launch and communicate with `az serve`.
+
 ## ACP vs MCP
 
 | | ACP | MCP |
 |---|---|---|
+| Role | Full coding agent | Tool provider |
 | Protocol | Simple JSON-RPC | JSON-RPC 2.0 (standard) |
+| Inference | AgentZero runs the model | Host runs the model |
+| Tool execution | AgentZero decides and executes | Host decides, AgentZero executes |
 | Ecosystem | Custom editors | Claude Code, Cursor, Zed |
 | Tool naming | Internal names (`read`, `list`) | MCP names (`read_file`, `list_directory`) |
-| Use when | Building a custom integration | Using an existing MCP client |
+| Use when | Building a custom integration or want AgentZero to drive | Using an existing MCP client |
 
-For most users, [MCP](/guides/mcp/) is the right choice. ACP exists for cases where you need a lighter-weight or custom integration.
+For most users, [MCP](/guides/mcp/) is the right choice. ACP exists for cases where you want AgentZero to own the full agentic loop — model selection, tool orchestration, and context management — rather than just exposing tools.

@@ -1,16 +1,60 @@
-# Sprint: AgentZero Bootstrap
+# Sprint: Editor-Configurable Coding Agent (Pi Model)
 
 ## Goal
 
-Establish the documentation, ADR, security, and implementation foundation for AgentZero as a local-first secure AI agent harness.
+Make `agentzero serve` a fully functional coding agent that editors can spawn and talk to — like Pi (pi.dev), not like a passive MCP tool server. Extract the agentic loop, wire ACP Chat, add dynamic provider loading, print/JSON mode, editor config generators, and an edit tool.
 
 ## Active Plan
 
-- `specs/plans/0001-bootstrap-agentzero.md`
+- `specs/plans/0003-editor-configurable-coding-agent.md`
 
 ## Current Phase
 
-**Status: PHASE 21 COMPLETE (v0.2.0 READY)**
+**Status: ALL 6 PHASES COMPLETE + ModelProvider trait extended**
+
+### Phase 1: Extract AgentLoop (COMPLETE)
+- [x] Create `agent_loop.rs` with `AgentLoop`, `AgentLoopConfig`, `AgentResponse`, `ApprovalHandler`, `ProgressHandler`
+- [x] Export from `agentzero-session/src/lib.rs`
+- [x] Refactor `cmd_chat` in CLI to use `AgentLoop`
+- [x] Tests pass: `cargo test -p agentzero-session` (65 tests)
+
+### Phase 2: Wire ACP Chat to AgentLoop (COMPLETE)
+- [x] Add `AcpNotification`, `ListModels`, `SwitchModel`, `ApproveAction`, `Cancel` to ACP protocol
+- [x] Wire `AcpServer::Chat` to `AgentLoop::send()` with real LLM inference + tool calls
+- [x] ACP server loads policy and settings, constructs `ProviderRouter` + `AgentLoop`
+- [x] Progress notifications sent over stdout during tool execution
+- [x] 15 ACP tests pass (4 new)
+
+### Phase 3: Dynamic Provider Loading + ModelProvider Trait (COMPLETE)
+- [x] Extended `ModelProvider` trait with `chat_with_tools`, `chat_streaming`, `health_check`, `model_name`
+- [x] Both `OllamaProvider` and `OpenAICompatProvider` implement full trait
+- [x] `LocalStubProvider` implements full trait (for testing)
+- [x] `ProviderRouter` uses `Box<dyn ModelProvider>` instead of hardcoded fields
+- [x] `ModelsConfig` / `ProviderConfig` structs in `models_config.rs`
+- [x] `ProviderRouter::from_config()` loads providers dynamically from `models.json`
+- [x] `ProviderRouter::list_models()` returns all configured providers
+- [x] `ProviderType::Ollama` and `ProviderType::OpenAICompatible` with serde support
+- [x] 15 new tests (4 models_config, 4 router, 4 provider, 3 misc)
+
+### Phase 4: Print/JSON Mode for CLI (COMPLETE)
+- [x] `--print/-P <message>` flag for single-shot queries
+- [x] `--mode json|text|jsonl` flag
+- [x] JSON output: `{"content", "tool_calls", "model", "session_id", "rounds"}`
+- [x] 2 parse tests for print mode
+
+### Phase 5: Editor Configuration Generators (COMPLETE)
+- [x] `az init --editor vscode|cursor|zed` flag
+- [x] VS Code: `.vscode/tasks.json` with ACP server task + single-query task with input prompt
+- [x] Cursor: `.cursor/rules` with MCP integration instructions
+- [x] Zed: `.zed/tasks.json` with ACP server + chat tasks
+- [x] Parse test for --editor flag
+
+### Phase 6: Edit Tool (COMPLETE)
+- [x] `edit_file(path, old_text, new_text)` in `ToolExecutor` with policy check + path validation
+- [x] Register `edit` tool schema in providers (6th tool)
+- [x] Session dispatch for `edit` tool
+- [x] Returns diff summary
+- [x] 2 edit tests (success + not-found)
 
 ## Tasks
 

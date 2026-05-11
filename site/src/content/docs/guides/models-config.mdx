@@ -1,0 +1,182 @@
+---
+title: Model Configuration
+description: Configure AI model providers via models.json
+---
+
+## Overview
+
+AgentZero loads provider configuration from `.agentzero/models.json`. Each entry defines a provider with its type, URL, default model, and routing metadata. The `ProviderRouter` instantiates providers dynamically at startup.
+
+## Schema
+
+```json
+{
+  "providers": [
+    {
+      "name": "string",
+      "type": "ollama | openai-compatible",
+      "url": "string",
+      "default_model": "string",
+      "is_local": true,
+      "api_key": "string (optional)"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Human-readable identifier for this provider |
+| `type` | string | `ollama` or `openai-compatible` |
+| `url` | string | Server URL (including port) |
+| `default_model` | string | Model name to use when none is specified |
+| `is_local` | bool | Whether the provider runs on the local machine (default: true) |
+| `api_key` | string? | API key for authenticated providers. Supports vault references. |
+
+## Provider Types
+
+### `ollama`
+
+Uses the native Ollama API at `/api/chat`. Supports tool calling with Ollama's native format.
+
+```json
+{
+  "name": "ollama-local",
+  "type": "ollama",
+  "url": "http://localhost:11434",
+  "default_model": "llama3.2",
+  "is_local": true
+}
+```
+
+### `openai-compatible`
+
+Uses the OpenAI `/v1/chat/completions` endpoint. Works with llama.cpp, vLLM, LM Studio, LocalAI, and any other server that implements the OpenAI chat completions API.
+
+```json
+{
+  "name": "lm-studio",
+  "type": "openai-compatible",
+  "url": "http://localhost:1234",
+  "default_model": "gemma-4-12b",
+  "is_local": true
+}
+```
+
+## Examples
+
+### LM Studio with Gemma 4
+
+```json
+{
+  "providers": [
+    {
+      "name": "lm-studio-gemma",
+      "type": "openai-compatible",
+      "url": "http://localhost:1234",
+      "default_model": "gemma-4-12b",
+      "is_local": true
+    }
+  ],
+}
+```
+
+```bash
+az chat --local
+# Uses gemma-4-12b via LM Studio automatically
+```
+
+### Remote Provider with API Key
+
+```json
+{
+  "providers": [
+    {
+      "name": "ollama-local",
+      "type": "ollama",
+      "url": "http://localhost:11434",
+      "default_model": "llama3.2",
+      "is_local": true
+    },
+    {
+      "name": "gpu-cluster",
+      "type": "openai-compatible",
+      "url": "https://gpu-box.internal:8000",
+      "default_model": "meta-llama/Llama-3.2-70B",
+      "is_local": false,
+      "api_key": "vault://vllm/api-key"
+    }
+  ],
+}
+```
+
+### Multiple Local Providers
+
+```json
+{
+  "providers": [
+    {
+      "name": "ollama",
+      "type": "ollama",
+      "url": "http://localhost:11434",
+      "default_model": "llama3.2",
+      "is_local": true
+    },
+    {
+      "name": "llama-cpp",
+      "type": "openai-compatible",
+      "url": "http://localhost:8080",
+      "default_model": "codellama",
+      "is_local": true
+    },
+    {
+      "name": "lm-studio",
+      "type": "openai-compatible",
+      "url": "http://localhost:1234",
+      "default_model": "gemma-4-12b",
+      "is_local": true
+    }
+  ],
+}
+```
+
+## is_local and Data Classification
+
+The `is_local` field controls how the provider interacts with data classification routing:
+
+| `is_local` | Effect |
+|-------------|--------|
+| `true` | All data classifications allowed. No redaction applied. |
+| `false` | Subject to classification-based routing. Private/PII data is redacted before sending. Secret and Credential data is denied. |
+
+See [Provider Routing](/reference/providers#classification-based-routing) for the full classification matrix.
+
+## API Keys
+
+The `api_key` field accepts:
+
+- **Plain string** — used directly (not recommended for shared configs)
+- **Vault reference** — `vault://provider-name/secret-name` resolves from the encrypted vault at runtime
+
+```bash
+# Store the key in the vault first
+az vault add vllm api-key
+
+# Then reference it in models.json
+"api_key": "vault://vllm/api-key"
+```
+
+## Dynamic Loading
+
+The router instantiates providers from config at startup:
+
+```rust
+let config = ModelsConfig::load(".agentzero/models.json")?;
+let router = ProviderRouter::from_config(&config)?;
+```
+
+The router tries providers in priority order (local first), with automatic fallback and retry on transient failures. Switch the active provider at runtime via `az serve` with the `switch_model` ACP method, or via CLI flags:
+
+```bash
+az chat --local --provider lm-studio --model gemma-4-12b
+```

@@ -39,6 +39,81 @@ AgentZero tries providers in priority order:
 az chat --local --provider llama-cpp --url http://gpu-box:8080
 ```
 
+## models.json Configuration
+
+Providers are configured in `.agentzero/models.json`. The `ProviderRouter` loads this file at startup and instantiates providers dynamically.
+
+```json
+{
+  "providers": [
+    {
+      "name": "ollama-local",
+      "provider_type": "ollama",
+      "base_url": "http://localhost:11434",
+      "default_model": "llama3.2",
+      "is_local": true
+    },
+    {
+      "name": "lm-studio",
+      "provider_type": "openai-compatible",
+      "base_url": "http://localhost:1234",
+      "default_model": "gemma-4-12b",
+      "is_local": true
+    },
+    {
+      "name": "remote-vllm",
+      "provider_type": "openai-compatible",
+      "base_url": "https://gpu-box.internal:8000",
+      "default_model": "meta-llama/Llama-3.2-70B",
+      "is_local": false,
+      "api_key": "vault://vllm/api-key"
+    }
+  ],
+  "default_provider": "ollama-local"
+}
+```
+
+See the [Model Configuration guide](/guides/models-config) for the full schema and examples.
+
+## ModelProvider Trait
+
+All providers implement the `ModelProvider` trait:
+
+```rust
+#[async_trait]
+pub trait ModelProvider: Send + Sync {
+    async fn chat_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDef],
+    ) -> Result<ChatResponse>;
+
+    async fn chat_streaming(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDef],
+        tx: mpsc::Sender<StreamEvent>,
+    ) -> Result<()>;
+
+    async fn health_check(&self) -> Result<bool>;
+    fn model_name(&self) -> &str;
+}
+```
+
+Both `OllamaProvider` and `OpenAICompatProvider` implement this trait. Adding a new provider means implementing `ModelProvider` and registering a `ProviderType` variant.
+
+## Dynamic Loading
+
+`ProviderRouter::from_config()` reads `models.json` and instantiates the correct provider for each entry:
+
+```rust
+let config = ModelsConfig::load(".agentzero/models.json")?;
+let router = ProviderRouter::from_config(&config)?;
+
+// Router tries providers in priority order with fallback
+let response = router.chat_with_tools(&messages, &tools).await?;
+```
+
 ## Settings Defaults
 
 Configure in `.agentzero/settings.toml`:

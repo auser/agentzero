@@ -221,12 +221,12 @@ impl OllamaProvider {
 
     /// Send a chat completion request to Ollama (non-streaming).
     pub async fn chat(&self, messages: &[ChatMessage]) -> Result<String, ModelProviderError> {
-        let result = self.chat_with_tools(messages, None).await?;
+        let result = self.chat_with_tools_impl(messages, None).await?;
         Ok(result.content)
     }
 
-    /// Send a chat completion with tool definitions.
-    pub async fn chat_with_tools(
+    /// Send a chat completion with tool definitions (implementation).
+    async fn chat_with_tools_impl(
         &self,
         messages: &[ChatMessage],
         tools: Option<&[ToolDefinition]>,
@@ -283,15 +283,12 @@ impl OllamaProvider {
         })
     }
 
-    /// Send a streaming chat request, calling `on_token` for each chunk.
-    pub async fn chat_streaming<F>(
+    /// Send a streaming chat request, calling `on_token` for each chunk (implementation).
+    async fn chat_streaming_impl(
         &self,
         messages: &[ChatMessage],
-        mut on_token: F,
-    ) -> Result<String, ModelProviderError>
-    where
-        F: FnMut(&str),
-    {
+        mut on_token: impl FnMut(&str),
+    ) -> Result<String, ModelProviderError> {
         let url = format!("{}/api/chat", self.config.base_url);
 
         let request = ChatRequest {
@@ -445,6 +442,31 @@ impl OllamaProvider {
             ToolDefinition {
                 tool_type: "function".into(),
                 function: ToolFunctionDef {
+                    name: "edit".into(),
+                    description: "Edit a file by replacing old_text with new_text (search-and-replace, requires approval)".into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Path to the file to edit"
+                            },
+                            "old_text": {
+                                "type": "string",
+                                "description": "Exact text to find and replace"
+                            },
+                            "new_text": {
+                                "type": "string",
+                                "description": "Text to replace old_text with"
+                            }
+                        },
+                        "required": ["path", "old_text", "new_text"]
+                    }),
+                },
+            },
+            ToolDefinition {
+                tool_type: "function".into(),
+                function: ToolFunctionDef {
                     name: "shell".into(),
                     description: "Execute a shell command (requires user approval)".into(),
                     parameters: serde_json::json!({
@@ -493,6 +515,56 @@ impl ModelProvider for OllamaProvider {
     fn location(&self) -> ModelLocation {
         ModelLocation::Local
     }
+
+    fn model_name(&self) -> &str {
+        &self.config.model
+    }
+
+    fn health_check(
+        &self,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<bool, ModelProviderError>> + Send + '_>,
+    > {
+        Box::pin(async {
+            let url = format!("{}/api/tags", self.config.base_url);
+            debug!(url = %url, "checking ollama health");
+            match self.client.get(&url).send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        info!(model = %self.config.model, "ollama is available");
+                        Ok(true)
+                    } else {
+                        warn!(status = %resp.status(), "ollama returned non-success");
+                        Ok(false)
+                    }
+                }
+                Err(e) => {
+                    debug!(error = %e, "ollama not reachable");
+                    Err(ModelProviderError::Unavailable(e.to_string()))
+                }
+            }
+        })
+    }
+
+    fn chat_with_tools<'a>(
+        &'a self,
+        messages: &'a [ChatMessage],
+        tools: Option<&'a [ToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ChatResult, ModelProviderError>> + Send + 'a>,
+    > {
+        Box::pin(async move { self.chat_with_tools_impl(messages, tools).await })
+    }
+
+    fn chat_streaming<'a>(
+        &'a self,
+        messages: &'a [ChatMessage],
+        on_token: Box<dyn FnMut(&str) + Send + 'a>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<String, ModelProviderError>> + Send + 'a>,
+    > {
+        Box::pin(async move { self.chat_streaming_impl(messages, on_token).await })
+    }
 }
 
 #[cfg(test)]
@@ -535,17 +607,18 @@ mod tests {
     #[test]
     fn tool_definitions_are_valid() {
         let tools = OllamaProvider::agentzero_tool_definitions();
-        assert!(tools.len() >= 5);
+        assert!(tools.len() >= 6);
         assert_eq!(tools[0].function.name, "read");
         assert_eq!(tools[1].function.name, "list");
         assert_eq!(tools[2].function.name, "search");
         assert_eq!(tools[3].function.name, "write");
-        assert_eq!(tools[4].function.name, "shell");
+        assert_eq!(tools[4].function.name, "edit");
+        assert_eq!(tools[5].function.name, "shell");
 
         #[cfg(feature = "rag")]
         {
-            assert_eq!(tools.len(), 6);
-            assert_eq!(tools[5].function.name, "query");
+            assert_eq!(tools.len(), 7);
+            assert_eq!(tools[6].function.name, "query");
         }
     }
 
