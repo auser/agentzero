@@ -483,6 +483,35 @@ impl OllamaProvider {
             },
         ];
 
+        // Add generate_tool when wasm feature is enabled
+        #[cfg(feature = "wasm")]
+        tools.push(ToolDefinition {
+            tool_type: "function".into(),
+            function: ToolFunctionDef {
+                name: "generate_tool".into(),
+                description: "Generate a new WASM tool from a template and register it for use. Templates: pure_computation (no imports, returns exit code), logger (calls az::log), file_reader (reads a file via az::read_file). Requires approval.".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name for the new tool (lowercase, hyphens allowed)"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Human-readable description of what the tool does"
+                        },
+                        "template": {
+                            "type": "string",
+                            "enum": ["pure_computation", "logger", "file_reader"],
+                            "description": "Template to generate from: pure_computation, logger, or file_reader"
+                        }
+                    },
+                    "required": ["name", "description", "template"]
+                }),
+            },
+        });
+
         // Add query tool when rag feature is enabled
         #[cfg(feature = "rag")]
         tools.push(ToolDefinition {

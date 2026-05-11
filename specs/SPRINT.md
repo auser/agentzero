@@ -287,8 +287,8 @@ WASM host imports, codegen, and dynamic tool registration per ADR 0012.
 - [x] `wasm-encoder` template-based tool generation (PureComputation, Logger, FileReader)
 - [x] `DynamicToolRegistry` — per-project tool storage with directory-based versioning
 - [x] `AgentLoop::generate_and_register_tool()` — end-to-end codegen → registration
-- [ ] `generate_tool` built-in tool callable by the LLM during the agent loop
-- [ ] Wire `WasmHostCallbacks` to `ToolExecutor` + `PolicyEngine` in session
+- [x] `generate_tool` built-in tool callable by the LLM during the agent loop
+- [x] Wire `WasmHostCallbacks` to `ToolExecutor` + `PolicyEngine` in session
 
 ## Not Yet (deferred)
 
