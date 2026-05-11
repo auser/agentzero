@@ -45,6 +45,10 @@ pub enum ProviderType {
     /// Works with llama.cpp, vLLM, LM Studio, LocalAI, text-gen-webui.
     #[serde(rename = "openai-compatible")]
     OpenAICompatible,
+    /// Anthropic Claude API (`/v1/messages`).
+    /// Always remote — PII redaction applies per ADR 0002.
+    #[serde(rename = "anthropic")]
+    Anthropic,
 }
 
 impl ModelsConfig {
@@ -126,6 +130,23 @@ mod tests {
         }"#;
         let config: ModelsConfig = serde_json::from_str(json).expect("should parse");
         assert!(config.providers[0].is_local);
+    }
+
+    #[test]
+    fn anthropic_provider_config() {
+        let json = r#"{
+            "providers": [{
+                "name": "claude",
+                "type": "anthropic",
+                "url": "https://api.anthropic.com",
+                "default_model": "claude-sonnet-4-20250514",
+                "is_local": false,
+                "api_key": "sk-ant-test"
+            }]
+        }"#;
+        let config: ModelsConfig = serde_json::from_str(json).expect("should parse");
+        assert_eq!(config.providers[0].provider_type, ProviderType::Anthropic);
+        assert!(!config.providers[0].is_local);
     }
 
     #[test]

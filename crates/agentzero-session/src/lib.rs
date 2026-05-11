@@ -4,6 +4,7 @@
 //! within a single supervised session (ADR 0001).
 
 pub mod agent_loop;
+pub mod anthropic;
 pub mod context;
 pub mod dynamic_tools;
 pub mod models_config;

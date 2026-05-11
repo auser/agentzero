@@ -6,6 +6,7 @@
 use agentzero_core::DataClassification;
 use agentzero_tracing::{debug, info, warn};
 
+use crate::anthropic::{AnthropicConfig, AnthropicProvider};
 use crate::models_config::{ModelsConfig, ProviderType};
 use crate::ollama::{ChatMessage, ChatResult, OllamaConfig, OllamaProvider, ToolDefinition};
 use crate::openai_compat::{OpenAICompatConfig, OpenAICompatProvider};
@@ -81,6 +82,16 @@ impl ProviderRouter {
                         api_key: pc.api_key.clone(),
                     };
                     Box::new(OpenAICompatProvider::new(cfg))
+                }
+                ProviderType::Anthropic => {
+                    let api_key = pc.api_key.clone().unwrap_or_default();
+                    let cfg = AnthropicConfig {
+                        api_key,
+                        model: pc.default_model.clone(),
+                        base_url: pc.url.clone(),
+                        max_tokens: 4096,
+                    };
+                    Box::new(AnthropicProvider::new(cfg))
                 }
             };
             providers.push(ProviderEntry {
