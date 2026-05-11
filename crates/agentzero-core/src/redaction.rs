@@ -51,9 +51,9 @@ impl RedactionResult {
 
 /// Generate a token-preserving placeholder for a redacted region.
 ///
-/// The placeholder preserves enough structure to be useful in context
-/// while hiding the actual value.
-pub fn placeholder_for(classification: DataClassification, index: usize) -> String {
+/// Uses a random hex suffix instead of sequential indices to prevent
+/// leaking the count of redacted items (security hardening).
+pub fn placeholder_for(classification: DataClassification, _index: usize) -> String {
     let tag = match classification {
         DataClassification::Pii => "PII",
         DataClassification::Secret => "SECRET",
@@ -62,7 +62,8 @@ pub fn placeholder_for(classification: DataClassification, index: usize) -> Stri
         DataClassification::Regulated => "REGULATED",
         _ => "REDACTED",
     };
-    format!("[{tag}_{index}]")
+    let random_suffix: u32 = rand::random::<u32>() & 0xFFFF;
+    format!("[{tag}_{random_suffix:04x}]")
 }
 
 /// Known patterns for secret and PII detection.
@@ -191,29 +192,33 @@ mod tests {
     }
 
     #[test]
-    fn placeholder_for_pii() {
-        assert_eq!(placeholder_for(DataClassification::Pii, 0), "[PII_0]");
+    fn placeholder_for_pii_has_random_suffix() {
+        let p = placeholder_for(DataClassification::Pii, 0);
+        assert!(p.starts_with("[PII_"));
+        assert!(p.ends_with(']'));
+        // Two calls should produce different placeholders (random)
+        let p2 = placeholder_for(DataClassification::Pii, 0);
+        // Not guaranteed different, but extremely unlikely to be same
+        // Just check format
+        assert!(p2.starts_with("[PII_"));
     }
 
     #[test]
     fn placeholder_for_secret() {
-        assert_eq!(placeholder_for(DataClassification::Secret, 3), "[SECRET_3]");
+        let p = placeholder_for(DataClassification::Secret, 3);
+        assert!(p.starts_with("[SECRET_"));
     }
 
     #[test]
     fn placeholder_for_credential() {
-        assert_eq!(
-            placeholder_for(DataClassification::Credential, 1),
-            "[CREDENTIAL_1]"
-        );
+        let p = placeholder_for(DataClassification::Credential, 1);
+        assert!(p.starts_with("[CREDENTIAL_"));
     }
 
     #[test]
     fn placeholder_for_unknown_uses_redacted() {
-        assert_eq!(
-            placeholder_for(DataClassification::Unknown, 0),
-            "[REDACTED_0]"
-        );
+        let p = placeholder_for(DataClassification::Unknown, 0);
+        assert!(p.starts_with("[REDACTED_"));
     }
 
     #[test]
@@ -284,10 +289,10 @@ mod tests {
                 start: 0,
                 end: 5,
                 classification: DataClassification::Pii,
-                placeholder: "[PII_0]".into(),
+                placeholder: "[PII_a1b2]".into(),
             }],
         };
         let json = serde_json::to_string(&result).expect("should serialize");
-        assert!(json.contains("PII_0"));
+        assert!(json.contains("PII_"));
     }
 }

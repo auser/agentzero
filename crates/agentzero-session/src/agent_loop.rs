@@ -50,6 +50,12 @@ pub struct AgentLoopConfig {
     pub classification: DataClassification,
     /// Context compaction config.
     pub context_config: ContextConfig,
+    /// Optional separate model for tool generation (cheaper/faster).
+    /// If None, uses the main model for everything.
+    pub tool_generation_model: Option<String>,
+    /// Maximum number of tools to include in context.
+    /// If tool count exceeds this, a selection pre-step picks relevant tools.
+    pub max_tools_in_context: usize,
 }
 
 impl Default for AgentLoopConfig {
@@ -59,6 +65,8 @@ impl Default for AgentLoopConfig {
             max_output_bytes: 2000,
             classification: DataClassification::Private,
             context_config: ContextConfig::default(),
+            tool_generation_model: None,
+            max_tools_in_context: 20,
         }
     }
 }

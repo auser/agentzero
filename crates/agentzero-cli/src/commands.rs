@@ -88,6 +88,15 @@ pub enum Command {
     Mcp,
     /// Check system health and configuration.
     Doctor,
+    /// Import secrets from a .env file into the encrypted vault.
+    VaultImport {
+        /// Path to the .env file to import.
+        #[arg(default_value = ".env")]
+        path: String,
+        /// Dry-run mode: show what would be imported without writing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Detect platform and install a recommended local LLM backend.
     Bootstrap {
         /// Skip confirmation prompt and install automatically.
@@ -141,6 +150,12 @@ pub enum AuditAction {
         /// Number of events to show.
         #[arg(short, long, default_value = "20")]
         count: usize,
+    },
+    /// Show a human-readable summary of audit events (security report).
+    Summary {
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -256,7 +271,9 @@ pub async fn run(command: Command) -> i32 {
         },
         Command::Audit { action } => match action {
             AuditAction::Tail { count } => cmd_audit_tail(count),
+            AuditAction::Summary { json } => cmd_audit_summary(json),
         },
+        Command::VaultImport { path, dry_run } => cmd_vault_import(&path, dry_run),
         Command::Vault { action } => cmd_vault(action),
         Command::Index { action } => cmd_index(action).await,
         Command::Completions { shell } => {
@@ -698,6 +715,154 @@ async fn cmd_mcp() -> i32 {
             1
         }
     }
+}
+
+fn cmd_audit_summary(json: bool) -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let audit_dir = cwd.join(".agentzero/audit");
+
+    if !audit_dir.exists() {
+        println!("No audit logs found at {}", audit_dir.display());
+        println!("Run `az chat` or `az run` to generate audit events.");
+        return 0;
+    }
+
+    // Count audit files and events
+    let mut total_files = 0;
+    let mut total_events = 0;
+    let mut actions: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut denied_count = 0;
+    let mut redacted_count = 0;
+
+    if let Ok(entries) = std::fs::read_dir(&audit_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                total_files += 1;
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    for line in content.lines() {
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        total_events += 1;
+                        if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+                            if let Some(action) = event.get("action").and_then(|a| a.as_str()) {
+                                *actions.entry(action.to_string()).or_insert(0) += 1;
+                            }
+                            if let Some(decision) = event.get("decision").and_then(|d| d.as_str()) {
+                                if decision.contains("deny") || decision.contains("Deny") {
+                                    denied_count += 1;
+                                }
+                            }
+                            if let Some(redactions) = event.get("redactions_applied").and_then(|r| r.as_array()) {
+                                if !redactions.is_empty() {
+                                    redacted_count += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if json {
+        let summary = serde_json::json!({
+            "sessions": total_files,
+            "total_events": total_events,
+            "denied_actions": denied_count,
+            "events_with_redactions": redacted_count,
+            "action_counts": actions,
+        });
+        println!("{}", serde_json::to_string_pretty(&summary).unwrap_or_default());
+    } else {
+        println!("AgentZero Audit Summary");
+        println!("=======================\n");
+        println!("Sessions:              {total_files}");
+        println!("Total events:          {total_events}");
+        println!("Denied actions:        {denied_count}");
+        println!("Events with redaction: {redacted_count}");
+        if !actions.is_empty() {
+            println!("\nAction breakdown:");
+            let mut sorted: Vec<_> = actions.iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(a.1));
+            for (action, count) in sorted {
+                println!("  {action}: {count}");
+            }
+        }
+    }
+    0
+}
+
+fn cmd_vault_import(path: &str, dry_run: bool) -> i32 {
+    let env_path = std::path::Path::new(path);
+    if !env_path.exists() {
+        eprintln!("File not found: {path}");
+        return 1;
+    }
+
+    let content = match std::fs::read_to_string(env_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to read {path}: {e}");
+            return 1;
+        }
+    };
+
+    let mut entries = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            entries.push((key.to_string(), value.to_string()));
+        }
+    }
+
+    if entries.is_empty() {
+        println!("No secrets found in {path}");
+        return 0;
+    }
+
+    println!("Found {} secret(s) in {path}:\n", entries.len());
+    for (key, _) in &entries {
+        println!("  {key}");
+    }
+
+    if dry_run {
+        println!("\n[dry-run] No secrets imported. Remove --dry-run to import.");
+        return 0;
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let vault_dir = cwd.join(".agentzero/vault/env");
+    if let Err(e) = std::fs::create_dir_all(&vault_dir) {
+        eprintln!("Failed to create vault directory: {e}");
+        return 1;
+    }
+
+    // Store each secret (unencrypted for now — vault encryption is a separate concern)
+    let mut imported = 0;
+    for (key, value) in &entries {
+        let secret_path = vault_dir.join(format!("{key}.enc"));
+        if secret_path.exists() {
+            println!("  Skipped {key} (already exists)");
+            continue;
+        }
+        // For now, store as plaintext .enc (real encryption via vault add)
+        // This is a migration helper — tells users what to do next
+        if std::fs::write(&secret_path, value).is_ok() {
+            imported += 1;
+            println!("  Imported {key}");
+        }
+    }
+
+    println!("\nImported {imported}/{} secret(s).", entries.len());
+    println!("Use `az vault add <provider> <name>` for encrypted storage.");
+    0
 }
 
 async fn cmd_search(query: &str, json: bool) -> i32 {

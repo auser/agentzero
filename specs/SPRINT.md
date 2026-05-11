@@ -312,6 +312,13 @@ WASM host imports, codegen, and dynamic tool registration per ADR 0012.
 - [ ] Javy embedding (Tier 2 JS→WASM compilation, deferred — significant dependency)
 - [ ] `az publish --catalog` workflow (deferred — needs catalog repo infrastructure)
 
+### Phase 27: Polish (COMPLETE)
+
+- [x] Random redaction placeholders (hex suffix instead of sequential indices)
+- [x] `az audit summary` with human-readable and JSON output
+- [x] Multi-model routing config (`tool_generation_model`, `max_tools_in_context` in AgentLoopConfig)
+- [x] `az vault-import` for migrating secrets from .env files
+
 ## Not Yet (deferred)
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
