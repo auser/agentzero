@@ -548,6 +548,205 @@ impl ToolExecutor {
         Ok(canonical)
     }
 
+    /// Append content to a file (creates if missing). Requires `FileWrite` capability.
+    pub fn append_file(&self, path: &str, content: &str) -> Result<ToolResult, ToolExecutorError> {
+        let execution_id = ExecutionId::new();
+        let tool_id = ToolId::from_string("append");
+
+        debug!(tool = "append", path = path, "checking policy for file append");
+
+        let canonical = self.validate_path_for_create(path)?;
+
+        let decision = self.check_policy(Capability::FileWrite, DataClassification::Private);
+        if !decision.is_allowed() {
+            warn!(tool = "append", path = %canonical.display(), "file append denied by policy");
+            return Err(ToolExecutorError::Denied(format!(
+                "file append denied: {decision:?}"
+            )));
+        }
+
+        info!(tool = "append", path = %canonical.display(), bytes = content.len(), "appending to file");
+
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&canonical)
+            .map_err(|e| ToolExecutorError::Failed(format!("failed to open {path} for append: {e}")))?;
+
+        file.write_all(content.as_bytes())
+            .map_err(|e| ToolExecutorError::Failed(format!("failed to append to {path}: {e}")))?;
+
+        Ok(ToolResult {
+            tool_id,
+            execution_id,
+            success: true,
+            output: format!("appended {} bytes to {path}", content.len()),
+        })
+    }
+
+    /// Create a directory and all parent directories. Requires `FileWrite` capability.
+    /// Idempotent — succeeds if the directory already exists.
+    pub fn create_dir(&self, path: &str) -> Result<ToolResult, ToolExecutorError> {
+        let execution_id = ExecutionId::new();
+        let tool_id = ToolId::from_string("create_dir");
+
+        debug!(tool = "create_dir", path = path, "checking policy for create_dir");
+
+        let canonical = self.validate_path_for_create(path)?;
+
+        let decision = self.check_policy(Capability::FileWrite, DataClassification::Private);
+        if !decision.is_allowed() {
+            warn!(tool = "create_dir", path = %canonical.display(), "create_dir denied by policy");
+            return Err(ToolExecutorError::Denied(format!(
+                "create_dir denied: {decision:?}"
+            )));
+        }
+
+        info!(tool = "create_dir", path = %canonical.display(), "creating directory");
+        std::fs::create_dir_all(&canonical)
+            .map_err(|e| ToolExecutorError::Failed(format!("failed to create dir {path}: {e}")))?;
+
+        Ok(ToolResult {
+            tool_id,
+            execution_id,
+            success: true,
+            output: format!("created directory {path}"),
+        })
+    }
+
+    /// Check whether a file or directory exists. Requires `FileRead` capability.
+    pub fn file_exists(&self, path: &str) -> Result<ToolResult, ToolExecutorError> {
+        let execution_id = ExecutionId::new();
+        let tool_id = ToolId::from_string("file_exists");
+
+        debug!(tool = "file_exists", path = path, "checking policy for file_exists");
+
+        // For file_exists we try canonicalize first; if it fails because the path
+        // doesn't exist, that's a valid "false" answer. But we still need to
+        // validate the parent to prevent sensitive-path probing.
+        let check_path = std::path::Path::new(path);
+        let exists = check_path.exists();
+
+        // If the path exists, validate it fully to check sensitive paths
+        if exists {
+            let canonical = self.validate_path(path)?;
+            let decision = self.check_policy(Capability::FileRead, DataClassification::Private);
+            if !decision.is_allowed() {
+                warn!(tool = "file_exists", path = %canonical.display(), "file_exists denied by policy");
+                return Err(ToolExecutorError::Denied(format!(
+                    "file_exists denied: {decision:?}"
+                )));
+            }
+        } else {
+            // Path doesn't exist — still check policy and validate parent
+            let decision = self.check_policy(Capability::FileRead, DataClassification::Private);
+            if !decision.is_allowed() {
+                return Err(ToolExecutorError::Denied(format!(
+                    "file_exists denied: {decision:?}"
+                )));
+            }
+            // Check the raw path for sensitive patterns
+            let sensitive = [".ssh", ".gnupg", ".aws/credentials", ".env", ".agentzero"];
+            for s in &sensitive {
+                if path.contains(s) {
+                    return Err(ToolExecutorError::Denied(format!(
+                        "access to sensitive path denied: {s}"
+                    )));
+                }
+            }
+        }
+
+        Ok(ToolResult {
+            tool_id,
+            execution_id,
+            success: true,
+            output: exists.to_string(),
+        })
+    }
+
+    /// Validate a path that may not exist yet (for create/append operations).
+    /// Walks up from the path to find the first existing ancestor, canonicalizes it,
+    /// then appends the remaining components.
+    fn validate_path_for_create(&self, path: &str) -> Result<std::path::PathBuf, ToolExecutorError> {
+        let p = std::path::Path::new(path);
+
+        // If the path already exists, use the normal validate_path
+        if p.exists() {
+            return self.validate_path(path);
+        }
+
+        // Walk up to find the first existing ancestor
+        let mut existing_ancestor = p.parent();
+        let mut suffix_components = vec![];
+        if let Some(name) = p.file_name() {
+            suffix_components.push(name);
+        }
+
+        loop {
+            match existing_ancestor {
+                Some(ancestor) if ancestor.as_os_str().is_empty() => {
+                    // Relative path — use current dir
+                    let canonical_ancestor = std::fs::canonicalize(".")
+                        .map_err(|e| ToolExecutorError::InvalidPath(format!(".: {e}")))?;
+                    let mut canonical = canonical_ancestor;
+                    for component in suffix_components.iter().rev() {
+                        canonical = canonical.join(component);
+                    }
+                    break self.check_path_security(&canonical, path);
+                }
+                Some(ancestor) if ancestor.exists() => {
+                    let canonical_ancestor = std::fs::canonicalize(ancestor)
+                        .map_err(|e| ToolExecutorError::InvalidPath(format!("{}: {e}", ancestor.display())))?;
+                    let mut canonical = canonical_ancestor;
+                    for component in suffix_components.iter().rev() {
+                        canonical = canonical.join(component);
+                    }
+                    break self.check_path_security(&canonical, path);
+                }
+                Some(ancestor) => {
+                    if let Some(name) = ancestor.file_name() {
+                        suffix_components.push(name);
+                    }
+                    existing_ancestor = ancestor.parent();
+                }
+                None => {
+                    return Err(ToolExecutorError::InvalidPath(format!(
+                        "{path}: no existing ancestor directory"
+                    )));
+                }
+            }
+        }
+    }
+
+    fn check_path_security(
+        &self,
+        canonical: &std::path::Path,
+        original_path: &str,
+    ) -> Result<std::path::PathBuf, ToolExecutorError> {
+        if let Some(ref root) = self.project_root {
+            let root_canonical = std::fs::canonicalize(root)
+                .map_err(|e| ToolExecutorError::InvalidPath(format!("{root}: {e}")))?;
+            if !canonical.starts_with(&root_canonical) {
+                return Err(ToolExecutorError::Denied(format!(
+                    "path {original_path} is outside project root"
+                )));
+            }
+        }
+
+        let path_str = canonical.to_string_lossy();
+        let sensitive = [".ssh", ".gnupg", ".aws/credentials", ".env", ".agentzero"];
+        for s in &sensitive {
+            if path_str.contains(s) {
+                return Err(ToolExecutorError::Denied(format!(
+                    "access to sensitive path denied: {s}"
+                )));
+            }
+        }
+
+        Ok(canonical.to_path_buf())
+    }
+
     fn search_recursive(
         &self,
         dir: &Path,
@@ -756,6 +955,148 @@ mod tests {
         let executor = executor_with_read_allowed().with_project_root("crates/agentzero-core");
         // Trying to read outside the project root
         let result = executor.read_file("Cargo.toml");
+        assert!(result.is_err());
+    }
+
+    fn executor_with_write_allowed() -> ToolExecutor {
+        let policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow(Capability::FileRead, DataClassification::Private),
+            PolicyRule::allow(Capability::FileWrite, DataClassification::Private),
+        ]);
+        ToolExecutor::new(policy)
+    }
+
+    #[test]
+    fn append_file_creates_if_missing() {
+        let executor = executor_with_write_allowed();
+        let dir = std::env::temp_dir().join("az-test-append-create");
+        std::fs::create_dir_all(&dir).ok();
+        let file = dir.join("new-append.txt");
+        // Ensure file doesn't exist
+        std::fs::remove_file(&file).ok();
+
+        let result = executor
+            .append_file(file.to_str().expect("path"), "first line\n")
+            .expect("append should succeed");
+        assert!(result.success);
+
+        let content = std::fs::read_to_string(&file).expect("should read");
+        assert_eq!(content, "first line\n");
+
+        std::fs::remove_file(&file).ok();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn append_file_appends_to_existing() {
+        let executor = executor_with_write_allowed();
+        let dir = std::env::temp_dir().join("az-test-append-existing");
+        std::fs::create_dir_all(&dir).ok();
+        let file = dir.join("existing.txt");
+        std::fs::write(&file, "line one\n").expect("write");
+
+        executor
+            .append_file(file.to_str().expect("path"), "line two\n")
+            .expect("append should succeed");
+
+        let content = std::fs::read_to_string(&file).expect("should read");
+        assert_eq!(content, "line one\nline two\n");
+
+        std::fs::remove_file(&file).ok();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn append_file_denied_by_policy() {
+        let executor = executor_deny_all();
+        let result = executor.append_file("/tmp/az-test-denied.txt", "content");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn create_dir_creates_nested() {
+        let executor = executor_with_write_allowed();
+        let dir = std::env::temp_dir().join("az-test-mkdir/nested/deep");
+        std::fs::remove_dir_all(std::env::temp_dir().join("az-test-mkdir")).ok();
+
+        let result = executor
+            .create_dir(dir.to_str().expect("path"))
+            .expect("create_dir should succeed");
+        assert!(result.success);
+        assert!(dir.is_dir());
+
+        std::fs::remove_dir_all(std::env::temp_dir().join("az-test-mkdir")).ok();
+    }
+
+    #[test]
+    fn create_dir_is_idempotent() {
+        let executor = executor_with_write_allowed();
+        let dir = std::env::temp_dir().join("az-test-mkdir-idem");
+        std::fs::create_dir_all(&dir).ok();
+
+        let result = executor.create_dir(dir.to_str().expect("path"));
+        assert!(result.is_ok());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_dir_denied_by_policy() {
+        let executor = executor_deny_all();
+        let result = executor.create_dir("/tmp/az-test-denied-dir");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn file_exists_returns_true_for_existing() {
+        let executor = executor_with_read_allowed();
+        let result = executor.file_exists("Cargo.toml").expect("should succeed");
+        assert_eq!(result.output, "true");
+    }
+
+    #[test]
+    fn file_exists_returns_false_for_missing() {
+        let executor = executor_with_read_allowed();
+        let result = executor
+            .file_exists("nonexistent-file-xyz.txt")
+            .expect("should succeed");
+        assert_eq!(result.output, "false");
+    }
+
+    #[test]
+    fn file_exists_denied_by_policy() {
+        let executor = executor_deny_all();
+        let result = executor.file_exists("Cargo.toml");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn file_exists_blocks_sensitive_paths() {
+        let executor = executor_with_read_allowed();
+        let result = executor.file_exists("/tmp/.agentzero/secrets");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn append_file_blocks_sensitive_paths() {
+        let executor = executor_with_write_allowed();
+        let dir = std::env::temp_dir().join("az-test-append-sens");
+        let az_dir = dir.join(".agentzero");
+        std::fs::create_dir_all(&az_dir).ok();
+
+        let result = executor.append_file(
+            az_dir.join("log.txt").to_str().expect("path"),
+            "data",
+        );
+        assert!(result.is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_dir_blocks_sensitive_paths() {
+        let executor = executor_with_write_allowed();
+        let result = executor.create_dir("/tmp/az-test/.agentzero/subdir");
         assert!(result.is_err());
     }
 }

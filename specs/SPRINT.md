@@ -289,9 +289,10 @@ WASM host imports, codegen, and dynamic tool registration per ADR 0012.
 - [x] `AgentLoop::generate_and_register_tool()` — end-to-end codegen → registration
 - [x] `generate_tool` built-in tool callable by the LLM during the agent loop
 - [x] Wire `WasmHostCallbacks` to `ToolExecutor` + `PolicyEngine` in session
-- [ ] Extended filesystem host imports: `list-dir`, `create-dir`, `file-exists`, `append-file`
-- [ ] Clock host import: `now` (ISO 8601)
-- [ ] WIT spec bumped to `az:host@0.2.0`
+- [x] Extended filesystem host imports: `list-dir`, `create-dir`, `file-exists`, `append-file`
+- [x] Clock host import: `now` (ISO 8601)
+- [x] WIT spec bumped to `az:host@0.2.0`
+- [x] Host-to-guest string return via `alloc` export protocol (`read_file` → i64, `list_dir` → JSON, `now` → ISO 8601)
 - [ ] ADR 0015: Personal Brain as WASM Plugin
 
 ### Phase 25: Provider & Onboarding (COMPLETE)
