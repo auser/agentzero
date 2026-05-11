@@ -14,6 +14,7 @@ pub mod retry;
 pub mod router;
 mod session;
 mod tool_exec;
+pub mod wasm_host;
 
 pub use agent_loop::{
     AgentLoop, AgentLoopConfig, AgentLoopError, AgentResponse, ApprovalDecision, ApprovalHandler,
