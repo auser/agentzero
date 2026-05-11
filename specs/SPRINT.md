@@ -289,16 +289,30 @@ WASM host imports, codegen, and dynamic tool registration per ADR 0012.
 - [x] `AgentLoop::generate_and_register_tool()` — end-to-end codegen → registration
 - [x] `generate_tool` built-in tool callable by the LLM during the agent loop
 - [x] Wire `WasmHostCallbacks` to `ToolExecutor` + `PolicyEngine` in session
+- [ ] Extended filesystem host imports: `list-dir`, `create-dir`, `file-exists`, `append-file`
+- [ ] Clock host import: `now` (ISO 8601)
+- [ ] WIT spec bumped to `az:host@0.2.0`
+- [ ] ADR 0015: Personal Brain as WASM Plugin
+
+### Phase 25: Provider & Onboarding (COMPLETE)
+
+- [x] Anthropic Claude provider (Messages API, tool calling, system prompt extraction)
+- [x] MCP moved to `--features mcp` optional flag (ADR 0014)
+- [x] `az bootstrap` command (platform detection, backend probing, install orchestration)
+- [x] `ProviderType::Anthropic` in models_config with router wiring
+- [x] OpenAI-compat verified against: Groq, Together, DeepSeek (all use /v1/chat/completions)
 
 ## Not Yet (deferred)
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
 - [ ] Central skill index (JSON file in a well-known repo for short-name resolution).
 - [ ] Lockfile checksum re-verification on `agentzero run`.
-- [ ] `az bootstrap` command (platform detection + backend install)
-- [ ] Anthropic provider
-- [ ] MCP to optional feature flag
 - [ ] Marketplace / catalog for published tools
+- [ ] Brain plugin (personal LLM wiki) — WASM plugin per ADR 0015
+  - Spec: `specs/prompts/0006-agentzero-brain-production-plugin-prompt.md`
+  - Plan: `specs/plans/0004-brain-plugin.md`
+  - MVP: `brain init`, `brain today`, `brain capture`, `brain query`
+  - Blocked on: Phase 24 extended host imports (`list-dir`, `create-dir`, `file-exists`, `append-file`, `now`)
 
 ## Notes
 
