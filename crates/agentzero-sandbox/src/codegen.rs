@@ -211,11 +211,12 @@ mod generator {
 
     /// Generate a WASM module that reads a file via `az::read_file`.
     ///
-    /// Imports: az::read_file(ptr: i32, len: i32) -> i32, az::log(ptr: i32, len: i32)
-    /// Exports: main() -> i32, memory
+    /// Imports: az::read_file(ptr: i32, len: i32) -> i64, az::log(ptr: i32, len: i32)
+    /// Exports: main() -> i32, memory, alloc(i32) -> i32
     ///
-    /// The module stores a hardcoded path in memory, calls read_file,
-    /// logs the result status, and returns the status code.
+    /// The module stores a hardcoded path in memory, calls read_file
+    /// (which returns packed ptr/len via the alloc protocol), logs the
+    /// result status, and returns 0 on success.
     fn generate_file_reader() -> Result<Vec<u8>, CodegenError> {
         use wasm_encoder::*;
 
@@ -225,12 +226,14 @@ mod generator {
         let mut types = TypeSection::new();
         // Type 0: (i32, i32) -> () — for az::log
         types.ty().function(vec![ValType::I32, ValType::I32], vec![]);
-        // Type 1: (i32, i32) -> i32 — for az::read_file
+        // Type 1: (i32, i32) -> i64 — for az::read_file (returns packed ptr/len)
         types
             .ty()
-            .function(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+            .function(vec![ValType::I32, ValType::I32], vec![ValType::I64]);
         // Type 2: () -> i32 — for main
         types.ty().function(vec![], vec![ValType::I32]);
+        // Type 3: (i32) -> i32 — for alloc
+        types.ty().function(vec![ValType::I32], vec![ValType::I32]);
         module.section(&types);
 
         // Import section
@@ -239,9 +242,10 @@ mod generator {
         imports.import("az", "read_file", EntityType::Function(1)); // func 1
         module.section(&imports);
 
-        // Function section: main is func 2 (after 2 imports), type 2
+        // Function section: alloc is func 2, main is func 3
         let mut functions = FunctionSection::new();
-        functions.function(2);
+        functions.function(3); // alloc: type 3
+        functions.function(2); // main: type 2
         module.section(&functions);
 
         // Memory section
@@ -255,32 +259,62 @@ mod generator {
         });
         module.section(&memories);
 
+        // Global section: bump pointer for alloc, starts at 1024
+        let mut globals = GlobalSection::new();
+        globals.global(
+            GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
+            &ConstExpr::i32_const(1024),
+        );
+        module.section(&globals);
+
         // Export section
         let mut exports = ExportSection::new();
-        exports.export("main", ExportKind::Func, 2);
+        exports.export("alloc", ExportKind::Func, 2);
+        exports.export("main", ExportKind::Func, 3);
         exports.export("memory", ExportKind::Memory, 0);
         module.section(&exports);
 
-        // Code section:
-        //   local result: i32
-        //   result = call az::read_file(0, path_len)
-        //   call az::log(256, log_msg_len)
-        //   return result
+        // Code section
         let path = b"Cargo.toml";
         let log_msg = b"file read attempted";
         let mut codes = CodeSection::new();
-        let mut func = Function::new(vec![(1, ValType::I32)]);
+
+        // alloc(size: i32) -> i32: bump allocator
+        let mut alloc_func = Function::new(vec![(1, ValType::I32)]); // local $ptr
+        alloc_func.instruction(&Instruction::GlobalGet(0)); // get bump
+        alloc_func.instruction(&Instruction::LocalSet(1)); // ptr = bump
+        alloc_func.instruction(&Instruction::GlobalGet(0));
+        alloc_func.instruction(&Instruction::LocalGet(0)); // size param
+        alloc_func.instruction(&Instruction::I32Add);
+        alloc_func.instruction(&Instruction::GlobalSet(0)); // bump += size
+        alloc_func.instruction(&Instruction::LocalGet(1)); // return ptr
+        alloc_func.instruction(&Instruction::End);
+        codes.function(&alloc_func);
+
+        // main() -> i32
+        let mut func = Function::new(vec![(1, ValType::I64)]); // local $result: i64
         // Call read_file
         func.instruction(&Instruction::I32Const(0)); // path ptr
         func.instruction(&Instruction::I32Const(path.len() as i32)); // path len
-        func.instruction(&Instruction::Call(1)); // az::read_file
+        func.instruction(&Instruction::Call(1)); // az::read_file -> i64
         func.instruction(&Instruction::LocalSet(0)); // store result
-        // Log
+        // Log status message
         func.instruction(&Instruction::I32Const(256)); // log msg ptr
-        func.instruction(&Instruction::I32Const(log_msg.len() as i32)); // log msg len
+        func.instruction(&Instruction::I32Const(log_msg.len() as i32));
         func.instruction(&Instruction::Call(0)); // az::log
-        // Return result
+        // Check if result == -1 (error)
         func.instruction(&Instruction::LocalGet(0));
+        func.instruction(&Instruction::I64Const(-1));
+        func.instruction(&Instruction::I64Eq);
+        func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        func.instruction(&Instruction::I32Const(1)); // error
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I32Const(0)); // success
+        func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
         codes.function(&func);
         module.section(&codes);
@@ -302,8 +336,8 @@ mod generator {
 
     /// Generate a WASM module that reads a file and returns its byte count.
     ///
-    /// Imports: az::read_file(ptr, len) -> i32, az::log(ptr, len)
-    /// Exports: main() -> i32 (returns read_file status)
+    /// Imports: az::read_file(ptr, len) -> i64, az::log(ptr, len)
+    /// Exports: main() -> i32, alloc(i32) -> i32
     ///
     /// Like FileReader but with a "counting" log message — foundation for
     /// parameterized analysis tools.
@@ -313,9 +347,10 @@ mod generator {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);       // type 0: az::log
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![ValType::I32]); // type 1: az::read_file
-        types.ty().function(vec![], vec![ValType::I32]);                     // type 2: main
+        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);        // type 0: az::log
+        types.ty().function(vec![ValType::I32, ValType::I32], vec![ValType::I64]); // type 1: az::read_file
+        types.ty().function(vec![], vec![ValType::I32]);                      // type 2: main
+        types.ty().function(vec![ValType::I32], vec![ValType::I32]);          // type 3: alloc
         module.section(&types);
 
         let mut imports = ImportSection::new();
@@ -324,15 +359,24 @@ mod generator {
         module.section(&imports);
 
         let mut functions = FunctionSection::new();
-        functions.function(2); // main
+        functions.function(3); // alloc: func 2
+        functions.function(2); // main: func 3
         module.section(&functions);
 
         let mut memories = MemorySection::new();
         memories.memory(MemoryType { minimum: 1, maximum: Some(1), memory64: false, shared: false, page_size_log2: None });
         module.section(&memories);
 
+        let mut globals = GlobalSection::new();
+        globals.global(
+            GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            &ConstExpr::i32_const(1024),
+        );
+        module.section(&globals);
+
         let mut exports = ExportSection::new();
-        exports.export("main", ExportKind::Func, 2);
+        exports.export("alloc", ExportKind::Func, 2);
+        exports.export("main", ExportKind::Func, 3);
         exports.export("memory", ExportKind::Memory, 0);
         module.section(&exports);
 
@@ -340,15 +384,37 @@ mod generator {
         let log_msg = b"file counted";
 
         let mut codes = CodeSection::new();
-        let mut func = Function::new(vec![(1, ValType::I32)]);
+
+        // alloc
+        let mut alloc_func = Function::new(vec![(1, ValType::I32)]);
+        alloc_func.instruction(&Instruction::GlobalGet(0));
+        alloc_func.instruction(&Instruction::LocalSet(1));
+        alloc_func.instruction(&Instruction::GlobalGet(0));
+        alloc_func.instruction(&Instruction::LocalGet(0));
+        alloc_func.instruction(&Instruction::I32Add);
+        alloc_func.instruction(&Instruction::GlobalSet(0));
+        alloc_func.instruction(&Instruction::LocalGet(1));
+        alloc_func.instruction(&Instruction::End);
+        codes.function(&alloc_func);
+
+        // main: call read_file, check if -1, log, return 0 or 1
+        let mut func = Function::new(vec![(1, ValType::I64)]);
         func.instruction(&Instruction::I32Const(0));
         func.instruction(&Instruction::I32Const(path.len() as i32));
-        func.instruction(&Instruction::Call(1)); // az::read_file
+        func.instruction(&Instruction::Call(1)); // az::read_file -> i64
         func.instruction(&Instruction::LocalSet(0));
         func.instruction(&Instruction::I32Const(256));
         func.instruction(&Instruction::I32Const(log_msg.len() as i32));
         func.instruction(&Instruction::Call(0)); // az::log
+        // Check if error (-1)
         func.instruction(&Instruction::LocalGet(0));
+        func.instruction(&Instruction::I64Const(-1));
+        func.instruction(&Instruction::I64Eq);
+        func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        func.instruction(&Instruction::I32Const(1));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::End);
         func.instruction(&Instruction::End);
         codes.function(&func);
         module.section(&codes);
@@ -438,9 +504,10 @@ mod generator {
 
     /// Generate a WASM module that reads multiple files sequentially.
     ///
-    /// Imports: az::read_file(ptr, len) -> i32, az::log(ptr, len)
+    /// Imports: az::read_file(ptr, len) -> i64, az::log(ptr, len)
+    /// Exports: main() -> i32, alloc(i32) -> i32
     /// Each path is stored in the data section at sequential offsets.
-    /// Returns 0 if all reads succeed, or the first non-zero status.
+    /// Returns 0 if all reads succeed, 1 on first failure.
     fn generate_multi_file_reader(paths: &[String]) -> Result<Vec<u8>, CodegenError> {
         use wasm_encoder::*;
 
@@ -454,9 +521,10 @@ mod generator {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);       // type 0: az::log
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![ValType::I32]); // type 1: az::read_file
-        types.ty().function(vec![], vec![ValType::I32]);                     // type 2: main
+        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);        // type 0: az::log
+        types.ty().function(vec![ValType::I32, ValType::I32], vec![ValType::I64]); // type 1: az::read_file
+        types.ty().function(vec![], vec![ValType::I32]);                      // type 2: main
+        types.ty().function(vec![ValType::I32], vec![ValType::I32]);          // type 3: alloc
         module.section(&types);
 
         let mut imports = ImportSection::new();
@@ -465,15 +533,24 @@ mod generator {
         module.section(&imports);
 
         let mut functions = FunctionSection::new();
-        functions.function(2);
+        functions.function(3); // alloc: func 2
+        functions.function(2); // main: func 3
         module.section(&functions);
 
         let mut memories = MemorySection::new();
         memories.memory(MemoryType { minimum: 1, maximum: Some(1), memory64: false, shared: false, page_size_log2: None });
         module.section(&memories);
 
+        let mut globals = GlobalSection::new();
+        globals.global(
+            GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            &ConstExpr::i32_const(8192),
+        );
+        module.section(&globals);
+
         let mut exports = ExportSection::new();
-        exports.export("main", ExportKind::Func, 2);
+        exports.export("alloc", ExportKind::Func, 2);
+        exports.export("main", ExportKind::Func, 3);
         exports.export("memory", ExportKind::Memory, 0);
         module.section(&exports);
 
@@ -482,21 +559,34 @@ mod generator {
         let log_msg = format!("read {} files", paths.len());
         let log_bytes = log_msg.as_bytes();
 
-        // Build code: for each path, call read_file; if non-zero, return early
         let mut codes = CodeSection::new();
-        let mut func = Function::new(vec![(1, ValType::I32)]);
+
+        // alloc
+        let mut alloc_func = Function::new(vec![(1, ValType::I32)]);
+        alloc_func.instruction(&Instruction::GlobalGet(0));
+        alloc_func.instruction(&Instruction::LocalSet(1));
+        alloc_func.instruction(&Instruction::GlobalGet(0));
+        alloc_func.instruction(&Instruction::LocalGet(0));
+        alloc_func.instruction(&Instruction::I32Add);
+        alloc_func.instruction(&Instruction::GlobalSet(0));
+        alloc_func.instruction(&Instruction::LocalGet(1));
+        alloc_func.instruction(&Instruction::End);
+        codes.function(&alloc_func);
+
+        // main: for each path, call read_file; if -1, return 1 early
+        let mut func = Function::new(vec![(1, ValType::I64)]);
         for (i, path) in paths.iter().enumerate() {
             let offset = (i * 256) as i32;
             func.instruction(&Instruction::I32Const(offset));
             func.instruction(&Instruction::I32Const(path.len() as i32));
-            func.instruction(&Instruction::Call(1)); // az::read_file
+            func.instruction(&Instruction::Call(1)); // az::read_file -> i64
             func.instruction(&Instruction::LocalSet(0));
-            // If non-zero, return early
+            // If -1 (error), return 1
             func.instruction(&Instruction::LocalGet(0));
-            func.instruction(&Instruction::I32Const(0));
-            func.instruction(&Instruction::I32Ne);
+            func.instruction(&Instruction::I64Const(-1));
+            func.instruction(&Instruction::I64Eq);
             func.instruction(&Instruction::If(BlockType::Empty));
-            func.instruction(&Instruction::LocalGet(0));
+            func.instruction(&Instruction::I32Const(1));
             func.instruction(&Instruction::Return);
             func.instruction(&Instruction::End);
         }

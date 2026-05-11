@@ -47,8 +47,64 @@ impl WasmHostCallbacks for SessionHostCallbacks {
             })
     }
 
+    fn append_file(&self, path: &str, content: &str) -> Result<bool, String> {
+        info!(host_call = "append_file", path = path, bytes = content.len(), "WASM guest calling append_file");
+        self.executor
+            .append_file(path, content)
+            .map(|result| result.success)
+            .map_err(|e| {
+                warn!(host_call = "append_file", path = path, error = %e, "append_file denied or failed");
+                e.to_string()
+            })
+    }
+
+    fn list_dir(&self, path: &str) -> Result<Vec<String>, String> {
+        info!(host_call = "list_dir", path = path, "WASM guest calling list_dir");
+        self.executor
+            .list_dir(path)
+            .map(|result| {
+                // ToolExecutor returns "type\tname" lines; extract just names
+                result
+                    .output
+                    .lines()
+                    .filter_map(|line| line.split('\t').nth(1))
+                    .map(String::from)
+                    .collect()
+            })
+            .map_err(|e| {
+                warn!(host_call = "list_dir", path = path, error = %e, "list_dir denied or failed");
+                e.to_string()
+            })
+    }
+
+    fn create_dir(&self, path: &str) -> Result<bool, String> {
+        info!(host_call = "create_dir", path = path, "WASM guest calling create_dir");
+        self.executor
+            .create_dir(path)
+            .map(|result| result.success)
+            .map_err(|e| {
+                warn!(host_call = "create_dir", path = path, error = %e, "create_dir denied or failed");
+                e.to_string()
+            })
+    }
+
+    fn file_exists(&self, path: &str) -> Result<bool, String> {
+        info!(host_call = "file_exists", path = path, "WASM guest calling file_exists");
+        self.executor
+            .file_exists(path)
+            .map(|result| result.output == "true")
+            .map_err(|e| {
+                warn!(host_call = "file_exists", path = path, error = %e, "file_exists denied or failed");
+                e.to_string()
+            })
+    }
+
     fn log(&self, message: &str) {
         info!(host_call = "log", "WASM guest log: {message}");
+    }
+
+    fn now(&self) -> String {
+        chrono::Local::now().to_rfc3339()
     }
 }
 
@@ -115,5 +171,126 @@ mod tests {
         let cb = callbacks_deny_all();
         cb.log("test message from WASM guest");
         // Just verify no panic
+    }
+
+    fn callbacks_with_readwrite_allowed() -> SessionHostCallbacks {
+        let policy = PolicyEngine::with_rules(vec![
+            PolicyRule::allow(Capability::FileRead, DataClassification::Private),
+            PolicyRule::allow(Capability::FileWrite, DataClassification::Private),
+        ]);
+        SessionHostCallbacks::new(ToolExecutor::new(policy))
+    }
+
+    #[test]
+    fn append_file_denied_by_default() {
+        let cb = callbacks_deny_all();
+        let result = cb.append_file("/tmp/az-wasm-append.txt", "data");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn list_dir_succeeds_with_allowed_policy() {
+        let cb = callbacks_with_read_allowed();
+        let result = cb.list_dir(".");
+        assert!(result.is_ok());
+        let entries = result.expect("should list");
+        assert!(entries.iter().any(|e| e == "Cargo.toml"));
+    }
+
+    #[test]
+    fn list_dir_denied_by_default() {
+        let cb = callbacks_deny_all();
+        let result = cb.list_dir(".");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn create_dir_denied_by_default() {
+        let cb = callbacks_deny_all();
+        let result = cb.create_dir("/tmp/az-wasm-mkdir");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn file_exists_succeeds_with_allowed_policy() {
+        let cb = callbacks_with_read_allowed();
+        let result = cb.file_exists("Cargo.toml");
+        assert!(result.is_ok());
+        assert!(result.expect("should check"), "Cargo.toml should exist");
+    }
+
+    #[test]
+    fn file_exists_returns_false_for_missing() {
+        let cb = callbacks_with_read_allowed();
+        let result = cb.file_exists("nonexistent-xyz.txt");
+        assert!(result.is_ok());
+        assert!(!result.expect("should check"), "file should not exist");
+    }
+
+    #[test]
+    fn file_exists_denied_by_default() {
+        let cb = callbacks_deny_all();
+        let result = cb.file_exists("Cargo.toml");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn now_returns_valid_iso8601() {
+        let cb = callbacks_deny_all();
+        let ts = cb.now();
+        // Should parse as RFC 3339 / ISO 8601
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(&ts).is_ok(),
+            "now() should return valid ISO 8601: {ts}"
+        );
+    }
+
+    #[test]
+    fn append_file_creates_and_appends() {
+        let cb = callbacks_with_readwrite_allowed();
+        let dir = std::env::temp_dir().join("az-wasm-host-append");
+        std::fs::create_dir_all(&dir).ok();
+        let file = dir.join("test-append.txt");
+        std::fs::remove_file(&file).ok();
+
+        let r1 = cb.append_file(file.to_str().expect("path"), "line1\n");
+        assert!(r1.is_ok());
+        let r2 = cb.append_file(file.to_str().expect("path"), "line2\n");
+        assert!(r2.is_ok());
+
+        let content = std::fs::read_to_string(&file).expect("read");
+        assert_eq!(content, "line1\nline2\n");
+
+        std::fs::remove_file(&file).ok();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_dir_and_file_exists() {
+        let cb = callbacks_with_readwrite_allowed();
+        let dir = std::env::temp_dir().join("az-wasm-host-mkdir-test");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let r = cb.create_dir(dir.to_str().expect("path"));
+        assert!(r.is_ok());
+
+        let exists = cb.file_exists(dir.to_str().expect("path"));
+        assert!(exists.is_ok());
+        assert!(exists.expect("should check"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn list_dir_returns_entry_names_not_paths() {
+        let cb = callbacks_with_read_allowed();
+        let result = cb.list_dir(".").expect("should list");
+        // Should be just names, not full paths
+        for entry in &result {
+            assert!(
+                !entry.contains('/'),
+                "entry should be name only, got: {entry}"
+            );
+        }
     }
 }
