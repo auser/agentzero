@@ -5,6 +5,7 @@
 
 pub mod agent_loop;
 pub mod context;
+pub mod dynamic_tools;
 pub mod models_config;
 pub mod ollama;
 pub mod openai_compat;
