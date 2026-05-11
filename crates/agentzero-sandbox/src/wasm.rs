@@ -6,11 +6,44 @@
 //!
 //! Requires the `wasm` feature flag: `cargo build --features wasm`
 
+/// Trait for host callbacks invoked by WASM guest modules.
+///
+/// Implementations provide policy-checked filesystem, logging, and secret
+/// access. The sandbox crate defines the trait; `agentzero-session` provides
+/// the implementation that delegates to `ToolExecutor` + `PolicyEngine`.
+///
+/// See ADR 0013 (WIT interface) for the intended contract.
+pub trait WasmHostCallbacks: Send + Sync {
+    /// Read file contents. Must policy-check FileRead before returning.
+    fn read_file(&self, path: &str) -> Result<String, String>;
+    /// Write file contents. Must policy-check FileWrite before returning.
+    fn write_file(&self, path: &str, content: &str) -> Result<bool, String>;
+    /// Emit an audit-logged message from the WASM guest.
+    fn log(&self, message: &str);
+}
+
+/// No-op host callbacks for modules that don't need host access.
+/// All operations return errors.
+pub struct DenyAllHostCallbacks;
+
+impl WasmHostCallbacks for DenyAllHostCallbacks {
+    fn read_file(&self, _path: &str) -> Result<String, String> {
+        Err("host imports not available (no callbacks provided)".into())
+    }
+    fn write_file(&self, _path: &str, _content: &str) -> Result<bool, String> {
+        Err("host imports not available (no callbacks provided)".into())
+    }
+    fn log(&self, _message: &str) {}
+}
+
 #[cfg(feature = "wasm")]
 mod runtime {
     use agentzero_core::ExecutionId;
     use agentzero_tracing::{debug, info};
     use thiserror::Error;
+
+    use super::WasmHostCallbacks;
+    use std::sync::Arc;
 
     #[derive(Debug, Error)]
     pub enum WasmError {
@@ -20,6 +53,11 @@ mod runtime {
         ExecutionFailed(String),
         #[error("wasm module not found: {0}")]
         NotFound(String),
+    }
+
+    /// State held in the wasmtime `Store`, accessible to host functions.
+    struct HostState {
+        callbacks: Arc<dyn WasmHostCallbacks>,
     }
 
     /// Result of a WASM module execution.
@@ -75,45 +113,151 @@ mod runtime {
             Ok(Self { engine, config })
         }
 
-        /// Execute a WASM module from bytes.
+        /// Execute a WASM module from bytes (no host imports).
+        ///
+        /// Modules with imports are rejected. Use `execute_with_host` for
+        /// modules that need filesystem/logging/secrets access.
         pub fn execute(&self, wasm_bytes: &[u8]) -> Result<WasmResult, WasmError> {
+            self.execute_inner(wasm_bytes, None)
+        }
+
+        /// Execute a WASM module with host callbacks providing filesystem,
+        /// logging, and secret access per ADR 0013.
+        ///
+        /// Host functions are registered via wasmtime `Linker` under the
+        /// `"az"` module namespace:
+        /// - `az::read_file(ptr, len) -> ptr` (policy-checked)
+        /// - `az::write_file(path_ptr, path_len, content_ptr, content_len) -> i32`
+        /// - `az::log(ptr, len)`
+        ///
+        /// Modules that don't import any `az::*` functions work without callbacks.
+        pub fn execute_with_host(
+            &self,
+            wasm_bytes: &[u8],
+            callbacks: Arc<dyn WasmHostCallbacks>,
+        ) -> Result<WasmResult, WasmError> {
+            self.execute_inner(wasm_bytes, Some(callbacks))
+        }
+
+        fn execute_inner(
+            &self,
+            wasm_bytes: &[u8],
+            callbacks: Option<Arc<dyn WasmHostCallbacks>>,
+        ) -> Result<WasmResult, WasmError> {
             let execution_id = ExecutionId::new();
 
             debug!(
                 execution_id = %execution_id,
                 bytes = wasm_bytes.len(),
+                has_host = callbacks.is_some(),
                 "compiling wasm module"
             );
 
             let module = wasmtime::Module::new(&self.engine, wasm_bytes)
                 .map_err(|e| WasmError::CompilationFailed(e.to_string()))?;
 
-            // Security: reject modules with imports we don't provide.
-            // Currently no host imports are wired (empty &[] at instantiation).
-            // A module requesting imports it can't get would fail anyway, but
-            // rejecting explicitly here makes it auditable and prevents future
-            // regressions when host imports are added (they must be whitelisted).
+            // Validate imports: only allow "az" module imports when callbacks are provided.
             let imports: Vec<_> = module.imports().collect();
-            if !imports.is_empty() {
-                let import_names: Vec<String> = imports
+            let has_az_imports = imports.iter().any(|i| i.module() == "az");
+            let has_other_imports = imports.iter().any(|i| i.module() != "az");
+
+            if has_other_imports {
+                let unknown: Vec<String> = imports
                     .iter()
+                    .filter(|i| i.module() != "az")
                     .map(|i| format!("{}::{}", i.module(), i.name()))
                     .collect();
                 return Err(WasmError::ExecutionFailed(format!(
-                    "WASM module has undeclared imports (no host imports currently allowed): {}",
-                    import_names.join(", ")
+                    "WASM module has undeclared imports (only az::* allowed): {}",
+                    unknown.join(", ")
                 )));
             }
 
-            let mut store = wasmtime::Store::new(&self.engine, ());
+            if has_az_imports && callbacks.is_none() {
+                return Err(WasmError::ExecutionFailed(
+                    "WASM module imports az::* functions but no host callbacks provided".into(),
+                ));
+            }
 
-            // Set fuel limit based on duration (rough approximation)
+            // Build store with host state
+            let host_state = HostState {
+                callbacks: callbacks.unwrap_or_else(|| {
+                    Arc::new(super::DenyAllHostCallbacks)
+                }),
+            };
+            let mut store = wasmtime::Store::new(&self.engine, host_state);
+
             let fuel = self.config.max_duration_secs * 1_000_000;
             store
                 .set_fuel(fuel)
                 .map_err(|e| WasmError::ExecutionFailed(e.to_string()))?;
 
-            let instance = wasmtime::Instance::new(&mut store, &module, &[])
+            // Register host functions via Linker
+            let mut linker = wasmtime::Linker::new(&self.engine);
+
+            // az::log(ptr: i32, len: i32)
+            linker
+                .func_wrap("az", "log", |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| {
+                    if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        let data = memory.data(&caller);
+                        if let Some(slice) = data.get(ptr as usize..(ptr as usize + len as usize)) {
+                            if let Ok(msg) = std::str::from_utf8(slice) {
+                                caller.data().callbacks.log(msg);
+                            }
+                        }
+                    }
+                })
+                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::log: {e}")))?;
+
+            // az::read_file(ptr: i32, len: i32) -> i32
+            // Returns 0 on success (result written to shared state), 1 on error.
+            // For Phase 1 we use a simple return code; string passing via shared
+            // memory will be refined when WIT component model is adopted.
+            linker
+                .func_wrap("az", "read_file", |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
+                    if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        let data = memory.data(&caller);
+                        if let Some(slice) = data.get(ptr as usize..(ptr as usize + len as usize)) {
+                            if let Ok(path) = std::str::from_utf8(slice) {
+                                match caller.data().callbacks.read_file(path) {
+                                    Ok(_content) => return 0, // success
+                                    Err(_) => return 1,       // error
+                                }
+                            }
+                        }
+                    }
+                    1 // error
+                })
+                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::read_file: {e}")))?;
+
+            // az::write_file(path_ptr: i32, path_len: i32, content_ptr: i32, content_len: i32) -> i32
+            linker
+                .func_wrap(
+                    "az",
+                    "write_file",
+                    |mut caller: wasmtime::Caller<'_, HostState>, path_ptr: i32, path_len: i32, content_ptr: i32, content_len: i32| -> i32 {
+                        if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+                            let data = memory.data(&caller);
+                            let path = data
+                                .get(path_ptr as usize..(path_ptr as usize + path_len as usize))
+                                .and_then(|s| std::str::from_utf8(s).ok());
+                            let content = data
+                                .get(content_ptr as usize..(content_ptr as usize + content_len as usize))
+                                .and_then(|s| std::str::from_utf8(s).ok());
+                            if let (Some(path), Some(content)) = (path, content) {
+                                match caller.data().callbacks.write_file(path, content) {
+                                    Ok(true) => return 0,
+                                    _ => return 1,
+                                }
+                            }
+                        }
+                        1
+                    },
+                )
+                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::write_file: {e}")))?;
+
+            let instance = linker
+                .instantiate(&mut store, &module)
                 .map_err(|e| WasmError::ExecutionFailed(e.to_string()))?;
 
             // Try to call _start (WASI convention) or main
@@ -153,6 +297,8 @@ mod runtime {
 
 #[cfg(feature = "wasm")]
 pub use runtime::{WasmConfig, WasmEngine, WasmError, WasmResult};
+// WasmHostCallbacks and DenyAllHostCallbacks are always available (no feature gate)
+// since they're traits that other crates implement.
 
 // When the wasm feature is not enabled, provide stub types for compilation
 #[cfg(not(feature = "wasm"))]
@@ -234,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn wasm_rejects_module_with_imports() {
+    fn wasm_rejects_module_with_non_az_imports() {
         // wasmtime can parse WAT text format directly
         let wat = r#"(module (import "env" "abort" (func)))"#;
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine should create");
@@ -245,6 +391,43 @@ mod tests {
             err.to_string().contains("undeclared imports"),
             "error should mention undeclared imports: {err}"
         );
+    }
+
+    #[test]
+    fn wasm_rejects_az_imports_without_callbacks() {
+        let wat = r#"(module (import "az" "log" (func (param i32 i32))))"#;
+        let engine = WasmEngine::new(WasmConfig::default()).expect("engine should create");
+        let result = engine.execute(wat.as_bytes());
+        assert!(result.is_err());
+        let err = result.expect_err("should fail");
+        assert!(
+            err.to_string().contains("no host callbacks"),
+            "error should mention no host callbacks: {err}"
+        );
+    }
+
+    #[test]
+    fn wasm_accepts_az_imports_with_callbacks() {
+        use super::DenyAllHostCallbacks;
+        use std::sync::Arc;
+
+        // Module that imports az::log and exports main
+        let wat = r#"
+            (module
+                (import "az" "log" (func $log (param i32 i32)))
+                (memory (export "memory") 1)
+                (func (export "main") (result i32)
+                    i32.const 0
+                    i32.const 5
+                    call $log
+                    i32.const 0))
+        "#;
+        let engine = WasmEngine::new(WasmConfig::default()).expect("engine should create");
+        let result = engine.execute_with_host(wat.as_bytes(), Arc::new(DenyAllHostCallbacks));
+        assert!(result.is_ok(), "should succeed with callbacks: {result:?}");
+        let output = result.expect("should succeed");
+        assert!(output.success);
+        assert!(output.output.contains("0"));
     }
 
     #[test]
