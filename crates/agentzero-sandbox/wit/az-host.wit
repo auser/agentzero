@@ -1,0 +1,49 @@
+// AgentZero host interface for WASM tool guests.
+//
+// This WIT definition documents the intended contract between
+// AgentZero (host) and WASM tool modules (guest). Phase 1 uses
+// raw wasmtime Linker imports matching these signatures. Phase 2
+// will adopt the full WASM Component Model with wit-bindgen.
+//
+// See ADR 0013: WIT Adoption for Tool Interfaces.
+
+package az:host@0.1.0;
+
+interface filesystem {
+    /// Read file contents. Policy-checked: requires FileRead capability.
+    /// Returns file content on success, error message on failure.
+    read-file: func(path: string) -> result<string, string>;
+
+    /// Write content to a file. Policy-checked: requires FileWrite capability.
+    /// Returns true on success, error message on failure.
+    write-file: func(path: string, content: string) -> result<bool, string>;
+}
+
+interface logging {
+    /// Emit an audit-logged message from the WASM guest.
+    log: func(message: string);
+}
+
+interface secrets {
+    /// Resolve a secret handle to its raw value.
+    /// Policy-checked: requires SecretHandleUsage capability.
+    /// Handle format: "vault://provider/name"
+    get-secret: func(handle: string) -> result<string, string>;
+}
+
+interface tools {
+    /// Register a new tool at runtime.
+    /// Policy-checked: requires WasmHostCall + SkillLoad capability.
+    /// The tool is registered per-project with Untrusted trust label.
+    register-tool: func(name: string, schema-json: string, wasm-bytes: list<u8>) -> result<bool, string>;
+}
+
+world tool {
+    import az:host/filesystem;
+    import az:host/logging;
+    import az:host/secrets;
+
+    /// The tool's entry point. Called by the agent loop.
+    /// Receives input as a JSON string, returns output as a JSON string.
+    export run: func(input: string) -> result<string, string>;
+}
