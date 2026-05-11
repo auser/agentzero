@@ -355,14 +355,21 @@ impl Session {
                 }
             };
 
-        // Audit: tool execution
+        // Audit: tool execution (scan output for secrets before logging)
+        let redaction_result = self.redact_content(&result.output);
+        let redaction_labels: Vec<String> = redaction_result
+            .redactions
+            .iter()
+            .map(|r| format!("{:?}@{}:{}", r.classification, r.start, r.end))
+            .collect();
+
         self.emit_audit(
             &format!("tool:{tool_name}"),
             capability,
             DataClassification::Private,
             PolicyDecision::Allow,
             &format!("tool {tool_name} executed successfully"),
-            &[],
+            &redaction_labels,
         )?;
 
         Ok(result.output)

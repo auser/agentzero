@@ -88,6 +88,23 @@ mod runtime {
             let module = wasmtime::Module::new(&self.engine, wasm_bytes)
                 .map_err(|e| WasmError::CompilationFailed(e.to_string()))?;
 
+            // Security: reject modules with imports we don't provide.
+            // Currently no host imports are wired (empty &[] at instantiation).
+            // A module requesting imports it can't get would fail anyway, but
+            // rejecting explicitly here makes it auditable and prevents future
+            // regressions when host imports are added (they must be whitelisted).
+            let imports: Vec<_> = module.imports().collect();
+            if !imports.is_empty() {
+                let import_names: Vec<String> = imports
+                    .iter()
+                    .map(|i| format!("{}::{}", i.module(), i.name()))
+                    .collect();
+                return Err(WasmError::ExecutionFailed(format!(
+                    "WASM module has undeclared imports (no host imports currently allowed): {}",
+                    import_names.join(", ")
+                )));
+            }
+
             let mut store = wasmtime::Store::new(&self.engine, ());
 
             // Set fuel limit based on duration (rough approximation)
@@ -214,6 +231,20 @@ mod tests {
         // With zero fuel, execution should fail
         let result = engine.execute(&wasm);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn wasm_rejects_module_with_imports() {
+        // wasmtime can parse WAT text format directly
+        let wat = r#"(module (import "env" "abort" (func)))"#;
+        let engine = WasmEngine::new(WasmConfig::default()).expect("engine should create");
+        let result = engine.execute(wat.as_bytes());
+        assert!(result.is_err());
+        let err = result.expect_err("should fail");
+        assert!(
+            err.to_string().contains("undeclared imports"),
+            "error should mention undeclared imports: {err}"
+        );
     }
 
     #[test]

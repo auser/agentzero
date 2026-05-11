@@ -62,20 +62,21 @@ impl ToolExecutor {
         let execution_id = ExecutionId::new();
         let tool_id = ToolId::from_string("read");
 
-        debug!(tool = "read", path = path, "checking policy for file read");
+        // Validate and canonicalize path BEFORE policy check (TOCTOU prevention)
+        let canonical = self.validate_path(path)?;
+
+        debug!(tool = "read", path = %canonical.display(), "checking policy for file read");
 
         let decision = self.check_policy(Capability::FileRead, DataClassification::Private);
         if !decision.is_allowed() {
-            warn!(tool = "read", path = path, "file read denied by policy");
+            warn!(tool = "read", path = %canonical.display(), "file read denied by policy");
             return Err(ToolExecutorError::Denied(format!(
                 "file read denied: {decision:?}"
             )));
         }
 
-        self.validate_path(path)?;
-
-        info!(tool = "read", path = path, "reading file");
-        match std::fs::read_to_string(path) {
+        info!(tool = "read", path = %canonical.display(), "reading file");
+        match std::fs::read_to_string(&canonical) {
             Ok(content) => Ok(ToolResult {
                 tool_id,
                 execution_id,
@@ -93,20 +94,20 @@ impl ToolExecutor {
         let execution_id = ExecutionId::new();
         let tool_id = ToolId::from_string("list");
 
-        debug!(tool = "list", path = path, "checking policy for dir list");
+        let canonical = self.validate_path(path)?;
+
+        debug!(tool = "list", path = %canonical.display(), "checking policy for dir list");
 
         let decision = self.check_policy(Capability::FileRead, DataClassification::Private);
         if !decision.is_allowed() {
-            warn!(tool = "list", path = path, "dir list denied by policy");
+            warn!(tool = "list", path = %canonical.display(), "dir list denied by policy");
             return Err(ToolExecutorError::Denied(format!(
                 "dir list denied: {decision:?}"
             )));
         }
 
-        self.validate_path(path)?;
-
-        info!(tool = "list", path = path, "listing directory");
-        match std::fs::read_dir(path) {
+        info!(tool = "list", path = %canonical.display(), "listing directory");
+        match std::fs::read_dir(&canonical) {
             Ok(entries) => {
                 let mut lines = Vec::new();
                 for entry in entries.flatten() {
@@ -140,24 +141,24 @@ impl ToolExecutor {
             "checking policy for search"
         );
 
+        let canonical = self.validate_path(path)?;
+
         let decision = self.check_policy(Capability::FileRead, DataClassification::Private);
         if !decision.is_allowed() {
-            warn!(tool = "search", path = path, "search denied by policy");
+            warn!(tool = "search", path = %canonical.display(), "search denied by policy");
             return Err(ToolExecutorError::Denied(format!(
                 "search denied: {decision:?}"
             )));
         }
 
-        self.validate_path(path)?;
-
         info!(
             tool = "search",
-            path = path,
+            path = %canonical.display(),
             pattern = pattern,
             "searching files"
         );
         let mut results = Vec::new();
-        self.search_recursive(Path::new(path), pattern, &mut results)?;
+        self.search_recursive(&canonical, pattern, &mut results)?;
         results.sort();
 
         Ok(ToolResult {
@@ -186,6 +187,8 @@ impl ToolExecutor {
             "checking policy for file edit"
         );
 
+        let canonical = self.validate_path(path)?;
+
         let decision = self.check_policy(Capability::FileWrite, DataClassification::Private);
         if !decision.is_allowed() {
             return match decision {
@@ -198,9 +201,7 @@ impl ToolExecutor {
             };
         }
 
-        self.validate_path(path)?;
-
-        let original = std::fs::read_to_string(path)
+        let original = std::fs::read_to_string(&canonical)
             .map_err(|e| ToolExecutorError::Failed(format!("failed to read {path}: {e}")))?;
 
         if !original.contains(old_text) {
@@ -213,10 +214,10 @@ impl ToolExecutor {
 
         info!(
             tool = "edit",
-            path = path,
+            path = %canonical.display(),
             "writing edited file"
         );
-        std::fs::write(path, &updated)
+        std::fs::write(&canonical, &updated)
             .map_err(|e| ToolExecutorError::Failed(format!("failed to write {path}: {e}")))?;
 
         // Generate a simple diff summary
@@ -243,9 +244,9 @@ impl ToolExecutor {
         let execution_id = ExecutionId::new();
         let tool_id = ToolId::from_string("propose_edit");
 
-        self.validate_path(path)?;
+        let canonical = self.validate_path(path)?;
 
-        info!(tool = "propose_edit", path = path, "proposing edit");
+        info!(tool = "propose_edit", path = %canonical.display(), "proposing edit");
         Ok(ToolResult {
             tool_id,
             execution_id,
@@ -265,6 +266,8 @@ impl ToolExecutor {
             "checking policy for file write"
         );
 
+        let canonical = self.validate_path(path)?;
+
         let decision = self.check_policy(Capability::FileWrite, DataClassification::Private);
         if !decision.is_allowed() {
             return match decision {
@@ -277,15 +280,13 @@ impl ToolExecutor {
             };
         }
 
-        self.validate_path(path)?;
-
         info!(
             tool = "write",
-            path = path,
+            path = %canonical.display(),
             bytes = content.len(),
             "writing file"
         );
-        match std::fs::write(path, content) {
+        match std::fs::write(&canonical, content) {
             Ok(()) => Ok(ToolResult {
                 tool_id,
                 execution_id,
@@ -508,7 +509,11 @@ impl ToolExecutor {
         self.policy.evaluate(&request)
     }
 
-    fn validate_path(&self, path: &str) -> Result<(), ToolExecutorError> {
+    /// Validate and canonicalize a path, returning the resolved `PathBuf`.
+    ///
+    /// Canonicalization happens once, before policy checks, to prevent
+    /// TOCTOU attacks where a symlink target changes between check and use.
+    fn validate_path(&self, path: &str) -> Result<std::path::PathBuf, ToolExecutorError> {
         let canonical = std::fs::canonicalize(path)
             .map_err(|e| ToolExecutorError::InvalidPath(format!("{path}: {e}")))?;
 
@@ -525,7 +530,13 @@ impl ToolExecutor {
 
         // Block obvious sensitive paths
         let path_str = canonical.to_string_lossy();
-        let sensitive = [".ssh", ".gnupg", ".aws/credentials", ".env"];
+        let sensitive = [
+            ".ssh",
+            ".gnupg",
+            ".aws/credentials",
+            ".env",
+            ".agentzero",
+        ];
         for s in &sensitive {
             if path_str.contains(s) {
                 return Err(ToolExecutorError::Denied(format!(
@@ -534,7 +545,7 @@ impl ToolExecutor {
             }
         }
 
-        Ok(())
+        Ok(canonical)
     }
 
     fn search_recursive(
@@ -714,6 +725,30 @@ mod tests {
 
         std::fs::remove_file(&file).ok();
         std::fs::remove_dir(&dir).ok();
+    }
+
+    #[test]
+    fn agentzero_dir_blocked() {
+        let executor = executor_with_read_allowed();
+        // Create a temp .agentzero dir so canonicalize succeeds
+        let dir = std::env::temp_dir().join("az-test-block");
+        let az_dir = dir.join(".agentzero");
+        std::fs::create_dir_all(&az_dir).ok();
+        let policy_file = az_dir.join("policy.yml");
+        std::fs::write(&policy_file, "version = 1").ok();
+
+        let result = executor.read_file(policy_file.to_str().expect("path"));
+        assert!(result.is_err());
+        match result {
+            Err(ToolExecutorError::Denied(msg)) => {
+                assert!(msg.contains(".agentzero"), "should mention .agentzero: {msg}");
+            }
+            other => panic!("expected Denied, got {other:?}"),
+        }
+
+        // Cleanup
+        std::fs::remove_file(&policy_file).ok();
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

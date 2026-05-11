@@ -223,9 +223,14 @@ impl AgentLoop {
                     let tool_name = &tc.function.name;
                     let tool_args = &tc.function.arguments;
 
-                    // Dangerous tools need approval
+                    // Redact tool arguments for storage and display
+                    // (prevents secrets from leaking through ToolCallRecord or approval UI)
+                    let redacted_args = redact_json_value(tool_args);
+
+                    // Dangerous tools need approval (use redacted args in approval UI)
                     if DANGEROUS_TOOLS.contains(&tool_name.as_str()) {
-                        let decision = approver.request_approval(tool_name, tool_args).await;
+                        let decision =
+                            approver.request_approval(tool_name, &redacted_args).await;
                         if decision == ApprovalDecision::Denied {
                             let denied_msg = format!(
                                 "{tool_name} denied by user. Do not retry without asking."
@@ -233,7 +238,7 @@ impl AgentLoop {
                             self.messages.push(ChatMessage::tool(&denied_msg));
                             all_tool_calls.push(ToolCallRecord {
                                 name: tool_name.clone(),
-                                arguments: tool_args.clone(),
+                                arguments: redacted_args,
                                 success: false,
                                 output: "denied by user".into(),
                             });
@@ -243,6 +248,7 @@ impl AgentLoop {
 
                     progress.on_tool_start(tool_name, tool_args);
 
+                    // Execute with original (unredacted) args — the tool needs real values
                     match self.session.execute_tool(tool_name, tool_args).await {
                         Ok(output) => {
                             let truncated = truncate_output(&output, self.config.max_output_bytes);
@@ -255,7 +261,7 @@ impl AgentLoop {
                             self.messages.push(ChatMessage::tool(labeled));
                             all_tool_calls.push(ToolCallRecord {
                                 name: tool_name.clone(),
-                                arguments: tool_args.clone(),
+                                arguments: redacted_args,
                                 success: true,
                                 output: truncated,
                             });
@@ -267,7 +273,7 @@ impl AgentLoop {
                                 .push(ChatMessage::tool(format!("Error: {err_msg}")));
                             all_tool_calls.push(ToolCallRecord {
                                 name: tool_name.clone(),
-                                arguments: tool_args.clone(),
+                                arguments: redacted_args,
                                 success: false,
                                 output: err_msg,
                             });
@@ -306,6 +312,63 @@ impl AgentLoop {
             rounds: self.config.max_tool_rounds + 1,
         })
     }
+}
+
+/// Redact known sensitive patterns from a JSON value for safe storage/display.
+///
+/// Walks all string values in the JSON structure and replaces patterns matching
+/// known secrets (API keys, tokens) and PII (email addresses) with placeholders.
+/// Used before storing tool arguments in `ToolCallRecord` or displaying in
+/// approval prompts — prevents secrets from leaking through side channels.
+fn redact_json_value(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => serde_json::Value::String(redact_string(s)),
+        serde_json::Value::Object(map) => {
+            let redacted: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), redact_json_value(v)))
+                .collect();
+            serde_json::Value::Object(redacted)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(redact_json_value).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// Redact known sensitive patterns from a string.
+fn redact_string(input: &str) -> String {
+    let mut output = input.to_string();
+
+    // Secret patterns: replace the match + following word characters
+    let secret_prefixes = ["ghp_", "gho_", "sk-", "akia"];
+    for prefix in &secret_prefixes {
+        // Re-scan from start after each replacement to avoid index issues
+        while let Some(pos) = output.to_lowercase().find(prefix) {
+            let end = output[pos..]
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
+                .map_or(output.len(), |e| pos + e);
+            output.replace_range(pos..end, "[REDACTED_SECRET]");
+        }
+    }
+
+    // Email patterns (simple: word@word.word)
+    let email_re_patterns = ["@gmail.com", "@yahoo.com", "@hotmail.com", "@outlook.com"];
+    for pattern in &email_re_patterns {
+        if output.to_lowercase().contains(&pattern.to_lowercase()) {
+            // Find the email start (go backward from @)
+            if let Some(at_pos) = output.to_lowercase().find(&pattern.to_lowercase()) {
+                let email_start = output[..at_pos]
+                    .rfind(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
+                    .map_or(0, |p| p + 1);
+                let email_end = at_pos + pattern.len();
+                output.replace_range(email_start..email_end, "[REDACTED_PII]");
+            }
+        }
+    }
+
+    output
 }
 
 /// Truncate tool output to a maximum byte length.
@@ -411,6 +474,53 @@ mod tests {
 
         let agent = AgentLoop::new(router, session, tools, config).with_messages(msgs);
         assert_eq!(agent.messages().len(), 3);
+    }
+
+    #[test]
+    fn redact_string_hides_api_keys() {
+        let input = "my key is sk-1234567890abcdef and done";
+        let output = redact_string(input);
+        assert!(!output.contains("sk-1234567890abcdef"));
+        assert!(output.contains("[REDACTED_SECRET]"));
+    }
+
+    #[test]
+    fn redact_string_hides_github_tokens() {
+        let input = "token: ghp_ABCDabcd1234567890abcdef1234567890";
+        let output = redact_string(input);
+        assert!(!output.contains("ghp_"));
+        assert!(output.contains("[REDACTED_SECRET]"));
+    }
+
+    #[test]
+    fn redact_string_hides_emails() {
+        let input = "contact user@gmail.com for info";
+        let output = redact_string(input);
+        assert!(!output.contains("@gmail.com"));
+        assert!(output.contains("[REDACTED_PII]"));
+    }
+
+    #[test]
+    fn redact_json_value_handles_nested() {
+        let value = serde_json::json!({
+            "path": "/tmp/test",
+            "content": "API_KEY=sk-secret123456789",
+            "nested": {"email": "user@gmail.com"}
+        });
+        let redacted = redact_json_value(&value);
+        let s = redacted.to_string();
+        assert!(!s.contains("sk-secret"));
+        assert!(!s.contains("@gmail.com"));
+        assert!(s.contains("[REDACTED_SECRET]"));
+        assert!(s.contains("[REDACTED_PII]"));
+        // Non-sensitive fields preserved
+        assert!(s.contains("/tmp/test"));
+    }
+
+    #[test]
+    fn redact_string_preserves_clean_content() {
+        let input = "normal text with no secrets";
+        assert_eq!(redact_string(input), input);
     }
 
     #[test]

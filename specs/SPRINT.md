@@ -263,11 +263,29 @@ Make `agentzero serve` a fully functional coding agent that editors can spawn an
 - [x] Website docs updated: skills guide (install, publish, host-supervised), CLI reference, crate map.
 - [x] 21 new tests across package (5), remote (12), github (4).
 
+### Phase 23: Security Hardening (IN PROGRESS)
+
+Prerequisite for self-improving agent work. Fixes security gaps found during gap analysis.
+
+- [x] Block `.agentzero/` in tool path blocklist (prevents policy/vault info disclosure)
+- [x] TOCTOU fix: canonicalize path before policy check, use resolved path for operations
+- [x] Redact tool arguments in ToolCallRecord and approval flow (prevents secret leakage)
+- [x] Scan tool output for secrets before audit logging (redaction labels in audit events)
+- [x] WASM import verification: reject modules with imports not currently provided
+- [x] Verify wasmtime version not affected by CVE-2026-34971 (v29.0.1 — not affected)
+- [ ] Implement approval scope tracking (Once/Session/Project)
+- [ ] Extract redaction scanning into agentzero-core as shared public utility
+
 ## Not Yet (deferred)
 
 - [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
 - [ ] Central skill index (JSON file in a well-known repo for short-name resolution).
 - [ ] Lockfile checksum re-verification on `agentzero run`.
+- [ ] Self-improving agent via WASM (Phase 24: WIT interface, host imports, dynamic tool registration)
+- [ ] `az bootstrap` command (platform detection + backend install)
+- [ ] Anthropic provider
+- [ ] MCP to optional feature flag
+- [ ] Marketplace / catalog for published tools
 
 ## Notes
 
