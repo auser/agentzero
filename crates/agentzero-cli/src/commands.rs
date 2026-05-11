@@ -69,6 +69,19 @@ pub enum Command {
         #[arg(long)]
         tag: Option<String>,
     },
+    /// Search the skill catalog for tools matching a query.
+    Search {
+        /// Query string to search for.
+        query: String,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Link a tool from another project for cross-project sharing.
+    Link {
+        /// Path to the tool in another project (e.g., ../other/.agentzero/skills/tool-name).
+        source: String,
+    },
     /// Start the ACP server for editor integrations.
     Serve,
     /// Start the MCP server (tools for Claude Code, Cursor, etc.).
@@ -231,6 +244,8 @@ pub async fn run(command: Command) -> i32 {
                 1
             }
         }
+        Command::Search { query, json } => cmd_search(&query, json).await,
+        Command::Link { source } => cmd_link(&source),
         Command::Doctor => cmd_doctor(),
         Command::Bootstrap { non_interactive, skip_model } => {
             cmd_bootstrap(non_interactive, skip_model)
@@ -683,6 +698,138 @@ async fn cmd_mcp() -> i32 {
             1
         }
     }
+}
+
+async fn cmd_search(query: &str, json: bool) -> i32 {
+    use agentzero::skills::index::{load_or_fetch_index, DEFAULT_INDEX_REPO};
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+
+    match load_or_fetch_index(&cwd, DEFAULT_INDEX_REPO, false).await {
+        Ok(index) => {
+            let results = index.search(query);
+            if results.is_empty() {
+                if json {
+                    println!("[]");
+                } else {
+                    println!("No skills found matching '{query}'");
+                }
+                return 0;
+            }
+
+            if json {
+                let json_results: Vec<serde_json::Value> = results
+                    .iter()
+                    .map(|(name, entry)| {
+                        serde_json::json!({
+                            "name": name,
+                            "repo": entry.repo,
+                            "description": entry.description,
+                            "trust": format!("{:?}", entry.trust).to_lowercase(),
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&json_results).unwrap_or_default());
+            } else {
+                println!("Skills matching '{query}':\n");
+                for (name, entry) in &results {
+                    let trust = format!("{:?}", entry.trust).to_lowercase();
+                    println!("  {name} [{trust}]");
+                    println!("    {}", entry.description);
+                    println!("    repo: {}", entry.repo);
+                    println!();
+                }
+                println!("Install with: az install <name>");
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("Failed to load skill index: {e}");
+            eprintln!("Try: az search --offline (local cache only)");
+            1
+        }
+    }
+}
+
+fn cmd_link(source: &str) -> i32 {
+    let source_path = std::path::Path::new(source);
+
+    if !source_path.exists() {
+        eprintln!("Source path does not exist: {source}");
+        return 1;
+    }
+
+    // Extract tool name from path (last component)
+    let tool_name = match source_path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => name,
+        None => {
+            eprintln!("Cannot determine tool name from path: {source}");
+            return 1;
+        }
+    };
+
+    // Verify it looks like a skill directory (has active.json or SKILL.md)
+    let has_active = source_path.join("active.json").exists();
+    let has_skill_md = source_path.join("SKILL.md").exists();
+    if !has_active && !has_skill_md {
+        // Check if it's a versioned directory (v1/SKILL.md)
+        let has_versioned = std::fs::read_dir(source_path)
+            .ok()
+            .map(|entries| {
+                entries.flatten().any(|e| {
+                    e.file_name().to_string_lossy().starts_with('v')
+                        && e.path().is_dir()
+                })
+            })
+            .unwrap_or(false);
+        if !has_versioned {
+            eprintln!("Source doesn't look like a skill directory (no active.json, SKILL.md, or versioned dirs)");
+            return 1;
+        }
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let link_dir = cwd.join(".agentzero/skills");
+    if let Err(e) = std::fs::create_dir_all(&link_dir) {
+        eprintln!("Failed to create skills directory: {e}");
+        return 1;
+    }
+
+    let link_path = link_dir.join(tool_name);
+    if link_path.exists() {
+        eprintln!("Tool '{tool_name}' already exists at {}", link_path.display());
+        eprintln!("Remove it first or use a different name.");
+        return 1;
+    }
+
+    // Create symlink
+    let canonical_source = match std::fs::canonicalize(source_path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Failed to resolve source path: {e}");
+            return 1;
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        if let Err(e) = std::os::unix::fs::symlink(&canonical_source, &link_path) {
+            eprintln!("Failed to create symlink: {e}");
+            return 1;
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Err(e) = std::os::windows::fs::symlink_dir(&canonical_source, &link_path) {
+            eprintln!("Failed to create symlink: {e}");
+            return 1;
+        }
+    }
+
+    println!("Linked: {} -> {}", link_path.display(), canonical_source.display());
+    println!("Tool '{tool_name}' is now available in this project.");
+    0
 }
 
 fn cmd_bootstrap(non_interactive: bool, skip_model: bool) -> i32 {
