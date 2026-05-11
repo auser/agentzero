@@ -3,9 +3,10 @@
 //! Extracted from the CLI `cmd_chat` so that both the terminal UI
 //! and protocol servers (ACP, future HTTP) can run the same cycle.
 
+use std::collections::HashSet;
 use std::pin::Pin;
 
-use agentzero_core::{redact_json_value, DataClassification};
+use agentzero_core::{redact_json_value, ApprovalScope, DataClassification};
 use agentzero_tracing::{info, warn};
 
 use crate::context::{self, ContextConfig};
@@ -62,8 +63,28 @@ impl Default for AgentLoopConfig {
 /// Approval decisions for dangerous tool calls.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalDecision {
+    /// Approved for this single invocation only.
     Approved,
+    /// Approved for all invocations of this tool name for the rest of the session.
+    ApprovedForSession,
+    /// Denied.
     Denied,
+}
+
+impl ApprovalDecision {
+    /// Whether this decision grants permission to proceed.
+    pub fn is_approved(&self) -> bool {
+        matches!(self, Self::Approved | Self::ApprovedForSession)
+    }
+
+    /// The scope of this approval.
+    pub fn scope(&self) -> Option<ApprovalScope> {
+        match self {
+            Self::Approved => Some(ApprovalScope::Once),
+            Self::ApprovedForSession => Some(ApprovalScope::Session),
+            Self::Denied => None,
+        }
+    }
 }
 
 /// Callback trait for tool approval.
@@ -72,7 +93,9 @@ pub enum ApprovalDecision {
 /// a notification and waits for the editor's response.
 pub trait ApprovalHandler: Send + Sync {
     /// Ask whether a tool call should proceed.
-    /// Returns `Approved` or `Denied`.
+    ///
+    /// Implementations may return `Approved` (once), `ApprovedForSession`
+    /// (cache for this tool name), or `Denied`.
     fn request_approval(
         &self,
         tool_name: &str,
@@ -120,6 +143,8 @@ pub struct AgentLoop {
     tools: Vec<ToolDefinition>,
     messages: Vec<ChatMessage>,
     config: AgentLoopConfig,
+    /// Tool names approved for the rest of this session (Session scope).
+    session_approvals: HashSet<String>,
 }
 
 impl AgentLoop {
@@ -136,6 +161,7 @@ impl AgentLoop {
             tools,
             messages: Vec::new(),
             config,
+            session_approvals: HashSet::new(),
         }
     }
 
@@ -227,22 +253,33 @@ impl AgentLoop {
                     // (prevents secrets from leaking through ToolCallRecord or approval UI)
                     let redacted_args = redact_json_value(tool_args);
 
-                    // Dangerous tools need approval (use redacted args in approval UI)
+                    // Dangerous tools need approval (check cache first, then ask user)
                     if DANGEROUS_TOOLS.contains(&tool_name.as_str()) {
-                        let decision =
-                            approver.request_approval(tool_name, &redacted_args).await;
-                        if decision == ApprovalDecision::Denied {
-                            let denied_msg = format!(
-                                "{tool_name} denied by user. Do not retry without asking."
-                            );
-                            self.messages.push(ChatMessage::tool(&denied_msg));
-                            all_tool_calls.push(ToolCallRecord {
-                                name: tool_name.clone(),
-                                arguments: redacted_args,
-                                success: false,
-                                output: "denied by user".into(),
-                            });
-                            continue;
+                        // Skip approval if already approved for this session
+                        if !self.session_approvals.contains(tool_name.as_str()) {
+                            let decision =
+                                approver.request_approval(tool_name, &redacted_args).await;
+                            if !decision.is_approved() {
+                                let denied_msg = format!(
+                                    "{tool_name} denied by user. Do not retry without asking."
+                                );
+                                self.messages.push(ChatMessage::tool(&denied_msg));
+                                all_tool_calls.push(ToolCallRecord {
+                                    name: tool_name.clone(),
+                                    arguments: redacted_args,
+                                    success: false,
+                                    output: "denied by user".into(),
+                                });
+                                continue;
+                            }
+                            // Cache session-scoped approvals
+                            if decision == ApprovalDecision::ApprovedForSession {
+                                info!(
+                                    tool = tool_name.as_str(),
+                                    "tool approved for session scope"
+                                );
+                                self.session_approvals.insert(tool_name.clone());
+                            }
                         }
                     }
 
@@ -417,6 +454,37 @@ mod tests {
 
         let agent = AgentLoop::new(router, session, tools, config).with_messages(msgs);
         assert_eq!(agent.messages().len(), 3);
+    }
+
+    #[test]
+    fn approval_decision_is_approved() {
+        assert!(ApprovalDecision::Approved.is_approved());
+        assert!(ApprovalDecision::ApprovedForSession.is_approved());
+        assert!(!ApprovalDecision::Denied.is_approved());
+    }
+
+    #[test]
+    fn approval_decision_scope() {
+        assert_eq!(
+            ApprovalDecision::Approved.scope(),
+            Some(agentzero_core::ApprovalScope::Once)
+        );
+        assert_eq!(
+            ApprovalDecision::ApprovedForSession.scope(),
+            Some(agentzero_core::ApprovalScope::Session)
+        );
+        assert_eq!(ApprovalDecision::Denied.scope(), None);
+    }
+
+    #[test]
+    fn session_approvals_start_empty() {
+        let session = test_session();
+        let router = ProviderRouter::local_only("llama3.2");
+        let tools = OllamaProvider::agentzero_tool_definitions();
+        let config = AgentLoopConfig::default();
+
+        let agent = AgentLoop::new(router, session, tools, config);
+        assert!(agent.session_approvals.is_empty());
     }
 
     #[test]

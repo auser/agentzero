@@ -273,8 +273,8 @@ Prerequisite for self-improving agent work. Fixes security gaps found during gap
 - [x] Scan tool output for secrets before audit logging (redaction labels in audit events)
 - [x] WASM import verification: reject modules with imports not currently provided
 - [x] Verify wasmtime version not affected by CVE-2026-34971 (v29.0.1 — not affected)
-- [ ] Implement approval scope tracking (Once/Session/Project)
-- [ ] Extract redaction scanning into agentzero-core as shared public utility
+- [x] Implement approval scope tracking (Once/Session via ApprovedForSession)
+- [x] Extract redaction scanning into agentzero-core as shared public utility
 
 ## Not Yet (deferred)
 

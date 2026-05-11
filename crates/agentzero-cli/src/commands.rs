@@ -751,12 +751,16 @@ async fn cmd_chat(
                 _ => tool_name.to_string(),
             };
             Box::pin(async move {
-                print!("  [APPROVE {description}?] (y/n) ");
+                print!("  [APPROVE {description}?] (y/yes-all/n) ");
                 io::stdout().flush().ok();
                 let mut answer = String::new();
                 io::stdin().lock().read_line(&mut answer).ok();
-                if answer.trim().eq_ignore_ascii_case("y") {
+                let trimmed = answer.trim();
+                if trimmed.eq_ignore_ascii_case("y") {
                     ApprovalDecision::Approved
+                } else if trimmed.eq_ignore_ascii_case("yes-all") || trimmed.eq_ignore_ascii_case("a") {
+                    println!("  [APPROVED for session]");
+                    ApprovalDecision::ApprovedForSession
                 } else {
                     println!("  [DENIED by user]");
                     ApprovalDecision::Denied
