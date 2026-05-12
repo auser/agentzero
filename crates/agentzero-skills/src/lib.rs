@@ -7,6 +7,7 @@
 pub mod github;
 pub mod index;
 pub mod package;
+pub mod plugin;
 pub mod registry;
 pub mod remote;
 pub mod report;

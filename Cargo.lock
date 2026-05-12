@@ -49,6 +49,7 @@ version = "0.3.0"
 dependencies = [
  "agentzero-acp",
  "agentzero-audit",
+ "agentzero-brain",
  "agentzero-core",
  "agentzero-index",
  "agentzero-mcp",
@@ -87,10 +88,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentzero-brain"
+version = "0.1.0"
+dependencies = [
+ "agentzero-core",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml",
+]
+
+[[package]]
 name = "agentzero-cli"
 version = "0.1.0"
 dependencies = [
  "agentzero",
+ "agentzero-brain",
  "chrono",
  "clap",
  "clap_complete",

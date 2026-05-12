@@ -100,6 +100,51 @@ install:
   ln -sf "$(pwd)/target/release/az" "$HOME/.bin/az"
   echo "Installed: ~/.bin/az → $(pwd)/target/release/az"
 
+# Build a WASM plugin: just build-plugin brain
+build-plugin name:
+  #!/usr/bin/env sh
+  set -eu
+  MANIFEST="plugins/{{name}}/Cargo.toml"
+  if [ ! -f "$MANIFEST" ]; then
+    echo "error: no plugin at plugins/{{name}}/" >&2
+    exit 1
+  fi
+  echo "Building plugin {{name}} for wasm32-unknown-unknown..."
+  cargo build --manifest-path "$MANIFEST" --target wasm32-unknown-unknown --release
+  WASM="plugins/{{name}}/target/wasm32-unknown-unknown/release/agentzero_{{name}}_wasm.wasm"
+  if [ ! -f "$WASM" ]; then
+    echo "error: expected output at $WASM" >&2
+    exit 1
+  fi
+  SIZE=$(wc -c < "$WASM" | tr -d ' ')
+  echo "Built: $WASM (${SIZE} bytes)"
+  # Compute checksum
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$WASM" | tee "plugins/{{name}}/target/{{name}}.wasm.sha256"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$WASM" | tee "plugins/{{name}}/target/{{name}}.wasm.sha256"
+  fi
+
+# Install a built plugin into .agentzero/plugins/
+install-plugin name:
+  #!/usr/bin/env sh
+  set -eu
+  WASM="plugins/{{name}}/target/wasm32-unknown-unknown/release/agentzero_{{name}}_wasm.wasm"
+  MANIFEST="plugins/{{name}}/PLUGIN.toml"
+  if [ ! -f "$WASM" ]; then
+    echo "error: plugin not built. Run: just build-plugin {{name}}" >&2
+    exit 1
+  fi
+  if [ ! -f "$MANIFEST" ]; then
+    echo "error: no PLUGIN.toml at plugins/{{name}}/" >&2
+    exit 1
+  fi
+  DEST=".agentzero/plugins/{{name}}"
+  mkdir -p "$DEST"
+  cp "$MANIFEST" "$DEST/PLUGIN.toml"
+  cp "$WASM" "$DEST/{{name}}.wasm"
+  echo "Installed plugin {{name}} to $DEST/"
+
 # Show tree of the project
 show-tree:
   find . -maxdepth 4 -type f | sort

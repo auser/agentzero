@@ -1,0 +1,66 @@
+name: Publish Plugin
+
+on:
+  push:
+    tags:
+      - 'brain-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            plugins/brain/target
+          key: plugin-brain-${{ hashFiles('plugins/brain/Cargo.lock') }}
+
+      - name: Extract plugin name from tag
+        id: meta
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          NAME="${TAG%%-v*}"
+          VERSION="${TAG#*-v}"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build WASM plugin
+        env:
+          PLUGIN_NAME: ${{ steps.meta.outputs.name }}
+        run: |
+          cargo build \
+            --manifest-path "plugins/${PLUGIN_NAME}/Cargo.toml" \
+            --target wasm32-unknown-unknown \
+            --release
+
+      - name: Prepare release assets
+        env:
+          PLUGIN_NAME: ${{ steps.meta.outputs.name }}
+        run: |
+          WASM="plugins/${PLUGIN_NAME}/target/wasm32-unknown-unknown/release/agentzero_${PLUGIN_NAME}_wasm.wasm"
+          cp "$WASM" "${PLUGIN_NAME}.wasm"
+          sha256sum "${PLUGIN_NAME}.wasm" > "${PLUGIN_NAME}.wasm.sha256"
+          echo "WASM size: $(wc -c < "${PLUGIN_NAME}.wasm") bytes"
+          cat "${PLUGIN_NAME}.wasm.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Plugin: ${{ steps.meta.outputs.name }} v${{ steps.meta.outputs.version }}"
+          files: |
+            ${{ steps.meta.outputs.name }}.wasm
+            ${{ steps.meta.outputs.name }}.wasm.sha256

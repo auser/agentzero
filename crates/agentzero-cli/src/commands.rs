@@ -130,10 +130,36 @@ pub enum Command {
         #[command(subcommand)]
         action: VaultAction,
     },
+    /// Personal knowledge vault (wiki).
+    Brain {
+        #[command(subcommand)]
+        action: BrainAction,
+    },
+    /// Manage plugins.
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
     /// Generate shell completions.
     Completions {
         /// Shell to generate completions for.
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PluginAction {
+    /// List installed plugins.
+    List,
+    /// Install a plugin from a local directory.
+    Install {
+        /// Path to the plugin directory (must contain PLUGIN.toml and a .wasm file).
+        source: String,
+    },
+    /// Show plugin information.
+    Info {
+        /// Plugin name.
+        name: String,
     },
 }
 
@@ -209,6 +235,139 @@ pub enum IndexAction {
     Clear,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum BrainAction {
+    /// Initialize a new brain vault.
+    Init {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Force overwrite existing files.
+        #[arg(long)]
+        force: bool,
+        /// Print actions without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Open or create today's daily note.
+    Today {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Date override (YYYY-MM-DD).
+        #[arg(long)]
+        date: Option<String>,
+        /// Open in $EDITOR.
+        #[arg(long)]
+        open: bool,
+    },
+    /// Capture a thought to today's daily note.
+    Capture {
+        /// The message to capture.
+        message: String,
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Date override (YYYY-MM-DD).
+        #[arg(long)]
+        date: Option<String>,
+        /// Section heading to append under (default: Capture).
+        #[arg(long)]
+        section: Option<String>,
+    },
+    /// Search the vault for a term.
+    Query {
+        /// Search term.
+        term: String,
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Also search the raw directory.
+        #[arg(long)]
+        raw: bool,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Maximum number of results.
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// Generate an ingest prompt for a raw file.
+    Ingest {
+        /// Path to the raw file to ingest.
+        path: String,
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Save the prompt to wiki/reports/.
+        #[arg(long)]
+        save_prompt: bool,
+        /// Show what would happen without writing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Generate an end-of-day review prompt.
+    Review {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Date to review (YYYY-MM-DD).
+        #[arg(long)]
+        date: Option<String>,
+        /// Save the prompt to wiki/reports/.
+        #[arg(long)]
+        save_prompt: bool,
+        /// Show what would happen without writing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Generate a weekly review prompt.
+    Weekly {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// ISO week identifier (e.g., 2026-W20).
+        #[arg(long)]
+        week: Option<String>,
+        /// Save the prompt to wiki/reports/.
+        #[arg(long)]
+        save_prompt: bool,
+    },
+    /// Run vault health diagnostics.
+    Health {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Attempt to fix issues (not yet implemented).
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Git checkpoint the vault.
+    Checkpoint {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Custom commit message.
+        #[arg(long)]
+        message: Option<String>,
+        /// Initialize a git repo if none exists.
+        #[arg(long)]
+        init: bool,
+        /// Show what would happen without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Show vault status summary.
+    Status {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+    },
+}
+
 pub async fn run(command: Command) -> i32 {
     match command {
         Command::Init { private, editor } => cmd_init(private, editor.as_deref()),
@@ -277,6 +436,8 @@ pub async fn run(command: Command) -> i32 {
         Command::VaultImport { path, dry_run } => cmd_vault_import(&path, dry_run),
         Command::Vault { action } => cmd_vault(action),
         Command::Index { action } => cmd_index(action).await,
+        Command::Brain { action } => cmd_brain(action),
+        Command::Plugin { action } => cmd_plugin(action),
         Command::Completions { shell } => {
             cmd_completions(shell);
             0
@@ -405,7 +566,9 @@ fn cmd_init(private: bool, editor: Option<&str>) -> i32 {
         return 1;
     }
 
-    let dirs = ["audit", "sessions", "prompts", "skills", "vault", "index"];
+    let dirs = [
+        "audit", "sessions", "prompts", "skills", "vault", "index", "plugins",
+    ];
     for sub in &dirs {
         if let Err(e) = std::fs::create_dir_all(az_dir.join(sub)) {
             eprintln!("error: failed to create .agentzero/{sub}: {e}");
@@ -500,6 +663,7 @@ fn cmd_init(private: bool, editor: Option<&str>) -> i32 {
     println!("  ├── sessions/");
     println!("  ├── prompts/");
     println!("  ├── skills/");
+    println!("  ├── plugins/");
     println!("  └── vault/");
 
     // Generate editor integration config if requested
@@ -3315,6 +3479,864 @@ fn cmd_demo() -> i32 {
     0
 }
 
+fn cmd_plugin(action: PluginAction) -> i32 {
+    use agentzero::skills::plugin::PluginRegistry;
+
+    let cwd = match std::env::current_dir() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+
+    let registry = PluginRegistry::new(cwd.join(".agentzero/plugins"));
+
+    match action {
+        PluginAction::List => {
+            let plugins = registry.list();
+            if plugins.is_empty() {
+                println!("No plugins installed.");
+                println!("Install a plugin with: az plugin install <path-to-plugin-directory>");
+                return 0;
+            }
+            println!("{:<15} {:<10} {:<6} DESCRIPTION", "NAME", "VERSION", "CMDS");
+            println!("{}", "-".repeat(60));
+            for (manifest, _path) in &plugins {
+                println!(
+                    "{:<15} {:<10} {:<6} {}",
+                    manifest.plugin.name,
+                    manifest.plugin.version,
+                    manifest.commands.len(),
+                    manifest.plugin.description,
+                );
+            }
+            0
+        }
+        PluginAction::Install { source } => {
+            let source_path = std::path::Path::new(&source);
+            if !source_path.exists() {
+                eprintln!("error: source directory does not exist: {source}");
+                return 1;
+            }
+            match registry.install(source_path) {
+                Ok(name) => {
+                    println!("Installed plugin: {name}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: failed to install plugin: {e}");
+                    1
+                }
+            }
+        }
+        PluginAction::Info { name } => match registry.get(&name) {
+            Some((manifest, path)) => {
+                println!("Plugin: {}", manifest.plugin.name);
+                println!("Version: {}", manifest.plugin.version);
+                println!("Description: {}", manifest.plugin.description);
+                println!("Runtime: {}", manifest.plugin.runtime);
+                if let Some(ref wasm_path) = manifest.plugin.wasm_path {
+                    println!("WASM path: {wasm_path}");
+                }
+                println!("Location: {}", path.display());
+                if manifest.commands.is_empty() {
+                    println!("\nNo commands declared.");
+                } else {
+                    println!("\nCommands:");
+                    for cmd in &manifest.commands {
+                        println!("  {:<15} {}", cmd.name, cmd.description);
+                    }
+                }
+                0
+            }
+            None => {
+                eprintln!("error: plugin '{name}' not found");
+                1
+            }
+        },
+    }
+}
+
+fn cmd_brain(action: BrainAction) -> i32 {
+    // Brain runs as a WASM plugin via the sandbox (ADR 0015).
+    // The WASM module is loaded from .agentzero/plugins/brain/brain.wasm
+    // or falls back to the native implementation if WASM is unavailable.
+
+    // Serialize the CLI action to JSON for the WASM guest
+    let input_json = match &action {
+        BrainAction::Init {
+            root,
+            force,
+            dry_run,
+        } => {
+            format!(
+                r#"{{"action":"init","root":"{}","force":{},"dry_run":{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                force,
+                dry_run
+            )
+        }
+        BrainAction::Today { root, date, .. } => {
+            let date_field = date
+                .as_ref()
+                .map(|d| format!(r#","date":"{}""#, d))
+                .unwrap_or_default();
+            format!(
+                r#"{{"action":"today","root":"{}"{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                date_field
+            )
+        }
+        BrainAction::Capture {
+            message,
+            root,
+            date,
+            section,
+        } => {
+            let date_field = date
+                .as_ref()
+                .map(|d| format!(r#","date":"{}""#, d))
+                .unwrap_or_default();
+            let section_field = section
+                .as_ref()
+                .map(|s| format!(r#","section":"{}""#, s))
+                .unwrap_or_default();
+            format!(
+                r#"{{"action":"capture","root":"{}","message":"{}"{}{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                message.replace('\\', "\\\\").replace('"', "\\\""),
+                date_field,
+                section_field
+            )
+        }
+        BrainAction::Query {
+            term,
+            root,
+            raw,
+            json,
+            limit,
+        } => {
+            format!(
+                r#"{{"action":"query","root":"{}","term":"{}","include_raw":{},"json":{},"limit":{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                term.replace('\\', "\\\\").replace('"', "\\\""),
+                raw,
+                json,
+                limit
+            )
+        }
+        BrainAction::Ingest {
+            path,
+            root,
+            save_prompt,
+            dry_run,
+        } => {
+            format!(
+                r#"{{"action":"ingest","root":"{}","path":"{}","save_prompt":{},"dry_run":{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                path.replace('\\', "\\\\").replace('"', "\\\""),
+                save_prompt,
+                dry_run
+            )
+        }
+        BrainAction::Review {
+            root,
+            date,
+            save_prompt,
+            dry_run,
+        } => {
+            let date_field = date
+                .as_ref()
+                .map(|d| format!(r#","date":"{}""#, d))
+                .unwrap_or_default();
+            format!(
+                r#"{{"action":"review","root":"{}","save_prompt":{},"dry_run":{}{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                save_prompt,
+                dry_run,
+                date_field
+            )
+        }
+        BrainAction::Weekly {
+            root,
+            week,
+            save_prompt,
+        } => {
+            let week_field = week
+                .as_ref()
+                .map(|w| format!(r#","week":"{}""#, w))
+                .unwrap_or_default();
+            format!(
+                r#"{{"action":"weekly","root":"{}","save_prompt":{}{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                save_prompt,
+                week_field
+            )
+        }
+        BrainAction::Health { root, json, fix } => {
+            format!(
+                r#"{{"action":"health","root":"{}","json":{},"fix":{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                json,
+                fix
+            )
+        }
+        BrainAction::Checkpoint {
+            root,
+            message,
+            init,
+            dry_run,
+        } => {
+            let msg_field = message
+                .as_ref()
+                .map(|m| {
+                    format!(
+                        r#","message":"{}""#,
+                        m.replace('\\', "\\\\").replace('"', "\\\"")
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                r#"{{"action":"checkpoint","root":"{}","init":{},"dry_run":{}{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                init,
+                dry_run,
+                msg_field
+            )
+        }
+        BrainAction::Status { root } => {
+            format!(
+                r#"{{"action":"status","root":"{}"}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\"")
+            )
+        }
+    };
+
+    // Extract the root path for the brain vault (used for path validation).
+    let root_str = match &action {
+        BrainAction::Init { root, .. }
+        | BrainAction::Today { root, .. }
+        | BrainAction::Capture { root, .. }
+        | BrainAction::Query { root, .. }
+        | BrainAction::Ingest { root, .. }
+        | BrainAction::Review { root, .. }
+        | BrainAction::Weekly { root, .. }
+        | BrainAction::Health { root, .. }
+        | BrainAction::Checkpoint { root, .. }
+        | BrainAction::Status { root, .. } => root.clone(),
+    };
+
+    // For init, ensure the root directory exists before constructing
+    // the PathValidator (which requires a canonicalizable root).
+    if matches!(action, BrainAction::Init { .. }) {
+        let rp = std::path::Path::new(&root_str);
+        if !rp.exists() {
+            if let Err(e) = std::fs::create_dir_all(rp) {
+                eprintln!("error: cannot create vault root: {e}");
+                return 1;
+            }
+        }
+    }
+
+    // Try generic plugin dispatch via registry or dev path
+    #[cfg(feature = "wasm")]
+    if let Some(exit_code) = run_plugin_wasm("brain", &input_json, Some(&root_str)) {
+        // Handle --open for today command after WASM returns
+        if let BrainAction::Today {
+            root,
+            date,
+            open: true,
+        } = &action
+        {
+            let date_str = date
+                .clone()
+                .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+            let full_path = format!("{root}/daily/{date_str}.md");
+            if let Ok(editor) = std::env::var("EDITOR") {
+                let _ = std::process::Command::new(&editor).arg(&full_path).status();
+            } else {
+                eprintln!("$EDITOR not set");
+            }
+        }
+        return exit_code;
+    }
+
+    // Fallback: run natively if no WASM module found
+    cmd_brain_native(action)
+}
+
+/// Direct filesystem host callbacks for WASM plugins.
+///
+/// All I/O operations are validated against a [`PathValidator`] anchored
+/// at the plugin root, preventing path traversal, access to sensitive
+/// locations, and symlink-based TOCTOU attacks.
+#[cfg(feature = "wasm")]
+struct PluginHostCallbacks {
+    validator: agentzero::core::path_validator::PathValidator,
+}
+
+/// Sensitive paths for plugins.
+///
+/// Excludes `.agentzero` from the default blocklist because some plugins
+/// (e.g. brain) legitimately use config files like `.agentzero-brain.toml`.
+#[cfg(feature = "wasm")]
+const PLUGIN_SENSITIVE: &[&str] = &[".ssh", ".gnupg", ".aws/credentials", ".env"];
+
+#[cfg(feature = "wasm")]
+impl PluginHostCallbacks {
+    fn new(root: &std::path::Path) -> Result<Self, agentzero::core::path_validator::PathError> {
+        Ok(Self {
+            validator: agentzero::core::path_validator::PathValidator::with_sensitive(
+                root,
+                PLUGIN_SENSITIVE,
+            )?,
+        })
+    }
+}
+
+#[cfg(feature = "wasm")]
+impl agentzero::sandbox::wasm::WasmHostCallbacks for PluginHostCallbacks {
+    fn read_file(&self, path: &str) -> Result<String, String> {
+        let canonical = self
+            .validator
+            .validate_read(path)
+            .map_err(|e| e.to_string())?;
+        std::fs::read_to_string(canonical).map_err(|e| format!("read {path}: {e}"))
+    }
+
+    fn write_file(&self, path: &str, content: &str) -> Result<bool, String> {
+        use agentzero::core::path_validator::PathError;
+        // Use validate_write for existing files (includes symlink check),
+        // fall back to validate_create for new files.
+        let canonical = match self.validator.validate_write(path) {
+            Ok(c) => c,
+            Err(PathError::InvalidPath(_)) => self
+                .validator
+                .validate_create(path)
+                .map_err(|e| e.to_string())?,
+            Err(e) => return Err(e.to_string()),
+        };
+        std::fs::write(canonical, content).map_err(|e| format!("write {path}: {e}"))?;
+        Ok(true)
+    }
+
+    fn append_file(&self, path: &str, content: &str) -> Result<bool, String> {
+        let canonical = self
+            .validator
+            .validate_create(path)
+            .map_err(|e| e.to_string())?;
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(canonical)
+            .map_err(|e| format!("append {path}: {e}"))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("append write {path}: {e}"))?;
+        Ok(true)
+    }
+
+    fn list_dir(&self, path: &str) -> Result<Vec<String>, String> {
+        let canonical = self
+            .validator
+            .validate_read(path)
+            .map_err(|e| e.to_string())?;
+        let entries = std::fs::read_dir(canonical).map_err(|e| format!("list_dir {path}: {e}"))?;
+        let mut result = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+            if let Some(name) = entry.file_name().to_str() {
+                result.push(name.to_string());
+            }
+        }
+        result.sort();
+        Ok(result)
+    }
+
+    fn create_dir(&self, path: &str) -> Result<bool, String> {
+        let canonical = self
+            .validator
+            .validate_create(path)
+            .map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(canonical).map_err(|e| format!("create_dir {path}: {e}"))?;
+        Ok(true)
+    }
+
+    fn file_exists(&self, path: &str) -> Result<bool, String> {
+        use agentzero::core::path_validator::PathError;
+        match self.validator.validate_read(path) {
+            Ok(canonical) => Ok(canonical.exists()),
+            Err(PathError::InvalidPath(_)) => {
+                // Path doesn't exist — validate bounds via create check
+                let _ = self
+                    .validator
+                    .validate_create(path)
+                    .map_err(|e| e.to_string())?;
+                Ok(false)
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn log(&self, message: &str) {
+        eprintln!("[plugin] {message}");
+    }
+
+    fn now(&self) -> String {
+        chrono::Local::now().to_rfc3339()
+    }
+}
+
+/// Run a plugin's WASM module by name.
+///
+/// Discovers the plugin via the registry (`.agentzero/plugins/<name>/`),
+/// falling back to the development path (`plugins/<name>/target/...`).
+/// Returns `Some(exit_code)` if the plugin was found and executed,
+/// `None` if no WASM module was found.
+#[cfg(feature = "wasm")]
+fn run_plugin_wasm(plugin_name: &str, input_json: &str, root_hint: Option<&str>) -> Option<i32> {
+    use agentzero::sandbox::wasm::{WasmConfig, WasmEngine, WasmHostCallbacks};
+    use agentzero::skills::plugin::PluginRegistry;
+    use std::sync::Arc;
+
+    let cwd = std::env::current_dir().ok()?;
+
+    // 1. Try registry first
+    let registry = PluginRegistry::new(cwd.join(".agentzero/plugins"));
+    let wasm_bytes = if let Some(bytes) = registry.find_wasm(plugin_name) {
+        eprintln!("[wasm] loaded {plugin_name} plugin from .agentzero/plugins/{plugin_name}/");
+        bytes
+    } else {
+        // 2. Fallback to development path
+        let dev_path = cwd.join(format!(
+            "plugins/{plugin_name}/target/wasm32-unknown-unknown/release/agentzero_{plugin_name}_wasm.wasm"
+        ));
+        if dev_path.exists() {
+            match std::fs::read(&dev_path) {
+                Ok(bytes) => {
+                    eprintln!(
+                        "[wasm] loaded {plugin_name} plugin from {}",
+                        dev_path.display()
+                    );
+                    bytes
+                }
+                Err(_) => return None,
+            }
+        } else {
+            return None;
+        }
+    };
+
+    // 3. Create WASM engine
+    let config = WasmConfig {
+        max_memory_bytes: 128 * 1024 * 1024, // 128MB
+        max_duration_secs: 60,
+        allow_filesystem: false,
+    };
+
+    let engine = match WasmEngine::new(config) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("error: failed to create WASM engine: {e}");
+            return Some(1);
+        }
+    };
+
+    // 4. Create PluginHostCallbacks with PathValidator rooted at root_hint
+    let root_path = root_hint.unwrap_or(".");
+    let callbacks: Arc<dyn WasmHostCallbacks> =
+        match PluginHostCallbacks::new(std::path::Path::new(root_path)) {
+            Ok(cb) => Arc::new(cb),
+            Err(e) => {
+                eprintln!("error: invalid root path: {e}");
+                return Some(1);
+            }
+        };
+
+    // 5. Execute and parse response
+    match engine.execute_with_input(&wasm_bytes, callbacks, input_json) {
+        Ok(result) => {
+            if let Ok(response) = serde_json::from_str::<serde_json::Value>(&result.output) {
+                let success = response
+                    .get("success")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if success {
+                    if let Some(output) = response.get("output").and_then(|v| v.as_str()) {
+                        println!("{output}");
+                    }
+                    return Some(0);
+                } else if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
+                    eprintln!("error: {err}");
+                    return Some(1);
+                }
+            }
+            // Fallthrough: couldn't parse as JSON response
+            if result.success {
+                println!("{}", result.output);
+                Some(0)
+            } else {
+                eprintln!("error: {}", result.output);
+                Some(1)
+            }
+        }
+        Err(e) => {
+            eprintln!("error: WASM execution failed: {e}");
+            Some(1)
+        }
+    }
+}
+
+/// Native fallback for brain commands when WASM is unavailable.
+fn cmd_brain_native(action: BrainAction) -> i32 {
+    use agentzero_brain::{
+        brain_capture, brain_checkpoint, brain_health, brain_ingest, brain_init, brain_query,
+        brain_review, brain_status, brain_today, brain_weekly, format_results, load_config,
+        CheckpointOptions, HealthOptions, IngestOptions, InitOptions, QueryOptions, RealBrainFs,
+        ReviewOptions, WeeklyOptions,
+    };
+
+    // Extract vault root from whichever action variant we have.
+    let root_str = match &action {
+        BrainAction::Init { root, .. }
+        | BrainAction::Today { root, .. }
+        | BrainAction::Capture { root, .. }
+        | BrainAction::Query { root, .. }
+        | BrainAction::Ingest { root, .. }
+        | BrainAction::Review { root, .. }
+        | BrainAction::Weekly { root, .. }
+        | BrainAction::Health { root, .. }
+        | BrainAction::Checkpoint { root, .. }
+        | BrainAction::Status { root, .. } => root.clone(),
+    };
+    let root_path = std::path::Path::new(&root_str);
+
+    // For init, ensure the root directory exists before constructing
+    // the PathValidator (which requires a canonicalizable root).
+    if matches!(action, BrainAction::Init { .. }) && !root_path.exists() {
+        if let Err(e) = std::fs::create_dir_all(root_path) {
+            eprintln!("error: cannot create vault root: {e}");
+            return 1;
+        }
+    }
+
+    let fs = match RealBrainFs::new(root_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: invalid vault root: {e}");
+            return 1;
+        }
+    };
+
+    match action {
+        BrainAction::Init {
+            root,
+            force,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("warning: {e}, using defaults");
+                    agentzero_brain::BrainConfig::default()
+                }
+            };
+            let opts = InitOptions { force, dry_run };
+            match brain_init(&fs, &root, &config, &opts) {
+                Ok(result) => {
+                    if dry_run {
+                        println!("[dry-run] {}", result.summary());
+                        for path in &result.created {
+                            println!("  would create: {path}");
+                        }
+                    } else {
+                        println!("{}", result.summary());
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Today { root, date, open } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            match brain_today(&fs, &root, &config, date.as_deref()) {
+                Ok(path) => {
+                    println!("{path}");
+                    if open {
+                        let full_path = format!("{root}/{path}");
+                        if let Ok(editor) = std::env::var("EDITOR") {
+                            let status =
+                                std::process::Command::new(&editor).arg(&full_path).status();
+                            match status {
+                                Ok(s) if s.success() => {}
+                                Ok(s) => {
+                                    eprintln!("editor exited with: {s}");
+                                    return 1;
+                                }
+                                Err(e) => {
+                                    eprintln!("failed to open editor '{editor}': {e}");
+                                    return 1;
+                                }
+                            }
+                        } else {
+                            eprintln!("$EDITOR not set");
+                            return 1;
+                        }
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Capture {
+            message,
+            root,
+            date,
+            section,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            match brain_capture(
+                &fs,
+                &root,
+                &config,
+                &message,
+                date.as_deref(),
+                section.as_deref(),
+            ) {
+                Ok((path, entry)) => {
+                    println!("{path}");
+                    println!("{entry}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Query {
+            term,
+            root,
+            raw,
+            json,
+            limit,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let opts = QueryOptions {
+                include_raw: raw,
+                json,
+                limit,
+            };
+            match brain_query(&fs, &root, &config, &term, &opts) {
+                Ok(matches) => {
+                    print!("{}", format_results(&matches, json));
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Ingest {
+            path,
+            root,
+            save_prompt,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let opts = IngestOptions {
+                save_prompt,
+                dry_run,
+            };
+            match brain_ingest(&fs, &root, &config, &path, &opts) {
+                Ok(result) => {
+                    for w in &result.warnings {
+                        eprintln!("{w}");
+                    }
+                    println!("{}", result.prompt);
+                    if let Some(saved) = &result.saved_to {
+                        eprintln!("Saved to: {saved}");
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Review {
+            root,
+            date,
+            save_prompt,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let opts = ReviewOptions {
+                date,
+                save_prompt,
+                dry_run,
+            };
+            match brain_review(&fs, &root, &config, &opts) {
+                Ok(result) => {
+                    println!("{}", result.prompt);
+                    if let Some(saved) = &result.saved_to {
+                        eprintln!("Saved to: {saved}");
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Weekly {
+            root,
+            week,
+            save_prompt,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let opts = WeeklyOptions { week, save_prompt };
+            match brain_weekly(&fs, &root, &config, &opts) {
+                Ok(result) => {
+                    println!("{}", result.prompt);
+                    if let Some(saved) = &result.saved_to {
+                        eprintln!("Saved to: {saved}");
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Health { root, json, fix } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let opts = HealthOptions { json, fix };
+            match brain_health(&fs, &root, &config, &opts) {
+                Ok(report) => {
+                    if json {
+                        match serde_json::to_string_pretty(&report) {
+                            Ok(j) => println!("{j}"),
+                            Err(e) => {
+                                eprintln!("error serializing report: {e}");
+                                return 1;
+                            }
+                        }
+                    } else {
+                        print!("{}", report.display());
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Checkpoint {
+            root,
+            message,
+            init,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("warning: {e}, using defaults");
+                    agentzero_brain::BrainConfig::default()
+                }
+            };
+            let opts = CheckpointOptions {
+                message,
+                init,
+                dry_run,
+            };
+            match brain_checkpoint(&fs, &root, &config, &opts) {
+                Ok(result) => {
+                    println!("{}", result.summary);
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Status { root } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            match brain_status(&fs, &root, &config) {
+                Ok(result) => {
+                    print!("{}", result.display());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -3519,6 +4541,40 @@ mod tests {
                 action: super::VaultAction::List,
             } => {}
             other => panic!("expected Vault List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_plugin_list() {
+        match parse(&["plugin", "list"]) {
+            super::Command::Plugin {
+                action: super::PluginAction::List,
+            } => {}
+            other => panic!("expected Plugin List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_plugin_install() {
+        match parse(&["plugin", "install", "/tmp/brain"]) {
+            super::Command::Plugin {
+                action: super::PluginAction::Install { source },
+            } => {
+                assert_eq!(source, "/tmp/brain");
+            }
+            other => panic!("expected Plugin Install, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_plugin_info() {
+        match parse(&["plugin", "info", "brain"]) {
+            super::Command::Plugin {
+                action: super::PluginAction::Info { name },
+            } => {
+                assert_eq!(name, "brain");
+            }
+            other => panic!("expected Plugin Info, got {other:?}"),
         }
     }
 }

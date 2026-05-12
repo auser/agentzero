@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     ".",
     "crates/agentzero-acp",
+    "crates/agentzero-brain",
     "crates/agentzero-mcp",
     "crates/agentzero-audit",
     "crates/agentzero-cli",
@@ -16,6 +17,7 @@ members = [
     "crates/agentzero-tracing",
 ]
 default-members = ["crates/agentzero-cli"]
+exclude = ["plugins/brain"]
 
 [package]
 name = "agentzero"
@@ -34,6 +36,7 @@ mcp = ["agentzero-mcp"]
 [dependencies]
 agentzero-acp = { workspace = true }
 agentzero-audit = { workspace = true }
+agentzero-brain = { workspace = true }
 agentzero-mcp = { workspace = true, optional = true }
 agentzero-core = { workspace = true }
 agentzero-index = { workspace = true, optional = true }
@@ -52,6 +55,7 @@ repository = "https://github.com/auser/agentzero"
 [workspace.dependencies]
 agentzero = { path = "." }
 agentzero-acp = { path = "crates/agentzero-acp" }
+agentzero-brain = { path = "crates/agentzero-brain" }
 agentzero-mcp = { path = "crates/agentzero-mcp" }
 agentzero-audit = { path = "crates/agentzero-audit" }
 agentzero-core = { path = "crates/agentzero-core" }

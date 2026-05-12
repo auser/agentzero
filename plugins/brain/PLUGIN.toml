@@ -1,0 +1,46 @@
+[plugin]
+name = "brain"
+version = "0.1.0"
+description = "Personal LLM wiki — manage a Karpathy-style knowledge vault"
+runtime = "wasm"
+wasm_path = "brain.wasm"
+
+[[commands]]
+name = "init"
+description = "Initialize a brain vault"
+
+[[commands]]
+name = "today"
+description = "Create or show today's daily note"
+
+[[commands]]
+name = "capture"
+description = "Append a timestamped thought to today's daily note"
+
+[[commands]]
+name = "query"
+description = "Search the vault for a term"
+
+[[commands]]
+name = "ingest"
+description = "Generate an ingest prompt for a raw file"
+
+[[commands]]
+name = "review"
+description = "Generate an end-of-day review prompt"
+
+[[commands]]
+name = "weekly"
+description = "Generate a weekly review prompt"
+
+[[commands]]
+name = "health"
+description = "Run vault health diagnostics"
+
+[[commands]]
+name = "checkpoint"
+description = "Git checkpoint the vault"
+
+[[commands]]
+name = "status"
+description = "Show vault status summary"
