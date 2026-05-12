@@ -79,12 +79,19 @@ impl ProviderRouter {
                         base_url: pc.url.clone(),
                         model: pc.default_model.clone(),
                         is_local: pc.is_local,
-                        api_key: pc.api_key.clone(),
+                        api_key: pc
+                            .api_key
+                            .clone()
+                            .or_else(|| std::env::var("OPENAI_API_KEY").ok()),
                     };
                     Box::new(OpenAICompatProvider::new(cfg))
                 }
                 ProviderType::Anthropic => {
-                    let api_key = pc.api_key.clone().unwrap_or_default();
+                    let api_key = pc
+                        .api_key
+                        .clone()
+                        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+                        .unwrap_or_default();
                     let cfg = AnthropicConfig {
                         api_key,
                         model: pc.default_model.clone(),

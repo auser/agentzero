@@ -752,7 +752,10 @@ mod tests {
         "#;
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         let result = engine
-            .execute_with_host(&wat::parse_str(wat).expect("valid WAT"), Arc::new(DenyAllHostCallbacks))
+            .execute_with_host(
+                &wat::parse_str(wat).expect("valid WAT"),
+                Arc::new(DenyAllHostCallbacks),
+            )
             .expect("should execute");
         assert!(result.success);
         assert!(
@@ -888,7 +891,10 @@ mod tests {
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         // DenyAllHostCallbacks returns Err for file_exists, so we expect -1
         let result = engine
-            .execute_with_host(&wat::parse_str(wat).expect("valid WAT"), Arc::new(DenyAllHostCallbacks))
+            .execute_with_host(
+                &wat::parse_str(wat).expect("valid WAT"),
+                Arc::new(DenyAllHostCallbacks),
+            )
             .expect("should execute");
         assert!(result.success);
         // The function returns -1 (as i32, wraps to 4294967295 or shows as -1)
@@ -915,7 +921,10 @@ mod tests {
         "#;
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         let result = engine
-            .execute_with_host(&wat::parse_str(wat).expect("valid WAT"), Arc::new(DenyAllHostCallbacks))
+            .execute_with_host(
+                &wat::parse_str(wat).expect("valid WAT"),
+                Arc::new(DenyAllHostCallbacks),
+            )
             .expect("should execute");
         assert!(result.success);
         // DenyAll returns 1 (error)

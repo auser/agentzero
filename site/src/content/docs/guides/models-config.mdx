@@ -99,7 +99,7 @@ Anthropic is always remote (`is_local: false`), so PII redaction is applied auto
 ```
 
 ```bash
-az chat --local
+az chat
 # Uses gemma-4-12b via LM Studio automatically
 ```
 
@@ -197,5 +197,5 @@ let router = ProviderRouter::from_config(&config)?;
 The router tries providers in priority order (local first), with automatic fallback and retry on transient failures. Switch the active provider at runtime via `az serve` with the `switch_model` ACP method, or via CLI flags:
 
 ```bash
-az chat --local --provider lm-studio --model gemma-4-12b
+az chat --provider lm-studio --model gemma-4-12b
 ```

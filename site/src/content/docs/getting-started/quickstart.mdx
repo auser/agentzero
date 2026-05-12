@@ -34,7 +34,7 @@ This creates `.agentzero/` with:
 ## Chat with Your Project
 
 ```bash
-az chat --local
+az chat
 ```
 
 The agent can read files, list directories, search code, and execute tools — all governed by your policy.
@@ -62,7 +62,7 @@ Build a semantic index of your project files, then ask questions about them in c
 ```bash
 ollama pull nomic-embed-text
 az index build
-az chat --local
+az chat
 ```
 
 ```
@@ -113,13 +113,13 @@ This sends one message, prints the JSON response, and exits.
 
 ```bash
 # Use a specific model
-az chat --local --model codellama
+az chat --model codellama
 
 # Use llama.cpp instead of Ollama
-az chat --local --provider llama-cpp
+az chat --provider llama-cpp
 
 # Use vLLM on a custom port
-az chat --local --provider vllm --url http://gpu-box:8000
+az chat --provider vllm --url http://gpu-box:8000
 ```
 
 ## Search for Skills
@@ -155,7 +155,7 @@ agentzero> Created and registered the line-counter tool. It's now available for 
 Encryption is enabled by default — you'll be prompted for a passphrase:
 
 ```bash
-az chat --local
+az chat
 # Encryption passphrase: ********
 # Audit logs and sessions encrypted at rest
 ```
