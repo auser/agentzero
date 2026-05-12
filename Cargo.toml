@@ -71,12 +71,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 toml = "0.8"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "time", "net", "sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4"] }
 wasm-encoder = "0.248"
-wasmtime = "29"
+wasmtime = { version = "29", default-features = false, features = ["cranelift", "runtime", "wat", "std"] }
 
 # Packaging
 sha2 = "0.10"
@@ -91,3 +91,8 @@ text-splitter = "0.30"
 aes-gcm = "0.10"
 argon2 = "0.5"
 rand = "0.8"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
