@@ -996,21 +996,22 @@ mod tests {
 
         // WAT module that echoes run() input back as output.
         // Uses i64 arithmetic to pack (ptr << 32 | len).
-        let wat = "(module
-            (memory (export \"memory\") 1)
-            (global $bump (mut i32) (i32.const 1024))
-            (func (export \"alloc\") (param $size i32) (result i32)
-                (local $ptr i32)
-                (local.set $ptr (global.get $bump))
-                (global.set $bump (i32.add (global.get $bump) (local.get $size)))
-                (local.get $ptr))
-            (func (export \"run\") (param $ptr i32) (param $len i32) (result i64)
-                (i64.or
-                    (i64.shl
-                        (i64.extend_i32_u (local.get $ptr))
-                        (i64.const 32))
-                    (i64.extend_i32_u (local.get $len)))))
-        ";
+        let wat = r#"
+            (module
+                (memory (export "memory") 1)
+                (global $bump (mut i32) (i32.const 1024))
+                (func (export "alloc") (param $size i32) (result i32)
+                    (local $ptr i32)
+                    (local.set $ptr (global.get $bump))
+                    (global.set $bump (i32.add (global.get $bump) (local.get $size)))
+                    (local.get $ptr))
+                (func (export "run") (param $ptr i32) (param $len i32) (result i64)
+                    (i64.or
+                        (i64.shl
+                            (i64.extend_i32_u (local.get $ptr))
+                            (i64.const 32))
+                        (i64.extend_i32_u (local.get $len)))))
+        "#;
 
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         let result = engine
