@@ -135,10 +135,31 @@ pub enum Command {
         #[command(subcommand)]
         action: BrainAction,
     },
+    /// Manage plugins.
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
     /// Generate shell completions.
     Completions {
         /// Shell to generate completions for.
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PluginAction {
+    /// List installed plugins.
+    List,
+    /// Install a plugin from a local directory.
+    Install {
+        /// Path to the plugin directory (must contain PLUGIN.toml and a .wasm file).
+        source: String,
+    },
+    /// Show plugin information.
+    Info {
+        /// Plugin name.
+        name: String,
     },
 }
 
@@ -342,6 +363,7 @@ pub async fn run(command: Command) -> i32 {
         Command::Vault { action } => cmd_vault(action),
         Command::Index { action } => cmd_index(action).await,
         Command::Brain { action } => cmd_brain(action),
+        Command::Plugin { action } => cmd_plugin(action),
         Command::Completions { shell } => {
             cmd_completions(shell);
             0
@@ -470,7 +492,9 @@ fn cmd_init(private: bool, editor: Option<&str>) -> i32 {
         return 1;
     }
 
-    let dirs = ["audit", "sessions", "prompts", "skills", "vault", "index"];
+    let dirs = [
+        "audit", "sessions", "prompts", "skills", "vault", "index", "plugins",
+    ];
     for sub in &dirs {
         if let Err(e) = std::fs::create_dir_all(az_dir.join(sub)) {
             eprintln!("error: failed to create .agentzero/{sub}: {e}");
@@ -565,6 +589,7 @@ fn cmd_init(private: bool, editor: Option<&str>) -> i32 {
     println!("  ├── sessions/");
     println!("  ├── prompts/");
     println!("  ├── skills/");
+    println!("  ├── plugins/");
     println!("  └── vault/");
 
     // Generate editor integration config if requested
@@ -3380,6 +3405,85 @@ fn cmd_demo() -> i32 {
     0
 }
 
+fn cmd_plugin(action: PluginAction) -> i32 {
+    use agentzero::skills::plugin::PluginRegistry;
+
+    let cwd = match std::env::current_dir() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+
+    let registry = PluginRegistry::new(cwd.join(".agentzero/plugins"));
+
+    match action {
+        PluginAction::List => {
+            let plugins = registry.list();
+            if plugins.is_empty() {
+                println!("No plugins installed.");
+                println!("Install a plugin with: az plugin install <path-to-plugin-directory>");
+                return 0;
+            }
+            println!("{:<15} {:<10} {:<6} DESCRIPTION", "NAME", "VERSION", "CMDS");
+            println!("{}", "-".repeat(60));
+            for (manifest, _path) in &plugins {
+                println!(
+                    "{:<15} {:<10} {:<6} {}",
+                    manifest.plugin.name,
+                    manifest.plugin.version,
+                    manifest.commands.len(),
+                    manifest.plugin.description,
+                );
+            }
+            0
+        }
+        PluginAction::Install { source } => {
+            let source_path = std::path::Path::new(&source);
+            if !source_path.exists() {
+                eprintln!("error: source directory does not exist: {source}");
+                return 1;
+            }
+            match registry.install(source_path) {
+                Ok(name) => {
+                    println!("Installed plugin: {name}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: failed to install plugin: {e}");
+                    1
+                }
+            }
+        }
+        PluginAction::Info { name } => match registry.get(&name) {
+            Some((manifest, path)) => {
+                println!("Plugin: {}", manifest.plugin.name);
+                println!("Version: {}", manifest.plugin.version);
+                println!("Description: {}", manifest.plugin.description);
+                println!("Runtime: {}", manifest.plugin.runtime);
+                if let Some(ref wasm_path) = manifest.plugin.wasm_path {
+                    println!("WASM path: {wasm_path}");
+                }
+                println!("Location: {}", path.display());
+                if manifest.commands.is_empty() {
+                    println!("\nNo commands declared.");
+                } else {
+                    println!("\nCommands:");
+                    for cmd in &manifest.commands {
+                        println!("  {:<15} {}", cmd.name, cmd.description);
+                    }
+                }
+                0
+            }
+            None => {
+                eprintln!("error: plugin '{name}' not found");
+                1
+            }
+        },
+    }
+}
+
 fn cmd_brain(action: BrainAction) -> i32 {
     // Brain runs as a WASM plugin via the sandbox (ADR 0015).
     // The WASM module is loaded from .agentzero/plugins/brain/brain.wasm
@@ -3450,144 +3554,84 @@ fn cmd_brain(action: BrainAction) -> i32 {
         }
     };
 
-    // Try to load and run the WASM plugin
-    #[cfg(feature = "wasm")]
-    {
-        use agentzero::sandbox::wasm::{WasmConfig, WasmEngine, WasmHostCallbacks};
-        use std::sync::Arc;
+    // Extract the root path for the brain vault (used for path validation).
+    let root_str = match &action {
+        BrainAction::Init { root, .. }
+        | BrainAction::Today { root, .. }
+        | BrainAction::Capture { root, .. }
+        | BrainAction::Query { root, .. } => root.clone(),
+    };
 
-        // Look for the WASM module on disk
-        let wasm_path = find_brain_wasm();
-        if let Some(wasm_bytes) = wasm_path {
-            let config = WasmConfig {
-                max_memory_bytes: 128 * 1024 * 1024, // 128MB for brain
-                max_duration_secs: 60,
-                allow_filesystem: false,
-            };
-
-            let engine = match WasmEngine::new(config) {
-                Ok(e) => e,
-                Err(e) => {
-                    eprintln!("error: failed to create WASM engine: {e}");
-                    return 1;
-                }
-            };
-
-            // Extract vault root from the JSON input for path validation.
-            let root_path = serde_json::from_str::<serde_json::Value>(&input_json)
-                .ok()
-                .and_then(|v| v.get("root").and_then(|r| r.as_str()).map(String::from))
-                .unwrap_or_else(|| ".".to_string());
-
-            // For init, ensure the root directory exists before constructing
-            // the PathValidator (which requires a canonicalizable root).
-            if matches!(action, BrainAction::Init { .. }) {
-                let rp = std::path::Path::new(&root_path);
-                if !rp.exists() {
-                    if let Err(e) = std::fs::create_dir_all(rp) {
-                        eprintln!("error: cannot create vault root: {e}");
-                        return 1;
-                    }
-                }
-            }
-
-            let callbacks: Arc<dyn WasmHostCallbacks> =
-                match BrainHostCallbacks::new(std::path::Path::new(&root_path)) {
-                    Ok(cb) => Arc::new(cb),
-                    Err(e) => {
-                        eprintln!("error: invalid vault root: {e}");
-                        return 1;
-                    }
-                };
-
-            match engine.execute_with_input(&wasm_bytes, callbacks, &input_json) {
-                Ok(result) => {
-                    if let Ok(response) = serde_json::from_str::<serde_json::Value>(&result.output)
-                    {
-                        let success = response
-                            .get("success")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        if success {
-                            if let Some(output) = response.get("output").and_then(|v| v.as_str()) {
-                                println!("{output}");
-                            }
-                            // Handle --open for today command after WASM returns
-                            if let BrainAction::Today {
-                                root, open: true, ..
-                            } = &action
-                            {
-                                if let Some(path) = response.get("output").and_then(|v| v.as_str())
-                                {
-                                    let full_path = format!("{root}/{path}");
-                                    if let Ok(editor) = std::env::var("EDITOR") {
-                                        let _ = std::process::Command::new(&editor)
-                                            .arg(&full_path)
-                                            .status();
-                                    } else {
-                                        eprintln!("$EDITOR not set");
-                                    }
-                                }
-                            }
-                            return 0;
-                        } else if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
-                            eprintln!("error: {err}");
-                            return 1;
-                        }
-                    }
-                    // Fallthrough: couldn't parse response
-                    if result.success {
-                        println!("{}", result.output);
-                        return 0;
-                    }
-                    eprintln!("error: {}", result.output);
-                    return 1;
-                }
-                Err(e) => {
-                    eprintln!("error: WASM execution failed: {e}");
-                    return 1;
-                }
+    // For init, ensure the root directory exists before constructing
+    // the PathValidator (which requires a canonicalizable root).
+    if matches!(action, BrainAction::Init { .. }) {
+        let rp = std::path::Path::new(&root_str);
+        if !rp.exists() {
+            if let Err(e) = std::fs::create_dir_all(rp) {
+                eprintln!("error: cannot create vault root: {e}");
+                return 1;
             }
         }
+    }
+
+    // Try generic plugin dispatch via registry or dev path
+    #[cfg(feature = "wasm")]
+    if let Some(exit_code) = run_plugin_wasm("brain", &input_json, Some(&root_str)) {
+        // Handle --open for today command after WASM returns
+        if let BrainAction::Today {
+            root,
+            date,
+            open: true,
+        } = &action
+        {
+            let date_str = date
+                .clone()
+                .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+            let full_path = format!("{root}/daily/{date_str}.md");
+            if let Ok(editor) = std::env::var("EDITOR") {
+                let _ = std::process::Command::new(&editor).arg(&full_path).status();
+            } else {
+                eprintln!("$EDITOR not set");
+            }
+        }
+        return exit_code;
     }
 
     // Fallback: run natively if no WASM module found
     cmd_brain_native(action)
 }
 
-/// Direct filesystem host callbacks for the brain plugin.
+/// Direct filesystem host callbacks for WASM plugins.
 ///
 /// All I/O operations are validated against a [`PathValidator`] anchored
-/// at the vault root, preventing path traversal, access to sensitive
+/// at the plugin root, preventing path traversal, access to sensitive
 /// locations, and symlink-based TOCTOU attacks.
 #[cfg(feature = "wasm")]
-struct BrainHostCallbacks {
+struct PluginHostCallbacks {
     validator: agentzero::core::path_validator::PathValidator,
 }
 
-/// Sensitive paths for the brain plugin.
+/// Sensitive paths for plugins.
 ///
-/// Excludes `.agentzero` from the default blocklist because the brain vault
-/// legitimately contains `.agentzero-brain.toml` as its config file.
+/// Excludes `.agentzero` from the default blocklist because some plugins
+/// (e.g. brain) legitimately use config files like `.agentzero-brain.toml`.
 #[cfg(feature = "wasm")]
-const BRAIN_SENSITIVE: &[&str] = &[".ssh", ".gnupg", ".aws/credentials", ".env"];
+const PLUGIN_SENSITIVE: &[&str] = &[".ssh", ".gnupg", ".aws/credentials", ".env"];
 
 #[cfg(feature = "wasm")]
-impl BrainHostCallbacks {
-    fn new(
-        vault_root: &std::path::Path,
-    ) -> Result<Self, agentzero::core::path_validator::PathError> {
+impl PluginHostCallbacks {
+    fn new(root: &std::path::Path) -> Result<Self, agentzero::core::path_validator::PathError> {
         Ok(Self {
             validator: agentzero::core::path_validator::PathValidator::with_sensitive(
-                vault_root,
-                BRAIN_SENSITIVE,
+                root,
+                PLUGIN_SENSITIVE,
             )?,
         })
     }
 }
 
 #[cfg(feature = "wasm")]
-impl agentzero::sandbox::wasm::WasmHostCallbacks for BrainHostCallbacks {
+impl agentzero::sandbox::wasm::WasmHostCallbacks for PluginHostCallbacks {
     fn read_file(&self, path: &str) -> Result<String, String> {
         let canonical = self
             .validator
@@ -3671,7 +3715,7 @@ impl agentzero::sandbox::wasm::WasmHostCallbacks for BrainHostCallbacks {
     }
 
     fn log(&self, message: &str) {
-        eprintln!("[brain] {message}");
+        eprintln!("[plugin] {message}");
     }
 
     fn now(&self) -> String {
@@ -3679,24 +3723,104 @@ impl agentzero::sandbox::wasm::WasmHostCallbacks for BrainHostCallbacks {
     }
 }
 
-/// Find the brain WASM module on disk.
+/// Run a plugin's WASM module by name.
+///
+/// Discovers the plugin via the registry (`.agentzero/plugins/<name>/`),
+/// falling back to the development path (`plugins/<name>/target/...`).
+/// Returns `Some(exit_code)` if the plugin was found and executed,
+/// `None` if no WASM module was found.
 #[cfg(feature = "wasm")]
-fn find_brain_wasm() -> Option<Vec<u8>> {
-    // Check .agentzero/plugins/brain/brain.wasm
+fn run_plugin_wasm(plugin_name: &str, input_json: &str, root_hint: Option<&str>) -> Option<i32> {
+    use agentzero::sandbox::wasm::{WasmConfig, WasmEngine, WasmHostCallbacks};
+    use agentzero::skills::plugin::PluginRegistry;
+    use std::sync::Arc;
+
     let cwd = std::env::current_dir().ok()?;
-    let paths = [
-        cwd.join(".agentzero/plugins/brain/brain.wasm"),
-        cwd.join("plugins/brain/target/wasm32-unknown-unknown/release/agentzero_brain_wasm.wasm"),
-    ];
-    for path in &paths {
-        if path.exists() {
-            if let Ok(bytes) = std::fs::read(path) {
-                eprintln!("[wasm] loaded brain plugin from {}", path.display());
-                return Some(bytes);
+
+    // 1. Try registry first
+    let registry = PluginRegistry::new(cwd.join(".agentzero/plugins"));
+    let wasm_bytes = if let Some(bytes) = registry.find_wasm(plugin_name) {
+        eprintln!("[wasm] loaded {plugin_name} plugin from .agentzero/plugins/{plugin_name}/");
+        bytes
+    } else {
+        // 2. Fallback to development path
+        let dev_path = cwd.join(format!(
+            "plugins/{plugin_name}/target/wasm32-unknown-unknown/release/agentzero_{plugin_name}_wasm.wasm"
+        ));
+        if dev_path.exists() {
+            match std::fs::read(&dev_path) {
+                Ok(bytes) => {
+                    eprintln!(
+                        "[wasm] loaded {plugin_name} plugin from {}",
+                        dev_path.display()
+                    );
+                    bytes
+                }
+                Err(_) => return None,
+            }
+        } else {
+            return None;
+        }
+    };
+
+    // 3. Create WASM engine
+    let config = WasmConfig {
+        max_memory_bytes: 128 * 1024 * 1024, // 128MB
+        max_duration_secs: 60,
+        allow_filesystem: false,
+    };
+
+    let engine = match WasmEngine::new(config) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("error: failed to create WASM engine: {e}");
+            return Some(1);
+        }
+    };
+
+    // 4. Create PluginHostCallbacks with PathValidator rooted at root_hint
+    let root_path = root_hint.unwrap_or(".");
+    let callbacks: Arc<dyn WasmHostCallbacks> =
+        match PluginHostCallbacks::new(std::path::Path::new(root_path)) {
+            Ok(cb) => Arc::new(cb),
+            Err(e) => {
+                eprintln!("error: invalid root path: {e}");
+                return Some(1);
+            }
+        };
+
+    // 5. Execute and parse response
+    match engine.execute_with_input(&wasm_bytes, callbacks, input_json) {
+        Ok(result) => {
+            if let Ok(response) = serde_json::from_str::<serde_json::Value>(&result.output) {
+                let success = response
+                    .get("success")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if success {
+                    if let Some(output) = response.get("output").and_then(|v| v.as_str()) {
+                        println!("{output}");
+                    }
+                    return Some(0);
+                } else if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
+                    eprintln!("error: {err}");
+                    return Some(1);
+                }
+            }
+            // Fallthrough: couldn't parse as JSON response
+            if result.success {
+                println!("{}", result.output);
+                Some(0)
+            } else {
+                eprintln!("error: {}", result.output);
+                Some(1)
             }
         }
+        Err(e) => {
+            eprintln!("error: WASM execution failed: {e}");
+            Some(1)
+        }
     }
-    None
 }
 
 /// Native fallback for brain commands when WASM is unavailable.
@@ -4073,6 +4197,40 @@ mod tests {
                 action: super::VaultAction::List,
             } => {}
             other => panic!("expected Vault List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_plugin_list() {
+        match parse(&["plugin", "list"]) {
+            super::Command::Plugin {
+                action: super::PluginAction::List,
+            } => {}
+            other => panic!("expected Plugin List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_plugin_install() {
+        match parse(&["plugin", "install", "/tmp/brain"]) {
+            super::Command::Plugin {
+                action: super::PluginAction::Install { source },
+            } => {
+                assert_eq!(source, "/tmp/brain");
+            }
+            other => panic!("expected Plugin Install, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_plugin_info() {
+        match parse(&["plugin", "info", "brain"]) {
+            super::Command::Plugin {
+                action: super::PluginAction::Info { name },
+            } => {
+                assert_eq!(name, "brain");
+            }
+            other => panic!("expected Plugin Info, got {other:?}"),
         }
     }
 }

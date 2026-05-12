@@ -1,0 +1,22 @@
+[plugin]
+name = "brain"
+version = "0.1.0"
+description = "Personal LLM wiki — manage a Karpathy-style knowledge vault"
+runtime = "wasm"
+wasm_path = "brain.wasm"
+
+[[commands]]
+name = "init"
+description = "Initialize a brain vault"
+
+[[commands]]
+name = "today"
+description = "Create or show today's daily note"
+
+[[commands]]
+name = "capture"
+description = "Append a timestamped thought to today's daily note"
+
+[[commands]]
+name = "query"
+description = "Search the vault for a term"
