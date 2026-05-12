@@ -8,11 +8,12 @@ repository.workspace = true
 
 [features]
 default = ["native"]
-native = ["chrono/clock"]
+native = ["chrono/clock", "dep:agentzero-core"]
 # When building for WASM, disable native features:
 # cargo build --no-default-features --target wasm32-unknown-unknown
 
 [dependencies]
+agentzero-core = { path = "../agentzero-core", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

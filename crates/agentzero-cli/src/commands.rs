@@ -3473,10 +3473,32 @@ fn cmd_brain(action: BrainAction) -> i32 {
                 }
             };
 
-            // Use direct filesystem callbacks for brain — the brain plugin
-            // manages its own path validation (vault root boundary checks).
+            // Extract vault root from the JSON input for path validation.
+            let root_path = serde_json::from_str::<serde_json::Value>(&input_json)
+                .ok()
+                .and_then(|v| v.get("root").and_then(|r| r.as_str()).map(String::from))
+                .unwrap_or_else(|| ".".to_string());
+
+            // For init, ensure the root directory exists before constructing
+            // the PathValidator (which requires a canonicalizable root).
+            if matches!(action, BrainAction::Init { .. }) {
+                let rp = std::path::Path::new(&root_path);
+                if !rp.exists() {
+                    if let Err(e) = std::fs::create_dir_all(rp) {
+                        eprintln!("error: cannot create vault root: {e}");
+                        return 1;
+                    }
+                }
+            }
+
             let callbacks: Arc<dyn WasmHostCallbacks> =
-                Arc::new(BrainHostCallbacks);
+                match BrainHostCallbacks::new(std::path::Path::new(&root_path)) {
+                    Ok(cb) => Arc::new(cb),
+                    Err(e) => {
+                        eprintln!("error: invalid vault root: {e}");
+                        return 1;
+                    }
+                };
 
             match engine.execute_with_input(&wasm_bytes, callbacks, &input_json) {
                 Ok(result) => {
@@ -3491,7 +3513,10 @@ fn cmd_brain(action: BrainAction) -> i32 {
                                 println!("{output}");
                             }
                             // Handle --open for today command after WASM returns
-                            if let BrainAction::Today { root, open: true, .. } = &action {
+                            if let BrainAction::Today {
+                                root, open: true, ..
+                            } = &action
+                            {
                                 if let Some(path) = response.get("output").and_then(|v| v.as_str())
                                 {
                                     let full_path = format!("{root}/{path}");
@@ -3505,9 +3530,7 @@ fn cmd_brain(action: BrainAction) -> i32 {
                                 }
                             }
                             return 0;
-                        } else if let Some(err) =
-                            response.get("error").and_then(|v| v.as_str())
-                        {
+                        } else if let Some(err) = response.get("error").and_then(|v| v.as_str()) {
                             eprintln!("error: {err}");
                             return 1;
                         }
@@ -3534,28 +3557,71 @@ fn cmd_brain(action: BrainAction) -> i32 {
 
 /// Direct filesystem host callbacks for the brain plugin.
 ///
-/// Brain manages its own path validation (vault root boundary),
-/// so we bypass ToolExecutor's project-root restrictions.
+/// All I/O operations are validated against a [`PathValidator`] anchored
+/// at the vault root, preventing path traversal, access to sensitive
+/// locations, and symlink-based TOCTOU attacks.
 #[cfg(feature = "wasm")]
-struct BrainHostCallbacks;
+struct BrainHostCallbacks {
+    validator: agentzero::core::path_validator::PathValidator,
+}
+
+/// Sensitive paths for the brain plugin.
+///
+/// Excludes `.agentzero` from the default blocklist because the brain vault
+/// legitimately contains `.agentzero-brain.toml` as its config file.
+#[cfg(feature = "wasm")]
+const BRAIN_SENSITIVE: &[&str] = &[".ssh", ".gnupg", ".aws/credentials", ".env"];
+
+#[cfg(feature = "wasm")]
+impl BrainHostCallbacks {
+    fn new(
+        vault_root: &std::path::Path,
+    ) -> Result<Self, agentzero::core::path_validator::PathError> {
+        Ok(Self {
+            validator: agentzero::core::path_validator::PathValidator::with_sensitive(
+                vault_root,
+                BRAIN_SENSITIVE,
+            )?,
+        })
+    }
+}
 
 #[cfg(feature = "wasm")]
 impl agentzero::sandbox::wasm::WasmHostCallbacks for BrainHostCallbacks {
     fn read_file(&self, path: &str) -> Result<String, String> {
-        std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))
+        let canonical = self
+            .validator
+            .validate_read(path)
+            .map_err(|e| e.to_string())?;
+        std::fs::read_to_string(canonical).map_err(|e| format!("read {path}: {e}"))
     }
 
     fn write_file(&self, path: &str, content: &str) -> Result<bool, String> {
-        std::fs::write(path, content).map_err(|e| format!("write {path}: {e}"))?;
+        use agentzero::core::path_validator::PathError;
+        // Use validate_write for existing files (includes symlink check),
+        // fall back to validate_create for new files.
+        let canonical = match self.validator.validate_write(path) {
+            Ok(c) => c,
+            Err(PathError::InvalidPath(_)) => self
+                .validator
+                .validate_create(path)
+                .map_err(|e| e.to_string())?,
+            Err(e) => return Err(e.to_string()),
+        };
+        std::fs::write(canonical, content).map_err(|e| format!("write {path}: {e}"))?;
         Ok(true)
     }
 
     fn append_file(&self, path: &str, content: &str) -> Result<bool, String> {
+        let canonical = self
+            .validator
+            .validate_create(path)
+            .map_err(|e| e.to_string())?;
         use std::io::Write;
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(path)
+            .open(canonical)
             .map_err(|e| format!("append {path}: {e}"))?;
         file.write_all(content.as_bytes())
             .map_err(|e| format!("append write {path}: {e}"))?;
@@ -3563,7 +3629,11 @@ impl agentzero::sandbox::wasm::WasmHostCallbacks for BrainHostCallbacks {
     }
 
     fn list_dir(&self, path: &str) -> Result<Vec<String>, String> {
-        let entries = std::fs::read_dir(path).map_err(|e| format!("list_dir {path}: {e}"))?;
+        let canonical = self
+            .validator
+            .validate_read(path)
+            .map_err(|e| e.to_string())?;
+        let entries = std::fs::read_dir(canonical).map_err(|e| format!("list_dir {path}: {e}"))?;
         let mut result = Vec::new();
         for entry in entries {
             let entry = entry.map_err(|e| format!("read entry: {e}"))?;
@@ -3576,12 +3646,28 @@ impl agentzero::sandbox::wasm::WasmHostCallbacks for BrainHostCallbacks {
     }
 
     fn create_dir(&self, path: &str) -> Result<bool, String> {
-        std::fs::create_dir_all(path).map_err(|e| format!("create_dir {path}: {e}"))?;
+        let canonical = self
+            .validator
+            .validate_create(path)
+            .map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(canonical).map_err(|e| format!("create_dir {path}: {e}"))?;
         Ok(true)
     }
 
     fn file_exists(&self, path: &str) -> Result<bool, String> {
-        Ok(std::path::Path::new(path).exists())
+        use agentzero::core::path_validator::PathError;
+        match self.validator.validate_read(path) {
+            Ok(canonical) => Ok(canonical.exists()),
+            Err(PathError::InvalidPath(_)) => {
+                // Path doesn't exist — validate bounds via create check
+                let _ = self
+                    .validator
+                    .validate_create(path)
+                    .map_err(|e| e.to_string())?;
+                Ok(false)
+            }
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     fn log(&self, message: &str) {
@@ -3605,10 +3691,7 @@ fn find_brain_wasm() -> Option<Vec<u8>> {
     for path in &paths {
         if path.exists() {
             if let Ok(bytes) = std::fs::read(path) {
-                eprintln!(
-                    "[wasm] loaded brain plugin from {}",
-                    path.display()
-                );
+                eprintln!("[wasm] loaded brain plugin from {}", path.display());
                 return Some(bytes);
             }
         }
@@ -3623,7 +3706,31 @@ fn cmd_brain_native(action: BrainAction) -> i32 {
         InitOptions, QueryOptions, RealBrainFs,
     };
 
-    let fs = RealBrainFs::new();
+    // Extract vault root from whichever action variant we have.
+    let root_str = match &action {
+        BrainAction::Init { root, .. }
+        | BrainAction::Today { root, .. }
+        | BrainAction::Capture { root, .. }
+        | BrainAction::Query { root, .. } => root.clone(),
+    };
+    let root_path = std::path::Path::new(&root_str);
+
+    // For init, ensure the root directory exists before constructing
+    // the PathValidator (which requires a canonicalizable root).
+    if matches!(action, BrainAction::Init { .. }) && !root_path.exists() {
+        if let Err(e) = std::fs::create_dir_all(root_path) {
+            eprintln!("error: cannot create vault root: {e}");
+            return 1;
+        }
+    }
+
+    let fs = match RealBrainFs::new(root_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: invalid vault root: {e}");
+            return 1;
+        }
+    };
 
     match action {
         BrainAction::Init {

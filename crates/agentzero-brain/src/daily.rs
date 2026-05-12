@@ -52,9 +52,7 @@ pub fn brain_capture(
     let full_path = format!("{root}/{rel_path}");
 
     // Read current content
-    let content = fs
-        .read_file(&full_path)
-        .map_err(BrainError::Io)?;
+    let content = fs.read_file(&full_path).map_err(BrainError::Io)?;
 
     let heading = section.unwrap_or("Capture");
     let heading_marker = format!("## {heading}");
@@ -157,11 +155,7 @@ fn resolve_date(
             // Get current time from the filesystem abstraction
             let now_raw = fs.now();
             // Extract just the date portion from ISO 8601
-            Ok(now_raw
-                .split('T')
-                .next()
-                .unwrap_or(&now_raw)
-                .to_string())
+            Ok(now_raw.split('T').next().unwrap_or(&now_raw).to_string())
         }
     }
 }
@@ -200,8 +194,8 @@ tags: []
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::TestFs;
     use crate::init::{brain_init, InitOptions};
+    use crate::tests::TestFs;
 
     fn setup_vault(fs: &TestFs) -> BrainConfig {
         let config = BrainConfig::default();
@@ -223,7 +217,11 @@ mod tests {
         let fs = TestFs::new();
         let config = setup_vault(&fs);
         brain_today(&fs, "/vault", &config, Some("2025-06-15")).expect("today");
-        let content = fs.files().get("/vault/wiki/daily/2025-06-15.md").cloned().expect("file");
+        let content = fs
+            .files()
+            .get("/vault/wiki/daily/2025-06-15.md")
+            .cloned()
+            .expect("file");
         assert!(content.contains("# 2025-06-15"));
         assert!(content.contains("## Capture"));
         assert!(content.contains("created: 2025-06-15"));
@@ -237,7 +235,11 @@ mod tests {
         // Manually modify
         fs.set_file("/vault/wiki/daily/2025-06-15.md", "custom content");
         brain_today(&fs, "/vault", &config, Some("2025-06-15")).expect("today second");
-        let content = fs.files().get("/vault/wiki/daily/2025-06-15.md").cloned().expect("file");
+        let content = fs
+            .files()
+            .get("/vault/wiki/daily/2025-06-15.md")
+            .cloned()
+            .expect("file");
         assert_eq!(content, "custom content");
     }
 
@@ -253,11 +255,21 @@ mod tests {
     fn test_capture_creates_note_if_missing() {
         let fs = TestFs::new();
         let config = setup_vault(&fs);
-        let (path, _) =
-            brain_capture(&fs, "/vault", &config, "test message", Some("2025-06-15"), None)
-                .expect("capture");
+        let (path, _) = brain_capture(
+            &fs,
+            "/vault",
+            &config,
+            "test message",
+            Some("2025-06-15"),
+            None,
+        )
+        .expect("capture");
         assert_eq!(path, "wiki/daily/2025-06-15.md");
-        let content = fs.files().get("/vault/wiki/daily/2025-06-15.md").cloned().expect("file");
+        let content = fs
+            .files()
+            .get("/vault/wiki/daily/2025-06-15.md")
+            .cloned()
+            .expect("file");
         assert!(content.contains("test message"));
     }
 
@@ -268,7 +280,11 @@ mod tests {
         brain_today(&fs, "/vault", &config, Some("2025-06-15")).expect("today");
         brain_capture(&fs, "/vault", &config, "first", Some("2025-06-15"), None).expect("cap 1");
         brain_capture(&fs, "/vault", &config, "second", Some("2025-06-15"), None).expect("cap 2");
-        let content = fs.files().get("/vault/wiki/daily/2025-06-15.md").cloned().expect("file");
+        let content = fs
+            .files()
+            .get("/vault/wiki/daily/2025-06-15.md")
+            .cloned()
+            .expect("file");
         assert!(content.contains("first"));
         assert!(content.contains("second"));
     }
@@ -283,16 +299,14 @@ mod tests {
             "/vault/wiki/daily/2025-06-15.md",
             "---\ntype: daily\n---\n\n# 2025-06-15\n\n## Plan\n",
         );
-        let (_, entry) = brain_capture(
-            &fs,
-            "/vault",
-            &config,
-            "new idea",
-            Some("2025-06-15"),
-            None,
-        )
-        .expect("capture");
-        let content = fs.files().get("/vault/wiki/daily/2025-06-15.md").cloned().expect("file");
+        let (_, entry) =
+            brain_capture(&fs, "/vault", &config, "new idea", Some("2025-06-15"), None)
+                .expect("capture");
+        let content = fs
+            .files()
+            .get("/vault/wiki/daily/2025-06-15.md")
+            .cloned()
+            .expect("file");
         assert!(content.contains("## Capture"));
         assert!(content.contains(&entry));
     }
@@ -304,7 +318,11 @@ mod tests {
         brain_today(&fs, "/vault", &config, Some("2025-06-15")).expect("today");
         let msg = "Idee: Architektur-Review fur das Projekt";
         brain_capture(&fs, "/vault", &config, msg, Some("2025-06-15"), None).expect("cap");
-        let content = fs.files().get("/vault/wiki/daily/2025-06-15.md").cloned().expect("file");
+        let content = fs
+            .files()
+            .get("/vault/wiki/daily/2025-06-15.md")
+            .cloned()
+            .expect("file");
         assert!(content.contains(msg));
     }
 
@@ -313,9 +331,17 @@ mod tests {
         let fs = TestFs::new();
         let config = setup_vault(&fs);
         brain_today(&fs, "/vault", &config, Some("2025-06-15")).expect("today");
-        let content_before = fs.files().get("/vault/wiki/daily/2025-06-15.md").cloned().expect("file");
+        let content_before = fs
+            .files()
+            .get("/vault/wiki/daily/2025-06-15.md")
+            .cloned()
+            .expect("file");
         brain_capture(&fs, "/vault", &config, "thought", Some("2025-06-15"), None).expect("cap");
-        let content_after = fs.files().get("/vault/wiki/daily/2025-06-15.md").cloned().expect("file");
+        let content_after = fs
+            .files()
+            .get("/vault/wiki/daily/2025-06-15.md")
+            .cloned()
+            .expect("file");
         // Original content should still be present
         assert!(content_after.contains("## Plan"));
         assert!(content_after.contains("## Notes"));

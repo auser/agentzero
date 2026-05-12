@@ -91,6 +91,7 @@ dependencies = [
 name = "agentzero-brain"
 version = "0.1.0"
 dependencies = [
+ "agentzero-core",
  "chrono",
  "serde",
  "serde_json",

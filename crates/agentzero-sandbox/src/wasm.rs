@@ -585,9 +585,7 @@ mod runtime {
             let alloc_fn = instance
                 .get_typed_func::<i32, i32>(store.as_context_mut(), "alloc")
                 .map_err(|_| {
-                    wasmtime::Error::msg(
-                        "module exports run() but not alloc() — cannot pass input",
-                    )
+                    wasmtime::Error::msg("module exports run() but not alloc() — cannot pass input")
                 })?;
 
             // Allocate space in guest memory and write the input string
@@ -1034,8 +1032,7 @@ mod tests {
             .expect("should execute with input");
         assert!(result.success);
         assert_eq!(
-            result.output,
-            r#"{"action":"init","root":"/tmp/brain"}"#,
+            result.output, r#"{"action":"init","root":"/tmp/brain"}"#,
             "run() should echo the input back"
         );
     }

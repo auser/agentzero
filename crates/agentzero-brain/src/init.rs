@@ -93,8 +93,7 @@ pub fn brain_init(
                     fs.create_dir(&parent_path).map_err(BrainError::Io)?;
                 }
             }
-            fs.write_file(&full_path, content)
-                .map_err(BrainError::Io)?;
+            fs.write_file(&full_path, content).map_err(BrainError::Io)?;
             if exists {
                 result.updated.push(rel_path.to_string());
             } else {
@@ -122,7 +121,10 @@ fn extract_date_from_iso(iso: &str, format: &str) -> String {
     iso.split('T').next().unwrap_or(iso).to_string()
 }
 
-fn starter_files(config: &BrainConfig, now_date: &str) -> Result<Vec<(String, String)>, BrainError> {
+fn starter_files(
+    config: &BrainConfig,
+    now_date: &str,
+) -> Result<Vec<(String, String)>, BrainError> {
     let config_toml = config.to_toml()?;
 
     Ok(vec![
@@ -337,9 +339,9 @@ mod tests {
         assert!(!result.created.is_empty());
         // Check some key dirs were created
         let dirs = fs.dirs();
-        assert!(dirs.contains(&"/vault/raw/inbox".to_string()));
-        assert!(dirs.contains(&"/vault/wiki/daily".to_string()));
-        assert!(dirs.contains(&"/vault/templates".to_string()));
+        assert!(dirs.contains("/vault/raw/inbox"));
+        assert!(dirs.contains("/vault/wiki/daily"));
+        assert!(dirs.contains("/vault/templates"));
     }
 
     #[test]

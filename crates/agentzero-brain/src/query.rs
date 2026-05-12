@@ -173,14 +173,8 @@ mod tests {
             "/vault/wiki/daily/2025-01-01.md",
             "# Hello World\n\nThis is a test note.\n",
         );
-        let results = brain_query(
-            &fs,
-            "/vault",
-            &config,
-            "hello",
-            &QueryOptions::default(),
-        )
-        .expect("query");
+        let results =
+            brain_query(&fs, "/vault", &config, "hello", &QueryOptions::default()).expect("query");
         assert!(!results.is_empty());
         assert!(results[0].content.contains("Hello World"));
     }
@@ -206,21 +200,11 @@ mod tests {
     fn test_json_output() {
         let fs = TestFs::new();
         let config = setup_vault(&fs);
-        fs.set_file(
-            "/vault/wiki/daily/2025-01-01.md",
-            "# Hello World\n",
-        );
-        let results = brain_query(
-            &fs,
-            "/vault",
-            &config,
-            "hello",
-            &QueryOptions::default(),
-        )
-        .expect("query");
+        fs.set_file("/vault/wiki/daily/2025-01-01.md", "# Hello World\n");
+        let results =
+            brain_query(&fs, "/vault", &config, "hello", &QueryOptions::default()).expect("query");
         let json_str = format_results(&results, true);
-        let parsed: Vec<serde_json::Value> =
-            serde_json::from_str(&json_str).expect("valid json");
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&json_str).expect("valid json");
         assert!(!parsed.is_empty());
         assert!(parsed[0].get("file").is_some());
         assert!(parsed[0].get("line").is_some());
@@ -253,14 +237,8 @@ mod tests {
             "/vault/wiki/daily/2025-01-01.md",
             "UPPERCASE match\nlowercase match\nMixed Match\n",
         );
-        let results = brain_query(
-            &fs,
-            "/vault",
-            &config,
-            "MATCH",
-            &QueryOptions::default(),
-        )
-        .expect("query");
+        let results =
+            brain_query(&fs, "/vault", &config, "MATCH", &QueryOptions::default()).expect("query");
         assert_eq!(results.len(), 3);
     }
 }

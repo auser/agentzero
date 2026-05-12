@@ -37,11 +37,7 @@ pub fn validate_path(path: &str) -> Result<(), BrainError> {
 
 /// Check whether a write path falls under the raw directory.
 /// Returns an error if raw is immutable and the path is under raw_dir.
-pub fn check_raw_immutable(
-    root: &str,
-    path: &str,
-    config: &BrainConfig,
-) -> Result<(), BrainError> {
+pub fn check_raw_immutable(root: &str, path: &str, config: &BrainConfig) -> Result<(), BrainError> {
     if !config.safety.raw_is_immutable {
         return Ok(());
     }

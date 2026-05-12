@@ -8,6 +8,7 @@
 mod action;
 pub mod crypto;
 mod id;
+pub mod path_validator;
 mod redaction;
 mod routing;
 pub mod secret;
