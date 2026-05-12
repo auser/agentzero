@@ -130,6 +130,11 @@ pub enum Command {
         #[command(subcommand)]
         action: VaultAction,
     },
+    /// Personal knowledge vault (wiki).
+    Brain {
+        #[command(subcommand)]
+        action: BrainAction,
+    },
     /// Generate shell completions.
     Completions {
         /// Shell to generate completions for.
@@ -209,6 +214,65 @@ pub enum IndexAction {
     Clear,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum BrainAction {
+    /// Initialize a new brain vault.
+    Init {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Force overwrite existing files.
+        #[arg(long)]
+        force: bool,
+        /// Print actions without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Open or create today's daily note.
+    Today {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Date override (YYYY-MM-DD).
+        #[arg(long)]
+        date: Option<String>,
+        /// Open in $EDITOR.
+        #[arg(long)]
+        open: bool,
+    },
+    /// Capture a thought to today's daily note.
+    Capture {
+        /// The message to capture.
+        message: String,
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Date override (YYYY-MM-DD).
+        #[arg(long)]
+        date: Option<String>,
+        /// Section heading to append under (default: Capture).
+        #[arg(long)]
+        section: Option<String>,
+    },
+    /// Search the vault for a term.
+    Query {
+        /// Search term.
+        term: String,
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Also search the raw directory.
+        #[arg(long)]
+        raw: bool,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Maximum number of results.
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+}
+
 pub async fn run(command: Command) -> i32 {
     match command {
         Command::Init { private, editor } => cmd_init(private, editor.as_deref()),
@@ -277,6 +341,7 @@ pub async fn run(command: Command) -> i32 {
         Command::VaultImport { path, dry_run } => cmd_vault_import(&path, dry_run),
         Command::Vault { action } => cmd_vault(action),
         Command::Index { action } => cmd_index(action).await,
+        Command::Brain { action } => cmd_brain(action),
         Command::Completions { shell } => {
             cmd_completions(shell);
             0
@@ -3313,6 +3378,156 @@ fn cmd_demo() -> i32 {
 
     println!("Demo complete. No untrusted code was executed.");
     0
+}
+
+fn cmd_brain(action: BrainAction) -> i32 {
+    use agentzero_brain::{
+        brain_capture, brain_init, brain_query, brain_today, format_results, load_config,
+        InitOptions, QueryOptions, RealBrainFs,
+    };
+
+    let fs = RealBrainFs::new();
+
+    match action {
+        BrainAction::Init {
+            root,
+            force,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    // For init, use defaults if config doesn't load
+                    eprintln!("warning: {e}, using defaults");
+                    agentzero_brain::BrainConfig::default()
+                }
+            };
+            let opts = InitOptions {
+                force,
+                dry_run,
+            };
+            match brain_init(&fs, &root, &config, &opts) {
+                Ok(result) => {
+                    if dry_run {
+                        println!("[dry-run] {}", result.summary());
+                        for path in &result.created {
+                            println!("  would create: {path}");
+                        }
+                    } else {
+                        println!("{}", result.summary());
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Today { root, date, open } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            match brain_today(&fs, &root, &config, date.as_deref()) {
+                Ok(path) => {
+                    println!("{path}");
+                    if open {
+                        let full_path = format!("{root}/{path}");
+                        if let Ok(editor) = std::env::var("EDITOR") {
+                            let status = std::process::Command::new(&editor)
+                                .arg(&full_path)
+                                .status();
+                            match status {
+                                Ok(s) if s.success() => {}
+                                Ok(s) => {
+                                    eprintln!("editor exited with: {s}");
+                                    return 1;
+                                }
+                                Err(e) => {
+                                    eprintln!("failed to open editor '{editor}': {e}");
+                                    return 1;
+                                }
+                            }
+                        } else {
+                            eprintln!("$EDITOR not set");
+                            return 1;
+                        }
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Capture {
+            message,
+            root,
+            date,
+            section,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            match brain_capture(
+                &fs,
+                &root,
+                &config,
+                &message,
+                date.as_deref(),
+                section.as_deref(),
+            ) {
+                Ok((path, entry)) => {
+                    println!("{path}");
+                    println!("{entry}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Query {
+            term,
+            root,
+            raw,
+            json,
+            limit,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let opts = QueryOptions {
+                include_raw: raw,
+                json,
+                limit,
+            };
+            match brain_query(&fs, &root, &config, &term, &opts) {
+                Ok(matches) => {
+                    print!("{}", format_results(&matches, json));
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
