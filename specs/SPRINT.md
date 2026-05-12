@@ -293,7 +293,8 @@ WASM host imports, codegen, and dynamic tool registration per ADR 0012.
 - [x] Clock host import: `now` (ISO 8601)
 - [x] WIT spec bumped to `az:host@0.2.0`
 - [x] Host-to-guest string return via `alloc` export protocol (`read_file` → i64, `list_dir` → JSON, `now` → ISO 8601)
-- [ ] ADR 0015: Personal Brain as WASM Plugin
+- [x] ADR 0015: WASM Plugin System
+- [x] `execute_with_input` — WASM `run(input: string)` entry point for plugin dispatch
 
 ### Phase 25: Provider & Onboarding (COMPLETE)
 
@@ -320,18 +321,41 @@ WASM host imports, codegen, and dynamic tool registration per ADR 0012.
 - [x] Multi-model routing config (`tool_generation_model`, `max_tools_in_context` in AgentLoopConfig)
 - [x] `az vault-import` for migrating secrets from .env files
 
+### Phase 28: WASM Plugin System + Brain Plugin (COMPLETE)
+
+Plugin infrastructure (ADR 0015) and brain as first WASM plugin.
+
+- [x] `PLUGIN.toml` manifest format with name, version, description, commands
+- [x] `PluginRegistry` — scans `.agentzero/plugins/*/PLUGIN.toml` for installed plugins
+- [x] `az plugin list` / `az plugin install <path>` / `az plugin info <name>`
+- [x] Generic `run_plugin_wasm()` dispatcher — any WASM plugin, not just brain
+- [x] `PluginHostCallbacks` with `PathValidator` — sandbox filesystem access
+- [x] `PathValidator` in agentzero-core — reusable path traversal/sensitive path/symlink blocking
+- [x] `just build-plugin <name>` / `just install-plugin <name>` Justfile targets
+- [x] GitHub Actions workflow for publishing plugin releases with sha256 checksums
+- [x] Brain plugin (`plugins/brain/`) compiles to wasm32-unknown-unknown
+- [x] Brain WASM guest: `WasmBrainFs` bridges `BrainFs` trait to `az::*` host imports
+- [x] 10 brain commands: init, today, capture, query, ingest, review, weekly, health, checkpoint, status
+- [x] Brain library (`crates/agentzero-brain/`) with `native`/WASM feature gates
+- [x] 60 brain tests + 10 plugin registry tests + 7 PathValidator tests
+- [x] CLI falls back to native brain when no WASM module found
+
 ## Not Yet (deferred)
 
-- [ ] MVM runtime integration (planned, waiting on `mvm` project maturity).
-- [ ] Lockfile checksum re-verification on `agentzero run`.
+- [ ] MVM runtime integration (planned, waiting on `mvm` project maturity)
+- [ ] Lockfile checksum re-verification on `agentzero run`
 - [ ] Javy embedding deferred indefinitely (no in-process JS→WASM API; CLI-only, too large for 6MB target)
-- [ ] Richer wasm-encoder templates replace Javy: FileCounter, FileWriter, MultiFileReader added
 - [ ] `az publish --catalog` with PR-based submission
-- [ ] Brain plugin (personal LLM wiki) — WASM plugin per ADR 0015
-  - Spec: `specs/prompts/0006-agentzero-brain-production-plugin-prompt.md`
-  - Plan: `specs/plans/0004-brain-plugin.md`
-  - MVP: `brain init`, `brain today`, `brain capture`, `brain query`
-  - Blocked on: Phase 24 extended host imports (`list-dir`, `create-dir`, `file-exists`, `append-file`, `now`)
+- [ ] `az plugin install owner/repo` — download WASM from GitHub releases with checksum verification
+- [ ] External subcommand dispatch — `az <plugin-name>` routes unknown commands to plugins
+- [ ] `run_command` host import — allowlisted shell access for plugins (git, ripgrep)
+- [ ] ToolExecutor delegation to PathValidator (cleanup, not urgent)
+- [ ] `brain ask` — RAG-style Q&A with context bundle and prompt generation
+- [ ] `brain index` — qmd/ripgrep search backend integration
+- [ ] Plugin capability permissions enforced by policy engine
+- [ ] Plugin marketplace / catalog
+- [ ] MCP server exposure for brain tools
+- [ ] Skills/plugins unification (evaluate after plugin system matures)
 
 ## Notes
 
