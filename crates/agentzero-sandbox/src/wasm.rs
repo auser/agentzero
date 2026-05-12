@@ -193,7 +193,7 @@ mod runtime {
         /// Modules with imports are rejected. Use `execute_with_host` for
         /// modules that need filesystem/logging/secrets access.
         pub fn execute(&self, wasm_bytes: &[u8]) -> Result<WasmResult, WasmError> {
-            self.execute_inner(wasm_bytes, None)
+            self.execute_inner(wasm_bytes, None, None)
         }
 
         /// Execute a WASM module with host callbacks providing filesystem,
@@ -201,7 +201,7 @@ mod runtime {
         ///
         /// Host functions are registered via wasmtime `Linker` under the
         /// `"az"` module namespace:
-        /// - `az::read_file(ptr, len) -> ptr` (policy-checked)
+        /// - `az::read_file(ptr, len) -> i64` (policy-checked)
         /// - `az::write_file(path_ptr, path_len, content_ptr, content_len) -> i32`
         /// - `az::log(ptr, len)`
         ///
@@ -211,13 +211,31 @@ mod runtime {
             wasm_bytes: &[u8],
             callbacks: Arc<dyn WasmHostCallbacks>,
         ) -> Result<WasmResult, WasmError> {
-            self.execute_inner(wasm_bytes, Some(callbacks))
+            self.execute_inner(wasm_bytes, Some(callbacks), None)
+        }
+
+        /// Execute a WASM module with host callbacks and an input string.
+        ///
+        /// If the module exports `run(ptr: i32, len: i32) -> i64`, the input
+        /// is written into guest memory via the alloc protocol and `run` is
+        /// called. The return value is a packed `(ptr, len)` i64 pointing to
+        /// the output string in guest memory.
+        ///
+        /// Falls back to `_start()` / `main()` if `run` is not exported.
+        pub fn execute_with_input(
+            &self,
+            wasm_bytes: &[u8],
+            callbacks: Arc<dyn WasmHostCallbacks>,
+            input: &str,
+        ) -> Result<WasmResult, WasmError> {
+            self.execute_inner(wasm_bytes, Some(callbacks), Some(input))
         }
 
         fn execute_inner(
             &self,
             wasm_bytes: &[u8],
             callbacks: Option<Arc<dyn WasmHostCallbacks>>,
+            input: Option<&str>,
         ) -> Result<WasmResult, WasmError> {
             let execution_id = ExecutionId::new();
 
@@ -512,9 +530,17 @@ mod runtime {
                 .instantiate(&mut store, &module)
                 .map_err(|e| WasmError::ExecutionFailed(e.to_string()))?;
 
-            // Try to call _start (WASI convention) or main
-            let result = if let Ok(start) = instance.get_typed_func::<(), ()>(&mut store, "_start")
-            {
+            // Try entry points in order: run(input), _start(), main()
+            //
+            // If input is provided and the module exports run(ptr, len) -> i64,
+            // we pass the input via the alloc protocol and read the output back.
+            // Otherwise fall back to _start() or main().
+            let result = if let (Some(input_str), Ok(run_fn)) = (
+                input,
+                instance.get_typed_func::<(i32, i32), i64>(&mut store, "run"),
+            ) {
+                Self::call_run(&instance, &mut store, &run_fn, input_str)
+            } else if let Ok(start) = instance.get_typed_func::<(), ()>(&mut store, "_start") {
                 start.call(&mut store, ()).map(|()| String::new())
             } else if let Ok(main) = instance.get_typed_func::<(), i32>(&mut store, "main") {
                 main.call(&mut store, ())
@@ -543,6 +569,65 @@ mod runtime {
                     }
                 }
             }
+        }
+
+        /// Call a guest's `run(ptr, len) -> i64` export with an input string.
+        ///
+        /// Writes input into guest memory via alloc, calls run, reads output back.
+        /// Returns `Result<String, wasmtime::Error>` to match the _start/main branches.
+        fn call_run(
+            instance: &wasmtime::Instance,
+            store: &mut wasmtime::Store<HostState>,
+            run_fn: &wasmtime::TypedFunc<(i32, i32), i64>,
+            input_str: &str,
+        ) -> Result<String, wasmtime::Error> {
+            // Get the guest's alloc function
+            let alloc_fn = instance
+                .get_typed_func::<i32, i32>(store.as_context_mut(), "alloc")
+                .map_err(|_| {
+                    wasmtime::Error::msg(
+                        "module exports run() but not alloc() — cannot pass input",
+                    )
+                })?;
+
+            // Allocate space in guest memory and write the input string
+            let input_bytes = input_str.as_bytes();
+            let input_len = input_bytes.len() as i32;
+            let input_ptr = alloc_fn.call(store.as_context_mut(), input_len)?;
+
+            let memory = instance
+                .get_memory(store.as_context_mut(), "memory")
+                .ok_or_else(|| wasmtime::Error::msg("no memory export"))?;
+            let dest = memory.data_mut(store.as_context_mut());
+            let start_offset = input_ptr as usize;
+            let end_offset = start_offset + input_bytes.len();
+            if end_offset > dest.len() {
+                return Err(wasmtime::Error::msg(
+                    "input string too large for guest memory",
+                ));
+            }
+            dest[start_offset..end_offset].copy_from_slice(input_bytes);
+
+            // Call run(ptr, len) -> i64 (packed output ptr/len or -1 for error)
+            let output_packed = run_fn.call(store.as_context_mut(), (input_ptr, input_len))?;
+
+            if output_packed == -1 {
+                return Err(wasmtime::Error::msg("run() returned error (-1)"));
+            }
+
+            // Read output string from guest memory
+            let out_ptr = (output_packed >> 32) as usize;
+            let out_len = (output_packed & 0xFFFF_FFFF) as usize;
+            let mem = instance
+                .get_memory(store.as_context_mut(), "memory")
+                .ok_or_else(|| wasmtime::Error::msg("no memory export"))?;
+            let data = mem.data(store.as_context());
+            let output = data
+                .get(out_ptr..out_ptr + out_len)
+                .and_then(|s| std::str::from_utf8(s).ok())
+                .unwrap_or("")
+                .to_string();
+            Ok(output)
         }
     }
 }
@@ -903,6 +988,70 @@ mod tests {
             "file_exists with deny should return -1: {}",
             result.output
         );
+    }
+
+    /// Test execute_with_input: guest exports run(ptr, len) -> i64
+    /// which echoes the input back as output.
+    #[test]
+    fn execute_with_input_echo() {
+        use std::sync::Arc;
+
+        // WAT module that:
+        // 1. Exports alloc (bump allocator)
+        // 2. Exports run(ptr, len) -> i64 that echoes the input back
+        //    (returns the same ptr/len packed as i64)
+        let wat = r#"
+            (module
+                (memory (export "memory") 1)
+                (global $bump (mut i32) (i32.const 1024))
+                (func (export "alloc") (param $size i32) (result i32)
+                    (local $ptr i32)
+                    global.get $bump
+                    local.set $ptr
+                    global.get $bump
+                    local.get $size
+                    i32.add
+                    global.set $bump
+                    local.get $ptr)
+                (func (export "run") (param $ptr i32) (param $len i32) (result i64)
+                    ;; Echo: pack the input ptr/len back as output
+                    local.get $ptr
+                    i64.extend_i32_u
+                    i64.const 32
+                    i64.shl
+                    local.get $len
+                    i64.extend_i32_u
+                    i64.or))
+        "#;
+
+        let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
+        let result = engine
+            .execute_with_input(
+                wat.as_bytes(),
+                Arc::new(DenyAllHostCallbacks),
+                r#"{"action":"init","root":"/tmp/brain"}"#,
+            )
+            .expect("should execute with input");
+        assert!(result.success);
+        assert_eq!(
+            result.output,
+            r#"{"action":"init","root":"/tmp/brain"}"#,
+            "run() should echo the input back"
+        );
+    }
+
+    /// Test that execute_with_input falls back to main() when run is not exported.
+    #[test]
+    fn execute_with_input_fallback_to_main() {
+        use std::sync::Arc;
+
+        let wasm = minimal_wasm_module(); // exports main(), not run()
+        let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
+        let result = engine
+            .execute_with_input(&wasm, Arc::new(DenyAllHostCallbacks), "ignored input")
+            .expect("should fall back to main");
+        assert!(result.success);
+        assert!(result.output.contains("42"));
     }
 
     #[test]
