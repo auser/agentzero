@@ -103,6 +103,40 @@ pub fn decrypt_string(encoded: &str, passphrase: &str) -> Result<String, CryptoE
         .map_err(|e| CryptoError::DecryptionFailed(format!("invalid UTF-8: {e}")))
 }
 
+/// Derive a deterministic passphrase from machine identity.
+///
+/// Combines hostname, username, and a fixed salt to produce a passphrase
+/// that is unique to this machine+user but requires no user input.
+/// Protects against offline disk theft but not against local access
+/// by the same user.
+pub fn machine_passphrase() -> String {
+    let hostname = std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("HOST"))
+        .or_else(|_| std::fs::read_to_string("/etc/hostname").map(|s| s.trim().to_string()))
+        .unwrap_or_else(|_| "unknown-host".to_string());
+
+    let username = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "unknown-user".to_string());
+
+    // Combine with a fixed application salt — not secret, just domain separation
+    let material = format!("agentzero:v1:{hostname}:{username}:machine-key");
+
+    // Hash to a fixed-length passphrase using Argon2id
+    let salt = b"agentzero-mach01";
+    let mut key = [0u8; 32];
+    if Argon2::default()
+        .hash_password_into(material.as_bytes(), salt, &mut key)
+        .is_ok()
+    {
+        // Encode as hex for a printable passphrase
+        key.iter().map(|b| format!("{b:02x}")).collect()
+    } else {
+        // Fallback: use the raw material (still better than nothing)
+        material
+    }
+}
+
 // Simple base64 without pulling in a full crate
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
