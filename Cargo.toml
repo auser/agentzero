@@ -21,7 +21,7 @@ exclude = ["plugins/brain"]
 
 [package]
 name = "agentzero"
-version = "0.3.0"
+version = "0.14.0"
 description = "AgentZero: secure AI agent runtime — facade crate re-exporting all sub-crates"
 edition.workspace = true
 license.workspace = true

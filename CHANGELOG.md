@@ -2,6 +2,55 @@
 
 All notable changes to AgentZero are documented here.
 
+## [0.14.0] - 2026-05-12
+
+### Bug Fixes
+
+- Cargo fmt formatting for WAT test lines
+- CI clippy and formatting issues
+- Security hardening — path blocklist, TOCTOU, redaction, WASM verification
+
+### Documentation
+
+- Update landing page binary size stat to 8.9 MB
+- Update all website docs for P0-P4 features
+- Update SPRINT.md with Phase 26 (Marketplace) progress
+- Update SPRINT.md with Phase 25 (Provider & Onboarding) complete
+- Add ADRs 0012-0014 and az:host WIT interface spec
+
+### Features
+
+- WASM plugin system + brain plugin (ADR 0015)
+- Extend WASM host imports with filesystem, clock, and alloc protocol
+- Add richer wasm-encoder templates replacing Javy dependency
+- P4 polish — random redaction, audit summary, vault import, multi-model config
+- Add catalog search, trust tiers, and cross-project tool linking
+- Add az bootstrap for platform-aware LLM backend setup
+- Move MCP to optional --features mcp flag (ADR 0014)
+- Add Anthropic Claude provider (Messages API)
+- Add generate_tool as LLM-callable built-in and wire host callbacks
+- Wire WasmHostCallbacks to ToolExecutor with policy enforcement
+- Integrate tool generation into agent loop
+- Add dynamic per-project tool registration with versioning
+- Add wasm-encoder codegen for template-based WASM tool generation
+- Add WASM host imports via wasmtime Linker (az::log, az::read_file, az::write_file)
+- Implement approval scope tracking (Once/Session)
+- Add editor-configurable coding agent (AgentLoop, ACP Chat, edit tool, print mode, models.json)
+
+### Miscellaneous
+
+- Consolidate CI from 5 jobs to 2 (#22)
+- Remove .playwright-mcp from git tracking
+- Update Cargo.lock for v0.3.0 version bump
+
+### Performance
+
+- Reduce release binary from 8.9 MB to 5.0 MB
+- Reduce release binary from 13 MB to 8.9 MB
+
+### Refactoring
+
+- Extract redaction scanning into agentzero-core as shared utility
 ## [0.3.0] - 2026-05-09
 
 ### Documentation
@@ -17,6 +66,7 @@ All notable changes to AgentZero are documented here.
 
 ### Miscellaneous
 
+- Release v0.3.0
 - Rename binary from agentzero to az
 - Add just install — build release and symlink to ~/.bin
 ## [0.2.0] - 2026-05-05
