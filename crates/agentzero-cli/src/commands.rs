@@ -292,6 +292,80 @@ pub enum BrainAction {
         #[arg(long, default_value = "50")]
         limit: usize,
     },
+    /// Generate an ingest prompt for a raw file.
+    Ingest {
+        /// Path to the raw file to ingest.
+        path: String,
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Save the prompt to wiki/reports/.
+        #[arg(long)]
+        save_prompt: bool,
+        /// Show what would happen without writing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Generate an end-of-day review prompt.
+    Review {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Date to review (YYYY-MM-DD).
+        #[arg(long)]
+        date: Option<String>,
+        /// Save the prompt to wiki/reports/.
+        #[arg(long)]
+        save_prompt: bool,
+        /// Show what would happen without writing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Generate a weekly review prompt.
+    Weekly {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// ISO week identifier (e.g., 2026-W20).
+        #[arg(long)]
+        week: Option<String>,
+        /// Save the prompt to wiki/reports/.
+        #[arg(long)]
+        save_prompt: bool,
+    },
+    /// Run vault health diagnostics.
+    Health {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Attempt to fix issues (not yet implemented).
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Git checkpoint the vault.
+    Checkpoint {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Custom commit message.
+        #[arg(long)]
+        message: Option<String>,
+        /// Initialize a git repo if none exists.
+        #[arg(long)]
+        init: bool,
+        /// Show what would happen without executing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Show vault status summary.
+    Status {
+        /// Root directory for the vault.
+        #[arg(long, default_value = ".")]
+        root: String,
+    },
 }
 
 pub async fn run(command: Command) -> i32 {
@@ -3552,6 +3626,91 @@ fn cmd_brain(action: BrainAction) -> i32 {
                 limit
             )
         }
+        BrainAction::Ingest {
+            path,
+            root,
+            save_prompt,
+            dry_run,
+        } => {
+            format!(
+                r#"{{"action":"ingest","root":"{}","path":"{}","save_prompt":{},"dry_run":{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                path.replace('\\', "\\\\").replace('"', "\\\""),
+                save_prompt,
+                dry_run
+            )
+        }
+        BrainAction::Review {
+            root,
+            date,
+            save_prompt,
+            dry_run,
+        } => {
+            let date_field = date
+                .as_ref()
+                .map(|d| format!(r#","date":"{}""#, d))
+                .unwrap_or_default();
+            format!(
+                r#"{{"action":"review","root":"{}","save_prompt":{},"dry_run":{}{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                save_prompt,
+                dry_run,
+                date_field
+            )
+        }
+        BrainAction::Weekly {
+            root,
+            week,
+            save_prompt,
+        } => {
+            let week_field = week
+                .as_ref()
+                .map(|w| format!(r#","week":"{}""#, w))
+                .unwrap_or_default();
+            format!(
+                r#"{{"action":"weekly","root":"{}","save_prompt":{}{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                save_prompt,
+                week_field
+            )
+        }
+        BrainAction::Health { root, json, fix } => {
+            format!(
+                r#"{{"action":"health","root":"{}","json":{},"fix":{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                json,
+                fix
+            )
+        }
+        BrainAction::Checkpoint {
+            root,
+            message,
+            init,
+            dry_run,
+        } => {
+            let msg_field = message
+                .as_ref()
+                .map(|m| {
+                    format!(
+                        r#","message":"{}""#,
+                        m.replace('\\', "\\\\").replace('"', "\\\"")
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                r#"{{"action":"checkpoint","root":"{}","init":{},"dry_run":{}{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                init,
+                dry_run,
+                msg_field
+            )
+        }
+        BrainAction::Status { root } => {
+            format!(
+                r#"{{"action":"status","root":"{}"}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\"")
+            )
+        }
     };
 
     // Extract the root path for the brain vault (used for path validation).
@@ -3559,7 +3718,13 @@ fn cmd_brain(action: BrainAction) -> i32 {
         BrainAction::Init { root, .. }
         | BrainAction::Today { root, .. }
         | BrainAction::Capture { root, .. }
-        | BrainAction::Query { root, .. } => root.clone(),
+        | BrainAction::Query { root, .. }
+        | BrainAction::Ingest { root, .. }
+        | BrainAction::Review { root, .. }
+        | BrainAction::Weekly { root, .. }
+        | BrainAction::Health { root, .. }
+        | BrainAction::Checkpoint { root, .. }
+        | BrainAction::Status { root, .. } => root.clone(),
     };
 
     // For init, ensure the root directory exists before constructing
@@ -3826,8 +3991,10 @@ fn run_plugin_wasm(plugin_name: &str, input_json: &str, root_hint: Option<&str>)
 /// Native fallback for brain commands when WASM is unavailable.
 fn cmd_brain_native(action: BrainAction) -> i32 {
     use agentzero_brain::{
-        brain_capture, brain_init, brain_query, brain_today, format_results, load_config,
-        InitOptions, QueryOptions, RealBrainFs,
+        brain_capture, brain_checkpoint, brain_health, brain_ingest, brain_init, brain_query,
+        brain_review, brain_status, brain_today, brain_weekly, format_results, load_config,
+        CheckpointOptions, HealthOptions, IngestOptions, InitOptions, QueryOptions, RealBrainFs,
+        ReviewOptions, WeeklyOptions,
     };
 
     // Extract vault root from whichever action variant we have.
@@ -3835,7 +4002,13 @@ fn cmd_brain_native(action: BrainAction) -> i32 {
         BrainAction::Init { root, .. }
         | BrainAction::Today { root, .. }
         | BrainAction::Capture { root, .. }
-        | BrainAction::Query { root, .. } => root.clone(),
+        | BrainAction::Query { root, .. }
+        | BrainAction::Ingest { root, .. }
+        | BrainAction::Review { root, .. }
+        | BrainAction::Weekly { root, .. }
+        | BrainAction::Health { root, .. }
+        | BrainAction::Checkpoint { root, .. }
+        | BrainAction::Status { root, .. } => root.clone(),
     };
     let root_path = std::path::Path::new(&root_str);
 
@@ -3982,6 +4155,177 @@ fn cmd_brain_native(action: BrainAction) -> i32 {
             match brain_query(&fs, &root, &config, &term, &opts) {
                 Ok(matches) => {
                     print!("{}", format_results(&matches, json));
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Ingest {
+            path,
+            root,
+            save_prompt,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let opts = IngestOptions {
+                save_prompt,
+                dry_run,
+            };
+            match brain_ingest(&fs, &root, &config, &path, &opts) {
+                Ok(result) => {
+                    for w in &result.warnings {
+                        eprintln!("{w}");
+                    }
+                    println!("{}", result.prompt);
+                    if let Some(saved) = &result.saved_to {
+                        eprintln!("Saved to: {saved}");
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Review {
+            root,
+            date,
+            save_prompt,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let opts = ReviewOptions {
+                date,
+                save_prompt,
+                dry_run,
+            };
+            match brain_review(&fs, &root, &config, &opts) {
+                Ok(result) => {
+                    println!("{}", result.prompt);
+                    if let Some(saved) = &result.saved_to {
+                        eprintln!("Saved to: {saved}");
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Weekly {
+            root,
+            week,
+            save_prompt,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let opts = WeeklyOptions { week, save_prompt };
+            match brain_weekly(&fs, &root, &config, &opts) {
+                Ok(result) => {
+                    println!("{}", result.prompt);
+                    if let Some(saved) = &result.saved_to {
+                        eprintln!("Saved to: {saved}");
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Health { root, json, fix } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let opts = HealthOptions { json, fix };
+            match brain_health(&fs, &root, &config, &opts) {
+                Ok(report) => {
+                    if json {
+                        match serde_json::to_string_pretty(&report) {
+                            Ok(j) => println!("{j}"),
+                            Err(e) => {
+                                eprintln!("error serializing report: {e}");
+                                return 1;
+                            }
+                        }
+                    } else {
+                        print!("{}", report.display());
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Checkpoint {
+            root,
+            message,
+            init,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("warning: {e}, using defaults");
+                    agentzero_brain::BrainConfig::default()
+                }
+            };
+            let opts = CheckpointOptions {
+                message,
+                init,
+                dry_run,
+            };
+            match brain_checkpoint(&fs, &root, &config, &opts) {
+                Ok(result) => {
+                    println!("{}", result.summary);
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        BrainAction::Status { root } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            match brain_status(&fs, &root, &config) {
+                Ok(result) => {
+                    print!("{}", result.display());
                     0
                 }
                 Err(e) => {

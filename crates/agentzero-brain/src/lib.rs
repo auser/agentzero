@@ -5,22 +5,40 @@
 //! - `brain today` — open/create today's daily note
 //! - `brain capture` — append a thought to today's note
 //! - `brain query` — search the vault
+//! - `brain ingest` — generate an ingest prompt for a raw file
+//! - `brain review` — generate an end-of-day review prompt
+//! - `brain weekly` — generate a weekly review prompt
+//! - `brain health` — run vault health diagnostics
+//! - `brain checkpoint` — git checkpoint the vault
+//! - `brain status` — show vault status summary
 
+pub mod checkpoint;
 pub mod config;
 pub mod daily;
 pub mod error;
 #[cfg(feature = "native")]
 pub mod fs;
+pub mod health;
+pub mod ingest;
 pub mod init;
 pub mod query;
+pub mod review;
+pub mod weekly;
 
+pub use checkpoint::{brain_checkpoint, CheckpointOptions, CheckpointResult};
 pub use config::BrainConfig;
 pub use daily::{brain_capture, brain_today};
 pub use error::BrainError;
 #[cfg(feature = "native")]
 pub use fs::RealBrainFs;
+pub use health::{
+    brain_health, brain_status, Diagnostic, HealthOptions, HealthReport, Severity, StatusResult,
+};
+pub use ingest::{brain_ingest, IngestOptions, IngestResult};
 pub use init::{brain_init, InitOptions, InitResult};
 pub use query::{brain_query, format_results, QueryMatch, QueryOptions};
+pub use review::{brain_review, ReviewOptions, ReviewResult};
+pub use weekly::{brain_weekly, WeeklyOptions, WeeklyResult};
 
 /// Validate a path is safe (no traversal, no null bytes).
 pub fn validate_path(path: &str) -> Result<(), BrainError> {

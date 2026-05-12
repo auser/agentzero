@@ -5,8 +5,10 @@
 //! and clock access.
 
 use agentzero_brain::{
-    brain_capture, brain_init, brain_query, brain_today, format_results, load_config, BrainFs,
-    InitOptions, QueryOptions,
+    brain_capture, brain_checkpoint, brain_health, brain_ingest, brain_init, brain_query,
+    brain_review, brain_status, brain_today, brain_weekly, format_results, load_config, BrainFs,
+    CheckpointOptions, HealthOptions, IngestOptions, InitOptions, QueryOptions, ReviewOptions,
+    WeeklyOptions,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -170,6 +172,46 @@ enum BrainCommand {
         json: bool,
         #[serde(default = "default_limit")]
         limit: usize,
+    },
+    Ingest {
+        root: String,
+        path: String,
+        #[serde(default)]
+        save_prompt: bool,
+        #[serde(default)]
+        dry_run: bool,
+    },
+    Review {
+        root: String,
+        date: Option<String>,
+        #[serde(default)]
+        save_prompt: bool,
+        #[serde(default)]
+        dry_run: bool,
+    },
+    Weekly {
+        root: String,
+        week: Option<String>,
+        #[serde(default)]
+        save_prompt: bool,
+    },
+    Health {
+        root: String,
+        #[serde(default)]
+        json: bool,
+        #[serde(default)]
+        fix: bool,
+    },
+    Checkpoint {
+        root: String,
+        message: Option<String>,
+        #[serde(default)]
+        init: bool,
+        #[serde(default)]
+        dry_run: bool,
+    },
+    Status {
+        root: String,
     },
 }
 
@@ -342,6 +384,214 @@ fn dispatch(cmd: BrainCommand) -> BrainResponse {
                         error: None,
                     }
                 }
+                Err(e) => BrainResponse {
+                    success: false,
+                    output: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+
+        BrainCommand::Ingest {
+            root,
+            path,
+            save_prompt,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    return BrainResponse {
+                        success: false,
+                        output: None,
+                        error: Some(e.to_string()),
+                    }
+                }
+            };
+            let opts = IngestOptions {
+                save_prompt,
+                dry_run,
+            };
+            match brain_ingest(&fs, &root, &config, &path, &opts) {
+                Ok(result) => {
+                    let mut output = result.prompt;
+                    for w in &result.warnings {
+                        log_msg(w);
+                    }
+                    if let Some(saved) = &result.saved_to {
+                        output.push_str(&format!("\n\nSaved to: {saved}"));
+                    }
+                    BrainResponse {
+                        success: true,
+                        output: Some(output),
+                        error: None,
+                    }
+                }
+                Err(e) => BrainResponse {
+                    success: false,
+                    output: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+
+        BrainCommand::Review {
+            root,
+            date,
+            save_prompt,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    return BrainResponse {
+                        success: false,
+                        output: None,
+                        error: Some(e.to_string()),
+                    }
+                }
+            };
+            let opts = ReviewOptions {
+                date,
+                save_prompt,
+                dry_run,
+            };
+            match brain_review(&fs, &root, &config, &opts) {
+                Ok(result) => {
+                    let mut output = result.prompt;
+                    if let Some(saved) = &result.saved_to {
+                        output.push_str(&format!("\n\nSaved to: {saved}"));
+                    }
+                    BrainResponse {
+                        success: true,
+                        output: Some(output),
+                        error: None,
+                    }
+                }
+                Err(e) => BrainResponse {
+                    success: false,
+                    output: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+
+        BrainCommand::Weekly {
+            root,
+            week,
+            save_prompt,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    return BrainResponse {
+                        success: false,
+                        output: None,
+                        error: Some(e.to_string()),
+                    }
+                }
+            };
+            let opts = WeeklyOptions { week, save_prompt };
+            match brain_weekly(&fs, &root, &config, &opts) {
+                Ok(result) => {
+                    let mut output = result.prompt;
+                    if let Some(saved) = &result.saved_to {
+                        output.push_str(&format!("\n\nSaved to: {saved}"));
+                    }
+                    BrainResponse {
+                        success: true,
+                        output: Some(output),
+                        error: None,
+                    }
+                }
+                Err(e) => BrainResponse {
+                    success: false,
+                    output: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+
+        BrainCommand::Health { root, json, fix } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    return BrainResponse {
+                        success: false,
+                        output: None,
+                        error: Some(e.to_string()),
+                    }
+                }
+            };
+            let opts = HealthOptions { json, fix };
+            match brain_health(&fs, &root, &config, &opts) {
+                Ok(report) => {
+                    let output = if json {
+                        serde_json::to_string_pretty(&report)
+                            .unwrap_or_else(|_| report.display())
+                    } else {
+                        report.display()
+                    };
+                    BrainResponse {
+                        success: true,
+                        output: Some(output),
+                        error: None,
+                    }
+                }
+                Err(e) => BrainResponse {
+                    success: false,
+                    output: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+
+        BrainCommand::Checkpoint {
+            root,
+            message,
+            init,
+            dry_run,
+        } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(_) => agentzero_brain::BrainConfig::default(),
+            };
+            let opts = CheckpointOptions {
+                message,
+                init,
+                dry_run,
+            };
+            match brain_checkpoint(&fs, &root, &config, &opts) {
+                Ok(result) => BrainResponse {
+                    success: true,
+                    output: Some(result.summary),
+                    error: None,
+                },
+                Err(e) => BrainResponse {
+                    success: false,
+                    output: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+
+        BrainCommand::Status { root } => {
+            let config = match load_config(&fs, &root) {
+                Ok(c) => c,
+                Err(e) => {
+                    return BrainResponse {
+                        success: false,
+                        output: None,
+                        error: Some(e.to_string()),
+                    }
+                }
+            };
+            match brain_status(&fs, &root, &config) {
+                Ok(result) => BrainResponse {
+                    success: true,
+                    output: Some(result.display()),
+                    error: None,
+                },
                 Err(e) => BrainResponse {
                     success: false,
                     output: None,
