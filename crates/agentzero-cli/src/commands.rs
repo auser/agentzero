@@ -590,6 +590,7 @@ fn cmd_init(private: bool, editor: Option<&str>) -> i32 {
         "[session]\n",
         "# max_tool_rounds = 5\n",
         "# max_output_bytes = 2000\n",
+        "# passphrase = \"your-passphrase-here\"  # or use AZ_PASSPHRASE env var\n",
     );
     if let Err(e) = std::fs::write(az_dir.join("settings.toml"), settings) {
         eprintln!("error: failed to write settings.toml: {e}");
@@ -1400,6 +1401,21 @@ fn load_settings() -> (Option<String>, Option<String>) {
     (provider, model)
 }
 
+/// Load encryption passphrase from .agentzero/settings.toml `[session] passphrase`.
+fn load_passphrase_from_settings() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let settings_path = cwd.join(".agentzero/settings.toml");
+    let content = std::fs::read_to_string(settings_path).ok()?;
+    let table: toml::Table = content.parse().ok()?;
+    table
+        .get("session")
+        .and_then(|v| v.as_table())
+        .and_then(|s| s.get("passphrase"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn cmd_chat(
     local: bool,
@@ -1681,17 +1697,29 @@ async fn cmd_chat(
     println!("Type your message and press Enter. Type /quit to exit.");
     println!();
 
-    // Get encryption passphrase (enabled by default, disable with --no-encrypt)
+    // Get encryption passphrase (enabled by default, disable with --no-encrypt).
+    // Check AZ_PASSPHRASE env var first, then settings.toml, then prompt.
     let passphrase = if encrypt {
-        print!("Encryption passphrase: ");
-        io::stdout().flush().ok();
-        let mut pass = String::new();
-        io::stdin().lock().read_line(&mut pass).ok();
-        let pass = pass.trim().to_string();
-        if pass.is_empty() {
-            eprintln!("error: passphrase cannot be empty");
-            return 1;
-        }
+        let pass = if let Ok(env_pass) = std::env::var("AZ_PASSPHRASE") {
+            if env_pass.is_empty() {
+                eprintln!("error: AZ_PASSPHRASE is set but empty");
+                return 1;
+            }
+            env_pass
+        } else if let Some(settings_pass) = load_passphrase_from_settings() {
+            settings_pass
+        } else {
+            print!("Encryption passphrase (or set AZ_PASSPHRASE): ");
+            io::stdout().flush().ok();
+            let mut p = String::new();
+            io::stdin().lock().read_line(&mut p).ok();
+            let p = p.trim().to_string();
+            if p.is_empty() {
+                eprintln!("error: passphrase cannot be empty");
+                return 1;
+            }
+            p
+        };
         println!("Audit logs and sessions will be encrypted.");
         Some(pass)
     } else {
