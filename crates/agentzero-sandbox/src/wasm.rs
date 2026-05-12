@@ -99,9 +99,11 @@ mod runtime {
         s: &str,
     ) -> i64 {
         let alloc = if let Some(inst) = instance {
-            inst.get_typed_func::<i32, i32>(caller.as_context_mut(), "alloc").ok()
+            inst.get_typed_func::<i32, i32>(caller.as_context_mut(), "alloc")
+                .ok()
         } else {
-            caller.get_export("alloc")
+            caller
+                .get_export("alloc")
                 .and_then(|e| e.into_func())
                 .and_then(|f| f.typed::<i32, i32>(caller.as_context()).ok())
         };
@@ -254,9 +256,7 @@ mod runtime {
 
             // Build store with host state
             let host_state = HostState {
-                callbacks: callbacks.unwrap_or_else(|| {
-                    Arc::new(super::DenyAllHostCallbacks)
-                }),
+                callbacks: callbacks.unwrap_or_else(|| Arc::new(super::DenyAllHostCallbacks)),
             };
             let mut store = wasmtime::Store::new(&self.engine, host_state);
 
@@ -270,56 +270,84 @@ mod runtime {
 
             // az::log(ptr: i32, len: i32)
             linker
-                .func_wrap("az", "log", |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| {
-                    if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                        let data = memory.data(&caller);
-                        if let Some(slice) = data.get(ptr as usize..(ptr as usize + len as usize)) {
-                            if let Ok(msg) = std::str::from_utf8(slice) {
-                                caller.data().callbacks.log(msg);
+                .func_wrap(
+                    "az",
+                    "log",
+                    |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| {
+                        if let Some(memory) =
+                            caller.get_export("memory").and_then(|e| e.into_memory())
+                        {
+                            let data = memory.data(&caller);
+                            if let Some(slice) =
+                                data.get(ptr as usize..(ptr as usize + len as usize))
+                            {
+                                if let Ok(msg) = std::str::from_utf8(slice) {
+                                    caller.data().callbacks.log(msg);
+                                }
                             }
                         }
-                    }
-                })
-                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::log: {e}")))?;
+                    },
+                )
+                .map_err(|e| {
+                    WasmError::ExecutionFailed(format!("failed to register az::log: {e}"))
+                })?;
 
             // az::read_file(ptr: i32, len: i32) -> i64
             // Returns packed (ptr, len) via write_string_to_guest on success, -1 on error.
             // Guest must export `alloc(size: i32) -> i32` to receive string data.
             linker
-                .func_wrap("az", "read_file", |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| -> i64 {
-                    let path = {
-                        let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                            Some(m) => m,
-                            None => return -1,
+                .func_wrap(
+                    "az",
+                    "read_file",
+                    |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| -> i64 {
+                        let path = {
+                            let memory =
+                                match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                                    Some(m) => m,
+                                    None => return -1,
+                                };
+                            let data = memory.data(&caller);
+                            match data
+                                .get(ptr as usize..(ptr as usize + len as usize))
+                                .and_then(|s| std::str::from_utf8(s).ok())
+                            {
+                                Some(p) => p.to_owned(),
+                                None => return -1,
+                            }
                         };
-                        let data = memory.data(&caller);
-                        match data.get(ptr as usize..(ptr as usize + len as usize))
-                            .and_then(|s| std::str::from_utf8(s).ok())
-                        {
-                            Some(p) => p.to_owned(),
-                            None => return -1,
+                        match caller.data().callbacks.read_file(&path) {
+                            Ok(content) => write_string_to_guest(&mut caller, None, &content),
+                            Err(_) => -1,
                         }
-                    };
-                    match caller.data().callbacks.read_file(&path) {
-                        Ok(content) => write_string_to_guest(&mut caller, None, &content),
-                        Err(_) => -1,
-                    }
-                })
-                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::read_file: {e}")))?;
+                    },
+                )
+                .map_err(|e| {
+                    WasmError::ExecutionFailed(format!("failed to register az::read_file: {e}"))
+                })?;
 
             // az::write_file(path_ptr, path_len, content_ptr, content_len) -> i32
             linker
                 .func_wrap(
                     "az",
                     "write_file",
-                    |mut caller: wasmtime::Caller<'_, HostState>, path_ptr: i32, path_len: i32, content_ptr: i32, content_len: i32| -> i32 {
-                        if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    |mut caller: wasmtime::Caller<'_, HostState>,
+                     path_ptr: i32,
+                     path_len: i32,
+                     content_ptr: i32,
+                     content_len: i32|
+                     -> i32 {
+                        if let Some(memory) =
+                            caller.get_export("memory").and_then(|e| e.into_memory())
+                        {
                             let data = memory.data(&caller);
                             let path = data
                                 .get(path_ptr as usize..(path_ptr as usize + path_len as usize))
                                 .and_then(|s| std::str::from_utf8(s).ok());
                             let content = data
-                                .get(content_ptr as usize..(content_ptr as usize + content_len as usize))
+                                .get(
+                                    content_ptr as usize
+                                        ..(content_ptr as usize + content_len as usize),
+                                )
                                 .and_then(|s| std::str::from_utf8(s).ok());
                             if let (Some(path), Some(content)) = (path, content) {
                                 match caller.data().callbacks.write_file(path, content) {
@@ -331,21 +359,33 @@ mod runtime {
                         1
                     },
                 )
-                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::write_file: {e}")))?;
+                .map_err(|e| {
+                    WasmError::ExecutionFailed(format!("failed to register az::write_file: {e}"))
+                })?;
 
             // az::append_file(path_ptr, path_len, content_ptr, content_len) -> i32
             linker
                 .func_wrap(
                     "az",
                     "append_file",
-                    |mut caller: wasmtime::Caller<'_, HostState>, path_ptr: i32, path_len: i32, content_ptr: i32, content_len: i32| -> i32 {
-                        if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    |mut caller: wasmtime::Caller<'_, HostState>,
+                     path_ptr: i32,
+                     path_len: i32,
+                     content_ptr: i32,
+                     content_len: i32|
+                     -> i32 {
+                        if let Some(memory) =
+                            caller.get_export("memory").and_then(|e| e.into_memory())
+                        {
                             let data = memory.data(&caller);
                             let path = data
                                 .get(path_ptr as usize..(path_ptr as usize + path_len as usize))
                                 .and_then(|s| std::str::from_utf8(s).ok());
                             let content = data
-                                .get(content_ptr as usize..(content_ptr as usize + content_len as usize))
+                                .get(
+                                    content_ptr as usize
+                                        ..(content_ptr as usize + content_len as usize),
+                                )
                                 .and_then(|s| std::str::from_utf8(s).ok());
                             if let (Some(path), Some(content)) = (path, content) {
                                 match caller.data().callbacks.append_file(path, content) {
@@ -357,81 +397,116 @@ mod runtime {
                         1
                     },
                 )
-                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::append_file: {e}")))?;
+                .map_err(|e| {
+                    WasmError::ExecutionFailed(format!("failed to register az::append_file: {e}"))
+                })?;
 
             // az::list_dir(ptr, len) -> i64
             // Returns packed (ptr, len) of a JSON array of entry names, -1 on error.
             linker
-                .func_wrap("az", "list_dir", |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| -> i64 {
-                    let path = {
-                        let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                            Some(m) => m,
-                            None => return -1,
+                .func_wrap(
+                    "az",
+                    "list_dir",
+                    |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| -> i64 {
+                        let path = {
+                            let memory =
+                                match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                                    Some(m) => m,
+                                    None => return -1,
+                                };
+                            let data = memory.data(&caller);
+                            match data
+                                .get(ptr as usize..(ptr as usize + len as usize))
+                                .and_then(|s| std::str::from_utf8(s).ok())
+                            {
+                                Some(p) => p.to_owned(),
+                                None => return -1,
+                            }
                         };
-                        let data = memory.data(&caller);
-                        match data.get(ptr as usize..(ptr as usize + len as usize))
-                            .and_then(|s| std::str::from_utf8(s).ok())
-                        {
-                            Some(p) => p.to_owned(),
-                            None => return -1,
+                        match caller.data().callbacks.list_dir(&path) {
+                            Ok(entries) => {
+                                let json =
+                                    serde_json::to_string(&entries).unwrap_or_else(|_| "[]".into());
+                                write_string_to_guest(&mut caller, None, &json)
+                            }
+                            Err(_) => -1,
                         }
-                    };
-                    match caller.data().callbacks.list_dir(&path) {
-                        Ok(entries) => {
-                            let json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".into());
-                            write_string_to_guest(&mut caller, None, &json)
-                        }
-                        Err(_) => -1,
-                    }
-                })
-                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::list_dir: {e}")))?;
+                    },
+                )
+                .map_err(|e| {
+                    WasmError::ExecutionFailed(format!("failed to register az::list_dir: {e}"))
+                })?;
 
             // az::create_dir(ptr, len) -> i32
             linker
-                .func_wrap("az", "create_dir", |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
-                    if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                        let data = memory.data(&caller);
-                        if let Some(path) = data.get(ptr as usize..(ptr as usize + len as usize))
-                            .and_then(|s| std::str::from_utf8(s).ok())
+                .func_wrap(
+                    "az",
+                    "create_dir",
+                    |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
+                        if let Some(memory) =
+                            caller.get_export("memory").and_then(|e| e.into_memory())
                         {
-                            match caller.data().callbacks.create_dir(path) {
-                                Ok(true) => return 0,
-                                _ => return 1,
+                            let data = memory.data(&caller);
+                            if let Some(path) = data
+                                .get(ptr as usize..(ptr as usize + len as usize))
+                                .and_then(|s| std::str::from_utf8(s).ok())
+                            {
+                                match caller.data().callbacks.create_dir(path) {
+                                    Ok(true) => return 0,
+                                    _ => return 1,
+                                }
                             }
                         }
-                    }
-                    1
-                })
-                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::create_dir: {e}")))?;
+                        1
+                    },
+                )
+                .map_err(|e| {
+                    WasmError::ExecutionFailed(format!("failed to register az::create_dir: {e}"))
+                })?;
 
             // az::file_exists(ptr, len) -> i32
             // Returns 0 if exists, 1 if not, -1 on error (e.g. policy denial).
             linker
-                .func_wrap("az", "file_exists", |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
-                    if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                        let data = memory.data(&caller);
-                        if let Some(path) = data.get(ptr as usize..(ptr as usize + len as usize))
-                            .and_then(|s| std::str::from_utf8(s).ok())
+                .func_wrap(
+                    "az",
+                    "file_exists",
+                    |mut caller: wasmtime::Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
+                        if let Some(memory) =
+                            caller.get_export("memory").and_then(|e| e.into_memory())
                         {
-                            match caller.data().callbacks.file_exists(path) {
-                                Ok(true) => return 0,
-                                Ok(false) => return 1,
-                                Err(_) => return -1,
+                            let data = memory.data(&caller);
+                            if let Some(path) = data
+                                .get(ptr as usize..(ptr as usize + len as usize))
+                                .and_then(|s| std::str::from_utf8(s).ok())
+                            {
+                                match caller.data().callbacks.file_exists(path) {
+                                    Ok(true) => return 0,
+                                    Ok(false) => return 1,
+                                    Err(_) => return -1,
+                                }
                             }
                         }
-                    }
-                    -1
-                })
-                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::file_exists: {e}")))?;
+                        -1
+                    },
+                )
+                .map_err(|e| {
+                    WasmError::ExecutionFailed(format!("failed to register az::file_exists: {e}"))
+                })?;
 
             // az::now() -> i64
             // Returns packed (ptr, len) of ISO 8601 timestamp string.
             linker
-                .func_wrap("az", "now", |mut caller: wasmtime::Caller<'_, HostState>| -> i64 {
-                    let timestamp = caller.data().callbacks.now();
-                    write_string_to_guest(&mut caller, None, &timestamp)
-                })
-                .map_err(|e| WasmError::ExecutionFailed(format!("failed to register az::now: {e}")))?;
+                .func_wrap(
+                    "az",
+                    "now",
+                    |mut caller: wasmtime::Caller<'_, HostState>| -> i64 {
+                        let timestamp = caller.data().callbacks.now();
+                        write_string_to_guest(&mut caller, None, &timestamp)
+                    },
+                )
+                .map_err(|e| {
+                    WasmError::ExecutionFailed(format!("failed to register az::now: {e}"))
+                })?;
 
             let instance = linker
                 .instantiate(&mut store, &module)

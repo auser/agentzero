@@ -222,10 +222,15 @@ impl AgentLoop {
             .map_err(|e| AgentLoopError::ProviderError(format!("codegen failed: {e}")))?;
 
         let template_name = format!("{template:?}");
-        let version = registry.register(name, description, &template_name, &wasm_bytes)
+        let version = registry
+            .register(name, description, &template_name, &wasm_bytes)
             .map_err(|e| AgentLoopError::ProviderError(format!("registration failed: {e}")))?;
 
-        info!(tool = name, version = version, "tool generated and registered");
+        info!(
+            tool = name,
+            version = version,
+            "tool generated and registered"
+        );
         Ok((name.to_string(), version))
     }
 
@@ -271,10 +276,7 @@ impl AgentLoop {
     ///
     /// Parses template name from args, generates WASM, and registers per-project.
     #[cfg(feature = "wasm")]
-    fn handle_generate_tool(
-        &self,
-        args: &serde_json::Value,
-    ) -> Result<String, AgentLoopError> {
+    fn handle_generate_tool(&self, args: &serde_json::Value) -> Result<String, AgentLoopError> {
         let name = args
             .get("name")
             .and_then(|v| v.as_str())
@@ -298,7 +300,10 @@ impl AgentLoop {
             "file_reader" => codegen::ToolTemplate::FileReader,
             "file_counter" => codegen::ToolTemplate::FileCounter,
             "file_writer" => {
-                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("/tmp/output.txt");
+                let path = args
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("/tmp/output.txt");
                 let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
                 codegen::ToolTemplate::FileWriter {
                     path: path.to_string(),
@@ -309,7 +314,11 @@ impl AgentLoop {
                 let paths = args
                     .get("paths")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 codegen::ToolTemplate::MultiFileReader { paths }
             }
@@ -320,8 +329,7 @@ impl AgentLoop {
             }
         };
 
-        let (tool_name, version) =
-            self.generate_and_register_tool(name, description, template)?;
+        let (tool_name, version) = self.generate_and_register_tool(name, description, template)?;
 
         Ok(format!(
             "Tool '{tool_name}' v{version} generated and registered. \
@@ -352,7 +360,11 @@ impl AgentLoop {
         for round in 0..=self.config.max_tool_rounds {
             let result = self
                 .router
-                .chat(&self.messages, Some(&self.tools), self.config.classification)
+                .chat(
+                    &self.messages,
+                    Some(&self.tools),
+                    self.config.classification,
+                )
                 .await
                 .map_err(|e| AgentLoopError::ProviderError(e.to_string()))?;
 
@@ -394,10 +406,7 @@ impl AgentLoop {
                             }
                             // Cache session-scoped approvals
                             if decision == ApprovalDecision::ApprovedForSession {
-                                info!(
-                                    tool = tool_name.as_str(),
-                                    "tool approved for session scope"
-                                );
+                                info!(tool = tool_name.as_str(), "tool approved for session scope");
                                 self.session_approvals.insert(tool_name.clone());
                             }
                         }
@@ -519,11 +528,11 @@ pub enum AgentLoopError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentzero_core::Capability;
-    use agentzero_policy::{PolicyEngine, PolicyRule};
     use crate::ollama::OllamaProvider;
     use crate::session::SessionConfig;
     use crate::tool_exec::ToolExecutor;
+    use agentzero_core::Capability;
+    use agentzero_policy::{PolicyEngine, PolicyRule};
 
     fn test_session() -> Session {
         let policy = PolicyEngine::with_rules(vec![PolicyRule::allow(
@@ -628,8 +637,7 @@ mod tests {
         let config = AgentLoopConfig::default();
 
         let dir = tempfile::tempdir().expect("temp dir");
-        let agent = AgentLoop::new(router, session, tools, config)
-            .with_tool_registry(dir.path());
+        let agent = AgentLoop::new(router, session, tools, config).with_tool_registry(dir.path());
 
         let (name, version) = agent
             .generate_and_register_tool(
@@ -674,8 +682,7 @@ mod tests {
         let config = AgentLoopConfig::default();
 
         let dir = tempfile::tempdir().expect("temp dir");
-        let agent = AgentLoop::new(router, session, tools, config)
-            .with_tool_registry(dir.path());
+        let agent = AgentLoop::new(router, session, tools, config).with_tool_registry(dir.path());
 
         let args = serde_json::json!({
             "name": "my-logger",
@@ -698,8 +705,7 @@ mod tests {
         let config = AgentLoopConfig::default();
 
         let dir = tempfile::tempdir().expect("temp dir");
-        let agent = AgentLoop::new(router, session, tools, config)
-            .with_tool_registry(dir.path());
+        let agent = AgentLoop::new(router, session, tools, config).with_tool_registry(dir.path());
 
         let args = serde_json::json!({
             "name": "bad",
@@ -708,7 +714,10 @@ mod tests {
         });
         let result = agent.handle_generate_tool(&args);
         assert!(result.is_err());
-        assert!(result.expect_err("should fail").to_string().contains("unknown template"));
+        assert!(result
+            .expect_err("should fail")
+            .to_string()
+            .contains("unknown template"));
     }
 
     #[cfg(feature = "wasm")]
@@ -716,7 +725,10 @@ mod tests {
     fn tool_definitions_include_generate_tool() {
         let tools = OllamaProvider::agentzero_tool_definitions();
         let names: Vec<&str> = tools.iter().map(|t| t.function.name.as_str()).collect();
-        assert!(names.contains(&"generate_tool"), "should include generate_tool: {names:?}");
+        assert!(
+            names.contains(&"generate_tool"),
+            "should include generate_tool: {names:?}"
+        );
     }
 
     #[test]

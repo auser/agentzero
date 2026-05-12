@@ -129,8 +129,7 @@ impl ProviderRouter {
     ) -> Result<ChatResult, ModelProviderError> {
         for entry in &self.providers {
             // Skip remote providers for restricted classifications
-            if entry.provider.location() == ModelLocation::Remote
-                && classification.denies_remote()
+            if entry.provider.location() == ModelLocation::Remote && classification.denies_remote()
             {
                 debug!(
                     provider = %entry.provider.name(),
@@ -288,9 +287,7 @@ mod tests {
 
     #[test]
     fn from_config_empty_fails() {
-        let config = ModelsConfig {
-            providers: vec![],
-        };
+        let config = ModelsConfig { providers: vec![] };
         assert!(ProviderRouter::from_config(&config).is_err());
     }
 }

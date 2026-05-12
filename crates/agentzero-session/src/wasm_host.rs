@@ -26,7 +26,11 @@ impl SessionHostCallbacks {
 
 impl WasmHostCallbacks for SessionHostCallbacks {
     fn read_file(&self, path: &str) -> Result<String, String> {
-        info!(host_call = "read_file", path = path, "WASM guest calling read_file");
+        info!(
+            host_call = "read_file",
+            path = path,
+            "WASM guest calling read_file"
+        );
         self.executor
             .read_file(path)
             .map(|result| result.output)
@@ -37,7 +41,12 @@ impl WasmHostCallbacks for SessionHostCallbacks {
     }
 
     fn write_file(&self, path: &str, content: &str) -> Result<bool, String> {
-        info!(host_call = "write_file", path = path, bytes = content.len(), "WASM guest calling write_file");
+        info!(
+            host_call = "write_file",
+            path = path,
+            bytes = content.len(),
+            "WASM guest calling write_file"
+        );
         self.executor
             .write_file(path, content)
             .map(|result| result.success)
@@ -48,7 +57,12 @@ impl WasmHostCallbacks for SessionHostCallbacks {
     }
 
     fn append_file(&self, path: &str, content: &str) -> Result<bool, String> {
-        info!(host_call = "append_file", path = path, bytes = content.len(), "WASM guest calling append_file");
+        info!(
+            host_call = "append_file",
+            path = path,
+            bytes = content.len(),
+            "WASM guest calling append_file"
+        );
         self.executor
             .append_file(path, content)
             .map(|result| result.success)
@@ -59,7 +73,11 @@ impl WasmHostCallbacks for SessionHostCallbacks {
     }
 
     fn list_dir(&self, path: &str) -> Result<Vec<String>, String> {
-        info!(host_call = "list_dir", path = path, "WASM guest calling list_dir");
+        info!(
+            host_call = "list_dir",
+            path = path,
+            "WASM guest calling list_dir"
+        );
         self.executor
             .list_dir(path)
             .map(|result| {
@@ -78,7 +96,11 @@ impl WasmHostCallbacks for SessionHostCallbacks {
     }
 
     fn create_dir(&self, path: &str) -> Result<bool, String> {
-        info!(host_call = "create_dir", path = path, "WASM guest calling create_dir");
+        info!(
+            host_call = "create_dir",
+            path = path,
+            "WASM guest calling create_dir"
+        );
         self.executor
             .create_dir(path)
             .map(|result| result.success)
@@ -89,7 +111,11 @@ impl WasmHostCallbacks for SessionHostCallbacks {
     }
 
     fn file_exists(&self, path: &str) -> Result<bool, String> {
-        info!(host_call = "file_exists", path = path, "WASM guest calling file_exists");
+        info!(
+            host_call = "file_exists",
+            path = path,
+            "WASM guest calling file_exists"
+        );
         self.executor
             .file_exists(path)
             .map(|result| result.output == "true")

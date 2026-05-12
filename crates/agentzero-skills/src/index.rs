@@ -91,7 +91,10 @@ impl SkillIndex {
             .filter(|(name, entry)| {
                 name.to_lowercase().contains(&query_lower)
                     || entry.description.to_lowercase().contains(&query_lower)
-                    || entry.tags.iter().any(|t| t.to_lowercase().contains(&query_lower))
+                    || entry
+                        .tags
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&query_lower))
             })
             .map(|(name, entry)| (name.as_str(), entry))
             .collect();
@@ -312,15 +315,16 @@ mod tests {
 
     #[test]
     fn trust_tier_defaults_to_community() {
-        let entry: SkillIndexEntry = serde_json::from_str(r#"{"repo": "user/repo"}"#).expect("should parse");
+        let entry: SkillIndexEntry =
+            serde_json::from_str(r#"{"repo": "user/repo"}"#).expect("should parse");
         assert_eq!(entry.trust, TrustTier::Community);
     }
 
     #[test]
     fn trust_tier_verified() {
-        let entry: SkillIndexEntry = serde_json::from_str(
-            r#"{"repo": "user/repo", "trust": "verified"}"#
-        ).expect("should parse");
+        let entry: SkillIndexEntry =
+            serde_json::from_str(r#"{"repo": "user/repo", "trust": "verified"}"#)
+                .expect("should parse");
         assert_eq!(entry.trust, TrustTier::Verified);
     }
 

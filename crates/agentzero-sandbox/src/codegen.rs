@@ -151,7 +151,9 @@ mod generator {
         // Type section
         let mut types = TypeSection::new();
         // Type 0: (i32, i32) -> () — for az::log
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);
+        types
+            .ty()
+            .function(vec![ValType::I32, ValType::I32], vec![]);
         // Type 1: () -> i32 — for main
         types.ty().function(vec![], vec![ValType::I32]);
         module.section(&types);
@@ -197,11 +199,7 @@ mod generator {
 
         // Data section: store "tool executed" at offset 0
         let mut data = DataSection::new();
-        data.active(
-            0,
-            &ConstExpr::i32_const(0),
-            message.iter().copied(),
-        );
+        data.active(0, &ConstExpr::i32_const(0), message.iter().copied());
         module.section(&data);
 
         let bytes = module.finish();
@@ -225,7 +223,9 @@ mod generator {
         // Type section
         let mut types = TypeSection::new();
         // Type 0: (i32, i32) -> () — for az::log
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);
+        types
+            .ty()
+            .function(vec![ValType::I32, ValType::I32], vec![]);
         // Type 1: (i32, i32) -> i64 — for az::read_file (returns packed ptr/len)
         types
             .ty()
@@ -297,16 +297,16 @@ mod generator {
 
         // main() -> i32
         let mut func = Function::new(vec![(1, ValType::I64)]); // local $result: i64
-        // Call read_file
+                                                               // Call read_file
         func.instruction(&Instruction::I32Const(0)); // path ptr
         func.instruction(&Instruction::I32Const(path.len() as i32)); // path len
         func.instruction(&Instruction::Call(1)); // az::read_file -> i64
         func.instruction(&Instruction::LocalSet(0)); // store result
-        // Log status message
+                                                     // Log status message
         func.instruction(&Instruction::I32Const(256)); // log msg ptr
         func.instruction(&Instruction::I32Const(log_msg.len() as i32));
         func.instruction(&Instruction::Call(0)); // az::log
-        // Check if result == -1 (error)
+                                                 // Check if result == -1 (error)
         func.instruction(&Instruction::LocalGet(0));
         func.instruction(&Instruction::I64Const(-1));
         func.instruction(&Instruction::I64Eq);
@@ -322,11 +322,7 @@ mod generator {
         // Data section: store path at offset 0, log message at offset 256
         let mut data = DataSection::new();
         data.active(0, &ConstExpr::i32_const(0), path.iter().copied());
-        data.active(
-            0,
-            &ConstExpr::i32_const(256),
-            log_msg.iter().copied(),
-        );
+        data.active(0, &ConstExpr::i32_const(256), log_msg.iter().copied());
         module.section(&data);
 
         let bytes = module.finish();
@@ -347,10 +343,14 @@ mod generator {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);        // type 0: az::log
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![ValType::I64]); // type 1: az::read_file
-        types.ty().function(vec![], vec![ValType::I32]);                      // type 2: main
-        types.ty().function(vec![ValType::I32], vec![ValType::I32]);          // type 3: alloc
+        types
+            .ty()
+            .function(vec![ValType::I32, ValType::I32], vec![]); // type 0: az::log
+        types
+            .ty()
+            .function(vec![ValType::I32, ValType::I32], vec![ValType::I64]); // type 1: az::read_file
+        types.ty().function(vec![], vec![ValType::I32]); // type 2: main
+        types.ty().function(vec![ValType::I32], vec![ValType::I32]); // type 3: alloc
         module.section(&types);
 
         let mut imports = ImportSection::new();
@@ -364,12 +364,22 @@ mod generator {
         module.section(&functions);
 
         let mut memories = MemorySection::new();
-        memories.memory(MemoryType { minimum: 1, maximum: Some(1), memory64: false, shared: false, page_size_log2: None });
+        memories.memory(MemoryType {
+            minimum: 1,
+            maximum: Some(1),
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
         module.section(&memories);
 
         let mut globals = GlobalSection::new();
         globals.global(
-            GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
             &ConstExpr::i32_const(1024),
         );
         module.section(&globals);
@@ -406,7 +416,7 @@ mod generator {
         func.instruction(&Instruction::I32Const(256));
         func.instruction(&Instruction::I32Const(log_msg.len() as i32));
         func.instruction(&Instruction::Call(0)); // az::log
-        // Check if error (-1)
+                                                 // Check if error (-1)
         func.instruction(&Instruction::LocalGet(0));
         func.instruction(&Instruction::I64Const(-1));
         func.instruction(&Instruction::I64Eq);
@@ -437,18 +447,23 @@ mod generator {
         use wasm_encoder::*;
 
         if path.is_empty() {
-            return Err(CodegenError::Failed("FileWriter: path cannot be empty".into()));
+            return Err(CodegenError::Failed(
+                "FileWriter: path cannot be empty".into(),
+            ));
         }
 
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);       // type 0: az::log
-        types.ty().function(                                                  // type 1: az::write_file
+        types
+            .ty()
+            .function(vec![ValType::I32, ValType::I32], vec![]); // type 0: az::log
+        types.ty().function(
+            // type 1: az::write_file
             vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32],
             vec![ValType::I32],
         );
-        types.ty().function(vec![], vec![ValType::I32]);                     // type 2: main
+        types.ty().function(vec![], vec![ValType::I32]); // type 2: main
         module.section(&types);
 
         let mut imports = ImportSection::new();
@@ -461,7 +476,13 @@ mod generator {
         module.section(&functions);
 
         let mut memories = MemorySection::new();
-        memories.memory(MemoryType { minimum: 1, maximum: Some(1), memory64: false, shared: false, page_size_log2: None });
+        memories.memory(MemoryType {
+            minimum: 1,
+            maximum: Some(1),
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
         module.section(&memories);
 
         let mut exports = ExportSection::new();
@@ -498,7 +519,11 @@ mod generator {
         module.section(&data);
 
         let bytes = module.finish();
-        debug!(bytes = bytes.len(), path = path, "generated file writer module");
+        debug!(
+            bytes = bytes.len(),
+            path = path,
+            "generated file writer module"
+        );
         Ok(bytes)
     }
 
@@ -512,7 +537,9 @@ mod generator {
         use wasm_encoder::*;
 
         if paths.is_empty() {
-            return Err(CodegenError::Failed("MultiFileReader: at least one path required".into()));
+            return Err(CodegenError::Failed(
+                "MultiFileReader: at least one path required".into(),
+            ));
         }
         if paths.len() > 16 {
             return Err(CodegenError::Failed("MultiFileReader: max 16 paths".into()));
@@ -521,10 +548,14 @@ mod generator {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![]);        // type 0: az::log
-        types.ty().function(vec![ValType::I32, ValType::I32], vec![ValType::I64]); // type 1: az::read_file
-        types.ty().function(vec![], vec![ValType::I32]);                      // type 2: main
-        types.ty().function(vec![ValType::I32], vec![ValType::I32]);          // type 3: alloc
+        types
+            .ty()
+            .function(vec![ValType::I32, ValType::I32], vec![]); // type 0: az::log
+        types
+            .ty()
+            .function(vec![ValType::I32, ValType::I32], vec![ValType::I64]); // type 1: az::read_file
+        types.ty().function(vec![], vec![ValType::I32]); // type 2: main
+        types.ty().function(vec![ValType::I32], vec![ValType::I32]); // type 3: alloc
         module.section(&types);
 
         let mut imports = ImportSection::new();
@@ -538,12 +569,22 @@ mod generator {
         module.section(&functions);
 
         let mut memories = MemorySection::new();
-        memories.memory(MemoryType { minimum: 1, maximum: Some(1), memory64: false, shared: false, page_size_log2: None });
+        memories.memory(MemoryType {
+            minimum: 1,
+            maximum: Some(1),
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
         module.section(&memories);
 
         let mut globals = GlobalSection::new();
         globals.global(
-            GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
             &ConstExpr::i32_const(8192),
         );
         module.section(&globals);
@@ -602,13 +643,21 @@ mod generator {
         let mut data = DataSection::new();
         for (i, path) in paths.iter().enumerate() {
             let offset = (i * 256) as i32;
-            data.active(0, &ConstExpr::i32_const(offset), path.as_bytes().iter().copied());
+            data.active(
+                0,
+                &ConstExpr::i32_const(offset),
+                path.as_bytes().iter().copied(),
+            );
         }
         data.active(0, &ConstExpr::i32_const(4096), log_bytes.iter().copied());
         module.section(&data);
 
         let bytes = module.finish();
-        debug!(bytes = bytes.len(), paths = paths.len(), "generated multi-file reader module");
+        debug!(
+            bytes = bytes.len(),
+            paths = paths.len(),
+            "generated multi-file reader module"
+        );
         Ok(bytes)
     }
 }
@@ -667,7 +716,10 @@ mod tests {
         // Should execute without host callbacks (no imports)
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         let result = engine.execute(&bytes);
-        assert!(result.is_ok(), "pure computation should work without host: {result:?}");
+        assert!(
+            result.is_ok(),
+            "pure computation should work without host: {result:?}"
+        );
     }
 
     #[test]
@@ -716,7 +768,10 @@ mod tests {
         .expect("should generate");
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         let result = engine.execute_with_host(&bytes, Arc::new(DenyAllHostCallbacks));
-        assert!(result.is_ok(), "multi-file reader should execute: {result:?}");
+        assert!(
+            result.is_ok(),
+            "multi-file reader should execute: {result:?}"
+        );
     }
 
     #[test]

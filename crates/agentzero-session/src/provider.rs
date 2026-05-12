@@ -55,7 +55,9 @@ pub trait ModelProvider: Send + Sync {
         &'a self,
         messages: &'a [ChatMessage],
         tools: Option<&'a [ToolDefinition]>,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ChatResult, ModelProviderError>> + Send + 'a>>;
+    ) -> Pin<
+        Box<dyn std::future::Future<Output = Result<ChatResult, ModelProviderError>> + Send + 'a>,
+    >;
 
     /// Send a streaming chat request, calling `on_token` for each chunk.
     ///
@@ -103,8 +105,9 @@ impl ModelProvider for LocalStubProvider {
         &'a self,
         _messages: &'a [ChatMessage],
         _tools: Option<&'a [ToolDefinition]>,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ChatResult, ModelProviderError>> + Send + 'a>>
-    {
+    ) -> Pin<
+        Box<dyn std::future::Future<Output = Result<ChatResult, ModelProviderError>> + Send + 'a>,
+    > {
         Box::pin(async {
             Ok(ChatResult {
                 content: "I'm a stub provider. No real model is connected.".into(),

@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use agentzero_core::Capability;
 use agentzero_policy::PolicyEngine;
-use agentzero_session::agent_loop::{
-    AgentLoop, AgentLoopConfig, AutoApprove, ProgressHandler,
-};
+use agentzero_session::agent_loop::{AgentLoop, AgentLoopConfig, AutoApprove, ProgressHandler};
 use agentzero_session::ollama::OllamaProvider;
 use agentzero_session::router::ProviderRouter;
 use agentzero_session::{Session, SessionConfig, SessionMode, ToolExecutor};
@@ -411,7 +409,10 @@ mod tests {
         let resp = server.handle(&req).await;
         assert!(resp.success);
         let result = resp.result.expect("should have result");
-        assert!(result["name"].as_str().expect("should be string").contains("agentzero"));
+        assert!(result["name"]
+            .as_str()
+            .expect("should be string")
+            .contains("agentzero"));
         // Check new capabilities are advertised
         let caps = result["capabilities"].as_array().expect("should be array");
         let cap_strs: Vec<&str> = caps.iter().filter_map(|v| v.as_str()).collect();

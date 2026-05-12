@@ -402,6 +402,6 @@ mod tests {
             max_tokens: 4096,
         });
         let result = rt.block_on(provider.health_check());
-        assert_eq!(result.expect("should not error"), false);
+        assert!(!result.expect("should not error"));
     }
 }

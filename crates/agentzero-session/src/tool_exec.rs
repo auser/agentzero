@@ -181,11 +181,7 @@ impl ToolExecutor {
         let execution_id = ExecutionId::new();
         let tool_id = ToolId::from_string("edit");
 
-        debug!(
-            tool = "edit",
-            path = path,
-            "checking policy for file edit"
-        );
+        debug!(tool = "edit", path = path, "checking policy for file edit");
 
         let canonical = self.validate_path(path)?;
 
@@ -530,13 +526,7 @@ impl ToolExecutor {
 
         // Block obvious sensitive paths
         let path_str = canonical.to_string_lossy();
-        let sensitive = [
-            ".ssh",
-            ".gnupg",
-            ".aws/credentials",
-            ".env",
-            ".agentzero",
-        ];
+        let sensitive = [".ssh", ".gnupg", ".aws/credentials", ".env", ".agentzero"];
         for s in &sensitive {
             if path_str.contains(s) {
                 return Err(ToolExecutorError::Denied(format!(
@@ -553,7 +543,11 @@ impl ToolExecutor {
         let execution_id = ExecutionId::new();
         let tool_id = ToolId::from_string("append");
 
-        debug!(tool = "append", path = path, "checking policy for file append");
+        debug!(
+            tool = "append",
+            path = path,
+            "checking policy for file append"
+        );
 
         let canonical = self.validate_path_for_create(path)?;
 
@@ -572,7 +566,9 @@ impl ToolExecutor {
             .create(true)
             .append(true)
             .open(&canonical)
-            .map_err(|e| ToolExecutorError::Failed(format!("failed to open {path} for append: {e}")))?;
+            .map_err(|e| {
+                ToolExecutorError::Failed(format!("failed to open {path} for append: {e}"))
+            })?;
 
         file.write_all(content.as_bytes())
             .map_err(|e| ToolExecutorError::Failed(format!("failed to append to {path}: {e}")))?;
@@ -591,7 +587,11 @@ impl ToolExecutor {
         let execution_id = ExecutionId::new();
         let tool_id = ToolId::from_string("create_dir");
 
-        debug!(tool = "create_dir", path = path, "checking policy for create_dir");
+        debug!(
+            tool = "create_dir",
+            path = path,
+            "checking policy for create_dir"
+        );
 
         let canonical = self.validate_path_for_create(path)?;
 
@@ -620,7 +620,11 @@ impl ToolExecutor {
         let execution_id = ExecutionId::new();
         let tool_id = ToolId::from_string("file_exists");
 
-        debug!(tool = "file_exists", path = path, "checking policy for file_exists");
+        debug!(
+            tool = "file_exists",
+            path = path,
+            "checking policy for file_exists"
+        );
 
         // For file_exists we try canonicalize first; if it fails because the path
         // doesn't exist, that's a valid "false" answer. But we still need to
@@ -668,7 +672,10 @@ impl ToolExecutor {
     /// Validate a path that may not exist yet (for create/append operations).
     /// Walks up from the path to find the first existing ancestor, canonicalizes it,
     /// then appends the remaining components.
-    fn validate_path_for_create(&self, path: &str) -> Result<std::path::PathBuf, ToolExecutorError> {
+    fn validate_path_for_create(
+        &self,
+        path: &str,
+    ) -> Result<std::path::PathBuf, ToolExecutorError> {
         let p = std::path::Path::new(path);
 
         // If the path already exists, use the normal validate_path
@@ -696,8 +703,9 @@ impl ToolExecutor {
                     break self.check_path_security(&canonical, path);
                 }
                 Some(ancestor) if ancestor.exists() => {
-                    let canonical_ancestor = std::fs::canonicalize(ancestor)
-                        .map_err(|e| ToolExecutorError::InvalidPath(format!("{}: {e}", ancestor.display())))?;
+                    let canonical_ancestor = std::fs::canonicalize(ancestor).map_err(|e| {
+                        ToolExecutorError::InvalidPath(format!("{}: {e}", ancestor.display()))
+                    })?;
                     let mut canonical = canonical_ancestor;
                     for component in suffix_components.iter().rev() {
                         canonical = canonical.join(component);
@@ -940,7 +948,10 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(ToolExecutorError::Denied(msg)) => {
-                assert!(msg.contains(".agentzero"), "should mention .agentzero: {msg}");
+                assert!(
+                    msg.contains(".agentzero"),
+                    "should mention .agentzero: {msg}"
+                );
             }
             other => panic!("expected Denied, got {other:?}"),
         }
@@ -1084,10 +1095,7 @@ mod tests {
         let az_dir = dir.join(".agentzero");
         std::fs::create_dir_all(&az_dir).ok();
 
-        let result = executor.append_file(
-            az_dir.join("log.txt").to_str().expect("path"),
-            "data",
-        );
+        let result = executor.append_file(az_dir.join("log.txt").to_str().expect("path"), "data");
         assert!(result.is_err());
 
         std::fs::remove_dir_all(&dir).ok();

@@ -7,7 +7,7 @@
 //
 // See ADR 0013: WIT Adoption for Tool Interfaces.
 
-package az:host@0.1.0;
+package az:host@0.2.0;
 
 interface filesystem {
     /// Read file contents. Policy-checked: requires FileRead capability.
@@ -17,11 +17,33 @@ interface filesystem {
     /// Write content to a file. Policy-checked: requires FileWrite capability.
     /// Returns true on success, error message on failure.
     write-file: func(path: string, content: string) -> result<bool, string>;
+
+    /// Append content to a file (creates if missing). Policy-checked: requires FileWrite capability.
+    /// Returns true on success, error message on failure.
+    append-file: func(path: string, content: string) -> result<bool, string>;
+
+    /// List entries in a directory. Policy-checked: requires FileRead capability.
+    /// Returns entry names (not full paths), error message on failure.
+    list-dir: func(path: string) -> result<list<string>, string>;
+
+    /// Create a directory and all parent directories. Policy-checked: requires FileWrite capability.
+    /// Returns true on success (or if already exists), error message on failure.
+    create-dir: func(path: string) -> result<bool, string>;
+
+    /// Check whether a file or directory exists. Policy-checked: requires FileRead capability.
+    /// Returns true if the path exists, error message on policy denial.
+    file-exists: func(path: string) -> result<bool, string>;
 }
 
 interface logging {
     /// Emit an audit-logged message from the WASM guest.
     log: func(message: string);
+}
+
+interface clock {
+    /// Current date-time in ISO 8601 format (local timezone).
+    /// Example: "2026-05-11T14:32:00-04:00"
+    now: func() -> string;
 }
 
 interface secrets {
@@ -41,6 +63,7 @@ interface tools {
 world tool {
     import az:host/filesystem;
     import az:host/logging;
+    import az:host/clock;
     import az:host/secrets;
 
     /// The tool's entry point. Called by the agent loop.

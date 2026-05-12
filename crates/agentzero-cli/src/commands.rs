@@ -262,9 +262,10 @@ pub async fn run(command: Command) -> i32 {
         Command::Search { query, json } => cmd_search(&query, json).await,
         Command::Link { source } => cmd_link(&source),
         Command::Doctor => cmd_doctor(),
-        Command::Bootstrap { non_interactive, skip_model } => {
-            cmd_bootstrap(non_interactive, skip_model)
-        }
+        Command::Bootstrap {
+            non_interactive,
+            skip_model,
+        } => cmd_bootstrap(non_interactive, skip_model),
         Command::Demo => cmd_demo(),
         Command::Policy { action } => match action {
             PolicyAction::Status => cmd_policy_status(),
@@ -639,7 +640,7 @@ async fn cmd_serve() -> i32 {
     eprintln!("AgentZero ACP Server");
     eprintln!("====================");
     eprintln!("Protocol: newline-delimited JSON over stdio");
-    eprintln!("Chat-capable: send {{\"id\":\"1\",\"method\":\"chat\",\"params\":{{\"message\":\"...\"}}}}")    ;
+    eprintln!("Chat-capable: send {{\"id\":\"1\",\"method\":\"chat\",\"params\":{{\"message\":\"...\"}}}}");
     eprintln!();
 
     // Load policy and settings
@@ -754,7 +755,9 @@ fn cmd_audit_summary(json: bool) -> i32 {
                                     denied_count += 1;
                                 }
                             }
-                            if let Some(redactions) = event.get("redactions_applied").and_then(|r| r.as_array()) {
+                            if let Some(redactions) =
+                                event.get("redactions_applied").and_then(|r| r.as_array())
+                            {
                                 if !redactions.is_empty() {
                                     redacted_count += 1;
                                 }
@@ -774,7 +777,10 @@ fn cmd_audit_summary(json: bool) -> i32 {
             "events_with_redactions": redacted_count,
             "action_counts": actions,
         });
-        println!("{}", serde_json::to_string_pretty(&summary).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&summary).unwrap_or_default()
+        );
     } else {
         println!("AgentZero Audit Summary");
         println!("=======================\n");
@@ -894,7 +900,10 @@ async fn cmd_search(query: &str, json: bool) -> i32 {
                         })
                     })
                     .collect();
-                println!("{}", serde_json::to_string_pretty(&json_results).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json_results).unwrap_or_default()
+                );
             } else {
                 println!("Skills matching '{query}':\n");
                 for (name, entry) in &results {
@@ -941,10 +950,9 @@ fn cmd_link(source: &str) -> i32 {
         let has_versioned = std::fs::read_dir(source_path)
             .ok()
             .map(|entries| {
-                entries.flatten().any(|e| {
-                    e.file_name().to_string_lossy().starts_with('v')
-                        && e.path().is_dir()
-                })
+                entries
+                    .flatten()
+                    .any(|e| e.file_name().to_string_lossy().starts_with('v') && e.path().is_dir())
             })
             .unwrap_or(false);
         if !has_versioned {
@@ -962,7 +970,10 @@ fn cmd_link(source: &str) -> i32 {
 
     let link_path = link_dir.join(tool_name);
     if link_path.exists() {
-        eprintln!("Tool '{tool_name}' already exists at {}", link_path.display());
+        eprintln!(
+            "Tool '{tool_name}' already exists at {}",
+            link_path.display()
+        );
         eprintln!("Remove it first or use a different name.");
         return 1;
     }
@@ -992,7 +1003,11 @@ fn cmd_link(source: &str) -> i32 {
         }
     }
 
-    println!("Linked: {} -> {}", link_path.display(), canonical_source.display());
+    println!(
+        "Linked: {} -> {}",
+        link_path.display(),
+        canonical_source.display()
+    );
     println!("Tool '{tool_name}' is now available in this project.");
     0
 }
@@ -1050,12 +1065,13 @@ fn cmd_bootstrap(non_interactive: bool, skip_model: bool) -> i32 {
     } else if os == "linux" {
         vec![
             ("Ollama", "curl -fsSL https://ollama.com/install.sh | sh"),
-            ("llama.cpp", "See https://github.com/ggml-org/llama.cpp for build instructions"),
+            (
+                "llama.cpp",
+                "See https://github.com/ggml-org/llama.cpp for build instructions",
+            ),
         ]
     } else if os == "macos" {
-        vec![
-            ("Ollama", "curl -fsSL https://ollama.com/install.sh | sh"),
-        ]
+        vec![("Ollama", "curl -fsSL https://ollama.com/install.sh | sh")]
     } else {
         // Windows
         vec![
@@ -1120,10 +1136,7 @@ fn cmd_bootstrap(non_interactive: bool, skip_model: bool) -> i32 {
                 let (name, cmd) = recommendations[idx - 1];
                 if cmd.starts_with("curl") || cmd.starts_with("pip") {
                     println!("\nInstalling {name}...");
-                    let status = std::process::Command::new("sh")
-                        .arg("-c")
-                        .arg(cmd)
-                        .status();
+                    let status = std::process::Command::new("sh").arg("-c").arg(cmd).status();
                     match status {
                         Ok(s) if s.success() => {
                             println!("{name} installed successfully.");
@@ -1235,12 +1248,12 @@ async fn cmd_chat(
     print_message: Option<&str>,
     output_mode: &str,
 ) -> i32 {
+    use agentzero::session::router::ProviderRouter;
     use agentzero::session::{
         AgentLoop, AgentLoopConfig, ApprovalDecision, ApprovalHandler, ChatMessage, ModelProvider,
-        OllamaConfig, OllamaProvider, OpenAICompatConfig, OpenAICompatProvider,
-        ProgressHandler, Session, SessionConfig, SessionMode, ToolExecutor,
+        OllamaConfig, OllamaProvider, OpenAICompatConfig, OpenAICompatProvider, ProgressHandler,
+        Session, SessionConfig, SessionMode, ToolExecutor,
     };
-    use agentzero::session::router::ProviderRouter;
     use std::io::{self, BufRead, Write};
     use std::pin::Pin;
 
@@ -1281,7 +1294,9 @@ async fn cmd_chat(
                 let trimmed = answer.trim();
                 if trimmed.eq_ignore_ascii_case("y") {
                     ApprovalDecision::Approved
-                } else if trimmed.eq_ignore_ascii_case("yes-all") || trimmed.eq_ignore_ascii_case("a") {
+                } else if trimmed.eq_ignore_ascii_case("yes-all")
+                    || trimmed.eq_ignore_ascii_case("a")
+                {
                     println!("  [APPROVED for session]");
                     ApprovalDecision::ApprovedForSession
                 } else {
@@ -1418,10 +1433,17 @@ async fn cmd_chat(
                 config.base_url = url.to_string();
             }
             let provider = OpenAICompatProvider::new(config.clone());
-            println!("Model: {} ({})", provider.model_name(), provider.server_type());
+            println!(
+                "Model: {} ({})",
+                provider.model_name(),
+                provider.server_type()
+            );
             match provider.health_check().await {
                 Ok(true) => println!("{}: connected", provider.server_type()),
-                Ok(false) => eprintln!("{}: responded but may not be healthy", provider.server_type()),
+                Ok(false) => eprintln!(
+                    "{}: responded but may not be healthy",
+                    provider.server_type()
+                ),
                 Err(e) => {
                     eprintln!("error: cannot connect to {}: {e}", provider.server_type());
                     return 1;
@@ -1436,10 +1458,17 @@ async fn cmd_chat(
                 config.base_url = url.to_string();
             }
             let provider = OpenAICompatProvider::new(config.clone());
-            println!("Model: {} ({})", provider.model_name(), provider.server_type());
+            println!(
+                "Model: {} ({})",
+                provider.model_name(),
+                provider.server_type()
+            );
             match provider.health_check().await {
                 Ok(true) => println!("{}: connected", provider.server_type()),
-                Ok(false) => eprintln!("{}: responded but may not be healthy", provider.server_type()),
+                Ok(false) => eprintln!(
+                    "{}: responded but may not be healthy",
+                    provider.server_type()
+                ),
                 Err(e) => {
                     eprintln!("error: cannot connect to {}: {e}", provider.server_type());
                     return 1;
@@ -1454,10 +1483,17 @@ async fn cmd_chat(
                 config.base_url = url.to_string();
             }
             let provider = OpenAICompatProvider::new(config.clone());
-            println!("Model: {} ({})", provider.model_name(), provider.server_type());
+            println!(
+                "Model: {} ({})",
+                provider.model_name(),
+                provider.server_type()
+            );
             match provider.health_check().await {
                 Ok(true) => println!("{}: connected", provider.server_type()),
-                Ok(false) => eprintln!("{}: responded but may not be healthy", provider.server_type()),
+                Ok(false) => eprintln!(
+                    "{}: responded but may not be healthy",
+                    provider.server_type()
+                ),
                 Err(e) => {
                     eprintln!("error: cannot connect to {}: {e}", provider.server_type());
                     return 1;
