@@ -24,6 +24,21 @@ The `--editor` flag generates integration files for the specified editor:
 | `cursor` | `.cursor/rules` |
 | `zed` | `.zed/tasks.json` |
 
+## `az bootstrap`
+
+Detect your platform, probe for existing LLM backends, and generate initial configuration.
+
+```bash
+az bootstrap [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--non-interactive` | Skip prompts (for CI/scripting) |
+| `--skip-model` | Skip model download after backend install |
+
+Probes ports 11434 (Ollama), 8080 (llama.cpp), 8000 (vLLM) for running backends. Recommends the best backend per platform (OS/arch), offers to install it, and generates `.agentzero/models.json`.
+
 ## `az chat`
 
 Start an interactive chat session.
@@ -37,7 +52,7 @@ az chat [OPTIONS]
 | `--local` | Use local models only |
 | `-m, --model` | Model name (default: llama3.2) |
 | `--stream` | Stream tokens as they arrive |
-| `-p, --provider` | Provider: ollama, llama-cpp, vllm, lm-studio |
+| `-p, --provider` | Provider: ollama, llama-cpp, vllm, lm-studio, anthropic |
 | `--url` | Custom server URL |
 | `--resume` | Resume a previous session by ID |
 | `--encrypt` | Encrypt audit and session files |
@@ -46,13 +61,17 @@ az chat [OPTIONS]
 
 ## `az mcp`
 
-Start the MCP server for editor integration.
+Start the MCP server for editor integration. Requires the `mcp` feature flag.
 
 ```bash
+# Build with MCP support
+cargo build --features mcp
+
+# Run the MCP server
 az mcp
 ```
 
-Reads JSON-RPC 2.0 from stdin, writes to stdout.
+Reads JSON-RPC 2.0 from stdin, writes to stdout. Running `az mcp` without the feature compiled in prints a message recommending ACP (`az serve`) as the native protocol. See [ADR 0014](/reference/adrs#adr-0014-mcp-deprecation-to-optional-feature-flag).
 
 ## `az serve`
 
@@ -143,6 +162,20 @@ Show recent audit events.
 az audit tail [-c, --count N]
 ```
 
+## `az audit summary`
+
+Show a human-readable summary of audit activity across sessions.
+
+```bash
+az audit summary [--json]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output structured JSON instead of human-readable text |
+
+Reports total sessions, total events, denied actions, and redactions applied.
+
 ## `az index`
 
 Build and query a semantic document index. Requires the `rag` feature (`cargo build --features rag`).
@@ -176,6 +209,30 @@ az index clear
 
 Removes the index from `.agentzero/index/`.
 
+## `az search`
+
+Search the skill index for matching skills.
+
+```bash
+az search <query> [--json]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output structured JSON |
+
+Matches against skill name, description, and tags. Results include trust tier (Verified, Community, Generated).
+
+## `az link`
+
+Share tools across projects via symlinks.
+
+```bash
+az link <source>
+```
+
+Creates a symlink in the current project's skill directory pointing to `<source>`. Useful for sharing generated or installed tools between projects.
+
 ## `az vault`
 
 Manage encrypted secrets.
@@ -186,6 +243,20 @@ az vault add <provider> <name>
 az vault get <provider> <name>
 az vault remove <provider> <name>
 ```
+
+## `az vault-import`
+
+Import secrets from a `.env` file into the encrypted vault.
+
+```bash
+az vault-import <path> [--dry-run]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Show what would be imported without writing to the vault |
+
+Parses `KEY=VALUE` lines from the file and stores each as a vault secret.
 
 ## `az completions`
 

@@ -3,6 +3,10 @@ title: MCP Integration
 description: Use AgentZero as a tool provider for any MCP client
 ---
 
+:::note
+MCP is now an optional feature. ACP (`az serve`) is the native protocol for editor integration. To use MCP, build with `--features mcp`. See [ADR 0014](/reference/adrs#adr-0014-mcp-deprecation-to-optional-feature-flag) for rationale.
+:::
+
 ## What is MCP?
 
 The Model Context Protocol (MCP) is a standard for AI tools. AgentZero implements an MCP server, letting any MCP-compatible client use its tools with full policy enforcement.
@@ -72,12 +76,26 @@ AgentZero speaks JSON-RPC 2.0 over stdio:
 ← {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"[workspace]\n..."}]}}
 ```
 
+## Building with MCP Support
+
+MCP is behind a feature flag. Build with:
+
+```bash
+cargo build --features mcp
+```
+
+Running `az mcp` without the feature compiled in prints a helpful message recommending ACP as the native alternative.
+
 ## Running Manually
 
 ```bash
-# Start the MCP server
+# Start the MCP server (requires --features mcp)
 az mcp
 
 # Test with a JSON-RPC request
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | az mcp
 ```
+
+## ACP Alternative
+
+For new integrations, consider using [ACP](/guides/editor-adapter/) instead. ACP is the native protocol and runs the full agentic loop (LLM inference + tool calling) inside AgentZero, while MCP only exposes individual tools.

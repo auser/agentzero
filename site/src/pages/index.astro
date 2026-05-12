@@ -51,10 +51,10 @@
       </div>
       <div class="stats">
         <div class="stat"><div class="num">13</div><div class="lbl">Rust Crates</div></div>
-        <div class="stat"><div class="num">329</div><div class="lbl">Tests</div></div>
+        <div class="stat"><div class="num">420</div><div class="lbl">Tests</div></div>
         <div class="stat"><div class="num">6 MB</div><div class="lbl">Binary Size</div></div>
-        <div class="stat"><div class="num">6</div><div class="lbl">Built-in Tools</div></div>
-        <div class="stat"><div class="num">4</div><div class="lbl">LLM Providers</div></div>
+        <div class="stat"><div class="num">7</div><div class="lbl">Built-in Tools</div></div>
+        <div class="stat"><div class="num">5</div><div class="lbl">LLM Providers</div></div>
       </div>
     </div>
   </div>
@@ -93,7 +93,7 @@ I recommend moving it to the vault:
   <span class="d">$ agentzero vault add postgres db-password</span>
 
 <span class="c">you&gt;</span> run the full security audit
-  <span class="d"><span class="y">[APPROVE shell: agentzero run repo-security-audit?]</span> (y/n) y</span>
+  <span class="d"><span class="y">[APPROVE shell: agentzero run repo-security-audit?]</span> (y/yes-all/n) y</span>
   <span class="d">Scanning 42 files… 3 findings.</span>
   <span class="d">Report → .agentzero/audit/security-report.md</span>`} />
       </div></div>
@@ -129,12 +129,12 @@ I recommend moving it to the vault:
     </div>
   </div>
 
-  <!-- =========== SECTION 4: MCP =========== -->
+  <!-- =========== SECTION 4: EDITOR INTEGRATION =========== -->
   <div class="sec">
     <div class="sec-narrow">
       <h2>One config line. <em>Full security layer for your editor.</em></h2>
       <p class="sec-sub">
-        AgentZero runs as an MCP server. Claude Code, Cursor, Zed &mdash; any MCP client gets
+        AgentZero runs as an ACP server (native protocol) or MCP server (optional). Claude Code, Cursor, Zed &mdash; any client gets
         policy-controlled, audited tool access without changing application code.
       </p>
       <div class="split">
@@ -150,9 +150,9 @@ I recommend moving it to the vault:
 }`} />
         </div>
         <div class="st">
-          <h3>Six tools, fully gated</h3>
-          <p><code>read_file</code> &middot; <code>list_directory</code> &middot; <code>search_files</code> &middot; <code>write_file</code> &middot; <code>edit_file</code> &middot; <code>run_command</code></p>
-          <p>Path validation blocks traversal outside the project root. Sensitive paths (<code>.ssh</code>, <code>.env</code>, <code>.aws/credentials</code>) are denied. Every call emits a structured audit event with the decision, capability, and context.</p>
+          <h3>Seven tools, fully gated</h3>
+          <p><code>read_file</code> &middot; <code>list_directory</code> &middot; <code>search_files</code> &middot; <code>write_file</code> &middot; <code>edit_file</code> &middot; <code>run_command</code> &middot; <code>generate_tool</code></p>
+          <p>Path validation blocks traversal outside the project root. Sensitive paths (<code>.ssh</code>, <code>.env</code>, <code>.aws/credentials</code>, <code>.agentzero/</code>) are denied. Every call emits a structured audit event with the decision, capability, and context.</p>
         </div>
       </div>
     </div>
@@ -188,7 +188,8 @@ I recommend moving it to the vault:
         <div class="fc"><h3>Secret handles</h3><p>Models see <code>handle://vault/github/token</code>. Never raw values. Exposed only at execution time, only after policy approval.</p></div>
         <div class="fc"><h3>PII redaction</h3><p>Content scanned before remote model calls. Emails, tokens, keys replaced with typed placeholders. Automatic, not optional.</p></div>
         <div class="fc"><h3>Encrypted at rest</h3><p>AES-256-GCM with Argon2id key derivation. Vault, sessions, audit logs. Per-line encryption so logs stay appendable.</p></div>
-        <div class="fc"><h3>Multi-provider routing</h3><p>Ollama, llama.cpp, vLLM, LM Studio. Try local first, fall back with redaction. Retry with exponential backoff on transient failures.</p></div>
+        <div class="fc"><h3>Multi-provider routing</h3><p>Ollama, llama.cpp, vLLM, LM Studio, Anthropic Claude. Try local first, fall back with redaction. Retry with exponential backoff on transient failures.</p></div>
+        <div class="fc"><h3>Self-improving agent</h3><p>The agent can generate new WASM tools on the fly via <code>generate_tool</code>. Template-based codegen, per-project versioning, and directory-based tool registries.</p></div>
         <div class="fc"><h3>Context compaction</h3><p>Long conversations auto-summarize older messages. System prompt and recent context preserved. No context overflow, no lost instructions.</p></div>
       </div>
     </div>

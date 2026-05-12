@@ -250,6 +250,83 @@ The lockfile records:
 - **checksum** — SHA-256 of the downloaded tarball (GitHub installs)
 - **permissions** — capability snapshot from the manifest at install time
 
+## Dynamic Tool Generation
+
+The agent can generate new WASM tools at runtime via the `generate_tool` built-in tool. This is the self-improving agent capability described in [ADR 0012](/reference/adrs#adr-0012-self-improving-agent-via-wasm).
+
+### How It Works
+
+During a chat session, the model can call `generate_tool` to create a new WASM tool. The process:
+
+1. **Template selection** from 6 available templates
+2. **WASM codegen** via `wasm-encoder`
+3. **Registration** in the `DynamicToolRegistry`
+4. **Versioning** with directory-based storage (v1/, v2/, active.json)
+
+### Templates
+
+| Template | Description |
+|----------|-------------|
+| PureComputation | Stateless computation (no host imports) |
+| Logger | Writes to the host log via `az::log` |
+| FileReader | Reads a single file via `az::read_file` |
+| FileCounter | Counts files matching a pattern |
+| FileWriter | Writes content to a file via `az::write_file` |
+| MultiFileReader | Reads multiple files |
+
+### Per-Project Tool Storage
+
+Generated tools are stored per-project with directory-based versioning:
+
+```
+.agentzero/tools/
+  line-counter/
+    v1/
+      module.wasm
+      manifest.json
+    v2/
+      module.wasm
+      manifest.json
+    active.json    # points to v2
+```
+
+The `DynamicToolRegistry` manages versioning automatically. Each generation creates a new version directory.
+
+### Cross-Project Sharing
+
+Share tools between projects with `az link`:
+
+```bash
+# In project B, link a tool from project A
+az link /path/to/project-a/.agentzero/tools/line-counter
+```
+
+This creates a symlink so the tool is available in both projects.
+
+## Trust Tiers
+
+Skills and tools have a trust tier that indicates their provenance:
+
+| Tier | Description |
+|------|-------------|
+| `Verified` | Published by a verified author with checksum validation |
+| `Community` | Published by a community member |
+| `Generated` | Created at runtime by the agent via `generate_tool` |
+
+Trust tier is displayed in `az search` results and tracked in the skill index.
+
+## Searching Skills
+
+```bash
+# Search by keyword
+az search "security audit"
+
+# JSON output for scripting
+az search "file counter" --json
+```
+
+Search matches against skill name, description, and tags. Results include trust tier, author, and tags.
+
 ## Built-in Skills
 
 | Skill | Description |

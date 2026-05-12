@@ -45,12 +45,13 @@ The model can request tools during conversation. Available tools:
 | `write` | Write to a file | Requires approval |
 | `edit` | Edit file contents (search-and-replace) | Requires approval |
 | `shell` | Execute shell command | Requires approval |
+| `generate_tool` | Generate a new WASM tool | Requires approval |
 
-Dangerous tools prompt for approval:
+Dangerous tools prompt for approval. Respond with `y` (approve once), `yes-all` or `a` (approve for this session), or `n` (deny):
 
 ```
 you> compile this project
-  [APPROVE shell: `cargo build`?] (y/n) y
+  [APPROVE shell: `cargo build`?] (y/yes-all/n) y
   [tool: shell] ok (156 bytes)
 
 agentzero> Build completed successfully.

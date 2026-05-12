@@ -11,6 +11,9 @@ description: Supported LLM providers and configuration
 | llama.cpp | OpenAI `/v1/chat/completions` | 8080 | `--provider llama-cpp` |
 | vLLM | OpenAI `/v1/chat/completions` | 8000 | `--provider vllm` |
 | LM Studio | OpenAI `/v1/chat/completions` | 1234 | `--provider lm-studio` |
+| Anthropic Claude | Messages `/v1/messages` | N/A (remote) | `--provider anthropic` |
+
+The OpenAI-compatible provider has been verified against Groq, Together, and DeepSeek in addition to the servers listed above. Any service implementing `/v1/chat/completions` should work.
 
 ## Provider Routing
 
@@ -67,6 +70,14 @@ Providers are configured in `.agentzero/models.json`. The `ProviderRouter` loads
       "default_model": "meta-llama/Llama-3.2-70B",
       "is_local": false,
       "api_key": "vault://vllm/api-key"
+    },
+    {
+      "name": "claude",
+      "provider_type": "anthropic",
+      "base_url": "https://api.anthropic.com",
+      "default_model": "claude-sonnet-4-20250514",
+      "is_local": false,
+      "api_key": "vault://anthropic/api-key"
     }
   ],
   "default_provider": "ollama-local"
@@ -100,7 +111,7 @@ pub trait ModelProvider: Send + Sync {
 }
 ```
 
-Both `OllamaProvider` and `OpenAICompatProvider` implement this trait. Adding a new provider means implementing `ModelProvider` and registering a `ProviderType` variant.
+`OllamaProvider`, `OpenAICompatProvider`, and `AnthropicProvider` all implement this trait. Adding a new provider means implementing `ModelProvider` and registering a `ProviderType` variant.
 
 ## Dynamic Loading
 

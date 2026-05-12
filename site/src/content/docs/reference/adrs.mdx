@@ -47,6 +47,18 @@ AgentZero represents secrets as capability handles (`handle://vault/github/defau
 
 AgentZero is not a swarm platform, hosted SaaS, workflow DAG engine, MCP marketplace, or generic bot platform. These boundaries are explicit to prevent scope creep.
 
+### ADR 0012: Self-Improving Agent via WASM
+
+AgentZero can generate new WASM tools at runtime. The agent loop includes a `generate_tool` built-in that uses template-based codegen (`wasm-encoder`) to produce WASM modules, registers them in a `DynamicToolRegistry`, and stores them with directory-based versioning (v1/, v2/, active.json). `WasmHostCallbacks` provides injectable host functions (`az::log`, `az::read_file`, `az::write_file`). Six templates: PureComputation, Logger, FileReader, FileCounter, FileWriter, MultiFileReader.
+
+### ADR 0013: WIT Adoption for Tool Interfaces
+
+WASM tool interfaces are defined using WIT (WebAssembly Interface Types). The `az:host` interface is declared at `crates/agentzero-sandbox/wit/az-host.wit`. Host imports are linked via the wasmtime Linker.
+
+### ADR 0014: MCP Deprecation to Optional Feature Flag
+
+MCP is no longer compiled by default. ACP (`az serve`) is the native protocol. MCP support is available behind `--features mcp`. Running `az mcp` without the feature prints a message directing users to ACP.
+
 ## Where to Find ADRs
 
 The source ADR files live in `specs/adrs/` in the repository:
@@ -63,4 +75,7 @@ specs/adrs/
   0008-prompt-injection-and-untrusted-content-boundaries.md
   0009-capability-based-secret-handles.md
   0010-non-goals-and-platform-creep-boundary.md
+  0012-self-improving-agent-via-wasm.md
+  0013-wit-adoption-for-tool-interfaces.md
+  0014-mcp-deprecation-to-optional-feature-flag.md
 ```

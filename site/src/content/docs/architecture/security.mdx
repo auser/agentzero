@@ -70,6 +70,38 @@ WASM skills run inside a wasmtime sandbox with:
 - **Time limit** — fuel-based, 30 seconds default
 - **Policy-gated** — requires `wasm_execution = "allow"` in policy
 
+## Security Hardening
+
+### .agentzero/ Directory Protection
+
+The `.agentzero/` directory is blocked from tool access. Tools cannot read, write, or list files inside this directory. This prevents policy files, vault secrets, and audit logs from being disclosed to the model or exfiltrated through tool calls.
+
+### TOCTOU Prevention
+
+Paths are canonicalized before policy evaluation. This prevents time-of-check-to-time-of-use attacks where a symlink could point to a different file between the policy check and the actual file operation.
+
+### Redaction Pipeline
+
+Tool arguments are redacted in `ToolCallRecord` and the approval flow. Secrets are replaced with `[REDACTED_SECRET]` and PII with `[REDACTED_PII]`. Redaction placeholders include a random hex suffix (e.g., `[SECRET_a1b2]`) to prevent placeholder collision.
+
+Tool output is scanned for secrets before audit event logging. The scanning functions (`scan_for_secrets()`, `redact_json_value()`) are extracted to `agentzero-core` as shared utilities.
+
+### WASM Import Verification
+
+WASM modules with undeclared imports are rejected before execution. Only imports declared in the WIT interface (`az:host`) are linked. This prevents modules from requesting capabilities they were not designed for.
+
+### Approval Scope Tracking
+
+The approval prompt supports three responses:
+
+| Response | Scope |
+|----------|-------|
+| `y` | Approve this one tool call |
+| `yes-all` / `a` | Approve all calls to this tool for the current session |
+| `n` | Deny |
+
+Session-scoped approvals are cached per tool name and do not persist across sessions.
+
 ## What AgentZero Prevents
 
 - Raw secrets reaching model context
@@ -77,5 +109,8 @@ WASM skills run inside a wasmtime sandbox with:
 - Prompt injection from tool output
 - Ambient host access from skills/tools
 - WASM modules escaping sandbox boundaries
-- Secret leakage in audit logs
+- WASM modules with undeclared imports executing
+- Secret leakage in audit logs (tool output scanned before logging)
 - Unaudited tool or skill execution
+- Tool access to `.agentzero/` configuration directory
+- TOCTOU path manipulation attacks

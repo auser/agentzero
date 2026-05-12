@@ -55,6 +55,29 @@ Each secret is stored as an individual AES-256-GCM encrypted file:
     key.enc
 ```
 
+## Importing from .env Files
+
+Migrate secrets from an existing `.env` file into the vault:
+
+```bash
+az vault-import .env
+# Vault passphrase: ********
+# Imported 5 secret(s):
+#   handle://vault/env/DATABASE_URL
+#   handle://vault/env/API_KEY
+#   handle://vault/env/GITHUB_TOKEN
+#   handle://vault/env/AWS_SECRET_KEY
+#   handle://vault/env/STRIPE_KEY
+```
+
+Preview what would be imported without writing:
+
+```bash
+az vault-import .env --dry-run
+```
+
+Each `KEY=VALUE` line is stored as `handle://vault/env/<KEY>`.
+
 ## Security Properties
 
 - **AES-256-GCM** encryption per secret

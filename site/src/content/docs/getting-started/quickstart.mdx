@@ -3,6 +3,16 @@ title: Quick Start
 description: Get up and running in 2 minutes
 ---
 
+## Bootstrap Your Environment
+
+Detect your platform, probe for existing backends, and generate a `models.json`:
+
+```bash
+az bootstrap
+```
+
+This checks common ports (11434 for Ollama, 8080 for llama.cpp, 8000 for vLLM), recommends the best backend for your platform, and optionally installs it. Use `--non-interactive` for CI or `--skip-model` to skip model downloads.
+
 ## Initialize a Project
 
 ```bash
@@ -110,6 +120,34 @@ az chat --local --provider llama-cpp
 
 # Use vLLM on a custom port
 az chat --local --provider vllm --url http://gpu-box:8000
+```
+
+## Search for Skills
+
+```bash
+az search "security audit"
+```
+
+Returns matching skills from the index with name, description, trust tier, and tags. Use `--json` for machine-readable output.
+
+## View Audit Summary
+
+```bash
+az audit summary
+```
+
+Shows a human-readable summary of audit activity: session count, total events, denied actions, and redactions applied. Use `--json` for structured output.
+
+## Generate a Tool
+
+The agent can create new WASM tools during a chat session:
+
+```
+you> I need a tool that counts lines in all .rs files
+  [APPROVE generate_tool: line-counter?] (y/yes-all/n) y
+  [tool: generate_tool] ok — registered line-counter v1
+
+agentzero> Created and registered the line-counter tool. It's now available for use.
 ```
 
 ## Enable Encryption

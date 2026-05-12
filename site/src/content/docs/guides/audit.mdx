@@ -82,9 +82,33 @@ With `--encrypt`, audit events are written to `.jsonl.enc` files. Each line is i
 - Individual events can be decrypted independently
 - The raw file never contains plaintext
 
+## Audit Summary
+
+View an aggregate summary of audit activity:
+
+```bash
+az audit summary
+```
+
+```
+Audit Summary
+  Sessions:   12
+  Events:     847
+  Denied:     23
+  Redactions: 156
+```
+
+Use `--json` for structured output suitable for dashboards or CI:
+
+```bash
+az audit summary --json
+```
+
 ## Security Properties
 
 - **No raw secrets** in audit events (handles only)
+- **Tool output scanned** for secrets before audit event logging
+- **Redaction labels** populated in audit events with random hex suffixes (e.g., `[SECRET_a1b2]`)
 - **Redaction list** recorded when content is modified
 - **Policy decision** and reason captured for every action
 - **Tamper evidence** — encrypted logs detect corruption via GCM authentication tags

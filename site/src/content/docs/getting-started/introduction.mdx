@@ -40,13 +40,15 @@ Every action passes through policy evaluation before execution. Every action emi
 
 ## What You Can Do
 
-- Chat with local LLMs (Ollama, llama.cpp, vLLM, LM Studio)
-- Use tools (read, list, search, write, edit, shell) with policy enforcement
+- Chat with local LLMs (Ollama, llama.cpp, vLLM, LM Studio) or remote providers (Anthropic Claude)
+- Use tools (read, list, search, write, edit, shell, generate_tool) with policy enforcement
 - Edit files with surgical search-and-replace
 - Run single-shot queries with JSON output for scripting
 - Generate editor configs for VS Code, Cursor, Zed
 - Run security scanners with configurable pattern files
-- Expose tools via MCP to Claude Code, Cursor, Zed
+- Generate new WASM tools on the fly via the self-improving agent loop
+- Expose tools via ACP (native protocol) or MCP (optional, `--features mcp`)
 - Encrypt sessions and audit logs at rest
 - Manage secrets in an encrypted vault
 - Install and share skills via git
+- Bootstrap your environment with `az bootstrap` (detects platform, probes backends, generates config)

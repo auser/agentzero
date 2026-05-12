@@ -32,7 +32,8 @@ Session engine tying together models, tools, policy, and audit. Includes:
 - `AgentLoop` — reusable agentic loop with `send()`, `ApprovalHandler` trait, `ProgressHandler` trait, configurable `max_tool_rounds` and `max_output_bytes`
 - `ModelProvider` trait with `chat_with_tools()`, `chat_streaming()`, `health_check()`, `model_name()`
 - Ollama provider (native API)
-- OpenAI-compatible provider (llama.cpp, vLLM, LM Studio)
+- OpenAI-compatible provider (llama.cpp, vLLM, LM Studio, Groq, Together, DeepSeek)
+- Anthropic Claude provider (Messages API, `anthropic.rs`)
 - `ModelsConfig` loaded from `.agentzero/models.json` with dynamic provider instantiation
 - `ProviderRouter::from_config()` for dynamic provider loading
 - Multi-provider router with fallback
@@ -41,10 +42,14 @@ Session engine tying together models, tools, policy, and audit. Includes:
 - Skill executor with runtime routing (InstructionOnly, HostSupervised, WasmSandbox; MVM planned)
 - WASM execution via `ToolExecutor::execute_wasm()` (default `wasm` feature)
 - Host-supervised execution via `shell_command` with policy + audit
+- Agent loop with `generate_and_register_tool()` for runtime WASM codegen (`agent_loop.rs`)
+- `DynamicToolRegistry` for per-project tool storage with directory-based versioning (`dynamic_tools.rs`)
+- `SessionHostCallbacks` wiring `WasmHostCallbacks` to ToolExecutor with policy enforcement (`wasm_host.rs`)
+- WASM codegen via `wasm-encoder` templates (`codegen.rs`)
 - Context compaction
 
 ### `agentzero-tools`
-Tool registry with 6 built-in schemas (read, list, search, write, edit, shell).
+Tool registry with 7 built-in schemas (read, list, search, write, edit, shell, generate_tool).
 
 ### `agentzero-sandbox`
 Sandbox profiles (`SandboxProfile`, `SandboxLimit`, `SandboxNetworkPolicy`) plus the WASM runtime. The `wasm` feature is on by default; build with `--no-default-features` for a smaller binary without WASM. Wasmtime backend provides:
@@ -53,6 +58,9 @@ Sandbox profiles (`SandboxProfile`, `SandboxLimit`, `SandboxNetworkPolicy`) plus
 - No ambient filesystem or network access
 - `_start` (WASI) and `main() -> i32` entrypoints
 - Policy-gated via `RuntimeTier::WasmSandbox`
+- `WasmHostCallbacks` trait for injectable host functions (`az::log`, `az::read_file`, `az::write_file`)
+- WIT interface definition at `crates/agentzero-sandbox/wit/az-host.wit`
+- WASM modules with undeclared imports rejected before execution
 
 ### `agentzero-index`
 Document indexing and semantic query engine. Behind the `rag` feature flag. Includes:
@@ -72,7 +80,7 @@ Skill manifests, security scanner, report generator, skill registry with lockfil
 - `github` — async GitHub API client for install and publish
 
 ### `agentzero-mcp`
-MCP server (JSON-RPC 2.0 over stdio). Exposes tools to any MCP client.
+MCP server (JSON-RPC 2.0 over stdio). Exposes tools to any MCP client. Now behind the optional `mcp` feature flag (see [ADR 0014](/reference/adrs#adr-0014-mcp-deprecation-to-optional-feature-flag)).
 
 ### `agentzero-acp`
 ACP adapter for custom editor integrations. JSON-RPC over stdio. Runs the full agentic loop via `chat` method (LLM inference + tool calls). Includes:

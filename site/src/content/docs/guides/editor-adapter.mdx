@@ -119,4 +119,6 @@ This creates the appropriate task or rules files so the editor can launch and co
 | Tool naming | Internal names (`read`, `list`) | MCP names (`read_file`, `list_directory`) |
 | Use when | Building a custom integration or want AgentZero to drive | Using an existing MCP client |
 
-For most users, [MCP](/guides/mcp/) is the right choice. ACP exists for cases where you want AgentZero to own the full agentic loop — model selection, tool orchestration, and context management — rather than just exposing tools.
+ACP is now the primary and recommended protocol for editor integration. MCP has been moved to an optional feature flag (`--features mcp`). See [ADR 0014](/reference/adrs#adr-0014-mcp-deprecation-to-optional-feature-flag).
+
+ACP also supports the `generate_tool` capability, allowing the agent to create new WASM tools during a session. Generated tools are immediately available for use in the same session.

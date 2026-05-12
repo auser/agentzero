@@ -14,7 +14,7 @@ AgentZero loads provider configuration from `.agentzero/models.json`. Each entry
   "providers": [
     {
       "name": "string",
-      "type": "ollama | openai-compatible",
+      "type": "ollama | openai-compatible | anthropic",
       "url": "string",
       "default_model": "string",
       "is_local": true,
@@ -27,7 +27,7 @@ AgentZero loads provider configuration from `.agentzero/models.json`. Each entry
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | Human-readable identifier for this provider |
-| `type` | string | `ollama` or `openai-compatible` |
+| `type` | string | `ollama`, `openai-compatible`, or `anthropic` |
 | `url` | string | Server URL (including port) |
 | `default_model` | string | Model name to use when none is specified |
 | `is_local` | bool | Whether the provider runs on the local machine (default: true) |
@@ -51,7 +51,7 @@ Uses the native Ollama API at `/api/chat`. Supports tool calling with Ollama's n
 
 ### `openai-compatible`
 
-Uses the OpenAI `/v1/chat/completions` endpoint. Works with llama.cpp, vLLM, LM Studio, LocalAI, and any other server that implements the OpenAI chat completions API.
+Uses the OpenAI `/v1/chat/completions` endpoint. Works with llama.cpp, vLLM, LM Studio, LocalAI, Groq, Together, DeepSeek, and any other server that implements the OpenAI chat completions API.
 
 ```json
 {
@@ -60,6 +60,23 @@ Uses the OpenAI `/v1/chat/completions` endpoint. Works with llama.cpp, vLLM, LM 
   "url": "http://localhost:1234",
   "default_model": "gemma-4-12b",
   "is_local": true
+}
+```
+
+### `anthropic`
+
+Uses the Anthropic Messages API at `/v1/messages`. Tool calling uses content blocks. System prompts are extracted to the top-level `system` parameter. Sends `x-api-key` and `anthropic-version` headers.
+
+Anthropic is always remote (`is_local: false`), so PII redaction is applied automatically.
+
+```json
+{
+  "name": "claude",
+  "type": "anthropic",
+  "url": "https://api.anthropic.com",
+  "default_model": "claude-sonnet-4-20250514",
+  "is_local": false,
+  "api_key": "vault://anthropic/api-key"
 }
 ```
 
@@ -148,6 +165,8 @@ The `is_local` field controls how the provider interacts with data classificatio
 |-------------|--------|
 | `true` | All data classifications allowed. No redaction applied. |
 | `false` | Subject to classification-based routing. Private/PII data is redacted before sending. Secret and Credential data is denied. |
+
+Remote providers like Anthropic Claude should always set `is_local: false`. This ensures PII redaction is applied before any data leaves your machine.
 
 See [Provider Routing](/reference/providers#classification-based-routing) for the full classification matrix.
 

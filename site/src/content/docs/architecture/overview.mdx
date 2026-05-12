@@ -23,8 +23,14 @@ Policy Evaluation ← .agentzero/policy.yml
 │    InstructionOnly → display         │
 │    HostSupervised  → shell (gated)   │
 │    WasmSandbox     → wasmtime engine │
+│      ↕ WasmHostCallbacks (az::log,   │
+│        az::read_file, az::write_file)│
 │    MvmMicrovm      → MicroVM (planned)│
 │    Deny            → blocked         │
+│                                      │
+│  Dynamic Tool Generation:            │
+│    generate_tool → wasm-encoder      │
+│      → DynamicToolRegistry (v1/v2/)  │
 └──────────────────────────────────────┘
     ↓
 Audit Logger → .agentzero/audit/<session>.jsonl
@@ -43,6 +49,8 @@ Response to User
 - **Secret handles** — models see URIs, tools get values at runtime
 - **Content provenance** — untrusted output wrapped with boundary markers
 - **Runtime isolation** — WASM skills run in sandboxed wasmtime with no ambient host access; host-supervised skills go through policy + audit before any shell call
+- **Self-improving agent** — the agent can generate new WASM tools at runtime via `generate_tool`, registered in a `DynamicToolRegistry` with per-project versioning
+- **WASM host imports** — sandboxed modules access host functions (`az::log`, `az::read_file`, `az::write_file`) through the WIT-defined `az:host` interface, policy-enforced via `SessionHostCallbacks`
 - **Fail closed** — unknown classification, permissions, or runtime → deny
 
 ## Workspace Structure
@@ -67,7 +75,7 @@ agentzero/
 
 ## ADRs
 
-Architecture decisions are binding. See `specs/adrs/` for all 10:
+Architecture decisions are binding. See `specs/adrs/` for all 13:
 
 1. Minimal Secure Core
 2. Local-First Model Routing
@@ -79,3 +87,6 @@ Architecture decisions are binding. See `specs/adrs/` for all 10:
 8. Prompt Injection & Untrusted Content Boundaries
 9. Capability-Based Secret Handles
 10. Non-Goals & Platform Creep Boundary
+12. Self-Improving Agent via WASM
+13. WIT Adoption for Tool Interfaces
+14. MCP Deprecation to Optional Feature Flag
