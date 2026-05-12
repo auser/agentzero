@@ -3381,6 +3381,243 @@ fn cmd_demo() -> i32 {
 }
 
 fn cmd_brain(action: BrainAction) -> i32 {
+    // Brain runs as a WASM plugin via the sandbox (ADR 0015).
+    // The WASM module is loaded from .agentzero/plugins/brain/brain.wasm
+    // or falls back to the native implementation if WASM is unavailable.
+
+    // Serialize the CLI action to JSON for the WASM guest
+    let input_json = match &action {
+        BrainAction::Init {
+            root,
+            force,
+            dry_run,
+        } => {
+            format!(
+                r#"{{"action":"init","root":"{}","force":{},"dry_run":{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                force,
+                dry_run
+            )
+        }
+        BrainAction::Today { root, date, .. } => {
+            let date_field = date
+                .as_ref()
+                .map(|d| format!(r#","date":"{}""#, d))
+                .unwrap_or_default();
+            format!(
+                r#"{{"action":"today","root":"{}"{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                date_field
+            )
+        }
+        BrainAction::Capture {
+            message,
+            root,
+            date,
+            section,
+        } => {
+            let date_field = date
+                .as_ref()
+                .map(|d| format!(r#","date":"{}""#, d))
+                .unwrap_or_default();
+            let section_field = section
+                .as_ref()
+                .map(|s| format!(r#","section":"{}""#, s))
+                .unwrap_or_default();
+            format!(
+                r#"{{"action":"capture","root":"{}","message":"{}"{}{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                message.replace('\\', "\\\\").replace('"', "\\\""),
+                date_field,
+                section_field
+            )
+        }
+        BrainAction::Query {
+            term,
+            root,
+            raw,
+            json,
+            limit,
+        } => {
+            format!(
+                r#"{{"action":"query","root":"{}","term":"{}","include_raw":{},"json":{},"limit":{}}}"#,
+                root.replace('\\', "\\\\").replace('"', "\\\""),
+                term.replace('\\', "\\\\").replace('"', "\\\""),
+                raw,
+                json,
+                limit
+            )
+        }
+    };
+
+    // Try to load and run the WASM plugin
+    #[cfg(feature = "wasm")]
+    {
+        use agentzero::sandbox::wasm::{WasmConfig, WasmEngine, WasmHostCallbacks};
+        use std::sync::Arc;
+
+        // Look for the WASM module on disk
+        let wasm_path = find_brain_wasm();
+        if let Some(wasm_bytes) = wasm_path {
+            let config = WasmConfig {
+                max_memory_bytes: 128 * 1024 * 1024, // 128MB for brain
+                max_duration_secs: 60,
+                allow_filesystem: false,
+            };
+
+            let engine = match WasmEngine::new(config) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("error: failed to create WASM engine: {e}");
+                    return 1;
+                }
+            };
+
+            // Use direct filesystem callbacks for brain — the brain plugin
+            // manages its own path validation (vault root boundary checks).
+            let callbacks: Arc<dyn WasmHostCallbacks> =
+                Arc::new(BrainHostCallbacks);
+
+            match engine.execute_with_input(&wasm_bytes, callbacks, &input_json) {
+                Ok(result) => {
+                    if let Ok(response) = serde_json::from_str::<serde_json::Value>(&result.output)
+                    {
+                        let success = response
+                            .get("success")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if success {
+                            if let Some(output) = response.get("output").and_then(|v| v.as_str()) {
+                                println!("{output}");
+                            }
+                            // Handle --open for today command after WASM returns
+                            if let BrainAction::Today { root, open: true, .. } = &action {
+                                if let Some(path) = response.get("output").and_then(|v| v.as_str())
+                                {
+                                    let full_path = format!("{root}/{path}");
+                                    if let Ok(editor) = std::env::var("EDITOR") {
+                                        let _ = std::process::Command::new(&editor)
+                                            .arg(&full_path)
+                                            .status();
+                                    } else {
+                                        eprintln!("$EDITOR not set");
+                                    }
+                                }
+                            }
+                            return 0;
+                        } else if let Some(err) =
+                            response.get("error").and_then(|v| v.as_str())
+                        {
+                            eprintln!("error: {err}");
+                            return 1;
+                        }
+                    }
+                    // Fallthrough: couldn't parse response
+                    if result.success {
+                        println!("{}", result.output);
+                        return 0;
+                    }
+                    eprintln!("error: {}", result.output);
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!("error: WASM execution failed: {e}");
+                    return 1;
+                }
+            }
+        }
+    }
+
+    // Fallback: run natively if no WASM module found
+    cmd_brain_native(action)
+}
+
+/// Direct filesystem host callbacks for the brain plugin.
+///
+/// Brain manages its own path validation (vault root boundary),
+/// so we bypass ToolExecutor's project-root restrictions.
+#[cfg(feature = "wasm")]
+struct BrainHostCallbacks;
+
+#[cfg(feature = "wasm")]
+impl agentzero::sandbox::wasm::WasmHostCallbacks for BrainHostCallbacks {
+    fn read_file(&self, path: &str) -> Result<String, String> {
+        std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))
+    }
+
+    fn write_file(&self, path: &str, content: &str) -> Result<bool, String> {
+        std::fs::write(path, content).map_err(|e| format!("write {path}: {e}"))?;
+        Ok(true)
+    }
+
+    fn append_file(&self, path: &str, content: &str) -> Result<bool, String> {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| format!("append {path}: {e}"))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("append write {path}: {e}"))?;
+        Ok(true)
+    }
+
+    fn list_dir(&self, path: &str) -> Result<Vec<String>, String> {
+        let entries = std::fs::read_dir(path).map_err(|e| format!("list_dir {path}: {e}"))?;
+        let mut result = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+            if let Some(name) = entry.file_name().to_str() {
+                result.push(name.to_string());
+            }
+        }
+        result.sort();
+        Ok(result)
+    }
+
+    fn create_dir(&self, path: &str) -> Result<bool, String> {
+        std::fs::create_dir_all(path).map_err(|e| format!("create_dir {path}: {e}"))?;
+        Ok(true)
+    }
+
+    fn file_exists(&self, path: &str) -> Result<bool, String> {
+        Ok(std::path::Path::new(path).exists())
+    }
+
+    fn log(&self, message: &str) {
+        eprintln!("[brain] {message}");
+    }
+
+    fn now(&self) -> String {
+        chrono::Local::now().to_rfc3339()
+    }
+}
+
+/// Find the brain WASM module on disk.
+#[cfg(feature = "wasm")]
+fn find_brain_wasm() -> Option<Vec<u8>> {
+    // Check .agentzero/plugins/brain/brain.wasm
+    let cwd = std::env::current_dir().ok()?;
+    let paths = [
+        cwd.join(".agentzero/plugins/brain/brain.wasm"),
+        cwd.join("plugins/brain/target/wasm32-unknown-unknown/release/agentzero_brain_wasm.wasm"),
+    ];
+    for path in &paths {
+        if path.exists() {
+            if let Ok(bytes) = std::fs::read(path) {
+                eprintln!(
+                    "[wasm] loaded brain plugin from {}",
+                    path.display()
+                );
+                return Some(bytes);
+            }
+        }
+    }
+    None
+}
+
+/// Native fallback for brain commands when WASM is unavailable.
+fn cmd_brain_native(action: BrainAction) -> i32 {
     use agentzero_brain::{
         brain_capture, brain_init, brain_query, brain_today, format_results, load_config,
         InitOptions, QueryOptions, RealBrainFs,
@@ -3397,15 +3634,11 @@ fn cmd_brain(action: BrainAction) -> i32 {
             let config = match load_config(&fs, &root) {
                 Ok(c) => c,
                 Err(e) => {
-                    // For init, use defaults if config doesn't load
                     eprintln!("warning: {e}, using defaults");
                     agentzero_brain::BrainConfig::default()
                 }
             };
-            let opts = InitOptions {
-                force,
-                dry_run,
-            };
+            let opts = InitOptions { force, dry_run };
             match brain_init(&fs, &root, &config, &opts) {
                 Ok(result) => {
                     if dry_run {
@@ -3438,9 +3671,8 @@ fn cmd_brain(action: BrainAction) -> i32 {
                     if open {
                         let full_path = format!("{root}/{path}");
                         if let Ok(editor) = std::env::var("EDITOR") {
-                            let status = std::process::Command::new(&editor)
-                                .arg(&full_path)
-                                .status();
+                            let status =
+                                std::process::Command::new(&editor).arg(&full_path).status();
                             match status {
                                 Ok(s) if s.success() => {}
                                 Ok(s) => {

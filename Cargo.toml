@@ -17,6 +17,7 @@ members = [
     "crates/agentzero-tracing",
 ]
 default-members = ["crates/agentzero-cli"]
+exclude = ["plugins/brain"]
 
 [package]
 name = "agentzero"

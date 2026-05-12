@@ -9,6 +9,7 @@
 pub mod config;
 pub mod daily;
 pub mod error;
+#[cfg(feature = "native")]
 pub mod fs;
 pub mod init;
 pub mod query;
@@ -16,6 +17,7 @@ pub mod query;
 pub use config::BrainConfig;
 pub use daily::{brain_capture, brain_today};
 pub use error::BrainError;
+#[cfg(feature = "native")]
 pub use fs::RealBrainFs;
 pub use init::{brain_init, InitOptions, InitResult};
 pub use query::{brain_query, format_results, QueryMatch, QueryOptions};

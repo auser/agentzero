@@ -6,9 +6,15 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["native"]
+native = ["chrono/clock"]
+# When building for WASM, disable native features:
+# cargo build --no-default-features --target wasm32-unknown-unknown
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
-chrono = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["serde", "alloc"] }

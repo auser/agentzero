@@ -9,7 +9,7 @@ pub fn brain_today(
     date_override: Option<&str>,
 ) -> Result<String, BrainError> {
     validate_root(fs, root)?;
-    let date = resolve_date(config, date_override)?;
+    let date = resolve_date(fs, config, date_override)?;
     let rel_path = format!("{}/daily/{date}.md", config.vault.wiki_dir);
     let full_path = format!("{root}/{rel_path}");
 
@@ -141,7 +141,11 @@ fn insert_under_heading(content: &str, heading: &str, entry: &str) -> String {
     }
 }
 
-fn resolve_date(config: &BrainConfig, date_override: Option<&str>) -> Result<String, BrainError> {
+fn resolve_date(
+    fs: &dyn BrainFs,
+    _config: &BrainConfig,
+    date_override: Option<&str>,
+) -> Result<String, BrainError> {
     match date_override {
         Some(d) => {
             // Validate the date parses
@@ -149,9 +153,16 @@ fn resolve_date(config: &BrainConfig, date_override: Option<&str>) -> Result<Str
                 .map_err(|e| BrainError::InvalidDate(format!("{d}: {e}")))?;
             Ok(d.to_string())
         }
-        None => Ok(chrono::Local::now()
-            .format(&config.daily.date_format)
-            .to_string()),
+        None => {
+            // Get current time from the filesystem abstraction
+            let now_raw = fs.now();
+            // Extract just the date portion from ISO 8601
+            Ok(now_raw
+                .split('T')
+                .next()
+                .unwrap_or(&now_raw)
+                .to_string())
+        }
     }
 }
 

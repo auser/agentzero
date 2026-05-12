@@ -67,8 +67,12 @@ pub fn brain_init(
         }
     }
 
+    // Get current date from the filesystem abstraction (supports WASM host clock)
+    let now_raw = fs.now();
+    let now_date = extract_date_from_iso(&now_raw, &config.daily.date_format);
+
     // Create starter files
-    let files = starter_files(config)?;
+    let files = starter_files(config, &now_date)?;
     for (rel_path, content) in &files {
         let full_path = format!("{root}/{rel_path}");
         let exists = if opts.dry_run {
@@ -102,9 +106,24 @@ pub fn brain_init(
     Ok(result)
 }
 
-fn starter_files(config: &BrainConfig) -> Result<Vec<(String, String)>, BrainError> {
+/// Extract a formatted date from an ISO 8601 string, using the config format.
+fn extract_date_from_iso(iso: &str, format: &str) -> String {
+    // Try parsing as full ISO 8601 datetime
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(
+        iso.split_once('+')
+            .or_else(|| iso.split_once('-').filter(|(pre, _)| pre.contains('T')))
+            .map(|(pre, _)| pre)
+            .unwrap_or(iso),
+        "%Y-%m-%dT%H:%M:%S",
+    ) {
+        return dt.format(format).to_string();
+    }
+    // Fallback: take the date portion
+    iso.split('T').next().unwrap_or(iso).to_string()
+}
+
+fn starter_files(config: &BrainConfig, now_date: &str) -> Result<Vec<(String, String)>, BrainError> {
     let config_toml = config.to_toml()?;
-    let now_date = chrono::Local::now().format(&config.daily.date_format).to_string();
 
     Ok(vec![
         (".agentzero-brain.toml".to_string(), config_toml),
