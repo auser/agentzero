@@ -19,6 +19,7 @@ mcp = ["agentzero/mcp"]
 [dependencies]
 agentzero = { workspace = true }
 clap_complete = "4"
+dotenvy = "0.15"
 chrono = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }

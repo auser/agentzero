@@ -57,12 +57,14 @@ Sessions are stored as JSON:
 
 ## Encrypted Sessions
 
-When using `--encrypt`, sessions are saved as `.json.enc`:
+Sessions are encrypted by default and saved as `.json.enc`:
 
 ```bash
-az chat --local --encrypt
+az chat --local
 # Session saved (encrypted) to .agentzero/sessions/f7a2c3e1-....json.enc
 ```
+
+To disable encryption, pass `--no-encrypt`.
 
 Encrypted sessions cannot currently be resumed (the resume feature reads plaintext JSON). This is a known limitation.
 

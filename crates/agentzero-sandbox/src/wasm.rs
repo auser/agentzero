@@ -633,10 +633,19 @@ mod tests {
 
     #[test]
     fn wasm_rejects_module_with_non_az_imports() {
-        // wasmtime can parse WAT text format directly
-        let wat = r#"(module (import "env" "abort" (func)))"#;
+        // Build a module with a non-az import using wasm-encoder
+        use wasm_encoder::*;
+        let mut module = Module::new();
+        let mut types = TypeSection::new();
+        types.ty().function(vec![], vec![]);
+        module.section(&types);
+        let mut imports = ImportSection::new();
+        imports.import("env", "abort", EntityType::Function(0));
+        module.section(&imports);
+        let bytes = module.finish();
+
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine should create");
-        let result = engine.execute(wat.as_bytes());
+        let result = engine.execute(&bytes);
         assert!(result.is_err());
         let err = result.expect_err("should fail");
         assert!(
@@ -647,9 +656,11 @@ mod tests {
 
     #[test]
     fn wasm_rejects_az_imports_without_callbacks() {
-        let wat = r#"(module (import "az" "log" (func (param i32 i32))))"#;
+        // Use the Logger template which imports az::log
+        let bytes =
+            crate::codegen::generate(&crate::codegen::ToolTemplate::Logger).expect("should gen");
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine should create");
-        let result = engine.execute(wat.as_bytes());
+        let result = engine.execute(&bytes);
         assert!(result.is_err());
         let err = result.expect_err("should fail");
         assert!(
@@ -663,23 +674,14 @@ mod tests {
         use super::DenyAllHostCallbacks;
         use std::sync::Arc;
 
-        // Module that imports az::log and exports main
-        let wat = r#"
-            (module
-                (import "az" "log" (func $log (param i32 i32)))
-                (memory (export "memory") 1)
-                (func (export "main") (result i32)
-                    i32.const 0
-                    i32.const 5
-                    call $log
-                    i32.const 0))
-        "#;
+        // Use the Logger template which imports az::log
+        let bytes =
+            crate::codegen::generate(&crate::codegen::ToolTemplate::Logger).expect("should gen");
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine should create");
-        let result = engine.execute_with_host(wat.as_bytes(), Arc::new(DenyAllHostCallbacks));
+        let result = engine.execute_with_host(&bytes, Arc::new(DenyAllHostCallbacks));
         assert!(result.is_ok(), "should succeed with callbacks: {result:?}");
         let output = result.expect("should succeed");
         assert!(output.success);
-        assert!(output.output.contains("0"));
     }
 
     #[test]
@@ -750,7 +752,7 @@ mod tests {
         "#;
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         let result = engine
-            .execute_with_host(wat.as_bytes(), Arc::new(DenyAllHostCallbacks))
+            .execute_with_host(&wat::parse_str(wat).expect("valid WAT"), Arc::new(DenyAllHostCallbacks))
             .expect("should execute");
         assert!(result.success);
         assert!(
@@ -857,7 +859,7 @@ mod tests {
 
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         let result = engine
-            .execute_with_host(wat.as_bytes(), cb)
+            .execute_with_host(&wat::parse_str(wat).expect("valid WAT"), cb)
             .expect("should execute");
         assert!(result.success);
 
@@ -886,7 +888,7 @@ mod tests {
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         // DenyAllHostCallbacks returns Err for file_exists, so we expect -1
         let result = engine
-            .execute_with_host(wat.as_bytes(), Arc::new(DenyAllHostCallbacks))
+            .execute_with_host(&wat::parse_str(wat).expect("valid WAT"), Arc::new(DenyAllHostCallbacks))
             .expect("should execute");
         assert!(result.success);
         // The function returns -1 (as i32, wraps to 4294967295 or shows as -1)
@@ -913,7 +915,7 @@ mod tests {
         "#;
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         let result = engine
-            .execute_with_host(wat.as_bytes(), Arc::new(DenyAllHostCallbacks))
+            .execute_with_host(&wat::parse_str(wat).expect("valid WAT"), Arc::new(DenyAllHostCallbacks))
             .expect("should execute");
         assert!(result.success);
         // DenyAll returns 1 (error)

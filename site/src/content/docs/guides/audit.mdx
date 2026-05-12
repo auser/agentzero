@@ -76,7 +76,7 @@ Each event is a JSON line in `.agentzero/audit/<session_id>.jsonl`:
 
 ## Encrypted Audit Logs
 
-With `--encrypt`, audit events are written to `.jsonl.enc` files. Each line is independently encrypted (AES-256-GCM), so:
+Audit events are encrypted by default and written to `.jsonl.enc` files. Each line is independently encrypted (AES-256-GCM), so:
 
 - New events append without re-encrypting the file
 - Individual events can be decrypted independently

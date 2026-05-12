@@ -150,10 +150,14 @@ you> I need a tool that counts lines in all .rs files
 agentzero> Created and registered the line-counter tool. It's now available for use.
 ```
 
-## Enable Encryption
+## Encryption (On by Default)
+
+Encryption is enabled by default — you'll be prompted for a passphrase:
 
 ```bash
-az chat --local --encrypt
+az chat --local
 # Encryption passphrase: ********
 # Audit logs and sessions encrypted at rest
 ```
+
+To disable, pass `--no-encrypt`.

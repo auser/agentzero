@@ -13,9 +13,9 @@ pub enum Command {
     },
     /// Start a supervised chat session.
     Chat {
-        /// Use local models only (no remote calls).
+        /// Allow remote model calls (local-only by default).
         #[arg(long)]
-        local: bool,
+        remote: bool,
         /// Model to use (default: llama3.2).
         #[arg(long, short, default_value = "llama3.2")]
         model: String,
@@ -31,9 +31,9 @@ pub enum Command {
         /// Resume a previous session by ID.
         #[arg(long)]
         resume: Option<String>,
-        /// Encrypt audit logs and session files at rest.
+        /// Disable encryption of audit logs and session files at rest.
         #[arg(long)]
-        encrypt: bool,
+        no_encrypt: bool,
         /// Single-shot mode: send one message and exit (no interactive loop).
         #[arg(long, short = 'P')]
         print: Option<String>,
@@ -213,24 +213,24 @@ pub async fn run(command: Command) -> i32 {
     match command {
         Command::Init { private, editor } => cmd_init(private, editor.as_deref()),
         Command::Chat {
-            local,
+            remote,
             model,
             stream,
             provider,
             url,
             resume,
-            encrypt,
+            no_encrypt,
             print,
             mode,
         } => {
             cmd_chat(
-                local,
+                !remote,
                 &model,
                 stream,
                 &provider,
                 url.as_deref(),
                 resume.as_deref(),
-                encrypt,
+                !no_encrypt,
                 print.as_deref(),
                 &mode,
             )
@@ -1517,7 +1517,7 @@ async fn cmd_chat(
     println!("Type your message and press Enter. Type /quit to exit.");
     println!();
 
-    // Get encryption passphrase if --encrypt is set
+    // Get encryption passphrase (enabled by default, disable with --no-encrypt)
     let passphrase = if encrypt {
         print!("Encryption passphrase: ");
         io::stdout().flush().ok();
@@ -3361,16 +3361,16 @@ mod tests {
     #[test]
     fn parse_chat() {
         match parse(&["chat"]) {
-            super::Command::Chat { local, .. } => assert!(!local),
+            super::Command::Chat { remote, .. } => assert!(!remote),
             other => panic!("expected Chat, got {other:?}"),
         }
     }
 
     #[test]
-    fn parse_chat_local() {
-        match parse(&["chat", "--local"]) {
-            super::Command::Chat { local, .. } => assert!(local),
-            other => panic!("expected Chat --local, got {other:?}"),
+    fn parse_chat_remote() {
+        match parse(&["chat", "--remote"]) {
+            super::Command::Chat { remote, .. } => assert!(remote),
+            other => panic!("expected Chat --remote, got {other:?}"),
         }
     }
 

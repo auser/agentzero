@@ -76,7 +76,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4"] }
 wasm-encoder = "0.248"
-wasmtime = { version = "29", default-features = false, features = ["cranelift", "runtime", "wat", "std"] }
+wasmtime = { version = "29", default-features = false, features = ["cranelift", "runtime", "std"] }
 
 # Packaging
 sha2 = "0.10"
@@ -96,3 +96,4 @@ rand = "0.8"
 lto = true
 codegen-units = 1
 strip = true
+opt-level = "z"

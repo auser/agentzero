@@ -13,13 +13,15 @@ AgentZero can encrypt sensitive data at rest using AES-256-GCM with Argon2id key
 
 ## Encrypting Chat Sessions
 
-Pass `--encrypt` when starting a chat:
+Encryption is enabled by default. When you start a chat, you'll be prompted for a passphrase:
 
 ```bash
-az chat --local --encrypt
+az chat --local
 # Encryption passphrase: ********
 # Audit logs and sessions will be encrypted.
 ```
+
+To disable encryption, pass `--no-encrypt`.
 
 When the session ends, both the audit log and conversation history are encrypted before writing to disk.
 
@@ -27,8 +29,8 @@ When the session ends, both the audit log and conversation history are encrypted
 
 | Data | Location | Encrypted? |
 |------|----------|-----------|
-| Audit events | `.agentzero/audit/<id>.jsonl.enc` | With `--encrypt` |
-| Session history | `.agentzero/sessions/<id>.json.enc` | With `--encrypt` |
+| Audit events | `.agentzero/audit/<id>.jsonl.enc` | By default |
+| Session history | `.agentzero/sessions/<id>.json.enc` | By default |
 | Vault secrets | `.agentzero/vault/<provider>/<name>.enc` | Always |
 
 ## Encryption Details

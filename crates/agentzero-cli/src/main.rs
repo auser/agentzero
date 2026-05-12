@@ -11,6 +11,9 @@ pub struct Cli {
 
 #[tokio::main]
 async fn main() {
+    // Load .env file if present (won't override existing env vars)
+    dotenvy::dotenv().ok();
+
     let cli = Cli::parse();
     let code = commands::run(cli.command).await;
     std::process::exit(code);
