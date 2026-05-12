@@ -668,6 +668,100 @@ mod tests {
     ///     i32.const 42)
     ///   (memory (export "memory") 1))
     /// ```
+    /// Build a WASM module that exports `run(ptr, len) -> i64` (echo) and `alloc`.
+    ///
+    /// The `run` function packs its input (ptr, len) back as `(ptr << 32) | len`
+    /// so the host reads back exactly the input it wrote. Used to test
+    /// `execute_with_input` without relying on WAT text parsing.
+    fn build_echo_run_module() -> Vec<u8> {
+        use wasm_encoder::*;
+
+        let mut module = Module::new();
+
+        // Types: alloc(i32) -> i32, run(i32, i32) -> i64
+        let mut types = TypeSection::new();
+        types.ty().function(vec![ValType::I32], vec![ValType::I32]); // type 0: alloc
+        types
+            .ty()
+            .function(vec![ValType::I32, ValType::I32], vec![ValType::I64]); // type 1: run
+        module.section(&types);
+
+        // Functions: 0=alloc (type 0), 1=run (type 1)
+        let mut functions = FunctionSection::new();
+        functions.function(0);
+        functions.function(1);
+        module.section(&functions);
+
+        // Memory: 1 page
+        let mut memories = MemorySection::new();
+        memories.memory(MemoryType {
+            minimum: 1,
+            maximum: None,
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
+        module.section(&memories);
+
+        // Global: $bump = 1024 (mutable i32)
+        let mut globals = GlobalSection::new();
+        globals.global(
+            GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
+            &ConstExpr::i32_const(1024),
+        );
+        module.section(&globals);
+
+        // Exports: alloc, run, memory
+        let mut exports = ExportSection::new();
+        exports.export("alloc", ExportKind::Func, 0);
+        exports.export("run", ExportKind::Func, 1);
+        exports.export("memory", ExportKind::Memory, 0);
+        module.section(&exports);
+
+        // Code
+        let mut code = CodeSection::new();
+
+        // alloc(size) -> ptr: bump allocator
+        {
+            let mut f = Function::new(vec![(1, ValType::I32)]); // 1 local: $ptr
+                                                                // ptr = bump
+            f.instruction(&Instruction::GlobalGet(0));
+            f.instruction(&Instruction::LocalSet(1));
+            // bump += size
+            f.instruction(&Instruction::GlobalGet(0));
+            f.instruction(&Instruction::LocalGet(0));
+            f.instruction(&Instruction::I32Add);
+            f.instruction(&Instruction::GlobalSet(0));
+            // return ptr
+            f.instruction(&Instruction::LocalGet(1));
+            f.instruction(&Instruction::End);
+            code.function(&f);
+        }
+
+        // run(ptr, len) -> i64: echo input back as packed (ptr << 32) | len
+        {
+            let mut f = Function::new(vec![]);
+            // (i64.extend_i32_u ptr) << 32
+            f.instruction(&Instruction::LocalGet(0));
+            f.instruction(&Instruction::I64ExtendI32U);
+            f.instruction(&Instruction::I64Const(32));
+            f.instruction(&Instruction::I64Shl);
+            // | (i64.extend_i32_u len)
+            f.instruction(&Instruction::LocalGet(1));
+            f.instruction(&Instruction::I64ExtendI32U);
+            f.instruction(&Instruction::I64Or);
+            f.instruction(&Instruction::End);
+            code.function(&f);
+        }
+
+        module.section(&code);
+        module.finish()
+    }
+
     fn minimal_wasm_module() -> Vec<u8> {
         vec![
             0x00, 0x61, 0x73, 0x6D, // magic: \0asm
@@ -994,29 +1088,15 @@ mod tests {
     fn execute_with_input_echo() {
         use std::sync::Arc;
 
-        // WAT module that echoes run() input back as output.
-        // Uses i64 arithmetic to pack (ptr << 32 | len).
-        let wat = r#"
-            (module
-                (memory (export "memory") 1)
-                (global $bump (mut i32) (i32.const 1024))
-                (func (export "alloc") (param $size i32) (result i32)
-                    (local $ptr i32)
-                    (local.set $ptr (global.get $bump))
-                    (global.set $bump (i32.add (global.get $bump) (local.get $size)))
-                    (local.get $ptr))
-                (func (export "run") (param $ptr i32) (param $len i32) (result i64)
-                    (i64.or
-                        (i64.shl
-                            (i64.extend_i32_u (local.get $ptr))
-                            (i64.const 32))
-                        (i64.extend_i32_u (local.get $len)))))
-        "#;
+        // Build a WASM module that echoes run(ptr, len) input back as output.
+        // Constructed via wasm-encoder to avoid WAT text parsing (wasmtime may
+        // not include the `wat` crate in all build configurations).
+        let wasm = build_echo_run_module();
 
         let engine = WasmEngine::new(WasmConfig::default()).expect("engine");
         let result = engine
             .execute_with_input(
-                wat.as_bytes(),
+                &wasm,
                 Arc::new(DenyAllHostCallbacks),
                 r#"{"action":"init","root":"/tmp/brain"}"#,
             )
