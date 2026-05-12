@@ -48,6 +48,11 @@ docs-dev:
 docs-preview:
   cd site && pnpm run preview
 
+# Trigger docs deployment via GitHub Actions
+deploy-docs:
+  gh workflow run deploy-docs.yml
+  @echo "Docs deployment triggered. Check status with: gh run list --workflow=deploy-docs.yml"
+
 # Release a specific version: just release 0.2.0
 release version:
   #!/usr/bin/env sh
@@ -74,6 +79,9 @@ release version:
   echo ""
   echo "Tagged ${TAG}. Push with:"
   echo "  git push origin main ${TAG}"
+  echo ""
+  echo "After pushing, deploy docs with:"
+  echo "  gh workflow run deploy-docs.yml"
 
 # Release with auto-detected version from conventional commits
 release-auto:
