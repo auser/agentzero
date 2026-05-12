@@ -258,6 +258,185 @@ az vault-import <path> [--dry-run]
 
 Parses `KEY=VALUE` lines from the file and stores each as a vault secret.
 
+## `az plugin list`
+
+List installed plugins.
+
+```bash
+az plugin list
+```
+
+Scans `.agentzero/plugins/` for directories containing a `PLUGIN.toml` manifest. Displays name, version, command count, and description.
+
+## `az plugin install`
+
+Install a plugin from a local directory.
+
+```bash
+az plugin install <path>
+```
+
+The source directory must contain a `PLUGIN.toml` and at least one `.wasm` file. Copies the manifest and all WASM files to `.agentzero/plugins/<name>/`.
+
+## `az plugin info`
+
+Show plugin details.
+
+```bash
+az plugin info <name>
+```
+
+Displays the plugin manifest, available commands, WASM path, and install location.
+
+## `az brain init`
+
+Initialize a new brain vault.
+
+```bash
+az brain init [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Root directory for the vault (default: `.`) |
+| `--force` | Force overwrite existing files |
+| `--dry-run` | Print actions without executing |
+
+Creates the vault directory structure (`raw/`, `wiki/`, `templates/`, `prompts/`), starter files, configuration (`.agentzero-brain.toml`), and agent instruction files.
+
+## `az brain today`
+
+Open or create today's daily note.
+
+```bash
+az brain today [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Root directory for the vault (default: `.`) |
+| `--date` | Date override (YYYY-MM-DD) |
+| `--open` | Open in `$EDITOR` |
+
+## `az brain capture`
+
+Capture a thought to today's daily note.
+
+```bash
+az brain capture <message> [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Root directory for the vault (default: `.`) |
+| `--date` | Date override (YYYY-MM-DD) |
+| `--section` | Section heading to append under (default: `Capture`) |
+
+Appends a timestamped entry under the specified section of the daily note.
+
+## `az brain query`
+
+Search the vault for a term.
+
+```bash
+az brain query <term> [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Root directory for the vault (default: `.`) |
+| `--raw` | Also search the raw directory |
+| `--json` | Output as JSON |
+| `--limit` | Maximum number of results (default: `50`) |
+
+## `az brain ingest`
+
+Generate an ingest prompt for a raw file.
+
+```bash
+az brain ingest <path> [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Root directory for the vault (default: `.`) |
+| `--save-prompt` | Save the prompt to `wiki/reports/` |
+| `--dry-run` | Show what would happen without writing |
+
+## `az brain review`
+
+Generate an end-of-day review prompt.
+
+```bash
+az brain review [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Root directory for the vault (default: `.`) |
+| `--date` | Date to review (YYYY-MM-DD) |
+| `--save-prompt` | Save the prompt to `wiki/reports/` |
+| `--dry-run` | Show what would happen without writing |
+
+## `az brain weekly`
+
+Generate a weekly review prompt.
+
+```bash
+az brain weekly [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Root directory for the vault (default: `.`) |
+| `--week` | ISO week identifier (e.g., `2026-W20`) |
+| `--save-prompt` | Save the prompt to `wiki/reports/` |
+
+## `az brain health`
+
+Run vault health diagnostics.
+
+```bash
+az brain health [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Root directory for the vault (default: `.`) |
+| `--json` | Output as JSON |
+| `--fix` | Attempt to fix issues (not yet implemented) |
+
+Checks for missing frontmatter, unprocessed inbox files, orphan notes, empty sections, and oversized files.
+
+## `az brain checkpoint`
+
+Git checkpoint the vault.
+
+```bash
+az brain checkpoint [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Root directory for the vault (default: `.`) |
+| `--message` | Custom commit message |
+| `--init` | Initialize a git repo if none exists |
+| `--dry-run` | Show what would happen without executing |
+
+## `az brain status`
+
+Show vault status summary.
+
+```bash
+az brain status [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Root directory for the vault (default: `.`) |
+
+Reports wiki note count, daily note count, raw file count, date format, raw immutability setting, and git presence.
+
 ## `az completions`
 
 Generate shell completions for `az`.

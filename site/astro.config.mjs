@@ -31,6 +31,8 @@ export default defineConfig({
 						{ label: 'Encryption at Rest', slug: 'guides/encryption' },
 						{ label: 'Session History & Resume', slug: 'guides/sessions' },
 						{ label: 'Audit Logs', slug: 'guides/audit' },
+						{ label: 'Plugins', slug: 'guides/plugins' },
+						{ label: 'Brain Wiki', slug: 'guides/brain' },
 						{ label: 'Policy Configuration', slug: 'guides/policy' },
 					],
 				},

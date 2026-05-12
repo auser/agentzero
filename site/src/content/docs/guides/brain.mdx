@@ -1,0 +1,313 @@
+---
+title: Brain Wiki
+description: Personal LLM knowledge vault with daily notes, capture, and review
+---
+
+## What Is Brain?
+
+Brain is a personal LLM wiki inspired by Andrej Karpathy's knowledge vault concept. It provides a structured, agent-friendly knowledge base that you and your AI agents can both read and write. Brain runs as a WASM plugin inside the AgentZero sandbox, using `az::*` host imports for filesystem access.
+
+Brain manages a vault of Markdown notes organized into raw material, curated wiki pages, templates, and prompts. All notes use YAML frontmatter for metadata. The vault is designed to work with Obsidian and other Markdown editors.
+
+## Getting Started
+
+### Initialize a Vault
+
+```bash
+az brain init --root ~/brain
+```
+
+This creates the vault directory structure, starter files, configuration, and agent instruction files (`AGENTS.md`, `CLAUDE.md`).
+
+Use `--dry-run` to preview what would be created without writing anything:
+
+```bash
+az brain init --root ~/brain --dry-run
+```
+
+Use `--force` to overwrite existing files:
+
+```bash
+az brain init --root ~/brain --force
+```
+
+## Vault Structure
+
+After initialization, the vault looks like this:
+
+```
+~/brain/
+  .agentzero-brain.toml   # configuration
+  AGENTS.md                # instructions for AI agents
+  CLAUDE.md                # instructions for Claude Code
+  README.md                # vault readme
+  raw/
+    inbox/                 # drop zone for raw material
+    sources/               # original sources
+    assets/                # images, PDFs, etc.
+  wiki/
+    index.md               # vault home page
+    log.md                 # operation log
+    daily/                 # daily notes (YYYY-MM-DD.md)
+    weekly/                # weekly review notes
+    projects/              # project notes
+      index.md             # projects listing
+    areas/                 # area-of-responsibility notes
+    decisions/             # decision records
+    people/                # people notes
+    sources/               # curated source summaries
+    reports/               # generated reports and prompts
+    archive/               # archived notes
+  templates/
+    daily.md               # daily note template
+    project.md             # project template
+    decision.md            # decision record template
+  prompts/
+    claude/                # Claude-specific prompts
+    maintenance/           # vault maintenance prompts
+    workflows/             # workflow prompts
+```
+
+### Key Directories
+
+| Directory | Purpose |
+|-----------|---------|
+| `raw/` | Immutable by default. Drop raw material here for ingestion. |
+| `wiki/` | Curated notes. All files should have YAML frontmatter. |
+| `templates/` | Note templates with `{{date}}` placeholders. |
+| `prompts/` | Prompt templates for LLM workflows. |
+
+## Commands
+
+### `az brain init`
+
+Initialize a new vault.
+
+```bash
+az brain init --root ~/brain
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Vault root directory (default: `.`) |
+| `--force` | Overwrite existing files |
+| `--dry-run` | Preview without writing |
+
+### `az brain today`
+
+Create or show today's daily note.
+
+```bash
+az brain today --root ~/brain
+```
+
+If the daily note does not exist, it is created from the `templates/daily.md` template.
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Vault root directory (default: `.`) |
+| `--date` | Date override in YYYY-MM-DD format |
+| `--open` | Open the note in `$EDITOR` |
+
+### `az brain capture`
+
+Append a timestamped thought to today's daily note.
+
+```bash
+az brain capture "WASM plugins can use az::read_file for host access" --root ~/brain
+```
+
+The message is appended under the `## Capture` section with a timestamp.
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Vault root directory (default: `.`) |
+| `--date` | Date override (YYYY-MM-DD) |
+| `--section` | Section heading to append under (default: `Capture`) |
+
+### `az brain query`
+
+Search the vault for a term.
+
+```bash
+az brain query "WASM" --root ~/brain
+```
+
+Searches all wiki files for matching content and returns file paths with matching lines.
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Vault root directory (default: `.`) |
+| `--raw` | Also search the `raw/` directory |
+| `--json` | Output as JSON |
+| `--limit` | Maximum number of results (default: `50`) |
+
+### `az brain ingest`
+
+Generate an ingest prompt for a raw file. This creates a structured prompt that an LLM can use to extract knowledge from the raw material and create wiki notes.
+
+```bash
+az brain ingest raw/inbox/notes.md --root ~/brain
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Vault root directory (default: `.`) |
+| `--save-prompt` | Save the prompt to `wiki/reports/` |
+| `--dry-run` | Preview without writing |
+
+### `az brain review`
+
+Generate an end-of-day review prompt. Summarizes the day's captures and suggests areas for reflection.
+
+```bash
+az brain review --root ~/brain
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Vault root directory (default: `.`) |
+| `--date` | Date to review (YYYY-MM-DD, default: today) |
+| `--save-prompt` | Save the prompt to `wiki/reports/` |
+| `--dry-run` | Preview without writing |
+
+### `az brain weekly`
+
+Generate a weekly review prompt. Aggregates the week's daily notes and highlights patterns.
+
+```bash
+az brain weekly --root ~/brain
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Vault root directory (default: `.`) |
+| `--week` | ISO week identifier (e.g., `2026-W20`) |
+| `--save-prompt` | Save the prompt to `wiki/reports/` |
+
+### `az brain health`
+
+Run vault health diagnostics. Checks for missing frontmatter, unprocessed inbox files, orphan notes, empty sections, and oversized files.
+
+```bash
+az brain health --root ~/brain
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Vault root directory (default: `.`) |
+| `--json` | Output as JSON |
+| `--fix` | Attempt to fix issues (not yet implemented) |
+
+Example output:
+
+```
+Health: 0 error(s), 2 warning(s), 1 info(s)
+
+  WARN  [missing-frontmatter] [wiki/projects/myproject.md] file is missing YAML frontmatter
+  WARN  [orphan-note] [wiki/projects/scratch.md] scratch.md not linked from projects/index.md
+  INFO  [raw-inbox] 3 file(s) in raw/inbox/ awaiting ingestion
+```
+
+### `az brain checkpoint`
+
+Git checkpoint the vault. Stages all changes and creates a commit.
+
+```bash
+az brain checkpoint --root ~/brain
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root` | Vault root directory (default: `.`) |
+| `--message` | Custom commit message |
+| `--init` | Initialize a git repo if none exists |
+| `--dry-run` | Preview without executing |
+
+### `az brain status`
+
+Show a summary of the vault.
+
+```bash
+az brain status --root ~/brain
+```
+
+Example output:
+
+```
+Vault root:      /home/user/brain
+Wiki notes:      42
+Daily notes:     15
+Raw files:       7
+Date format:     %Y-%m-%d
+Raw immutable:   true
+Git repo:        yes
+```
+
+## Configuration
+
+Brain is configured via `.agentzero-brain.toml` in the vault root. The file is created during `az brain init` and uses sensible defaults.
+
+```toml
+[vault]
+root = "."
+raw_dir = "raw"
+wiki_dir = "wiki"
+templates_dir = "templates"
+
+[daily]
+date_format = "%Y-%m-%d"
+time_format = "%H:%M"
+
+[safety]
+raw_is_immutable = true
+allow_destructive = false
+```
+
+### Configuration Sections
+
+| Section | Field | Default | Description |
+|---------|-------|---------|-------------|
+| `vault` | `root` | `.` | Vault root path |
+| `vault` | `raw_dir` | `raw` | Raw material directory (relative) |
+| `vault` | `wiki_dir` | `wiki` | Curated wiki directory (relative) |
+| `vault` | `templates_dir` | `templates` | Templates directory (relative) |
+| `daily` | `date_format` | `%Y-%m-%d` | Date format for daily note filenames |
+| `daily` | `time_format` | `%H:%M` | Time format for capture timestamps |
+| `safety` | `raw_is_immutable` | `true` | Prevent writes to the `raw/` directory |
+| `safety` | `allow_destructive` | `false` | Allow destructive operations (reserved) |
+
+Directory paths must be relative (no leading `/`) and must not contain path traversal (`..`). Validation rejects invalid paths at config load time.
+
+## Obsidian Compatibility
+
+The vault is designed to work as an Obsidian vault. Open the vault root directory in Obsidian and all notes will be browsable. Brain uses standard Markdown links (not wikilinks) by default, so configure Obsidian accordingly:
+
+1. Open the vault in Obsidian
+2. Go to **Settings > Files & Links**
+3. Set **New link format** to **Relative path to file**
+
+Daily notes appear in `wiki/daily/` and follow the `YYYY-MM-DD.md` naming convention, which is compatible with Obsidian's Daily Notes plugin.
+
+## YAML Frontmatter Conventions
+
+All wiki notes are expected to have YAML frontmatter. The `brain health` command warns about files missing frontmatter.
+
+```yaml
+---
+type: daily
+status: active
+created: 2026-05-11
+tags: [rust, wasm]
+---
+```
+
+Common frontmatter fields:
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| `type` | `daily`, `project`, `decision`, `index`, `log`, `meta` | Note type |
+| `status` | `active`, `draft`, `archived` | Note lifecycle status |
+| `created` | Date string | Creation date |
+| `updated` | Date string | Last update date |
+| `tags` | Array of strings | Searchable tags |

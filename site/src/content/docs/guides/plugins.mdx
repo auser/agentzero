@@ -1,0 +1,221 @@
+---
+title: Plugins
+description: Build, install, and manage WASM-based plugins
+---
+
+## What Are Plugins?
+
+Plugins are WASM modules with a `PLUGIN.toml` manifest that extend AgentZero with new commands. They run inside the same wasmtime sandbox used for WASM skills, with fuel-based time limits and no ambient filesystem or network access.
+
+### Plugins vs. Skills
+
+Skills are the original extension mechanism. They use `SKILL.md` frontmatter, live in `.agentzero/skills/`, and support multiple runtimes (instruction-only, WASM, host-supervised). Plugins are a newer, more structured alternative:
+
+| Feature | Skills | Plugins |
+|---------|--------|---------|
+| Manifest | `SKILL.md` (Markdown frontmatter) | `PLUGIN.toml` (structured TOML) |
+| Location | `.agentzero/skills/<name>/` | `.agentzero/plugins/<name>/` |
+| Runtime | `none`, `wasm`, `host_supervised` | `wasm` only |
+| Commands | Single entrypoint | Multiple named commands |
+| Host imports | `_start` or `main` | `az::*` host imports (filesystem, clock, logging) |
+
+Plugins are the recommended path for new extensions. They have richer host integration through the `az::*` import module and support multiple commands per module.
+
+## Managing Plugins
+
+### List Installed Plugins
+
+```bash
+az plugin list
+```
+
+Shows all plugins installed in `.agentzero/plugins/`:
+
+```
+NAME            VERSION    CMDS   DESCRIPTION
+------------------------------------------------------------
+brain           0.1.0      10     Personal LLM wiki — manage a Karpathy-style knowledge vault
+```
+
+### Install a Plugin
+
+```bash
+az plugin install /path/to/plugin-directory
+```
+
+The source directory must contain a `PLUGIN.toml` and at least one `.wasm` file. The installer copies the manifest and all `.wasm` files to `.agentzero/plugins/<name>/`.
+
+### Show Plugin Details
+
+```bash
+az plugin info brain
+```
+
+Displays the plugin manifest, available commands, WASM path, and install location.
+
+## PLUGIN.toml Format
+
+Every plugin has a `PLUGIN.toml` in its root directory:
+
+```toml
+[plugin]
+name = "brain"
+version = "0.1.0"
+description = "Personal LLM wiki — manage a Karpathy-style knowledge vault"
+runtime = "wasm"
+wasm_path = "brain.wasm"
+
+[[commands]]
+name = "init"
+description = "Initialize a brain vault"
+
+[[commands]]
+name = "today"
+description = "Create or show today's daily note"
+
+[[commands]]
+name = "capture"
+description = "Append a timestamped thought to today's daily note"
+```
+
+### Manifest Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `plugin.name` | yes | Plugin identifier (used as the directory name) |
+| `plugin.version` | yes | Semantic version |
+| `plugin.description` | yes | Human-readable description |
+| `plugin.runtime` | no | Runtime type (default: `wasm`) |
+| `plugin.wasm_path` | no | Path to the WASM module relative to the plugin directory. If omitted, the registry scans for any `.wasm` file. |
+| `commands` | no | Array of `{name, description}` entries declaring available subcommands |
+
+## Building a Plugin
+
+Plugins compile from Rust to `wasm32-unknown-unknown`. A typical plugin has two parts:
+
+1. **A library crate** (`crates/agentzero-<name>/`) containing the business logic with a `BrainFs`-style trait for filesystem abstraction.
+2. **A WASM guest crate** (`plugins/<name>/`) that implements the trait using `az::*` host imports and exports `run(ptr, len) -> i64`.
+
+### Project Structure
+
+```
+plugins/my-plugin/
+  Cargo.toml        # crate-type = ["cdylib"], targets wasm32-unknown-unknown
+  PLUGIN.toml       # manifest
+  src/lib.rs        # WASM guest: host imports + run() export
+```
+
+### Cargo.toml
+
+```toml
+[package]
+name = "my-plugin-wasm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+```
+
+### Build Command
+
+```bash
+cargo build --manifest-path plugins/my-plugin/Cargo.toml \
+  --target wasm32-unknown-unknown --release
+```
+
+Or use the Justfile recipe:
+
+```bash
+just build-plugin my-plugin
+```
+
+### Install After Building
+
+```bash
+just install-plugin my-plugin
+```
+
+This copies the built `.wasm` and `PLUGIN.toml` into `.agentzero/plugins/<name>/`.
+
+## The `run(input) -> output` Protocol
+
+Plugins export two functions:
+
+| Export | Signature | Purpose |
+|--------|-----------|---------|
+| `alloc` | `(size: i32) -> i32` | Allocate bytes in guest memory for the host to write into |
+| `run` | `(ptr: i32, len: i32) -> i64` | Execute a command; input is a JSON string, return is a packed `(ptr << 32 \| len)` pointing to a JSON response |
+
+### Input JSON
+
+The host writes a JSON object into guest memory. The `action` field selects which command to run:
+
+```json
+{
+  "action": "capture",
+  "root": "/home/user/brain",
+  "message": "interesting thought about WASM sandboxing"
+}
+```
+
+### Output JSON
+
+The guest returns a packed pointer to a JSON response:
+
+```json
+{
+  "success": true,
+  "output": "Captured to wiki/daily/2026-05-11.md",
+  "error": null
+}
+```
+
+On failure:
+
+```json
+{
+  "success": false,
+  "output": null,
+  "error": "path traversal detected: ../etc/passwd"
+}
+```
+
+## Host Imports
+
+Plugins access host capabilities through the `az` import module. These are the same imports used by dynamically generated WASM tools:
+
+| Import | Signature | Description |
+|--------|-----------|-------------|
+| `az::read_file` | `(ptr, len) -> i64` | Read a file; returns packed `(ptr, len)` string or `-1` on error |
+| `az::write_file` | `(path_ptr, path_len, content_ptr, content_len) -> i32` | Write a file; returns `0` on success |
+| `az::append_file` | `(path_ptr, path_len, content_ptr, content_len) -> i32` | Append to a file; returns `0` on success |
+| `az::list_dir` | `(ptr, len) -> i64` | List directory entries as JSON array; returns packed string |
+| `az::create_dir` | `(ptr, len) -> i32` | Create directory and parents; returns `0` on success |
+| `az::file_exists` | `(ptr, len) -> i32` | Check existence; `0` = exists, `1` = not found |
+| `az::now` | `() -> i64` | Current time as packed ISO 8601 string |
+| `az::log` | `(ptr, len)` | Write a message to the host log |
+
+All filesystem imports are mediated by the host's `PathValidator`, which rejects path traversal (`..`), null bytes, and access outside the allowed root directory. WASM modules that declare undeclared imports are rejected before execution.
+
+## Security
+
+Plugin execution follows the same security model as WASM skills:
+
+- **Policy-gated**: `wasm_execution` must be `allow` or `require_approval` in `.agentzero/policy.yml`
+- **Path validation**: All filesystem paths pass through the `PathValidator` which blocks traversal attacks and sensitive paths (`.ssh`, `.env`, `.aws/credentials`)
+- **Memory capped**: 64 MB default
+- **Time-limited**: 30-second fuel budget
+- **No ambient access**: No filesystem or network access except through declared host imports
+- **Import verification**: Modules with undeclared imports are rejected before execution
+- **Audit trail**: Every plugin execution emits a structured audit event

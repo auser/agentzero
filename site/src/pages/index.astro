@@ -190,6 +190,7 @@ I recommend moving it to the vault:
         <div class="fc"><h3>Encrypted at rest</h3><p>AES-256-GCM with Argon2id key derivation. Vault, sessions, audit logs. Per-line encryption so logs stay appendable.</p></div>
         <div class="fc"><h3>Multi-provider routing</h3><p>Ollama, llama.cpp, vLLM, LM Studio, Anthropic Claude. Try local first, fall back with redaction. Retry with exponential backoff on transient failures.</p></div>
         <div class="fc"><h3>Self-improving agent</h3><p>The agent can generate new WASM tools on the fly via <code>generate_tool</code>. Template-based codegen, per-project versioning, and directory-based tool registries.</p></div>
+        <div class="fc"><h3>WASM plugin system</h3><p>Extend AgentZero with WASM plugins. Full host import API (<code>az::read_file</code>, <code>az::write_file</code>, <code>az::log</code>). Path-validated, time-limited, memory-capped. The Brain plugin ships as the first example &mdash; a personal LLM wiki with daily notes, capture, query, and review.</p></div>
         <div class="fc"><h3>Context compaction</h3><p>Long conversations auto-summarize older messages. System prompt and recent context preserved. No context overflow, no lost instructions.</p></div>
       </div>
     </div>

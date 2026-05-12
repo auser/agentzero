@@ -79,6 +79,9 @@ Skill manifests, security scanner, report generator, skill registry with lockfil
 - `remote` — skill ref parsing (local/git/GitHub), release resolution
 - `github` — async GitHub API client for install and publish
 
+### `agentzero-brain`
+Personal LLM wiki plugin. Manages a knowledge vault with daily notes, capture, query, ingest, review, weekly summaries, health diagnostics, git checkpoints, and status. Uses a `BrainFs` trait to abstract filesystem operations, enabling the same logic to run natively or inside the WASM sandbox via `az::*` host imports. Configured via `.agentzero-brain.toml`. The WASM guest crate lives at `plugins/brain/`.
+
 ### `agentzero-mcp`
 MCP server (JSON-RPC 2.0 over stdio). Exposes tools to any MCP client. Now behind the optional `mcp` feature flag (see [ADR 0014](/reference/adrs#adr-0014-mcp-deprecation-to-optional-feature-flag)).
 
