@@ -4091,6 +4091,7 @@ fn cmd_brain(action: BrainAction) -> i32 {
 #[cfg(feature = "wasm")]
 struct PluginHostCallbacks {
     validator: agentzero::core::path_validator::PathValidator,
+    network_policy: agentzero::sandbox::SandboxNetworkPolicy,
 }
 
 /// Sensitive paths for plugins.
@@ -4102,12 +4103,16 @@ const PLUGIN_SENSITIVE: &[&str] = &[".ssh", ".gnupg", ".aws/credentials", ".env"
 
 #[cfg(feature = "wasm")]
 impl PluginHostCallbacks {
-    fn new(root: &std::path::Path) -> Result<Self, agentzero::core::path_validator::PathError> {
+    fn new(
+        root: &std::path::Path,
+        network_policy: agentzero::sandbox::SandboxNetworkPolicy,
+    ) -> Result<Self, agentzero::core::path_validator::PathError> {
         Ok(Self {
             validator: agentzero::core::path_validator::PathValidator::with_sensitive(
                 root,
                 PLUGIN_SENSITIVE,
             )?,
+            network_policy,
         })
     }
 }
@@ -4206,12 +4211,67 @@ impl agentzero::sandbox::wasm::WasmHostCallbacks for PluginHostCallbacks {
 
     fn http_request(
         &self,
-        _url: &str,
-        _method: &str,
-        _headers_json: &str,
-        _body: &str,
+        url: &str,
+        method: &str,
+        headers_json: &str,
+        body: &str,
     ) -> Result<String, String> {
-        Err("network access denied for plugins (not yet configured)".into())
+        // 1. Check network policy (URL allowlist)
+        if !self.network_policy.allows_url(url) {
+            return Err(format!(
+                "network access denied: URL '{url}' not allowed by plugin network policy"
+            ));
+        }
+
+        // 2. PII scan on request body
+        if !body.is_empty() {
+            let scan = agentzero::core::scan_for_secrets(body);
+            if !scan.is_clean() {
+                return Err(
+                    "network request denied: request body contains secrets or PII".to_string(),
+                );
+            }
+        }
+
+        // 3. Execute via reqwest::blocking
+        let client = reqwest::blocking::Client::new();
+        let mut req = match method.to_uppercase().as_str() {
+            "GET" => client.get(url),
+            "POST" => client.post(url),
+            "PUT" => client.put(url),
+            "DELETE" => client.delete(url),
+            "PATCH" => client.patch(url),
+            "HEAD" => client.head(url),
+            other => return Err(format!("unsupported HTTP method: {other}")),
+        };
+
+        if !headers_json.is_empty() && headers_json != "{}" {
+            if let Ok(headers) =
+                serde_json::from_str::<std::collections::HashMap<String, String>>(headers_json)
+            {
+                for (key, value) in &headers {
+                    req = req.header(key.as_str(), value.as_str());
+                }
+            }
+        }
+
+        if !body.is_empty() {
+            req = req.body(body.to_string());
+        }
+
+        let resp = req
+            .send()
+            .map_err(|e| format!("http_request failed: {e}"))?;
+        let status = resp.status().as_u16();
+        let resp_body = resp.text().map_err(|e| format!("read response: {e}"))?;
+
+        eprintln!("[plugin] http {method} {url} → {status}");
+
+        let response = serde_json::json!({
+            "status": status,
+            "body": resp_body,
+        });
+        Ok(response.to_string())
     }
 }
 
@@ -4270,10 +4330,25 @@ fn run_plugin_wasm(plugin_name: &str, input_json: &str, root_hint: Option<&str>)
         }
     };
 
-    // 4. Create PluginHostCallbacks with PathValidator rooted at root_hint
+    // 4. Load network policy from plugin manifest (if available)
+    let network_policy = registry
+        .get(plugin_name)
+        .and_then(|(manifest, _)| manifest.plugin.network)
+        .map(|net_config| match net_config.policy.as_str() {
+            "allow_egress" => agentzero::sandbox::SandboxNetworkPolicy::AllowEgress,
+            "allow_egress_filtered" => {
+                agentzero::sandbox::SandboxNetworkPolicy::AllowEgressFiltered {
+                    allowed_hosts: net_config.allowed_hosts,
+                }
+            }
+            _ => agentzero::sandbox::SandboxNetworkPolicy::Deny,
+        })
+        .unwrap_or(agentzero::sandbox::SandboxNetworkPolicy::Deny);
+
+    // 5. Create PluginHostCallbacks with PathValidator rooted at root_hint
     let root_path = root_hint.unwrap_or(".");
     let callbacks: Arc<dyn WasmHostCallbacks> =
-        match PluginHostCallbacks::new(std::path::Path::new(root_path)) {
+        match PluginHostCallbacks::new(std::path::Path::new(root_path), network_policy) {
             Ok(cb) => Arc::new(cb),
             Err(e) => {
                 eprintln!("error: invalid root path: {e}");
@@ -4281,7 +4356,7 @@ fn run_plugin_wasm(plugin_name: &str, input_json: &str, root_hint: Option<&str>)
             }
         };
 
-    // 5. Execute and parse response
+    // 6. Execute and parse response
     match engine.execute_with_input(&wasm_bytes, callbacks, input_json) {
         Ok(result) => {
             if let Ok(response) = serde_json::from_str::<serde_json::Value>(&result.output) {

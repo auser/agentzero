@@ -21,6 +21,7 @@ agentzero = { workspace = true }
 agentzero-brain = { workspace = true }
 async-trait = "0.1"
 clap_complete = "4"
+reqwest = { workspace = true, features = ["blocking"] }
 dotenvy = "0.15"
 chrono = { workspace = true }
 clap = { workspace = true }
