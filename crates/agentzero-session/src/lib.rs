@@ -5,6 +5,7 @@
 
 pub mod agent_loop;
 pub mod anthropic;
+pub mod checkpoint;
 pub mod context;
 pub mod dynamic_tools;
 pub mod models_config;
@@ -20,6 +21,9 @@ pub mod wasm_host;
 pub use agent_loop::{
     AgentLoop, AgentLoopConfig, AgentLoopError, AgentResponse, ApprovalDecision, ApprovalHandler,
     AutoApprove, NoopProgress, ProgressHandler, ToolCallRecord,
+};
+pub use checkpoint::{
+    AgentCheckpoint, CaptureParams, CheckpointConfig, CheckpointError, WakeTrigger,
 };
 pub use models_config::{ModelsConfig, ProviderConfig, ProviderType};
 pub use ollama::{

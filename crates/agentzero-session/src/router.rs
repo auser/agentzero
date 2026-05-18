@@ -100,6 +100,42 @@ impl ProviderRouter {
                     };
                     Box::new(AnthropicProvider::new(cfg))
                 }
+                ProviderType::Custom => {
+                    let driver = pc.driver.as_deref().unwrap_or("openai-compatible");
+                    match driver {
+                        "ollama" => {
+                            let cfg = OllamaConfig {
+                                base_url: pc.url.clone(),
+                                model: pc.default_model.clone(),
+                            };
+                            Box::new(OllamaProvider::new(cfg))
+                        }
+                        "anthropic" => {
+                            let api_key = pc
+                                .api_key
+                                .clone()
+                                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+                                .unwrap_or_default();
+                            let cfg = AnthropicConfig {
+                                api_key,
+                                model: pc.default_model.clone(),
+                                base_url: pc.url.clone(),
+                                max_tokens: 4096,
+                            };
+                            Box::new(AnthropicProvider::new(cfg))
+                        }
+                        _ => {
+                            // Default: openai-compatible (covers most third-party APIs)
+                            let cfg = OpenAICompatConfig {
+                                base_url: pc.url.clone(),
+                                model: pc.default_model.clone(),
+                                is_local: pc.is_local,
+                                api_key: pc.api_key.clone(),
+                            };
+                            Box::new(OpenAICompatProvider::new(cfg))
+                        }
+                    }
+                }
             };
             providers.push(ProviderEntry {
                 provider,
@@ -274,6 +310,7 @@ mod tests {
                     default_model: "llama3.2".into(),
                     is_local: true,
                     api_key: None,
+                    driver: None,
                 },
                 crate::models_config::ProviderConfig {
                     name: "lm-studio".into(),
@@ -282,6 +319,7 @@ mod tests {
                     default_model: "gemma-4".into(),
                     is_local: true,
                     api_key: Some("lm-studio".into()),
+                    driver: None,
                 },
             ],
         };
@@ -296,5 +334,43 @@ mod tests {
     fn from_config_empty_fails() {
         let config = ModelsConfig { providers: vec![] };
         assert!(ProviderRouter::from_config(&config).is_err());
+    }
+
+    #[test]
+    fn custom_provider_defaults_to_openai_compat() {
+        let config = ModelsConfig {
+            providers: vec![crate::models_config::ProviderConfig {
+                name: "together-ai".into(),
+                provider_type: ProviderType::Custom,
+                url: "https://api.together.xyz/v1".into(),
+                default_model: "meta-llama/Llama-3-70b".into(),
+                is_local: false,
+                api_key: Some("test-key".into()),
+                driver: None, // should default to openai-compatible
+            }],
+        };
+        let router = ProviderRouter::from_config(&config).expect("should create");
+        assert_eq!(router.providers.len(), 1);
+        assert_eq!(router.model_name(), "meta-llama/Llama-3-70b");
+        let models = router.list_models();
+        assert!(!models[0].is_local);
+    }
+
+    #[test]
+    fn custom_provider_with_ollama_driver() {
+        let config = ModelsConfig {
+            providers: vec![crate::models_config::ProviderConfig {
+                name: "custom-ollama".into(),
+                provider_type: ProviderType::Custom,
+                url: "http://my-gpu:11434".into(),
+                default_model: "llama3.2".into(),
+                is_local: true,
+                api_key: None,
+                driver: Some("ollama".into()),
+            }],
+        };
+        let router = ProviderRouter::from_config(&config).expect("should create");
+        assert_eq!(router.providers.len(), 1);
+        assert_eq!(router.primary_name(), "ollama");
     }
 }

@@ -132,6 +132,31 @@ impl WasmHostCallbacks for SessionHostCallbacks {
     fn now(&self) -> String {
         chrono::Local::now().to_rfc3339()
     }
+
+    fn http_request(
+        &self,
+        url: &str,
+        method: &str,
+        _headers_json: &str,
+        _body: &str,
+    ) -> Result<String, String> {
+        info!(
+            host_call = "http_request",
+            url = url,
+            method = method,
+            "WASM guest calling http_request"
+        );
+        // Delegate to ToolExecutor's network request policy check.
+        // For now, deny all — full implementation requires the policy engine
+        // to check Capability::NetworkRequest and validate the URL against
+        // the SandboxNetworkPolicy allowlist.
+        warn!(
+            host_call = "http_request",
+            url = url,
+            "http_request not yet wired to ToolExecutor — denied by default"
+        );
+        Err("http_request: network requests require NetworkRequest capability (not yet implemented in ToolExecutor)".into())
+    }
 }
 
 #[cfg(test)]

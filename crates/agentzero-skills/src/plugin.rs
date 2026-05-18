@@ -39,6 +39,25 @@ pub struct PluginMeta {
     #[serde(default = "default_runtime")]
     pub runtime: String,
     pub wasm_path: Option<String>,
+    /// Optional network policy for this plugin.
+    /// If omitted, defaults to deny (no network access).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<PluginNetworkConfig>,
+}
+
+/// Network configuration declared in a plugin manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginNetworkConfig {
+    /// Policy type: `"deny"`, `"allow_egress"`, or `"allow_egress_filtered"`.
+    #[serde(default = "default_deny")]
+    pub policy: String,
+    /// Allowed hostnames when `policy = "allow_egress_filtered"`.
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+}
+
+fn default_deny() -> String {
+    "deny".to_string()
 }
 
 fn default_runtime() -> String {
@@ -388,5 +407,42 @@ description = "A simple plugin"
         let manifest: PluginManifest = toml::from_str(manifest_str).expect("should parse");
         assert_eq!(manifest.plugin.runtime, "wasm");
         assert!(manifest.commands.is_empty());
+    }
+
+    #[test]
+    fn test_parse_manifest_with_network_config() {
+        let manifest_str = r#"
+[plugin]
+name = "slack-gateway"
+version = "0.1.0"
+description = "Slack messaging integration"
+runtime = "wasm"
+wasm_path = "slack.wasm"
+
+[plugin.network]
+policy = "allow_egress_filtered"
+allowed_hosts = ["slack.com", "files.slack.com"]
+
+[[commands]]
+name = "send_message"
+description = "Send a message to Slack"
+"#;
+        let manifest: PluginManifest = toml::from_str(manifest_str).expect("should parse");
+        assert_eq!(manifest.plugin.name, "slack-gateway");
+        let network = manifest.plugin.network.expect("should have network config");
+        assert_eq!(network.policy, "allow_egress_filtered");
+        assert_eq!(network.allowed_hosts, vec!["slack.com", "files.slack.com"]);
+    }
+
+    #[test]
+    fn test_parse_manifest_no_network_defaults_to_none() {
+        let manifest_str = r#"
+[plugin]
+name = "offline"
+version = "0.1.0"
+description = "No network needed"
+"#;
+        let manifest: PluginManifest = toml::from_str(manifest_str).expect("should parse");
+        assert!(manifest.plugin.network.is_none());
     }
 }

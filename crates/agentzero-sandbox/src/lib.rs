@@ -47,14 +47,45 @@ pub struct SandboxMount {
 }
 
 /// Network policy for sandbox execution.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxNetworkPolicy {
     /// No network access.
     #[default]
     Deny,
-    /// Allow specific egress only.
+    /// Allow all outbound egress (unrestricted).
     AllowEgress,
+    /// Allow outbound egress only to specific hosts.
+    AllowEgressFiltered {
+        /// Allowed hostnames (e.g. `["slack.com", "api.telegram.org"]`).
+        allowed_hosts: Vec<String>,
+    },
+}
+
+impl SandboxNetworkPolicy {
+    /// Check whether the given URL is allowed by this policy.
+    pub fn allows_url(&self, url: &str) -> bool {
+        match self {
+            Self::Deny => false,
+            Self::AllowEgress => true,
+            Self::AllowEgressFiltered { allowed_hosts } => {
+                // Extract host from URL
+                let host = url
+                    .strip_prefix("https://")
+                    .or_else(|| url.strip_prefix("http://"))
+                    .unwrap_or(url)
+                    .split('/')
+                    .next()
+                    .unwrap_or("")
+                    .split(':')
+                    .next()
+                    .unwrap_or("");
+                allowed_hosts
+                    .iter()
+                    .any(|h| host == h || host.ends_with(&format!(".{h}")))
+            }
+        }
+    }
 }
 
 /// Complete sandbox profile for an execution.
@@ -153,5 +184,47 @@ mod tests {
         let profile = SandboxProfile::host_readonly(vec![]);
         let json = serde_json::to_string(&profile).expect("profile should serialize");
         assert!(json.contains("host_readonly"));
+    }
+
+    #[test]
+    fn deny_policy_blocks_all_urls() {
+        let policy = SandboxNetworkPolicy::Deny;
+        assert!(!policy.allows_url("https://slack.com/api/chat.postMessage"));
+    }
+
+    #[test]
+    fn allow_egress_allows_all_urls() {
+        let policy = SandboxNetworkPolicy::AllowEgress;
+        assert!(policy.allows_url("https://slack.com/api/chat.postMessage"));
+        assert!(policy.allows_url("http://localhost:8080/test"));
+    }
+
+    #[test]
+    fn filtered_egress_checks_host() {
+        let policy = SandboxNetworkPolicy::AllowEgressFiltered {
+            allowed_hosts: vec!["slack.com".into(), "api.telegram.org".into()],
+        };
+        assert!(policy.allows_url("https://slack.com/api/chat.postMessage"));
+        assert!(policy.allows_url("https://api.telegram.org/bot123/sendMessage"));
+        assert!(!policy.allows_url("https://evil.com/steal-data"));
+        assert!(!policy.allows_url("https://notslack.com/api"));
+    }
+
+    #[test]
+    fn filtered_egress_allows_subdomains() {
+        let policy = SandboxNetworkPolicy::AllowEgressFiltered {
+            allowed_hosts: vec!["slack.com".into()],
+        };
+        assert!(policy.allows_url("https://files.slack.com/upload"));
+    }
+
+    #[test]
+    fn filtered_egress_serializes() {
+        let policy = SandboxNetworkPolicy::AllowEgressFiltered {
+            allowed_hosts: vec!["slack.com".into()],
+        };
+        let json = serde_json::to_string(&policy).expect("should serialize");
+        let loaded: SandboxNetworkPolicy = serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(loaded, policy);
     }
 }

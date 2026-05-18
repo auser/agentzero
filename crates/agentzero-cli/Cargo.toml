@@ -19,6 +19,7 @@ mcp = ["agentzero/mcp"]
 [dependencies]
 agentzero = { workspace = true }
 agentzero-brain = { workspace = true }
+async-trait = "0.1"
 clap_complete = "4"
 dotenvy = "0.15"
 chrono = { workspace = true }

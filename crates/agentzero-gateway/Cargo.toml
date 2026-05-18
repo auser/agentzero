@@ -1,0 +1,17 @@
+[package]
+name = "agentzero-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "Messaging gateway framework for AgentZero"
+
+[dependencies]
+agentzero-core = { path = "../agentzero-core" }
+agentzero-session = { path = "../agentzero-session" }
+agentzero-tracing = { path = "../agentzero-tracing" }
+async-trait = "0.1"
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+toml = { workspace = true }

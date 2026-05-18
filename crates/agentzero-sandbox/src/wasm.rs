@@ -31,6 +31,17 @@ pub trait WasmHostCallbacks: Send + Sync {
     fn log(&self, message: &str);
     /// Current date-time in ISO 8601 format.
     fn now(&self) -> String;
+    /// Make an outbound HTTP request. Must policy-check NetworkRequest
+    /// and validate the URL against the sandbox network policy.
+    ///
+    /// Returns a JSON string: `{"status": u16, "headers": {}, "body": "..."}`.
+    fn http_request(
+        &self,
+        url: &str,
+        method: &str,
+        headers_json: &str,
+        body: &str,
+    ) -> Result<String, String>;
 }
 
 /// No-op host callbacks for modules that don't need host access.
@@ -59,6 +70,15 @@ impl WasmHostCallbacks for DenyAllHostCallbacks {
     fn log(&self, _message: &str) {}
     fn now(&self) -> String {
         chrono::Local::now().to_rfc3339()
+    }
+    fn http_request(
+        &self,
+        _url: &str,
+        _method: &str,
+        _headers_json: &str,
+        _body: &str,
+    ) -> Result<String, String> {
+        Err("network access denied (no callbacks provided)".into())
     }
 }
 
@@ -526,6 +546,62 @@ mod runtime {
                     WasmError::ExecutionFailed(format!("failed to register az::now: {e}"))
                 })?;
 
+            // az::http_request(url_ptr, url_len, method_ptr, method_len,
+            //                  headers_ptr, headers_len, body_ptr, body_len) -> i64
+            // Returns packed (ptr, len) of JSON response string, -1 on error.
+            linker
+                .func_wrap(
+                    "az",
+                    "http_request",
+                    |mut caller: wasmtime::Caller<'_, HostState>,
+                     url_ptr: i32,
+                     url_len: i32,
+                     method_ptr: i32,
+                     method_len: i32,
+                     headers_ptr: i32,
+                     headers_len: i32,
+                     body_ptr: i32,
+                     body_len: i32|
+                     -> i64 {
+                        let (url, method, headers_json, body) = {
+                            let memory =
+                                match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                                    Some(m) => m,
+                                    None => return -1,
+                                };
+                            let data = memory.data(&caller);
+                            let read_str = |ptr: i32, len: i32| -> Option<String> {
+                                data.get(ptr as usize..(ptr as usize + len as usize))
+                                    .and_then(|s| std::str::from_utf8(s).ok())
+                                    .map(|s| s.to_owned())
+                            };
+                            match (
+                                read_str(url_ptr, url_len),
+                                read_str(method_ptr, method_len),
+                                read_str(headers_ptr, headers_len),
+                                read_str(body_ptr, body_len),
+                            ) {
+                                (Some(u), Some(m), Some(h), Some(b)) => (u, m, h, b),
+                                _ => return -1,
+                            }
+                        };
+                        match caller.data().callbacks.http_request(
+                            &url,
+                            &method,
+                            &headers_json,
+                            &body,
+                        ) {
+                            Ok(response_json) => {
+                                write_string_to_guest(&mut caller, None, &response_json)
+                            }
+                            Err(_) => -1,
+                        }
+                    },
+                )
+                .map_err(|e| {
+                    WasmError::ExecutionFailed(format!("failed to register az::http_request: {e}"))
+                })?;
+
             let instance = linker
                 .instantiate(&mut store, &module)
                 .map_err(|e| WasmError::ExecutionFailed(e.to_string()))?;
@@ -975,6 +1051,15 @@ mod tests {
             }
             fn now(&self) -> String {
                 "2026-05-11T12:00:00-04:00".to_string()
+            }
+            fn http_request(
+                &self,
+                _url: &str,
+                _method: &str,
+                _headers_json: &str,
+                _body: &str,
+            ) -> Result<String, String> {
+                Err("not implemented".into())
             }
         }
 

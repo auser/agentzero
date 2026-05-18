@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 use std::pin::Pin;
+use std::time::{Duration, Instant};
 
 use agentzero_core::{redact_json_value, ApprovalScope, DataClassification};
 use agentzero_sandbox::codegen;
@@ -158,6 +159,10 @@ pub struct AgentLoop {
     session_approvals: HashSet<String>,
     /// Optional dynamic tool registry for self-improving agent (ADR 0012).
     tool_registry: Option<DynamicToolRegistry>,
+    /// Timestamp of last user interaction or tool execution.
+    last_activity: Instant,
+    /// Optional idle timeout — hibernation triggers after this duration of inactivity.
+    idle_timeout: Option<Duration>,
 }
 
 impl AgentLoop {
@@ -176,6 +181,8 @@ impl AgentLoop {
             config,
             session_approvals: HashSet::new(),
             tool_registry: None,
+            last_activity: Instant::now(),
+            idle_timeout: None,
         }
     }
 
@@ -197,6 +204,39 @@ impl AgentLoop {
     pub fn with_tool_registry(mut self, project_root: &std::path::Path) -> Self {
         self.tool_registry = Some(DynamicToolRegistry::new(project_root));
         self
+    }
+
+    /// Set an idle timeout for hibernation.
+    ///
+    /// When the agent has been inactive for this duration, `is_idle()` returns true
+    /// and the caller can trigger hibernation via `checkpoint()`.
+    pub fn with_idle_timeout(mut self, timeout: Duration) -> Self {
+        self.idle_timeout = Some(timeout);
+        self
+    }
+
+    /// Record that activity just occurred (user message, tool execution, etc.).
+    pub fn touch_activity(&mut self) {
+        self.last_activity = Instant::now();
+    }
+
+    /// Check whether the agent has been idle past its configured timeout.
+    ///
+    /// Returns `false` if no idle timeout is configured.
+    pub fn is_idle(&self) -> bool {
+        match self.idle_timeout {
+            Some(timeout) => self.last_activity.elapsed() >= timeout,
+            None => false,
+        }
+    }
+
+    /// Duration until the idle timeout fires, or `None` if no timeout is set
+    /// or already expired.
+    pub fn time_until_idle(&self) -> Option<Duration> {
+        self.idle_timeout.and_then(|timeout| {
+            let elapsed = self.last_activity.elapsed();
+            timeout.checked_sub(elapsed)
+        })
     }
 
     /// Generate a WASM tool from a template and register it per-project.
@@ -265,6 +305,59 @@ impl AgentLoop {
     /// Return the tool definitions.
     pub fn tools(&self) -> &[ToolDefinition] {
         &self.tools
+    }
+
+    /// Read-only access to session approvals (for checkpointing).
+    pub fn session_approvals(&self) -> &HashSet<String> {
+        &self.session_approvals
+    }
+
+    /// Capture a hibernation checkpoint of the current agent state.
+    pub fn checkpoint(
+        &self,
+        idle_reason: Option<String>,
+        wake_triggers: Vec<crate::checkpoint::WakeTrigger>,
+    ) -> crate::checkpoint::AgentCheckpoint {
+        crate::checkpoint::AgentCheckpoint::capture(crate::checkpoint::CaptureParams {
+            session_id: self.session_id(),
+            model: self.model_name(),
+            messages: &self.messages,
+            session_approvals: &self.session_approvals,
+            config: crate::checkpoint::CheckpointConfig {
+                max_tool_rounds: self.config.max_tool_rounds,
+                max_output_bytes: self.config.max_output_bytes,
+                max_tools_in_context: self.config.max_tools_in_context,
+            },
+            dynamic_tools: self.list_dynamic_tools(),
+            idle_reason,
+            wake_triggers,
+        })
+    }
+
+    /// Restore an agent loop from a previously saved checkpoint.
+    pub fn from_checkpoint(
+        checkpoint: &crate::checkpoint::AgentCheckpoint,
+        router: ProviderRouter,
+        session: Session,
+        tools: Vec<ToolDefinition>,
+    ) -> Self {
+        let config = AgentLoopConfig {
+            max_tool_rounds: checkpoint.config.max_tool_rounds,
+            max_output_bytes: checkpoint.config.max_output_bytes,
+            max_tools_in_context: checkpoint.config.max_tools_in_context,
+            ..AgentLoopConfig::default()
+        };
+        Self {
+            router,
+            session,
+            tools,
+            messages: checkpoint.messages.clone(),
+            config,
+            session_approvals: checkpoint.session_approvals.clone(),
+            tool_registry: None,
+            last_activity: Instant::now(),
+            idle_timeout: None,
+        }
     }
 
     /// Signal session end.

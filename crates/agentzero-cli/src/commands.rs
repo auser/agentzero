@@ -40,6 +40,10 @@ pub enum Command {
         /// Output mode for --print: text (default), json, jsonl.
         #[arg(long, default_value = "text")]
         mode: String,
+        /// Hibernate the session after N minutes of inactivity.
+        /// Saves a full checkpoint that can be resumed later.
+        #[arg(long, value_name = "MINUTES")]
+        hibernate_after: Option<u64>,
     },
     /// Run a skill or tool by name.
     Run {
@@ -135,6 +139,11 @@ pub enum Command {
         #[command(subcommand)]
         action: BrainAction,
     },
+    /// Manage messaging gateways (Slack, Telegram, etc.).
+    Gateway {
+        #[command(subcommand)]
+        action: GatewayAction,
+    },
     /// Manage plugins.
     Plugin {
         #[command(subcommand)]
@@ -144,6 +153,17 @@ pub enum Command {
     Completions {
         /// Shell to generate completions for.
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GatewayAction {
+    /// List configured gateways.
+    List,
+    /// Start a gateway by name (runs in foreground).
+    Start {
+        /// Gateway name from gateways.toml.
+        name: String,
     },
 }
 
@@ -381,6 +401,7 @@ pub async fn run(command: Command) -> i32 {
             no_encrypt,
             print,
             mode,
+            hibernate_after,
         } => {
             cmd_chat(
                 !remote,
@@ -392,6 +413,7 @@ pub async fn run(command: Command) -> i32 {
                 !no_encrypt,
                 print.as_deref(),
                 &mode,
+                hibernate_after,
             )
             .await
         }
@@ -437,6 +459,7 @@ pub async fn run(command: Command) -> i32 {
         Command::Vault { action } => cmd_vault(action),
         Command::Index { action } => cmd_index(action).await,
         Command::Brain { action } => cmd_brain(action),
+        Command::Gateway { action } => cmd_gateway(action).await,
         Command::Plugin { action } => cmd_plugin(action),
         Command::Completions { shell } => {
             cmd_completions(shell);
@@ -1411,6 +1434,7 @@ async fn cmd_chat(
     encrypt: bool,
     print_message: Option<&str>,
     output_mode: &str,
+    hibernate_after_mins: Option<u64>,
 ) -> i32 {
     use agentzero::session::router::ProviderRouter;
     use agentzero::session::{
@@ -1703,42 +1727,80 @@ async fn cmd_chat(
     let config = AgentLoopConfig::default();
     let mut agent_loop = AgentLoop::new(router, session, tools.clone(), config);
 
-    // Resume existing session or start with system prompt
+    // Set idle timeout for hibernation if requested
+    if let Some(mins) = hibernate_after_mins {
+        agent_loop = agent_loop.with_idle_timeout(std::time::Duration::from_secs(mins * 60));
+        println!("Hibernation enabled: will checkpoint after {mins} minutes of inactivity");
+    }
+
+    // Resume existing session or start with system prompt.
+    // Try checkpoint format first, fall back to legacy message-only format.
     if let Some(id) = resume_id {
-        let session_file = cwd.join(format!(".agentzero/sessions/{id}.json"));
-        if !session_file.exists() {
-            eprintln!("error: session file not found: {}", session_file.display());
-            return 1;
-        }
-        match std::fs::read_to_string(&session_file) {
-            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
-                Ok(data) => {
-                    if let Some(msgs) = data.get("messages") {
-                        match serde_json::from_value::<Vec<ChatMessage>>(msgs.clone()) {
-                            Ok(msgs) => {
-                                println!("Resumed session {id} ({} messages)", msgs.len());
-                                agent_loop = agent_loop.with_messages(msgs);
-                            }
-                            Err(e) => {
-                                eprintln!("error: failed to parse messages: {e}");
-                                return 1;
-                            }
-                        }
-                    } else {
-                        eprintln!("error: no messages in session file");
-                        return 1;
+        let mut resumed = false;
+        let checkpoint_file = cwd.join(format!(".agentzero/sessions/{id}.checkpoint.json"));
+        if checkpoint_file.exists() {
+            match agentzero::session::AgentCheckpoint::load(&checkpoint_file) {
+                Ok(checkpoint) => {
+                    println!(
+                        "Resumed session {id} from checkpoint ({} messages, {} approvals)",
+                        checkpoint.messages.len(),
+                        checkpoint.session_approvals.len()
+                    );
+                    // Restore messages and approvals from the checkpoint.
+                    // We reuse the already-constructed agent_loop's router/session/tools
+                    // and just overlay the checkpoint state.
+                    agent_loop = agent_loop.with_messages(checkpoint.messages.clone());
+                    // Session approvals are restored via from_checkpoint when we have
+                    // a full reconstruction path, but for now we restore messages only.
+                    // Full from_checkpoint will be used by gateways.
+                    resumed = true;
+                    if let Some(mins) = hibernate_after_mins {
+                        agent_loop =
+                            agent_loop.with_idle_timeout(std::time::Duration::from_secs(mins * 60));
                     }
                 }
                 Err(e) => {
-                    eprintln!("error: failed to parse session: {e}");
-                    return 1;
+                    eprintln!("warning: failed to load checkpoint, trying legacy format: {e}");
                 }
-            },
-            Err(e) => {
-                eprintln!("error: failed to read session: {e}");
-                return 1;
             }
         }
+        // Fall through to legacy format if checkpoint didn't exist or failed
+        if !resumed {
+            let session_file = cwd.join(format!(".agentzero/sessions/{id}.json"));
+            if !session_file.exists() {
+                eprintln!("error: session file not found: {}", session_file.display());
+                return 1;
+            }
+            match std::fs::read_to_string(&session_file) {
+                Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(data) => {
+                        if let Some(msgs) = data.get("messages") {
+                            match serde_json::from_value::<Vec<ChatMessage>>(msgs.clone()) {
+                                Ok(msgs) => {
+                                    println!("Resumed session {id} ({} messages)", msgs.len());
+                                    agent_loop = agent_loop.with_messages(msgs);
+                                }
+                                Err(e) => {
+                                    eprintln!("error: failed to parse messages: {e}");
+                                    return 1;
+                                }
+                            }
+                        } else {
+                            eprintln!("error: no messages in session file");
+                            return 1;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("error: failed to parse session: {e}");
+                        return 1;
+                    }
+                },
+                Err(e) => {
+                    eprintln!("error: failed to read session: {e}");
+                    return 1;
+                }
+            }
+        } // end if !resumed
     } else {
         let system_prompt = {
             let prompt_path = cwd.join(".agentzero/prompts/system.md");
@@ -1865,8 +1927,10 @@ async fn cmd_chat(
             continue;
         }
 
+        agent_loop.touch_activity();
         match agent_loop.send(input, &approver, &progress).await {
             Ok(response) => {
+                agent_loop.touch_activity();
                 if !response.content.is_empty() {
                     println!();
                     println!("agentzero> {}", response.content);
@@ -1875,6 +1939,31 @@ async fn cmd_chat(
             }
             Err(e) => {
                 eprintln!("error: {e}");
+            }
+        }
+
+        // Check idle timeout for hibernation
+        if agent_loop.is_idle() {
+            let sessions_dir = cwd.join(".agentzero/sessions");
+            if sessions_dir.exists() {
+                let checkpoint = agent_loop.checkpoint(
+                    Some("idle timeout".to_string()),
+                    vec![agentzero::session::WakeTrigger::CliResume],
+                );
+                let path = agentzero::session::AgentCheckpoint::path_for(
+                    &sessions_dir,
+                    agent_loop.session_id(),
+                );
+                match checkpoint.save(&path) {
+                    Ok(()) => {
+                        println!("\nHibernated: session saved to {}", path.display());
+                        println!("Resume with: az chat --resume {}", agent_loop.session_id());
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("warning: failed to save hibernate checkpoint: {e}");
+                    }
+                }
             }
         }
     }
@@ -3480,6 +3569,119 @@ fn cmd_demo() -> i32 {
     0
 }
 
+async fn cmd_gateway(action: GatewayAction) -> i32 {
+    use agentzero::gateway::config::GatewaysConfig;
+
+    let cwd = match std::env::current_dir() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: cannot determine current directory: {e}");
+            return 1;
+        }
+    };
+
+    let config_path = cwd.join(".agentzero/gateways.toml");
+
+    match action {
+        GatewayAction::List => {
+            if !config_path.exists() {
+                println!("No gateways configured.");
+                println!("Create .agentzero/gateways.toml to configure gateways.");
+                return 0;
+            }
+            match GatewaysConfig::load(&config_path) {
+                Ok(config) => {
+                    if config.gateway.is_empty() {
+                        println!("No gateways configured in gateways.toml.");
+                    } else {
+                        println!("Configured gateways:");
+                        for gw in &config.gateway {
+                            println!(
+                                "  {} (type: {}, channels: {}, poll: {}s)",
+                                gw.name,
+                                gw.gateway_type,
+                                if gw.channels.is_empty() {
+                                    "none".to_string()
+                                } else {
+                                    gw.channels.join(", ")
+                                },
+                                gw.poll_interval_secs,
+                            );
+                        }
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        GatewayAction::Start { name } => {
+            if !config_path.exists() {
+                eprintln!("error: .agentzero/gateways.toml not found");
+                return 1;
+            }
+            let config = match GatewaysConfig::load(&config_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 1;
+                }
+            };
+            let entry = match config.gateway.iter().find(|g| g.name == name) {
+                Some(e) => e.clone(),
+                None => {
+                    eprintln!("error: gateway '{name}' not found in gateways.toml");
+                    return 1;
+                }
+            };
+
+            match entry.gateway_type.as_str() {
+                "slack" => {
+                    println!("Starting Slack gateway '{}'...", entry.name);
+                    println!("Channels: {}", entry.channels.join(", "));
+                    println!("Poll interval: {}s", entry.poll_interval_secs);
+                    println!("Press Ctrl+C to stop.\n");
+
+                    // For now, just create the gateway — full integration with
+                    // the agent loop requires wiring up a MessageHandler that
+                    // creates an AgentLoop per conversation.
+                    let mut gw = agentzero::gateway::slack::SlackGateway::new(entry);
+                    use agentzero::gateway::Gateway;
+
+                    // Stub handler that echoes messages
+                    struct EchoHandler;
+
+                    #[async_trait::async_trait]
+                    impl agentzero::gateway::MessageHandler for EchoHandler {
+                        async fn handle(
+                            &self,
+                            msg: agentzero::gateway::IncomingMessage,
+                        ) -> Result<String, agentzero::gateway::GatewayError>
+                        {
+                            Ok(format!("AgentZero received: {}", msg.text))
+                        }
+                    }
+
+                    match gw.start(Box::new(EchoHandler)).await {
+                        Ok(()) => 0,
+                        Err(e) => {
+                            eprintln!("error: {e}");
+                            1
+                        }
+                    }
+                }
+                other => {
+                    eprintln!("error: unsupported gateway type: {other}");
+                    eprintln!("supported types: slack");
+                    1
+                }
+            }
+        }
+    }
+}
+
 fn cmd_plugin(action: PluginAction) -> i32 {
     use agentzero::skills::plugin::PluginRegistry;
 
@@ -3886,6 +4088,16 @@ impl agentzero::sandbox::wasm::WasmHostCallbacks for PluginHostCallbacks {
 
     fn now(&self) -> String {
         chrono::Local::now().to_rfc3339()
+    }
+
+    fn http_request(
+        &self,
+        _url: &str,
+        _method: &str,
+        _headers_json: &str,
+        _body: &str,
+    ) -> Result<String, String> {
+        Err("network access denied for plugins (not yet configured)".into())
     }
 }
 

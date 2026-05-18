@@ -29,6 +29,11 @@ pub struct ProviderConfig {
     /// Optional API key (some servers require it). Supports "vault:provider/key" references.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// Driver to use for `Custom` provider type.
+    /// Maps to an existing provider implementation: `"ollama"`, `"openai-compatible"`, or `"anthropic"`.
+    /// Defaults to `"openai-compatible"` when omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub driver: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -36,7 +41,7 @@ fn default_true() -> bool {
 }
 
 /// Supported provider types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProviderType {
     /// Native Ollama API (`/api/chat`).
     #[serde(rename = "ollama")]
@@ -49,6 +54,14 @@ pub enum ProviderType {
     /// Always remote — PII redaction applies per ADR 0002.
     #[serde(rename = "anthropic")]
     Anthropic,
+    /// Custom provider backed by an existing driver.
+    /// Use the `driver` field in `ProviderConfig` to select the underlying
+    /// client (`"ollama"`, `"openai-compatible"`, or `"anthropic"`).
+    /// Defaults to `"openai-compatible"` when `driver` is omitted.
+    /// This lets users add any compatible endpoint via `models.json`
+    /// without code changes.
+    #[serde(rename = "custom")]
+    Custom,
 }
 
 impl ModelsConfig {
@@ -70,6 +83,7 @@ impl ModelsConfig {
                 default_model: "llama3.2".into(),
                 is_local: true,
                 api_key: None,
+                driver: None,
             }],
         }
     }
@@ -164,5 +178,40 @@ mod tests {
         let config: ModelsConfig = serde_json::from_str(json).expect("should parse");
         assert!(!config.providers[0].is_local);
         assert_eq!(config.providers[0].api_key, Some("sk-1234".into()));
+    }
+
+    #[test]
+    fn custom_provider_with_driver() {
+        let json = r#"{
+            "providers": [{
+                "name": "together-ai",
+                "type": "custom",
+                "driver": "openai-compatible",
+                "url": "https://api.together.xyz/v1",
+                "default_model": "meta-llama/Llama-3-70b",
+                "is_local": false,
+                "api_key": "vault:together/key"
+            }]
+        }"#;
+        let config: ModelsConfig = serde_json::from_str(json).expect("should parse");
+        assert_eq!(config.providers[0].provider_type, ProviderType::Custom);
+        assert_eq!(config.providers[0].driver, Some("openai-compatible".into()));
+        assert!(!config.providers[0].is_local);
+    }
+
+    #[test]
+    fn custom_provider_without_driver_defaults_to_none() {
+        let json = r#"{
+            "providers": [{
+                "name": "my-server",
+                "type": "custom",
+                "url": "http://my-gpu:8080/v1",
+                "default_model": "my-model",
+                "is_local": true
+            }]
+        }"#;
+        let config: ModelsConfig = serde_json::from_str(json).expect("should parse");
+        assert_eq!(config.providers[0].provider_type, ProviderType::Custom);
+        assert_eq!(config.providers[0].driver, None);
     }
 }
