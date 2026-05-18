@@ -137,8 +137,8 @@ impl WasmHostCallbacks for SessionHostCallbacks {
         &self,
         url: &str,
         method: &str,
-        _headers_json: &str,
-        _body: &str,
+        headers_json: &str,
+        body: &str,
     ) -> Result<String, String> {
         info!(
             host_call = "http_request",
@@ -146,16 +146,83 @@ impl WasmHostCallbacks for SessionHostCallbacks {
             method = method,
             "WASM guest calling http_request"
         );
-        // Delegate to ToolExecutor's network request policy check.
-        // For now, deny all — full implementation requires the policy engine
-        // to check Capability::NetworkRequest and validate the URL against
-        // the SandboxNetworkPolicy allowlist.
-        warn!(
+
+        // 1. Policy check: NetworkRequest capability
+        let decision = self.executor.check_network_request();
+        if !decision.is_allowed() {
+            warn!(
+                host_call = "http_request",
+                url = url,
+                "http_request denied by policy"
+            );
+            return Err(format!("http_request denied: {decision:?}"));
+        }
+
+        // 2. PII scan on request body — block if secrets detected
+        if !body.is_empty() {
+            let scan = agentzero_core::scan_for_secrets(body);
+            if !scan.is_clean() {
+                warn!(
+                    host_call = "http_request",
+                    url = url,
+                    redactions = scan.redactions.len(),
+                    "http_request body contains secrets — blocked"
+                );
+                return Err("http_request denied: request body contains secrets or PII".to_string());
+            }
+        }
+
+        // 3. Execute via reqwest::blocking
+        let client = reqwest::blocking::Client::new();
+        let mut req = match method.to_uppercase().as_str() {
+            "GET" => client.get(url),
+            "POST" => client.post(url),
+            "PUT" => client.put(url),
+            "DELETE" => client.delete(url),
+            "PATCH" => client.patch(url),
+            "HEAD" => client.head(url),
+            other => {
+                return Err(format!("unsupported HTTP method: {other}"));
+            }
+        };
+
+        // Parse and apply custom headers
+        if !headers_json.is_empty() && headers_json != "{}" {
+            if let Ok(headers) =
+                serde_json::from_str::<std::collections::HashMap<String, String>>(headers_json)
+            {
+                for (key, value) in &headers {
+                    req = req.header(key.as_str(), value.as_str());
+                }
+            }
+        }
+
+        if !body.is_empty() {
+            req = req.body(body.to_string());
+        }
+
+        let resp = req
+            .send()
+            .map_err(|e| format!("http_request failed: {e}"))?;
+
+        let status = resp.status().as_u16();
+        let resp_body = resp.text().map_err(|e| format!("read response: {e}"))?;
+
+        // 4. Audit log: URL, method, status (never the body)
+        info!(
             host_call = "http_request",
             url = url,
-            "http_request not yet wired to ToolExecutor — denied by default"
+            method = method,
+            status = status,
+            "http_request completed"
         );
-        Err("http_request: network requests require NetworkRequest capability (not yet implemented in ToolExecutor)".into())
+
+        // Return JSON response
+        let response = serde_json::json!({
+            "status": status,
+            "body": resp_body,
+        });
+        Ok(response.to_string())
     }
 }
 
@@ -330,6 +397,36 @@ mod tests {
         assert!(exists.expect("should check"));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn http_request_denied_by_default() {
+        let cb = callbacks_deny_all();
+        let result = cb.http_request("https://example.com", "GET", "{}", "");
+        assert!(result.is_err());
+        let err = result.expect_err("should deny");
+        assert!(err.contains("denied"), "error should mention denied: {err}");
+    }
+
+    #[test]
+    fn http_request_blocks_body_with_secrets() {
+        let policy = PolicyEngine::with_rules(vec![PolicyRule::allow(
+            Capability::NetworkRequest,
+            DataClassification::Private,
+        )]);
+        let cb = SessionHostCallbacks::new(ToolExecutor::new(policy));
+        let result = cb.http_request(
+            "https://example.com",
+            "POST",
+            "{}",
+            "my secret key is sk-1234567890abcdef here",
+        );
+        assert!(result.is_err());
+        let err = result.expect_err("should block secrets");
+        assert!(
+            err.contains("secrets") || err.contains("PII"),
+            "error should mention secrets: {err}"
+        );
     }
 
     #[test]

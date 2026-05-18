@@ -482,6 +482,14 @@ impl ToolExecutor {
         Err(ToolExecutorError::WasmNotAvailable)
     }
 
+    /// Check whether a network request is allowed by policy.
+    ///
+    /// Used by `SessionHostCallbacks::http_request` to enforce
+    /// `Capability::NetworkRequest` before outbound HTTP calls.
+    pub fn check_network_request(&self) -> PolicyDecision {
+        self.check_policy(Capability::NetworkRequest, DataClassification::Private)
+    }
+
     fn check_policy(
         &self,
         capability: Capability,

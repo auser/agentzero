@@ -3569,6 +3569,128 @@ fn cmd_demo() -> i32 {
     0
 }
 
+/// MessageHandler that routes gateway messages through an AgentLoop.
+///
+/// Wraps an `AgentLoop` in a `tokio::sync::Mutex` so it can be shared
+/// across async message handler calls. Each incoming message is sent
+/// through the loop and the response text is returned (with PII redacted).
+struct AgentLoopHandler {
+    agent_loop: tokio::sync::Mutex<agentzero::session::AgentLoop>,
+}
+
+#[async_trait::async_trait]
+impl agentzero::gateway::MessageHandler for AgentLoopHandler {
+    async fn handle(
+        &self,
+        msg: agentzero::gateway::IncomingMessage,
+    ) -> Result<String, agentzero::gateway::GatewayError> {
+        let mut loop_guard = self.agent_loop.lock().await;
+        loop_guard.touch_activity();
+
+        // Auto-approve tool calls in gateway mode (no interactive terminal)
+        let approver = agentzero::session::AutoApprove;
+        let progress = agentzero::session::NoopProgress;
+
+        match loop_guard.send(&msg.text, &approver, &progress).await {
+            Ok(response) => {
+                // PII-redact outbound text (gateway sends to remote platform)
+                let scan = agentzero::core::scan_for_secrets(&response.content);
+                let redacted = if scan.is_clean() {
+                    response.content
+                } else {
+                    scan.apply(&response.content)
+                };
+                Ok(redacted)
+            }
+            Err(e) => Err(agentzero::gateway::GatewayError::Send(format!(
+                "agent loop error: {e}"
+            ))),
+        }
+    }
+}
+
+/// Build a gateway MessageHandler backed by a real AgentLoop.
+///
+/// Loads policy from `.agentzero/policy.yml`, models from `.agentzero/models.json`,
+/// and creates a session with tool executor. Falls back to local Ollama if no
+/// models.json exists.
+fn build_gateway_handler(cwd: &std::path::Path) -> Result<AgentLoopHandler, String> {
+    use agentzero::session::{
+        AgentLoop, AgentLoopConfig, Session, SessionConfig, SessionMode, ToolExecutor,
+    };
+
+    // Load policy
+    let policy_path = cwd.join(".agentzero/policy.yml");
+    let policy = if policy_path.exists() {
+        agentzero::policy::load_policy_file(&policy_path)
+            .map(agentzero::policy::PolicyEngine::with_rules)
+            .unwrap_or_else(|_| agentzero::policy::PolicyEngine::deny_by_default())
+    } else {
+        agentzero::policy::PolicyEngine::deny_by_default()
+    };
+
+    // Tool executor with policy
+    let tool_policy = if policy_path.exists() {
+        agentzero::policy::load_policy_file(&policy_path)
+            .map(agentzero::policy::PolicyEngine::with_rules)
+            .unwrap_or_else(|_| agentzero::policy::PolicyEngine::deny_by_default())
+    } else {
+        agentzero::policy::PolicyEngine::deny_by_default()
+    };
+    let tool_executor =
+        ToolExecutor::new(tool_policy).with_project_root(cwd.to_string_lossy().to_string());
+
+    // Session
+    let session_config = SessionConfig {
+        mode: SessionMode::LocalOnly,
+        project_root: Some(cwd.to_string_lossy().to_string()),
+    };
+    let session = Session::new(session_config, policy)
+        .map_err(|e| format!("failed to create session: {e}"))?
+        .with_tool_executor(tool_executor);
+
+    // Wire audit if available
+    let audit_dir = cwd.join(".agentzero/audit");
+    let session = if audit_dir.exists() {
+        session
+            .with_audit_dir(&audit_dir)
+            .map_err(|e| format!("failed to set up audit: {e}"))?
+    } else {
+        session
+    };
+
+    // Build router: try models.json, fall back to local Ollama
+    let models_path = cwd.join(".agentzero/models.json");
+    let router = if models_path.exists() {
+        let config = agentzero::session::ModelsConfig::load(&models_path)
+            .map_err(|e| format!("failed to load models.json: {e}"))?;
+        agentzero::session::router::ProviderRouter::from_config(&config)?
+    } else {
+        agentzero::session::router::ProviderRouter::local_only("llama3.2")
+    };
+
+    // Tools
+    let tools = agentzero::session::OllamaProvider::agentzero_tool_definitions();
+
+    // Build AgentLoop with system prompt
+    let config = AgentLoopConfig::default();
+    let agent_loop = AgentLoop::new(router, session, tools, config);
+
+    let system_prompt = {
+        let prompt_path = cwd.join(".agentzero/prompts/system.md");
+        if prompt_path.exists() {
+            std::fs::read_to_string(&prompt_path).unwrap_or_else(|_| default_system_prompt())
+        } else {
+            default_system_prompt()
+        }
+    };
+    let agent_loop = agent_loop.with_system_prompt(&system_prompt);
+
+    Ok(AgentLoopHandler {
+        agent_loop: tokio::sync::Mutex::new(agent_loop),
+    })
+}
+
 async fn cmd_gateway(action: GatewayAction) -> i32 {
     use agentzero::gateway::config::GatewaysConfig;
 
@@ -3644,27 +3766,19 @@ async fn cmd_gateway(action: GatewayAction) -> i32 {
                     println!("Poll interval: {}s", entry.poll_interval_secs);
                     println!("Press Ctrl+C to stop.\n");
 
-                    // For now, just create the gateway — full integration with
-                    // the agent loop requires wiring up a MessageHandler that
-                    // creates an AgentLoop per conversation.
                     let mut gw = agentzero::gateway::slack::SlackGateway::new(entry);
                     use agentzero::gateway::Gateway;
 
-                    // Stub handler that echoes messages
-                    struct EchoHandler;
-
-                    #[async_trait::async_trait]
-                    impl agentzero::gateway::MessageHandler for EchoHandler {
-                        async fn handle(
-                            &self,
-                            msg: agentzero::gateway::IncomingMessage,
-                        ) -> Result<String, agentzero::gateway::GatewayError>
-                        {
-                            Ok(format!("AgentZero received: {}", msg.text))
+                    // Build an AgentLoop for the gateway to use
+                    let handler = match build_gateway_handler(&cwd) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            eprintln!("error: failed to create agent loop: {e}");
+                            return 1;
                         }
-                    }
+                    };
 
-                    match gw.start(Box::new(EchoHandler)).await {
+                    match gw.start(Box::new(handler)).await {
                         Ok(()) => 0,
                         Err(e) => {
                             eprintln!("error: {e}");
