@@ -360,6 +360,21 @@ impl AgentLoop {
         }
     }
 
+    /// Restore state from a checkpoint in-place.
+    ///
+    /// Overwrites messages, session approvals, and config from the
+    /// checkpoint while keeping the existing router, session, and tools.
+    /// Use this when you already have a constructed `AgentLoop` and want
+    /// to overlay checkpoint state (e.g. CLI resume).
+    pub fn restore_checkpoint(&mut self, checkpoint: &crate::checkpoint::AgentCheckpoint) {
+        self.messages = checkpoint.messages.clone();
+        self.session_approvals = checkpoint.session_approvals.clone();
+        self.config.max_tool_rounds = checkpoint.config.max_tool_rounds;
+        self.config.max_output_bytes = checkpoint.config.max_output_bytes;
+        self.config.max_tools_in_context = checkpoint.config.max_tools_in_context;
+        self.last_activity = Instant::now();
+    }
+
     /// Signal session end.
     pub fn end(&self) -> Result<(), crate::session::SessionError> {
         self.session.end()

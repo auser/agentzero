@@ -1746,13 +1746,10 @@ async fn cmd_chat(
                         checkpoint.messages.len(),
                         checkpoint.session_approvals.len()
                     );
-                    // Restore messages and approvals from the checkpoint.
-                    // We reuse the already-constructed agent_loop's router/session/tools
-                    // and just overlay the checkpoint state.
-                    agent_loop = agent_loop.with_messages(checkpoint.messages.clone());
-                    // Session approvals are restored via from_checkpoint when we have
-                    // a full reconstruction path, but for now we restore messages only.
-                    // Full from_checkpoint will be used by gateways.
+                    // Full restore: messages + session approvals + config.
+                    // Uses restore_checkpoint to overlay state in-place
+                    // (router/session/tools are already owned by agent_loop).
+                    agent_loop.restore_checkpoint(&checkpoint);
                     resumed = true;
                     if let Some(mins) = hibernate_after_mins {
                         agent_loop =
