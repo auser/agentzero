@@ -2,6 +2,31 @@
 
 All notable changes to AgentZero are documented here.
 
+## [0.15.0] - 2026-05-19
+
+### Bug Fixes
+
+- Checkpoint resume now restores session approvals
+
+### Documentation
+
+- Add plugin system and brain wiki guides
+
+### Features
+
+- Wire plugin http_request to network policy + PII scan
+- Wire http_request + real AgentLoop gateway handler
+- Gateways, hibernation, provider extensibility
+- Machine-derived encryption key — no passphrase prompt
+- Read chat passphrase from AZ_PASSPHRASE env or settings.toml
+
+### Miscellaneous
+
+- Add deploy-docs Justfile target and release reminder
+
+### Security
+
+- Harden gateway approval + enforce URL allowlists
 ## [0.14.0] - 2026-05-12
 
 ### Bug Fixes
@@ -39,6 +64,7 @@ All notable changes to AgentZero are documented here.
 
 ### Miscellaneous
 
+- Release v0.14.0
 - Consolidate CI from 5 jobs to 2 (#22)
 - Remove .playwright-mcp from git tracking
 - Update Cargo.lock for v0.3.0 version bump
